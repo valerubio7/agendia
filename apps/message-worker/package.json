@@ -1,0 +1,14 @@
+{
+  "name": "@agendia/message-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "AGENDIA_RUN_MESSAGE_WORKER=1 node --import tsx src/index.ts" },
+  "dependencies": {
+    "@agendia/ai-deepseek": "workspace:*",
+    "@agendia/contracts": "workspace:*",
+    "@agendia/db": "workspace:*",
+    "@agendia/domain": "workspace:*",
+    "pg-boss": "12.28.0"
+  }
+}

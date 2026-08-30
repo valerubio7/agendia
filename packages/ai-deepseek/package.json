@@ -1,0 +1,8 @@
+{
+  "name": "@agendia/ai-deepseek",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@agendia/domain": "workspace:*" }
+}
