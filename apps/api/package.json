@@ -1,0 +1,12 @@
+{
+  "name": "@agendia/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@agendia/auth": "workspace:*",
+    "@agendia/contracts": "workspace:*",
+    "@agendia/db": "workspace:*",
+    "@agendia/domain": "workspace:*"
+  }
+}

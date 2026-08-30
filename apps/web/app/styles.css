@@ -1,0 +1,4 @@
+:root { color-scheme: light; font-family: system-ui, sans-serif; background: #f5f7fb; color: #13233a; }
+body { margin: 0; } main { max-width: 72rem; margin: auto; padding: 2rem; }
+table { width: 100%; border-collapse: collapse; background: white; } th, td { padding: .75rem; text-align: left; border-bottom: 1px solid #dce3ec; }
+button, input, textarea { font: inherit; } [role="alert"] { border-left: .25rem solid #b42318; padding: 1rem; background: #fff1f0; }

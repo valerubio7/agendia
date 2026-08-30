@@ -1,0 +1,73 @@
+schema: spec-driven
+
+project:
+  name: AgendIA
+  purpose: >-
+    Plataforma SaaS multiempresa que permite a los negocios configurar un asistente
+    de inteligencia artificial y conectarlo con WhatsApp sin mantener infraestructura propia.
+  repository_state: >-
+    Repositorio dedicado a documentación. Los requisitos completos del producto están en
+    docs/PRD.md; README.md contiene únicamente el título del proyecto. Actualmente no hay
+    código de aplicación ni herramientas de pruebas.
+
+context: |
+  AgendIA es una plataforma SaaS multiempresa para asistentes de inteligencia artificial
+  configurables conectados con WhatsApp. Cada negocio es un tenant aislado, con su propia
+  información, configuración del asistente, conexión de WhatsApp, usuarios, registros
+  técnicos y registros de auditoría.
+
+  El objetivo del SDD es lograr el cumplimiento completo de todos los requisitos de
+  docs/PRD.md. No se debe reducir el alcance a una primera parte ni excluir o aplazar
+  silenciosamente ningún requisito del PRD para el producto final.
+
+  Baileys y DeepSeek son las integraciones iniciales descritas por el PRD, y PostgreSQL
+  es la base de datos indicada allí. Sin embargo, las decisiones de arquitectura sobre
+  stack, implementación del aislamiento entre tenants, mecanismo de autenticación,
+  límites de despliegue y ejecución, modelo de persistencia y herramientas de pruebas
+  permanecen intencionalmente sin resolver. Deben decidirse en fases posteriores del
+  SDD; la inicialización no debe inferirlas ni fijarlas.
+
+testing:
+  methodology: strict-tdd
+  runners:
+    - vitest
+    - playwright
+  commands:
+    - bun run lint
+    - bun run typecheck
+    - bun run test:unit
+    - bun run test:integration
+    - bun run test:contracts
+    - bun run test:tenant-isolation
+    - bun run test:e2e
+    - bun run test
+    - bun run db:check
+    - bun run build
+  note: >-
+    Tras el scaffolding, Vitest ejecutará unitarias, integración con PostgreSQL real,
+    contratos y aislamiento; Playwright ejecutará E2E. Las suites con PostgreSQL y E2E
+    usarán Testcontainers/Docker y dobles deterministas de Baileys y DeepSeek.
+
+rules:
+  proposal:
+    - Mantener como objetivo el cumplimiento completo de todos los requisitos de docs/PRD.md.
+    - Preservar el aislamiento multiempresa exigido por el PRD y validado en el backend.
+    - Mantener sin decidir el stack, el aislamiento entre tenants y el mecanismo de autenticación.
+  spec:
+    - Usar identificadores y nombres de directorio de especificaciones en inglés; mantener en español el contenido legible por humanos.
+    - Cubrir todos los requisitos del PRD sin reducir ni excluir el alcance final.
+  design:
+    - Decidir explícitamente las cuestiones de arquitectura pendientes en esta fase posterior.
+    - Mantener Baileys y DeepSeek detrás de límites reemplazables.
+  tasks:
+    - Incluir verificación para todos los requisitos del PRD después de seleccionar el stack y el ejecutor de pruebas.
+  implementation:
+    - Aplicar autenticación, autorización y aislamiento entre tenants en el backend, no solamente en la interfaz.
+    - Aplicar TDD estricto: escribir primero una prueba fallida del requisito, implementar lo mínimo para pasarla y luego refactorizar.
+    - Mantener verdes lint, tipos, pruebas unitarias, integración, contratos, aislamiento, E2E, migraciones y build antes de cerrar cada incremento.
+
+session_preflight:
+  mode: interactive
+  artifact_store: openspec
+  risk_policy: ask-on-risk
+  changed_lines_limit: 400
