@@ -73,9 +73,7 @@ test("real services complete the deterministic multi-tenant happy path", async (
       tenant.name,
     );
     await expect(tenantPage.getByLabel("Horarios")).toHaveValue(tenant.hours);
-    await tenantPage
-      .getByRole("link", { name: "Configurar asistente" })
-      .click();
+    await tenantPage.getByRole("link", { name: "Asistente" }).click();
     await expect(tenantPage).toHaveURL(/\/assistant$/);
     await tenantPage.getByLabel("Respuestas automáticas activas").check();
     await tenantPage.getByRole("button", { name: "Guardar y activar" }).click();
@@ -86,7 +84,7 @@ test("real services complete the deterministic multi-tenant happy path", async (
     await expect(
       tenantPage.getByLabel("Respuestas automáticas activas"),
     ).toBeChecked();
-    await tenantPage.getByRole("link", { name: "Vincular WhatsApp" }).click();
+    await tenantPage.getByRole("link", { name: "WhatsApp" }).click();
     await expect(tenantPage).toHaveURL(/\/whatsapp$/);
     await tenantPage.getByRole("button", { name: "Vincular WhatsApp" }).click();
     await expect(
