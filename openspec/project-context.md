@@ -1,4 +1,4 @@
-# Contexto del proyecto AgendIA
+# Contexto del proyecto agendIA
 
 ## Resultado de la inicialización
 
@@ -8,7 +8,7 @@ silenciosamente ningún requisito.
 
 ## Propósito
 
-AgendIA es una plataforma SaaS multiempresa que permite a los negocios configurar un
+agendIA es una plataforma SaaS multiempresa que permite a los negocios configurar un
 asistente de inteligencia artificial y conectarlo con WhatsApp sin mantener su propia
 infraestructura tecnológica.
 

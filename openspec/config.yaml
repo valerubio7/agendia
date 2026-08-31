@@ -1,7 +1,7 @@
 schema: spec-driven
 
 project:
-  name: AgendIA
+  name: agendIA
   purpose: >-
     Plataforma SaaS multiempresa que permite a los negocios configurar un asistente
     de inteligencia artificial y conectarlo con WhatsApp sin mantener infraestructura propia.
@@ -11,7 +11,7 @@ project:
     código de aplicación ni herramientas de pruebas.
 
 context: |
-  AgendIA es una plataforma SaaS multiempresa para asistentes de inteligencia artificial
+  agendIA es una plataforma SaaS multiempresa para asistentes de inteligencia artificial
   configurables conectados con WhatsApp. Cada negocio es un tenant aislado, con su propia
   información, configuración del asistente, conexión de WhatsApp, usuarios, registros
   técnicos y registros de auditoría.

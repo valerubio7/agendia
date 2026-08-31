@@ -1,4 +1,4 @@
-# AgendIA
+# agendIA
 
 Plataforma SaaS multiempresa para asistentes de IA conectados a WhatsApp.
 

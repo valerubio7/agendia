@@ -61,14 +61,14 @@ El sistema MUST registrar actividad técnica y fallos relevantes, incluidos fall
 - WHEN se registra o comunica el error
 - THEN no incluye credenciales, material de sesión ni datos de otro tenant.
 
-### Requirement: Sin visor de conversaciones en AgendIA
+### Requirement: Sin visor de conversaciones en agendIA
 
-El sistema MUST conservar y usar el historial solo para la operación autorizada del asistente y MUST NOT ofrecer en AgendIA una bandeja, visor, búsqueda ni gestión humana de conversaciones. La consulta humana de conversaciones se realizará directamente en WhatsApp.
+El sistema MUST conservar y usar el historial solo para la operación autorizada del asistente y MUST NOT ofrecer en agendIA una bandeja, visor, búsqueda ni gestión humana de conversaciones. La consulta humana de conversaciones se realizará directamente en WhatsApp.
 
 #### Scenario: Panel sin consulta de conversaciones
 
 - GIVEN un administrador general o usuario de negocio autenticado
-- WHEN navega las funciones de AgendIA
+- WHEN navega las funciones de agendIA
 - THEN puede consultar los estados y la configuración autorizados
 - AND no dispone de una función para ver, buscar o gestionar el contenido de conversaciones.
 

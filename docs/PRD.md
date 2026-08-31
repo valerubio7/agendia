@@ -1,10 +1,10 @@
-# AgendIA
+# agendIA
 
 **Tu asistente inteligente para WhatsApp.**
 
 ## 1. Descripción general
 
-**AgendIA** es una plataforma SaaS multiempresa que permite a distintos negocios conectar una cuenta de WhatsApp con un asistente de inteligencia artificial configurable.
+**agendIA** es una plataforma SaaS multiempresa que permite a distintos negocios conectar una cuenta de WhatsApp con un asistente de inteligencia artificial configurable.
 
 Cada negocio podrá:
 
@@ -17,19 +17,19 @@ La comunicación con WhatsApp se realizará inicialmente mediante **Baileys** y 
 
 El flujo principal será:
 
-**Cliente → WhatsApp → Baileys → AgendIA → DeepSeek → AgendIA → Baileys → WhatsApp**
+**Cliente → WhatsApp → Baileys → agendIA → DeepSeek → agendIA → Baileys → WhatsApp**
 
-AgendIA administrará los negocios, sus configuraciones, las conexiones de WhatsApp y la comunicación con el modelo de inteligencia artificial.
+agendIA administrará los negocios, sus configuraciones, las conexiones de WhatsApp y la comunicación con el modelo de inteligencia artificial.
 
 ---
 
 ## 2. Objetivo del producto
 
-El objetivo de AgendIA es permitir que un negocio configure y utilice un asistente de inteligencia artificial en WhatsApp sin tener que desarrollar ni mantener su propia infraestructura tecnológica.
+El objetivo de agendIA es permitir que un negocio configure y utilice un asistente de inteligencia artificial en WhatsApp sin tener que desarrollar ni mantener su propia infraestructura tecnológica.
 
 El negocio deberá poder:
 
-- Acceder a su cuenta de AgendIA.
+- Acceder a su cuenta de agendIA.
 - Configurar la información de su negocio.
 - Configurar el comportamiento de su asistente.
 - Conectar su cuenta de WhatsApp.
@@ -42,7 +42,7 @@ La configuración y administración deberán realizarse desde una interfaz web, 
 
 ## 3. Concepto central
 
-AgendIA es una:
+agendIA es una:
 
 **Plataforma SaaS multiempresa de asistentes de inteligencia artificial conectados a WhatsApp.**
 
@@ -53,13 +53,13 @@ Cada negocio tendrá un entorno independiente dentro de la plataforma, con:
 - Conexión de WhatsApp.
 - Estado del asistente.
 
-AgendIA utilizará la información configurada por cada negocio para generar respuestas personalizadas mediante inteligencia artificial.
+agendIA utilizará la información configurada por cada negocio para generar respuestas personalizadas mediante inteligencia artificial.
 
 ---
 
 ## 4. Arquitectura multi-tenant
 
-AgendIA deberá diseñarse como una plataforma **multi-tenant desde el inicio**.
+agendIA deberá diseñarse como una plataforma **multi-tenant desde el inicio**.
 
 Una misma instalación administrará múltiples negocios independientes. Cada negocio representará un tenant.
 
@@ -111,7 +111,7 @@ El cliente final se comunicará con el negocio mediante WhatsApp.
 
 No necesitará:
 
-- Crear una cuenta en AgendIA.
+- Crear una cuenta en agendIA.
 - Registrarse en la plataforma.
 - Instalar otra aplicación.
 
@@ -119,7 +119,7 @@ No necesitará:
 
 ## 6. Autenticación y permisos
 
-AgendIA contará con un sistema de autenticación para proteger el acceso a los paneles.
+agendIA contará con un sistema de autenticación para proteger el acceso a los paneles.
 
 Deberá contemplar:
 
@@ -230,16 +230,16 @@ Esta configuración se enviará a DeepSeek como parte del contexto necesario par
 
 ## 11. Integración con WhatsApp
 
-AgendIA utilizará inicialmente **Baileys** para conectar la cuenta de WhatsApp de cada negocio.
+agendIA utilizará inicialmente **Baileys** para conectar la cuenta de WhatsApp de cada negocio.
 
 El proceso será:
 
 1. El usuario ingresa al panel.
 2. Selecciona la opción para conectar WhatsApp.
-3. AgendIA inicia una sesión de Baileys.
+3. agendIA inicia una sesión de Baileys.
 4. Se muestra el mecanismo de vinculación correspondiente.
 5. El usuario vincula su cuenta.
-6. AgendIA almacena la sesión de forma segura.
+6. agendIA almacena la sesión de forma segura.
 7. La conexión queda asociada al negocio.
 
 El sistema deberá mantener como mínimo:
@@ -257,13 +257,13 @@ Las credenciales y archivos de sesión deberán almacenarse de forma segura.
 
 ## 12. Identificación del negocio
 
-Cuando Baileys reciba un mensaje, AgendIA deberá identificar mediante qué conexión de WhatsApp fue recibido.
+Cuando Baileys reciba un mensaje, agendIA deberá identificar mediante qué conexión de WhatsApp fue recibido.
 
 La relación será:
 
 **Sesión de WhatsApp → Negocio**
 
-A partir de esa relación, AgendIA podrá recuperar:
+A partir de esa relación, agendIA podrá recuperar:
 
 - La información del negocio.
 - La configuración del asistente.
@@ -275,7 +275,7 @@ Esta identificación deberá realizarse antes de solicitar una respuesta a DeepS
 
 ## 13. Inteligencia artificial
 
-AgendIA utilizará inicialmente **DeepSeek** como proveedor de inteligencia artificial.
+agendIA utilizará inicialmente **DeepSeek** como proveedor de inteligencia artificial.
 
 DeepSeek será utilizado para:
 
@@ -296,9 +296,9 @@ El flujo principal será:
 
 1. Un cliente envía un mensaje por WhatsApp.
 2. Baileys recibe el mensaje.
-3. AgendIA identifica la conexión y el negocio correspondiente.
-4. AgendIA recupera la información y configuración del asistente.
-5. AgendIA construye el contexto necesario.
+3. agendIA identifica la conexión y el negocio correspondiente.
+4. agendIA recupera la información y configuración del asistente.
+5. agendIA construye el contexto necesario.
 6. DeepSeek genera una respuesta.
 7. Baileys envía la respuesta por WhatsApp.
 
@@ -310,11 +310,11 @@ Cada negocio podrá activar o desactivar su asistente.
 
 ### Asistente activo
 
-AgendIA procesará los mensajes recibidos y enviará respuestas automáticas.
+agendIA procesará los mensajes recibidos y enviará respuestas automáticas.
 
 ### Asistente inactivo
 
-AgendIA no enviará respuestas automáticas.
+agendIA no enviará respuestas automáticas.
 
 El estado deberá almacenarse por negocio y reflejarse en el panel.
 
@@ -328,7 +328,7 @@ La base de datos principal será **PostgreSQL**.
 
 ## 17. Seguridad y manejo de errores
 
-AgendIA deberá garantizar:
+agendIA deberá garantizar:
 
 - Aislamiento entre negocios.
 - Contraseñas y sesiones protegidas.
@@ -363,9 +363,9 @@ La primera versión deberá permitir completar este flujo:
 8. Activa el asistente.
 9. Un cliente envía un mensaje.
 10. Baileys recibe el mensaje.
-11. AgendIA identifica el negocio.
+11. agendIA identifica el negocio.
 12. DeepSeek genera una respuesta utilizando la configuración correspondiente.
-13. AgendIA envía la respuesta por WhatsApp.
+13. agendIA envía la respuesta por WhatsApp.
 
 La consulta de conversaciones se realizará directamente desde WhatsApp.
 
@@ -389,7 +389,7 @@ La primera versión se considerará funcional cuando:
 - Las respuestas puedan enviarse por WhatsApp.
 - El asistente pueda activarse y desactivarse.
 - Los datos de diferentes negocios permanezcan aislados.
-- No sea necesario consultar conversaciones desde el panel de AgendIA.
+- No sea necesario consultar conversaciones desde el panel de agendIA.
 
 ---
 
@@ -409,7 +409,7 @@ La administración de negocios y asistentes deberá realizarse desde el panel, s
 
 ### IA como componente controlado
 
-DeepSeek generará respuestas, pero AgendIA controlará la configuración, el contexto, la seguridad y el envío mediante WhatsApp.
+DeepSeek generará respuestas, pero agendIA controlará la configuración, el contexto, la seguridad y el envío mediante WhatsApp.
 
 ### Integraciones desacopladas
 
@@ -421,6 +421,6 @@ La autenticación, los permisos y el aislamiento entre negocios deberán validar
 
 ---
 
-# AgendIA
+# agendIA
 
 **Tu asistente inteligente para WhatsApp.**

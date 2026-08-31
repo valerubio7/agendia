@@ -69,17 +69,17 @@ El sistema MUST usar DeepSeek como proveedor inicial para interpretar textos y g
 #### Scenario: Credenciales de IA fuera del navegador
 
 - GIVEN un navegador de usuario o cliente final
-- WHEN interactúa con funciones de AgendIA
+- WHEN interactúa con funciones de agendIA
 - THEN no recibe credenciales de DeepSeek ni invoca al proveedor con credenciales de la plataforma.
 
 ### Requirement: Límite reemplazable del proveedor de IA
 
-La comunicación con DeepSeek MUST estar separada de la lógica de negocio mediante un límite reemplazable, de modo que un proveedor futuro pueda cumplir el mismo contrato de generación sin cambiar los requisitos de enrutamiento, aislamiento ni configuración de AgendIA.
+La comunicación con DeepSeek MUST estar separada de la lógica de negocio mediante un límite reemplazable, de modo que un proveedor futuro pueda cumplir el mismo contrato de generación sin cambiar los requisitos de enrutamiento, aislamiento ni configuración de agendIA.
 
 #### Scenario: Dependencia de proveedor contenida
 
 - GIVEN el flujo de generación de una respuesta
-- WHEN AgendIA solicita la generación
+- WHEN agendIA solicita la generación
 - THEN la lógica de negocio interactúa con el contrato de proveedor y no depende de detalles exclusivos de DeepSeek.
 
 ### Requirement: Fallo de IA y envío de respuestas
