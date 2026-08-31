@@ -4,7 +4,7 @@
 
 El administrador inicia sesión, crea el negocio y sus credenciales iniciales, y consulta nombre, estado del tenant, asistente, WhatsApp, creación y última actividad. Suspender bloquea el acceso y la automatización; reactivar conserva el estado previo del asistente.
 
-AgendIA no ofrece enlaces, rutas, búsqueda ni visor de conversaciones. Las conversaciones se consultan directamente en WhatsApp.
+agendIA no ofrece enlaces, rutas, búsqueda ni visor de conversaciones. Las conversaciones se consultan directamente en WhatsApp.
 
 ## Negocio
 

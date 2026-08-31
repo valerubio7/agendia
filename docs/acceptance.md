@@ -1,4 +1,4 @@
-# Aceptación y trazabilidad ejecutable de AgendIA v1
+# Aceptación y trazabilidad ejecutable de agendIA v1
 
 ## Fuentes normativas vigentes
 
