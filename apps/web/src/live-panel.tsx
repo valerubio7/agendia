@@ -12,6 +12,7 @@ import {
   type WhatsAppStatus,
 } from "./api-client";
 import { renderWhatsAppQrDataUrl } from "./qr-code";
+import { Brand, BrandedName } from "./ui/brand";
 
 type Mode = "login" | "admin" | "profile" | "assistant" | "whatsapp";
 const profileFields = [
@@ -193,8 +194,10 @@ export function LivePanel({ mode }: { mode: Mode }) {
     [notice, setNotice] = useState(""),
     [error, setError] = useState(""),
     [qrDataUrl, setQrDataUrl] = useState<string | null>(null),
-    [linking, setLinking] = useState(false);
+    [linking, setLinking] = useState(false),
+    [loginPending, setLoginPending] = useState(false);
   const monitorRef = useRef<AbortController | null>(null);
+  const loginPendingRef = useRef(false);
   const run = async (work: () => Promise<unknown>, success = "") => {
     setError("");
     try {
@@ -325,6 +328,29 @@ export function LivePanel({ mode }: { mode: Mode }) {
       const form = new FormData(event.currentTarget);
       await run(() => work(form), success);
     };
+  const submitLogin = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (loginPendingRef.current) return;
+
+    loginPendingRef.current = true;
+    setLoginPending(true);
+    setError("");
+    setNotice("");
+    const form = new FormData(event.currentTarget);
+
+    try {
+      const session = await api.login(
+        String(form.get("email")),
+        String(form.get("password")),
+      );
+      if (session.role === "platform_admin") router.replace("/businesses");
+      else router.replace("/profile");
+    } catch (cause) {
+      setError(await api.errorMessage(cause));
+      loginPendingRef.current = false;
+      setLoginPending(false);
+    }
+  };
   const feedback = (
     <>
       {error && <p role="alert">{error}</p>}
@@ -334,36 +360,77 @@ export function LivePanel({ mode }: { mode: Mode }) {
 
   if (mode === "login")
     return (
-      <main>
-        <h1>Iniciar sesión</h1>
-        {feedback}
-        <form
-          onSubmit={submit(async (form) => {
-            const session = await api.login(
-              String(form.get("email")),
-              String(form.get("password")),
-            );
-            if (session.role === "platform_admin")
-              router.replace("/businesses");
-            else router.replace("/profile");
-          }, "Sesión iniciada")}
+      <main className="login-frame" data-ui="login-frame">
+        <section
+          className="login-form-panel"
+          data-ui="login-form-panel"
+          aria-labelledby="login-title"
         >
-          <label>
-            Correo
-            <input name="email" type="email" required />
-          </label>
-          <label>
-            Contraseña
-            <input name="password" type="password" minLength={16} required />
-          </label>
-          <button>Ingresar</button>
-        </form>
+          <div className="login-card">
+            <Brand />
+            <h1 id="login-title">Iniciar sesión</h1>
+            {feedback}
+            <form onSubmit={submitLogin} aria-busy={loginPending}>
+              <label className="login-field">
+                Correo
+                <input
+                  name="email"
+                  type="email"
+                  autoComplete="email"
+                  autoCapitalize="none"
+                  required
+                />
+              </label>
+              <label className="login-field">
+                Contraseña
+                <input
+                  name="password"
+                  type="password"
+                  autoComplete="current-password"
+                  minLength={16}
+                  required
+                />
+              </label>
+              <button
+                className="login-submit"
+                type="submit"
+                disabled={loginPending}
+              >
+                {loginPending ? "Ingresando…" : "Ingresar"}
+              </button>
+            </form>
+          </div>
+        </section>
+        <aside
+          className="login-story"
+          data-ui="login-story"
+          aria-labelledby="login-story-title"
+        >
+          <Brand className="login-story__brand" inverse />
+          <div className="login-story__content">
+            <p className="login-story__eyebrow">
+              Tu asistente inteligente para WhatsApp
+            </p>
+            <h2 id="login-story-title">
+              <span data-ui="login-story-heading-primary">Atendé mejor.</span>{" "}
+              <span data-ui="login-story-heading-accent">
+                Sin estar pendiente.
+              </span>
+            </h2>
+            <p className="login-story__copy">
+              Menos tiempo pendiente del teléfono. Más tiempo para dedicarle a
+              tu negocio.
+            </p>
+          </div>
+        </aside>
       </main>
     );
   if (!data)
     return (
       <main>
-        <h1>AgendIA</h1>
+        <h1>
+          <BrandedName />
+        </h1>
         {feedback}
         <p role="status">Cargando panel…</p>
       </main>
