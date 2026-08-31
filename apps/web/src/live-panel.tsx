@@ -17,6 +17,9 @@ import {
   AuthenticatedShell,
   TerminalAuthenticatedState,
 } from "./ui/authenticated-shell";
+import { AssistantScreen } from "./ui/assistant-screen";
+import { ProfileScreen } from "./ui/profile-screen";
+import { WhatsAppScreen } from "./ui/whatsapp-screen";
 
 type Mode = "login" | "admin" | "profile" | "assistant" | "whatsapp";
 type AuthenticatedViewState =
@@ -45,27 +48,6 @@ const assistantFields = [
   "restrictions",
   "active",
 ] as const;
-const labels: Record<string, string> = {
-  displayName: "Nombre comercial",
-  description: "Descripción",
-  address: "Dirección",
-  contact: "Contacto",
-  businessHours: "Horarios",
-  offerings: "Servicios o productos",
-  faq: "Preguntas frecuentes",
-  policies: "Políticas",
-  additionalInfo: "Información adicional",
-  personality: "Personalidad",
-  tone: "Tono",
-  instructions: "Instrucciones",
-  knowledge: "Conocimiento",
-  rules: "Reglas",
-  restrictions: "Restricciones",
-  connected: "Conectado",
-  disconnected: "Desconectado",
-  link_required: "Requiere vinculación",
-  error: "Error de conexión",
-};
 const activityFormatter = new Intl.DateTimeFormat("es-AR", {
   dateStyle: "medium",
   timeStyle: "short",
@@ -178,10 +160,16 @@ export function LivePanel({ mode }: { mode: Mode }) {
     [linking, setLinking] = useState(false),
     [loginPending, setLoginPending] = useState(false),
     [logoutPending, setLogoutPending] = useState(false),
+    [profilePending, setProfilePending] = useState(false),
+    [assistantPending, setAssistantPending] = useState(false),
     [viewState, setViewState] = useState<AuthenticatedViewState>("loading");
   const monitorRef = useRef<AbortController | null>(null);
   const loginPendingRef = useRef(false);
   const logoutPendingRef = useRef(false);
+  const profilePendingRef = useRef(false);
+  const profileSaveAttemptRef = useRef(0);
+  const assistantPendingRef = useRef(false);
+  const assistantSaveAttemptRef = useRef(0);
   const loadAttemptRef = useRef(0);
   const run = async (work: () => Promise<unknown>, success = "") => {
     setError("");
@@ -267,6 +255,12 @@ export function LivePanel({ mode }: { mode: Mode }) {
   useEffect(() => {
     monitorRef.current?.abort();
     monitorRef.current = null;
+    profileSaveAttemptRef.current += 1;
+    profilePendingRef.current = false;
+    setProfilePending(false);
+    assistantSaveAttemptRef.current += 1;
+    assistantPendingRef.current = false;
+    setAssistantPending(false);
     if (mode === "login") {
       setData(null);
       setNotice("");
@@ -277,6 +271,10 @@ export function LivePanel({ mode }: { mode: Mode }) {
     } else void load();
     return () => {
       loadAttemptRef.current += 1;
+      profileSaveAttemptRef.current += 1;
+      profilePendingRef.current = false;
+      assistantSaveAttemptRef.current += 1;
+      assistantPendingRef.current = false;
       monitorRef.current?.abort();
       monitorRef.current = null;
     };
@@ -378,6 +376,64 @@ export function LivePanel({ mode }: { mode: Mode }) {
       setError(await api.errorMessage(cause));
       loginPendingRef.current = false;
       setLoginPending(false);
+    }
+  };
+  const submitProfile = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (profilePendingRef.current) return;
+
+    const attempt = ++profileSaveAttemptRef.current;
+    profilePendingRef.current = true;
+    setProfilePending(true);
+    setError("");
+    setNotice("");
+    const form = new FormData(event.currentTarget);
+
+    try {
+      const savedProfile = await api.saveProfile(
+        formValues(form, profileFields) as Profile,
+      );
+      if (profileSaveAttemptRef.current !== attempt) return;
+      setData(savedProfile);
+      setNotice("Perfil guardado");
+    } catch (cause) {
+      if (profileSaveAttemptRef.current !== attempt) return;
+      setError(await api.errorMessage(cause));
+    } finally {
+      if (profileSaveAttemptRef.current === attempt) {
+        profilePendingRef.current = false;
+        setProfilePending(false);
+      }
+    }
+  };
+  const submitAssistant = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (assistantPendingRef.current) return;
+
+    const attempt = ++assistantSaveAttemptRef.current;
+    assistantPendingRef.current = true;
+    setAssistantPending(true);
+    setError("");
+    setNotice("");
+    const form = new FormData(event.currentTarget);
+    const assistant = data as Partial<Assistant>;
+
+    try {
+      const savedAssistant = await api.saveAssistant({
+        ...(formValues(form, assistantFields) as Omit<Assistant, "revision">),
+        expectedRevision: assistant.revision ?? 0,
+      });
+      if (assistantSaveAttemptRef.current !== attempt) return;
+      setData(savedAssistant);
+      setNotice("Asistente guardado");
+    } catch (cause) {
+      if (assistantSaveAttemptRef.current !== attempt) return;
+      setError(await api.errorMessage(cause));
+    } finally {
+      if (assistantSaveAttemptRef.current === attempt) {
+        assistantPendingRef.current = false;
+        setAssistantPending(false);
+      }
     }
   };
   const logout = async () => {
@@ -608,29 +664,12 @@ export function LivePanel({ mode }: { mode: Mode }) {
         logoutPending={logoutPending}
         logoutAction={() => void logout()}
       >
-        <main>
-          <h1>Información del negocio</h1>
-          {feedback}
-          <form
-            onSubmit={submit(
-              (form) =>
-                api.saveProfile(formValues(form, profileFields) as Profile),
-              "Perfil guardado",
-            )}
-          >
-            {profileFields.map((field) => (
-              <label key={field}>
-                {labels[field]}
-                <textarea
-                  name={field}
-                  defaultValue={profile[field] ?? ""}
-                  required={field === "displayName"}
-                />
-              </label>
-            ))}
-            <button>Guardar perfil</button>
-          </form>
-        </main>
+        <ProfileScreen
+          profile={profile}
+          feedback={feedback}
+          savePending={profilePending}
+          submitAction={submitProfile}
+        />
       </AuthenticatedShell>
     );
   }
@@ -643,43 +682,12 @@ export function LivePanel({ mode }: { mode: Mode }) {
         logoutPending={logoutPending}
         logoutAction={() => void logout()}
       >
-        <main>
-          <h1>Asistente</h1>
-          {feedback}
-          <form
-            onSubmit={submit(
-              (form) =>
-                api.saveAssistant({
-                  ...(formValues(form, assistantFields) as Omit<
-                    Assistant,
-                    "revision"
-                  >),
-                  expectedRevision: assistant.revision ?? 0,
-                }),
-              "Asistente guardado",
-            )}
-          >
-            <p>Un asistente activo opera las 24 horas.</p>
-            {assistantFields.slice(0, -1).map((field) => (
-              <label key={field}>
-                {labels[field]}
-                <textarea
-                  name={field}
-                  defaultValue={String(assistant[field] ?? "")}
-                />
-              </label>
-            ))}
-            <label>
-              <input
-                name="active"
-                type="checkbox"
-                defaultChecked={assistant.active}
-              />{" "}
-              Respuestas automáticas activas
-            </label>
-            <button>Guardar y activar</button>
-          </form>
-        </main>
+        <AssistantScreen
+          assistant={assistant}
+          feedback={feedback}
+          savePending={assistantPending}
+          submitAction={submitAssistant}
+        />
       </AuthenticatedShell>
     );
   }
@@ -691,31 +699,13 @@ export function LivePanel({ mode }: { mode: Mode }) {
       logoutPending={logoutPending}
       logoutAction={() => void logout()}
     >
-      <main>
-        <h1>WhatsApp</h1>
-        {feedback}
-        <p role="status">{labels[whatsapp.status]}</p>
-        <p>El QR es temporal y nunca expone credenciales persistentes.</p>
-        <button
-          disabled={whatsapp.status === "connected" || linking}
-          onClick={() => void startWhatsAppLink()}
-        >
-          {whatsapp.status === "connected"
-            ? "WhatsApp vinculado"
-            : linking
-              ? "Esperando conexión…"
-              : "Vincular WhatsApp"}
-        </button>
-        {qrDataUrl && (
-          <img
-            src={qrDataUrl}
-            alt="Código QR temporal de WhatsApp"
-            aria-label="Código QR temporal de WhatsApp"
-            width={384}
-            height={384}
-          />
-        )}
-      </main>
+      <WhatsAppScreen
+        status={whatsapp}
+        feedback={feedback}
+        qrDataUrl={qrDataUrl}
+        linking={linking}
+        linkAction={() => void startWhatsAppLink()}
+      />
     </AuthenticatedShell>
   );
 }
