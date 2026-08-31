@@ -14,7 +14,14 @@ export const PRODUCT_HTTP_ROUTES = Object.freeze([
   "/me/whatsapp/status",
 ] as const);
 
-export const ErrorCodeSchema = z.enum(["VALIDATION_FAILED", "UNAUTHENTICATED", "FORBIDDEN", "NOT_FOUND", "CONFLICT", "INTERNAL_ERROR"]);
+export const ErrorCodeSchema = z.enum([
+  "VALIDATION_FAILED",
+  "UNAUTHENTICATED",
+  "FORBIDDEN",
+  "NOT_FOUND",
+  "CONFLICT",
+  "INTERNAL_ERROR",
+]);
 export const SafeErrorSchema = z.object({
   code: ErrorCodeSchema,
   message: z.string().min(1).max(240),
@@ -23,24 +30,53 @@ export const SafeErrorSchema = z.object({
 });
 export type SafeError = z.infer<typeof SafeErrorSchema>;
 
-const SENSITIVE = /(pass(word)?|secret|token|cookie|authorization|api[-_]?key|qr|credential)/i;
-export function redactFields(details: Record<string, unknown> = {}): Record<string, string> {
-  return Object.fromEntries(Object.entries(details).map(([key, value]) => [key, SENSITIVE.test(key) ? "[REDACTED]" : String(value)]));
+const SENSITIVE =
+  /(pass(word)?|secret|token|cookie|authorization|api[-_]?key|qr|credential)/i;
+export function redactFields(
+  details: Record<string, unknown> = {},
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(details).map(([key, value]) => [
+      key,
+      SENSITIVE.test(key) ? "[REDACTED]" : String(value),
+    ]),
+  );
 }
 
-export function makeSafeError(code: SafeError["code"], message: string, requestId: string, details?: Record<string, unknown>): SafeError {
+export function makeSafeError(
+  code: SafeError["code"],
+  message: string,
+  requestId: string,
+  details?: Record<string, unknown>,
+): SafeError {
   const safe = details ? redactFields(details) : undefined;
-  return SafeErrorSchema.parse({ code, message, requestId, ...(safe ? { details: safe } : {}) });
+  return SafeErrorSchema.parse({
+    code,
+    message,
+    requestId,
+    ...(safe ? { details: safe } : {}),
+  });
 }
 
 export function toOpenApiDocument() {
   return {
     openapi: "3.1.0" as const,
-    info: { title: "AgendIA API", version: "1.0.0" },
+    info: { title: "agendIA API", version: "1.0.0" },
     paths: Object.fromEntries(PRODUCT_HTTP_ROUTES.map((route) => [route, {}])),
-    components: { schemas: { SafeError: {
-      type: "object", required: ["code", "message", "requestId"], additionalProperties: false,
-      properties: { code: { type: "string" }, message: { type: "string" }, requestId: { type: "string" }, details: { type: "object" } },
-    } } },
+    components: {
+      schemas: {
+        SafeError: {
+          type: "object",
+          required: ["code", "message", "requestId"],
+          additionalProperties: false,
+          properties: {
+            code: { type: "string" },
+            message: { type: "string" },
+            requestId: { type: "string" },
+            details: { type: "object" },
+          },
+        },
+      },
+    },
   };
 }
