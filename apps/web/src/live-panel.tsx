@@ -12,9 +12,19 @@ import {
   type WhatsAppStatus,
 } from "./api-client";
 import { renderWhatsAppQrDataUrl } from "./qr-code";
-import { Brand, BrandedName } from "./ui/brand";
+import { Brand } from "./ui/brand";
+import {
+  AuthenticatedShell,
+  TerminalAuthenticatedState,
+} from "./ui/authenticated-shell";
 
 type Mode = "login" | "admin" | "profile" | "assistant" | "whatsapp";
+type AuthenticatedViewState =
+  | "loading"
+  | "ready"
+  | "denied"
+  | "session-recovery"
+  | "load-error";
 const profileFields = [
   "displayName",
   "description",
@@ -159,35 +169,6 @@ export async function runWhatsAppLinkMonitor({
   }
 }
 
-const businessOnboardingSteps = [
-  { mode: "profile", href: "/profile", label: "Completar perfil" },
-  { mode: "assistant", href: "/assistant", label: "Configurar asistente" },
-  { mode: "whatsapp", href: "/whatsapp", label: "Vincular WhatsApp" },
-] as const;
-
-function BusinessOnboardingNavigation({
-  mode,
-}: {
-  mode: "profile" | "assistant" | "whatsapp";
-}) {
-  return (
-    <nav aria-label="Pasos de configuración del negocio">
-      <ol>
-        {businessOnboardingSteps.map((step) => (
-          <li key={step.mode}>
-            <a
-              href={step.href}
-              aria-current={mode === step.mode ? "page" : undefined}
-            >
-              {step.label}
-            </a>
-          </li>
-        ))}
-      </ol>
-    </nav>
-  );
-}
-
 export function LivePanel({ mode }: { mode: Mode }) {
   const router = useRouter();
   const [data, setData] = useState<unknown>(null),
@@ -195,9 +176,13 @@ export function LivePanel({ mode }: { mode: Mode }) {
     [error, setError] = useState(""),
     [qrDataUrl, setQrDataUrl] = useState<string | null>(null),
     [linking, setLinking] = useState(false),
-    [loginPending, setLoginPending] = useState(false);
+    [loginPending, setLoginPending] = useState(false),
+    [logoutPending, setLogoutPending] = useState(false),
+    [viewState, setViewState] = useState<AuthenticatedViewState>("loading");
   const monitorRef = useRef<AbortController | null>(null);
   const loginPendingRef = useRef(false);
+  const logoutPendingRef = useRef(false);
+  const loadAttemptRef = useRef(0);
   const run = async (work: () => Promise<unknown>, success = "") => {
     setError("");
     try {
@@ -211,43 +196,87 @@ export function LivePanel({ mode }: { mode: Mode }) {
   };
   const load = async () => {
     if (mode === "login") return;
+    const attempt = ++loadAttemptRef.current;
+    const isCurrent = () => loadAttemptRef.current === attempt;
+
+    setData(null);
+    setNotice("");
+    setError("");
+    setQrDataUrl(null);
+    setLinking(false);
+    setViewState("loading");
+
     let session: Session;
     try {
       session = await api.session();
     } catch (cause) {
+      if (!isCurrent()) return;
       setError(await api.errorMessage(cause));
+      setViewState(
+        cause instanceof ApiError && cause.code === "UNAUTHENTICATED"
+          ? "session-recovery"
+          : "load-error",
+      );
       return;
     }
-    if ((mode === "admin") !== (session.role === "platform_admin"))
-      return setError("Tu rol no permite acceder a este panel.");
-    const loaded = await run(() =>
-      mode === "admin"
-        ? api.businesses()
-        : mode === "profile"
-          ? api.profile()
-          : mode === "assistant"
-            ? api.assistant()
-            : api.whatsappStatus(),
-    );
+    if (!isCurrent()) return;
+
+    if ((mode === "admin") !== (session.role === "platform_admin")) {
+      setError("Tu rol no permite acceder a este panel.");
+      setViewState("denied");
+      return;
+    }
+
+    let loaded: unknown;
+    try {
+      loaded =
+        mode === "admin"
+          ? await api.businesses()
+          : mode === "profile"
+            ? await api.profile()
+            : mode === "assistant"
+              ? await api.assistant()
+              : await api.whatsappStatus();
+    } catch (cause) {
+      if (!isCurrent()) return;
+      setError(await api.errorMessage(cause));
+      setViewState("load-error");
+      return;
+    }
+    if (!isCurrent()) return;
+
+    setData(loaded);
+    setViewState("ready");
     if (
       mode === "whatsapp" &&
-      loaded &&
       (loaded as WhatsAppStatus).status !== "connected"
     ) {
       try {
         const { qr } = await api.whatsappQr();
-        setQrDataUrl(await renderWhatsAppQrDataUrl(qr));
+        const renderedQr = await renderWhatsAppQrDataUrl(qr);
+        if (isCurrent()) setQrDataUrl(renderedQr);
       } catch (cause) {
-        if (!(cause instanceof ApiError) || cause.code !== "NOT_FOUND")
+        if (
+          isCurrent() &&
+          (!(cause instanceof ApiError) || cause.code !== "NOT_FOUND")
+        )
           setError(await api.errorMessage(cause));
       }
     }
   };
   useEffect(() => {
-    setQrDataUrl(null);
-    setLinking(false);
-    void load();
+    monitorRef.current?.abort();
+    monitorRef.current = null;
+    if (mode === "login") {
+      setData(null);
+      setNotice("");
+      setError("");
+      setQrDataUrl(null);
+      setLinking(false);
+      setViewState("loading");
+    } else void load();
     return () => {
+      loadAttemptRef.current += 1;
       monitorRef.current?.abort();
       monitorRef.current = null;
     };
@@ -351,6 +380,21 @@ export function LivePanel({ mode }: { mode: Mode }) {
       setLoginPending(false);
     }
   };
+  const logout = async () => {
+    if (logoutPendingRef.current) return;
+    logoutPendingRef.current = true;
+    setLogoutPending(true);
+    setError("");
+
+    try {
+      await api.logout();
+      router.replace("/");
+    } catch (cause) {
+      setError(await api.errorMessage(cause));
+      logoutPendingRef.current = false;
+      setLogoutPending(false);
+    }
+  };
   const feedback = (
     <>
       {error && <p role="alert">{error}</p>}
@@ -425,226 +469,253 @@ export function LivePanel({ mode }: { mode: Mode }) {
         </aside>
       </main>
     );
-  if (!data)
+  if (viewState !== "ready")
     return (
-      <main>
-        <h1>
-          <BrandedName />
-        </h1>
-        {feedback}
-        <p role="status">Cargando panel…</p>
-      </main>
+      <TerminalAuthenticatedState
+        state={viewState}
+        message={error}
+        retryAction={() => void load()}
+      />
     );
 
   if (mode === "admin") {
     const rows = data as Business[];
     return (
-      <main>
-        <h1>Negocios</h1>
-        <p>Supervisión sin acceso a conversaciones ni secretos.</p>
-        {feedback}
-        <form
-          onSubmit={submit(async (form) => {
-            await api.createBusiness({
-              name: String(form.get("name")),
-              userEmail: String(form.get("userEmail")),
-              initialPassword: String(form.get("initialPassword")),
-            });
-            return api.businesses();
-          }, "Negocio creado")}
-        >
-          <label>
-            Nombre
-            <input name="name" required />
-          </label>
-          <label>
-            Correo del usuario
-            <input name="userEmail" type="email" required />
-          </label>
-          <label>
-            Contraseña inicial
-            <input
-              name="initialPassword"
-              type="password"
-              minLength={16}
-              required
-            />
-          </label>
-          <button>Crear negocio</button>
-        </form>
-        <table>
-          <thead>
-            <tr>
-              <th>Nombre</th>
-              <th>Negocio</th>
-              <th>Asistente</th>
-              <th>WhatsApp</th>
-              <th>Creación</th>
-              <th>Última actividad técnica</th>
-              <th>Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((business) => (
-              <tr key={business.id}>
-                <td>{business.name}</td>
-                <td>{business.status}</td>
-                <td>{business.assistantStatus}</td>
-                <td>{business.whatsappStatus}</td>
-                <td>{business.createdAt}</td>
-                <td>
-                  {formatActivityTimestamp(business.lastTechnicalActivityAt)}
-                </td>
-                <td>
-                  <form
-                    onSubmit={submit(async (form) => {
-                      const action = String(form.get("action"));
-                      if (action === "rename")
-                        await api.renameBusiness(
-                          business.id,
-                          String(form.get("name")),
-                        );
-                      else if (action === "password")
-                        await api.replacePassword(
-                          business.id,
-                          String(form.get("password")),
-                        );
-                      else
-                        await api.setBusinessStatus(
-                          business.id,
-                          business.status === "active" ? "suspended" : "active",
-                        );
-                      return api.businesses();
-                    }, "Negocio actualizado")}
-                  >
-                    <input
-                      name="name"
-                      aria-label={`Nombre de ${business.name}`}
-                      defaultValue={business.name}
-                    />
-                    <button name="action" value="rename">
-                      Renombrar
-                    </button>
-                    <input
-                      name="password"
-                      type="password"
-                      minLength={16}
-                      aria-label={`Nueva contraseña de ${business.name}`}
-                    />
-                    <button name="action" value="password">
-                      Cambiar contraseña
-                    </button>
-                    <button name="action" value="status">
-                      {business.status === "active" ? "Suspender" : "Reactivar"}
-                    </button>
-                  </form>
-                </td>
+      <AuthenticatedShell
+        variant="admin"
+        activeHref="/businesses"
+        logoutPending={logoutPending}
+        logoutAction={() => void logout()}
+      >
+        <main>
+          <h1>Negocios</h1>
+          <p>Supervisión sin acceso a conversaciones ni secretos.</p>
+          {feedback}
+          <form
+            onSubmit={submit(async (form) => {
+              await api.createBusiness({
+                name: String(form.get("name")),
+                userEmail: String(form.get("userEmail")),
+                initialPassword: String(form.get("initialPassword")),
+              });
+              return api.businesses();
+            }, "Negocio creado")}
+          >
+            <label>
+              Nombre
+              <input name="name" required />
+            </label>
+            <label>
+              Correo del usuario
+              <input name="userEmail" type="email" required />
+            </label>
+            <label>
+              Contraseña inicial
+              <input
+                name="initialPassword"
+                type="password"
+                minLength={16}
+                required
+              />
+            </label>
+            <button>Crear negocio</button>
+          </form>
+          <table>
+            <thead>
+              <tr>
+                <th>Nombre</th>
+                <th>Negocio</th>
+                <th>Asistente</th>
+                <th>WhatsApp</th>
+                <th>Creación</th>
+                <th>Última actividad técnica</th>
+                <th>Acciones</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </main>
+            </thead>
+            <tbody>
+              {rows.map((business) => (
+                <tr key={business.id}>
+                  <td>{business.name}</td>
+                  <td>{business.status}</td>
+                  <td>{business.assistantStatus}</td>
+                  <td>{business.whatsappStatus}</td>
+                  <td>{business.createdAt}</td>
+                  <td>
+                    {formatActivityTimestamp(business.lastTechnicalActivityAt)}
+                  </td>
+                  <td>
+                    <form
+                      onSubmit={submit(async (form) => {
+                        const action = String(form.get("action"));
+                        if (action === "rename")
+                          await api.renameBusiness(
+                            business.id,
+                            String(form.get("name")),
+                          );
+                        else if (action === "password")
+                          await api.replacePassword(
+                            business.id,
+                            String(form.get("password")),
+                          );
+                        else
+                          await api.setBusinessStatus(
+                            business.id,
+                            business.status === "active"
+                              ? "suspended"
+                              : "active",
+                          );
+                        return api.businesses();
+                      }, "Negocio actualizado")}
+                    >
+                      <input
+                        name="name"
+                        aria-label={`Nombre de ${business.name}`}
+                        defaultValue={business.name}
+                      />
+                      <button name="action" value="rename">
+                        Renombrar
+                      </button>
+                      <input
+                        name="password"
+                        type="password"
+                        minLength={16}
+                        aria-label={`Nueva contraseña de ${business.name}`}
+                      />
+                      <button name="action" value="password">
+                        Cambiar contraseña
+                      </button>
+                      <button name="action" value="status">
+                        {business.status === "active"
+                          ? "Suspender"
+                          : "Reactivar"}
+                      </button>
+                    </form>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </main>
+      </AuthenticatedShell>
     );
   }
   if (mode === "profile") {
     const profile = data as Partial<Profile>;
     return (
-      <main>
-        <h1>Información del negocio</h1>
-        <BusinessOnboardingNavigation mode="profile" />
-        {feedback}
-        <form
-          onSubmit={submit(
-            (form) =>
-              api.saveProfile(formValues(form, profileFields) as Profile),
-            "Perfil guardado",
-          )}
-        >
-          {profileFields.map((field) => (
-            <label key={field}>
-              {labels[field]}
-              <textarea
-                name={field}
-                defaultValue={profile[field] ?? ""}
-                required={field === "displayName"}
-              />
-            </label>
-          ))}
-          <button>Guardar perfil</button>
-        </form>
-      </main>
+      <AuthenticatedShell
+        variant="business"
+        activeHref="/profile"
+        logoutPending={logoutPending}
+        logoutAction={() => void logout()}
+      >
+        <main>
+          <h1>Información del negocio</h1>
+          {feedback}
+          <form
+            onSubmit={submit(
+              (form) =>
+                api.saveProfile(formValues(form, profileFields) as Profile),
+              "Perfil guardado",
+            )}
+          >
+            {profileFields.map((field) => (
+              <label key={field}>
+                {labels[field]}
+                <textarea
+                  name={field}
+                  defaultValue={profile[field] ?? ""}
+                  required={field === "displayName"}
+                />
+              </label>
+            ))}
+            <button>Guardar perfil</button>
+          </form>
+        </main>
+      </AuthenticatedShell>
     );
   }
   if (mode === "assistant") {
     const assistant = data as Partial<Assistant>;
     return (
-      <main>
-        <h1>Asistente</h1>
-        <BusinessOnboardingNavigation mode="assistant" />
-        {feedback}
-        <form
-          onSubmit={submit(
-            (form) =>
-              api.saveAssistant({
-                ...(formValues(form, assistantFields) as Omit<
-                  Assistant,
-                  "revision"
-                >),
-                expectedRevision: assistant.revision ?? 0,
-              }),
-            "Asistente guardado",
-          )}
-        >
-          <p>Un asistente activo opera las 24 horas.</p>
-          {assistantFields.slice(0, -1).map((field) => (
-            <label key={field}>
-              {labels[field]}
-              <textarea
-                name={field}
-                defaultValue={String(assistant[field] ?? "")}
-              />
+      <AuthenticatedShell
+        variant="business"
+        activeHref="/assistant"
+        logoutPending={logoutPending}
+        logoutAction={() => void logout()}
+      >
+        <main>
+          <h1>Asistente</h1>
+          {feedback}
+          <form
+            onSubmit={submit(
+              (form) =>
+                api.saveAssistant({
+                  ...(formValues(form, assistantFields) as Omit<
+                    Assistant,
+                    "revision"
+                  >),
+                  expectedRevision: assistant.revision ?? 0,
+                }),
+              "Asistente guardado",
+            )}
+          >
+            <p>Un asistente activo opera las 24 horas.</p>
+            {assistantFields.slice(0, -1).map((field) => (
+              <label key={field}>
+                {labels[field]}
+                <textarea
+                  name={field}
+                  defaultValue={String(assistant[field] ?? "")}
+                />
+              </label>
+            ))}
+            <label>
+              <input
+                name="active"
+                type="checkbox"
+                defaultChecked={assistant.active}
+              />{" "}
+              Respuestas automáticas activas
             </label>
-          ))}
-          <label>
-            <input
-              name="active"
-              type="checkbox"
-              defaultChecked={assistant.active}
-            />{" "}
-            Respuestas automáticas activas
-          </label>
-          <button>Guardar y activar</button>
-        </form>
-      </main>
+            <button>Guardar y activar</button>
+          </form>
+        </main>
+      </AuthenticatedShell>
     );
   }
   const whatsapp = data as WhatsAppStatus;
   return (
-    <main>
-      <h1>WhatsApp</h1>
-      <BusinessOnboardingNavigation mode="whatsapp" />
-      {feedback}
-      <p role="status">{labels[whatsapp.status]}</p>
-      <p>El QR es temporal y nunca expone credenciales persistentes.</p>
-      <button
-        disabled={whatsapp.status === "connected" || linking}
-        onClick={() => void startWhatsAppLink()}
-      >
-        {whatsapp.status === "connected"
-          ? "WhatsApp vinculado"
-          : linking
-            ? "Esperando conexión…"
-            : "Vincular WhatsApp"}
-      </button>
-      {qrDataUrl && (
-        <img
-          src={qrDataUrl}
-          alt="Código QR temporal de WhatsApp"
-          aria-label="Código QR temporal de WhatsApp"
-          width={384}
-          height={384}
-        />
-      )}
-    </main>
+    <AuthenticatedShell
+      variant="business"
+      activeHref="/whatsapp"
+      logoutPending={logoutPending}
+      logoutAction={() => void logout()}
+    >
+      <main>
+        <h1>WhatsApp</h1>
+        {feedback}
+        <p role="status">{labels[whatsapp.status]}</p>
+        <p>El QR es temporal y nunca expone credenciales persistentes.</p>
+        <button
+          disabled={whatsapp.status === "connected" || linking}
+          onClick={() => void startWhatsAppLink()}
+        >
+          {whatsapp.status === "connected"
+            ? "WhatsApp vinculado"
+            : linking
+              ? "Esperando conexión…"
+              : "Vincular WhatsApp"}
+        </button>
+        {qrDataUrl && (
+          <img
+            src={qrDataUrl}
+            alt="Código QR temporal de WhatsApp"
+            aria-label="Código QR temporal de WhatsApp"
+            width={384}
+            height={384}
+          />
+        )}
+      </main>
+    </AuthenticatedShell>
   );
 }
