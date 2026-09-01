@@ -24,7 +24,7 @@ import {
   applyPostgresMigrations,
   startTestPostgres,
   type TestPostgres,
-} from "@agendia/test-support";
+} from "../support/index.ts";
 
 const ORIGIN = "https://panel.agendia.test";
 const LINK_KEY = Buffer.alloc(32, 6);

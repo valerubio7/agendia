@@ -5,7 +5,6 @@
   "type": "module",
   "scripts": { "start": "AGENDIA_RUN_WHATSAPP_MANAGER=1 node --import tsx src/index.ts" },
   "dependencies": {
-    "@agendia/contracts": "workspace:*",
     "@agendia/db": "workspace:*",
     "@agendia/domain": "workspace:*",
     "@agendia/whatsapp-baileys": "workspace:*",

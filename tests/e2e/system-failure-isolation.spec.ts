@@ -184,7 +184,7 @@ test("contains hostile access and provider failures while preserving isolated re
     ),
   ).not.toContain(tenants[0]!.secret);
   expect(
-    (await api(system, authA, "/me/assistant", "PUT", assistant(false))).status,
+    (await api(system, authA, "/me/assistant", "PUT", assistant(true))).status,
   ).toBe(200);
   expect(
     (
@@ -234,6 +234,21 @@ test("contains hostile access and provider failures while preserving isolated re
     expiredNotFound: expiredQrStatus === 404,
     openedNotFound: openedQrStatus === 404,
   });
+
+  const linkedAssistantA = await json(
+    await api(system, authA, "/me/assistant"),
+  );
+  expect(
+    (
+      await api(
+        system,
+        authA,
+        "/me/assistant",
+        "PUT",
+        assistant(false, Number(linkedAssistantA.revision)),
+      )
+    ).status,
+  ).toBe(200);
 
   await system.expireSessions(tenants[0]!.email);
   expect((await api(system, authA, "/auth/session")).status).toBe(401);

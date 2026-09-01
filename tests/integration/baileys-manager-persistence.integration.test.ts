@@ -13,7 +13,7 @@ import {
   startTestPostgres,
   testTenantContext,
   type TestPostgres,
-} from "@agendia/test-support";
+} from "../support/index.ts";
 import { createWhatsAppManager } from "../../apps/whatsapp-manager/src/index.ts";
 import type { WhatsAppGateway } from "../../apps/whatsapp-manager/src/lifecycle.ts";
 

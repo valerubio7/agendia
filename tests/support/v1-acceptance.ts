@@ -1,6 +1,7 @@
-export * from "./v1-traceability.ts";
-
-import { AuthService, InMemoryAuthStore } from "../../auth/src/index.ts";
+import {
+  AuthService,
+  InMemoryAuthStore,
+} from "../../packages/auth/src/index.ts";
 import {
   AdministrationService,
   AssistantConfigService,
@@ -10,26 +11,28 @@ import {
   InMemoryWhatsAppConnections,
   ProfileService,
   WhatsAppConnectionService,
-} from "../../domain/src/index.ts";
+} from "../../packages/domain/src/index.ts";
 import {
-  DeterministicBaileysDouble,
-  DurableLinkCommands,
-  EphemeralLinkCodeStore,
   InMemoryInboundRepository,
   InMemorySessionRouter,
   InboundMessageHandler,
-  WhatsAppLifecycleManager,
-} from "../../../apps/whatsapp-manager/src/index.ts";
+} from "./whatsapp-manager/inbound.ts";
 import {
   DeterministicOutboundGateway,
   InMemoryOutboundRepository,
   OutboundDispatcher,
-} from "../../../apps/whatsapp-manager/src/outbound-dispatcher.ts";
+} from "./whatsapp-manager/outbound.ts";
+import {
+  DeterministicBaileysDouble,
+  DurableLinkCommands,
+  EphemeralLinkCodeStore,
+  WhatsAppLifecycleManager,
+} from "./whatsapp-manager/lifecycle.ts";
 import {
   AiJobProcessor,
   DeterministicAiProvider,
   InMemoryAiJobRepository,
-} from "../../../apps/message-worker/src/ai-job.ts";
+} from "./message-worker/ai-job.ts";
 
 export interface V1AcceptanceResult {
   businessStatus: "active";
@@ -45,14 +48,21 @@ export interface V1AcceptanceResult {
 
 export async function runDeterministicV1Journey(): Promise<V1AcceptanceResult> {
   const auth = new AuthService(new InMemoryAuthStore());
-  const administration = new AdministrationService(new InMemoryAdministrationStore(), auth);
+  const administration = new AdministrationService(
+    new InMemoryAdministrationStore(),
+    auth,
+  );
   const business = await administration.createBusiness({
     name: "Negocio de aceptación",
     userEmail: "acceptance@example.com",
     initialPassword: "correct horse battery staple",
     requestId: "acceptance-admin",
   });
-  const session = await auth.login("acceptance@example.com", "correct horse battery staple", 1_000);
+  const session = await auth.login(
+    "acceptance@example.com",
+    "correct horse battery staple",
+    1_000,
+  );
   const authenticated = await auth.authenticate(session.token, 1_001);
 
   const profiles = new ProfileService(new InMemoryProfileRepository());
@@ -67,7 +77,9 @@ export async function runDeterministicV1Journey(): Promise<V1AcceptanceResult> {
     policies: "Políticas",
     additionalInfo: "Información autorizada",
   });
-  const assistants = new AssistantConfigService(new InMemoryAssistantRepository());
+  const assistants = new AssistantConfigService(
+    new InMemoryAssistantRepository(),
+  );
   assistants.save(business.id, {
     personality: "amable",
     tone: "breve",
@@ -79,22 +91,40 @@ export async function runDeterministicV1Journey(): Promise<V1AcceptanceResult> {
     expectedRevision: 0,
   });
 
-  const connections = new WhatsAppConnectionService(new InMemoryWhatsAppConnections());
+  const connections = new WhatsAppConnectionService(
+    new InMemoryWhatsAppConnections(),
+  );
   const baileys = new DeterministicBaileysDouble();
-  baileys.script([{ type: "qr", value: "temporary-acceptance-qr" }, { type: "open", linkedNumber: "+549111" }]);
+  baileys.script([
+    { type: "qr", value: "temporary-acceptance-qr" },
+    { type: "open", linkedNumber: "+549111" },
+  ]);
   const commands = new DurableLinkCommands();
   const linkCodes = new EphemeralLinkCodeStore();
-  const lifecycle = new WhatsAppLifecycleManager(connections, baileys, commands, linkCodes);
+  const lifecycle = new WhatsAppLifecycleManager(
+    connections,
+    baileys,
+    commands,
+    linkCodes,
+  );
   lifecycle.requestLink(business.id);
   lifecycle.processNext(2_000);
   let secondLinkRejected = false;
-  try { lifecycle.requestLink(business.id); }
-  catch { secondLinkRejected = true; }
+  try {
+    lifecycle.requestLink(business.id);
+  } catch {
+    secondLinkRejected = true;
+  }
   const connection = connections.claimLease(business.id, "manager-1", 2_001);
-  if (connection.state !== "CONNECTED") throw new Error("Acceptance connection did not open");
+  if (connection.state !== "CONNECTED")
+    throw new Error("Acceptance connection did not open");
 
   const router = new InMemorySessionRouter();
-  router.add("acceptance-session", { businessId: business.id, businessStatus: "active", assistantActive: true });
+  router.add("acceptance-session", {
+    businessId: business.id,
+    businessStatus: "active",
+    assistantActive: true,
+  });
   const inboundRepository = new InMemoryInboundRepository();
   new InboundMessageHandler(router, inboundRepository).handle({
     sessionPublicId: "acceptance-session",
@@ -109,7 +139,10 @@ export async function runDeterministicV1Journey(): Promise<V1AcceptanceResult> {
 
   const aiRepository = new InMemoryAiJobRepository();
   const ai = new AiJobProcessor(
-    new DeterministicAiProvider({ type: "success", text: "Sí, tenemos turnos disponibles." }),
+    new DeterministicAiProvider({
+      type: "success",
+      text: "Sí, tenemos turnos disponibles.",
+    }),
     aiRepository,
   );
   await ai.process({
@@ -118,8 +151,15 @@ export async function runDeterministicV1Journey(): Promise<V1AcceptanceResult> {
     messageId: "acceptance-message",
     request: {
       business: { commercialName: "Negocio de aceptación", services: "Turnos" },
-      assistant: { personality: "amable", instructions: "responder con datos del negocio" },
-      context: { summary: "Sin turnos previos", retrieved: [], recent: ["¿Tienen turnos?"] },
+      assistant: {
+        personality: "amable",
+        instructions: "responder con datos del negocio",
+      },
+      context: {
+        summary: "Sin turnos previos",
+        retrieved: [],
+        recent: ["¿Tienen turnos?"],
+      },
       message: "¿Tienen turnos?",
       maxOutputCharacters: 500,
       correlationId: "acceptance-ai",
@@ -131,7 +171,7 @@ export async function runDeterministicV1Journey(): Promise<V1AcceptanceResult> {
     outboundId: "acceptance-outbound",
     businessId: business.id,
     connectionId: connection.id,
-    remoteJid:"acceptance@s.whatsapp.net",
+    remoteJid: "acceptance@s.whatsapp.net",
     text: aiRepository.outbound[0]!.text,
     state: "generated",
   });
@@ -148,12 +188,14 @@ export async function runDeterministicV1Journey(): Promise<V1AcceptanceResult> {
   return {
     businessStatus: "active",
     authenticatedTenant: authenticated?.businessId === business.id,
-    profileConfigured: profiles.get(business.id)?.displayName === "Negocio de aceptación",
+    profileConfigured:
+      profiles.get(business.id)?.displayName === "Negocio de aceptación",
     assistantActive: assistants.get(business.id)?.active === true,
     whatsappState: "CONNECTED",
     secondLinkRejected,
     inboundMessages: inboundRepository.messages.length,
     aiProvider: "deterministic-ai",
-    deliveryState: outboundRepository.get("acceptance-outbound")!.state as "sent",
+    deliveryState: outboundRepository.get("acceptance-outbound")!
+      .state as "sent",
   };
 }

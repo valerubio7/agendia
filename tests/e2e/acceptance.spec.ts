@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { runDeterministicV1Journey } from "../../packages/test-support/src/v1-acceptance.ts";
+import { runDeterministicV1Journey } from "../support/v1-acceptance.ts";
 
 test("admin to tenant to single link to message to deterministic AI to ACK", async ({
   page,

@@ -74,6 +74,37 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
   const tenantPage = await tenantContext.newPage();
 
   try {
+    const loginResponse = await fetch(`${system.apiUrl}/auth/login`, {
+      method: "POST",
+      headers: { origin: system.webUrl, "content-type": "application/json" },
+      body: JSON.stringify({ email: tenant.email, password: tenant.password }),
+    });
+    expect(loginResponse.status).toBe(200);
+    const cookie = loginResponse.headers.get("set-cookie")!.split(";")[0]!;
+    const { csrfToken } = (await loginResponse.json()) as {
+      csrfToken: string;
+    };
+    const assistantResponse = await fetch(`${system.apiUrl}/me/assistant`, {
+      method: "PUT",
+      headers: {
+        cookie,
+        origin: system.webUrl,
+        "x-csrf-token": csrfToken,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        personality: "clara",
+        tone: "amable",
+        instructions: "responder",
+        knowledge: "propio",
+        rules: "texto",
+        restrictions: "sin secretos",
+        active: true,
+        expectedRevision: 0,
+      }),
+    });
+    expect(assistantResponse.status).toBe(200);
+
     await login(tenantPage, system.webUrl, tenant.email, tenant.password);
     await expect(tenantPage).toHaveURL(/\/profile$/);
     await tenantPage.goto(`${system.webUrl}/whatsapp`);

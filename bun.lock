@@ -41,7 +41,6 @@
       "version": "0.1.0",
       "dependencies": {
         "@agendia/ai-deepseek": "workspace:*",
-        "@agendia/contracts": "workspace:*",
         "@agendia/db": "workspace:*",
         "@agendia/domain": "workspace:*",
         "pg-boss": "12.28.0",
@@ -51,8 +50,6 @@
       "name": "@agendia/web",
       "version": "0.1.0",
       "dependencies": {
-        "@agendia/contracts": "workspace:*",
-        "@agendia/domain": "workspace:*",
         "next": "16.3.3",
         "qrcode": "1.5.4",
         "react": "19.2.8",
@@ -66,7 +63,6 @@
       "name": "@agendia/whatsapp-manager",
       "version": "0.1.0",
       "dependencies": {
-        "@agendia/contracts": "workspace:*",
         "@agendia/db": "workspace:*",
         "@agendia/domain": "workspace:*",
         "@agendia/whatsapp-baileys": "workspace:*",
@@ -96,14 +92,6 @@
       "name": "@agendia/domain",
       "version": "0.1.0",
     },
-    "packages/observability": {
-      "name": "@agendia/observability",
-      "version": "0.1.0",
-    },
-    "packages/test-support": {
-      "name": "@agendia/test-support",
-      "version": "0.1.0",
-    },
     "packages/whatsapp-baileys": {
       "name": "@agendia/whatsapp-baileys",
       "version": "0.1.0",
@@ -127,10 +115,6 @@
     "@agendia/domain": ["@agendia/domain@workspace:packages/domain"],
 
     "@agendia/message-worker": ["@agendia/message-worker@workspace:apps/message-worker"],
-
-    "@agendia/observability": ["@agendia/observability@workspace:packages/observability"],
-
-    "@agendia/test-support": ["@agendia/test-support@workspace:packages/test-support"],
 
     "@agendia/web": ["@agendia/web@workspace:apps/web"],
 

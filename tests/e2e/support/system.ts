@@ -12,7 +12,7 @@ import {
 import {
   applyPostgresMigrations,
   startTestPostgres,
-} from "@agendia/test-support";
+} from "../../support/index.ts";
 import { SystemProviders } from "./providers.ts";
 
 const admin = {
@@ -49,7 +49,10 @@ async function probeHttp(url: string) {
   for (let attempt = 0; attempt < 120; attempt++) {
     try {
       if ((await fetch(url)).status < 500) return true;
-    } catch {}
+    } catch {
+      await delay(100);
+      continue;
+    }
     await delay(100);
   }
   throw new Error(`Readiness probe failed: ${url}`);
