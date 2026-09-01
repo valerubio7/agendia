@@ -1,5 +1,8 @@
 import type { FastifyInstance } from "fastify";
-import { projectWhatsAppStatus, type WhatsAppConnectionService } from "@agendia/domain";
+import {
+  projectWhatsAppStatus,
+  type WhatsAppConnectionService,
+} from "@agendia/domain";
 
 export interface WhatsAppLinkController {
   requestLink(tenant: string): void;
@@ -13,7 +16,14 @@ export function registerWhatsAppRoutes(
   resolveTenant: (request: unknown) => string | null,
   linking?: WhatsAppLinkController,
 ) {
-  const status = async (request: unknown, reply: { code: (status: number) => { send: (body: object) => unknown } }) => {
+  const status = async (
+    request: unknown,
+    reply: {
+      code: (status: number) => {
+        send: (body: Record<string, unknown>) => unknown;
+      };
+    },
+  ) => {
     const tenant = resolveTenant(request);
     if (!tenant) return reply.code(401).send({ code: "UNAUTHENTICATED" });
     const connection = service.ensureConnection(tenant);

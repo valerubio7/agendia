@@ -14,14 +14,14 @@ import {
   type SocketFactory,
 } from "@agendia/whatsapp-baileys";
 import { createWhatsAppLifecycleLogger } from "../../apps/whatsapp-manager/src/index.ts";
+import type { WhatsAppGateway } from "../../apps/whatsapp-manager/src/lifecycle.ts";
 import {
   DeterministicBaileysDouble,
   DurableLinkCommands,
   EphemeralLinkCodeStore,
   WhatsAppLifecycleManager,
-  type WhatsAppGateway,
-} from "../../apps/whatsapp-manager/src/lifecycle.ts";
-import { FakeBaileysSocket } from "@agendia/test-support";
+} from "../support/whatsapp-manager/lifecycle.ts";
+import { FakeBaileysSocket } from "../support/index.ts";
 
 const lifecycle = (gateway: WhatsAppGateway) => {
   const connections = new WhatsAppConnectionService(
