@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page } from "@playwright/test";
+import { expect, type Locator, type Page, type Route } from "@playwright/test";
 import { test } from "./support/fixtures.ts";
 
 const tenant = {
@@ -228,6 +228,7 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
     const status = screen.getByRole("status");
     await expect(status).toHaveCount(1);
     await expect(status).toHaveText("Asistente guardado");
+    await tenantPage.unroute("**/me/assistant");
 
     await tenantPage.reload();
     await expect(tenantPage).toHaveURL(/\/assistant$/);
@@ -246,6 +247,73 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
       }),
     ).toBeChecked();
     await expectNoHorizontalOverflow(tenantPage);
+
+    const stalePersonality =
+      "Este cambio local no debe sobrevivir al conflicto.";
+    let conflictPending = true;
+    const conflictRoute = async (route: Route) => {
+      if (route.request().method() !== "PUT" || !conflictPending) {
+        await route.continue();
+        return;
+      }
+      conflictPending = false;
+      await route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({
+          code: "CONFLICT",
+          message: "Revision conflict",
+        }),
+      });
+    };
+    await tenantPage.route("**/me/assistant", conflictRoute);
+
+    await textareas.personality.fill(stalePersonality);
+    await savePanel
+      .getByRole("button", { name: "Guardar y activar", exact: true })
+      .click();
+
+    const conflictAlert = screen.getByRole("alert");
+    await expect(conflictAlert).toHaveCount(1);
+    await expect(conflictAlert).toHaveText(
+      "Los datos cambiaron. Recargá y volvé a intentar.",
+    );
+    const reloadConfiguration = screen.getByRole("button", {
+      name: "Recargar configuración",
+      exact: true,
+    });
+    await expect(reloadConfiguration).toBeVisible();
+
+    await tenantPage.unroute("**/me/assistant", conflictRoute);
+    const refreshedConfiguration = tenantPage.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        new URL(response.url()).pathname.endsWith("/me/assistant") &&
+        response.ok(),
+    );
+    await Promise.all([refreshedConfiguration, reloadConfiguration.click()]);
+    await expect(tenantPage).toHaveURL(/\/assistant$/);
+    await expect(screen).toBeVisible();
+    await expect(textareas.personality).toHaveValue(values.personality);
+    await expect(conflictAlert).toHaveCount(0);
+    await expect(reloadConfiguration).toHaveCount(0);
+    await expect(screen.getByRole("button")).toHaveCount(1);
+
+    const refreshedPersonality = `${values.personality} Revisión actualizada.`;
+    await textareas.personality.fill(refreshedPersonality);
+    const refreshedSave = savePanel.getByRole("button", {
+      name: "Guardar y activar",
+      exact: true,
+    });
+    await expect(refreshedSave).toBeEnabled();
+    const refreshedSaveResponse = tenantPage.waitForResponse(
+      (response) =>
+        response.request().method() === "PUT" &&
+        new URL(response.url()).pathname.endsWith("/me/assistant") &&
+        response.ok(),
+    );
+    await Promise.all([refreshedSaveResponse, refreshedSave.click()]);
+    await expect(status).toHaveText("Asistente guardado");
 
     await tenantPage.setViewportSize({ width: 360, height: 800 });
     for (const [, name] of fields) await expectReachable(textareas[name]);

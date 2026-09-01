@@ -17,9 +17,12 @@ import {
   AuthenticatedShell,
   TerminalAuthenticatedState,
 } from "./ui/authenticated-shell";
+import { AdminBusinessesScreen } from "./ui/admin-businesses-screen";
 import { AssistantScreen } from "./ui/assistant-screen";
 import { ProfileScreen } from "./ui/profile-screen";
 import { WhatsAppScreen } from "./ui/whatsapp-screen";
+
+export { formatActivityTimestamp } from "./ui/admin-businesses-screen";
 
 type Mode = "login" | "admin" | "profile" | "assistant" | "whatsapp";
 type AuthenticatedViewState =
@@ -48,15 +51,6 @@ const assistantFields = [
   "restrictions",
   "active",
 ] as const;
-const activityFormatter = new Intl.DateTimeFormat("es-AR", {
-  dateStyle: "medium",
-  timeStyle: "short",
-  timeZone: "UTC",
-  hourCycle: "h23",
-});
-export const formatActivityTimestamp = (value: string | null) =>
-  value ? activityFormatter.format(new Date(value)) : "Sin actividad";
-
 const WHATSAPP_QR_LIFECYCLE_MS = 5 * 60_000;
 
 export type WhatsAppLinkMonitorEvent =
@@ -162,7 +156,9 @@ export function LivePanel({ mode }: { mode: Mode }) {
     [logoutPending, setLogoutPending] = useState(false),
     [profilePending, setProfilePending] = useState(false),
     [assistantPending, setAssistantPending] = useState(false),
+    [assistantConflict, setAssistantConflict] = useState(false),
     [viewState, setViewState] = useState<AuthenticatedViewState>("loading");
+
   const monitorRef = useRef<AbortController | null>(null);
   const loginPendingRef = useRef(false);
   const logoutPendingRef = useRef(false);
@@ -171,17 +167,6 @@ export function LivePanel({ mode }: { mode: Mode }) {
   const assistantPendingRef = useRef(false);
   const assistantSaveAttemptRef = useRef(0);
   const loadAttemptRef = useRef(0);
-  const run = async (work: () => Promise<unknown>, success = "") => {
-    setError("");
-    try {
-      const value = await work();
-      if (value !== undefined) setData(value);
-      setNotice(success);
-      return value;
-    } catch (cause) {
-      setError(await api.errorMessage(cause));
-    }
-  };
   const load = async () => {
     if (mode === "login") return;
     const attempt = ++loadAttemptRef.current;
@@ -190,6 +175,7 @@ export function LivePanel({ mode }: { mode: Mode }) {
     setData(null);
     setNotice("");
     setError("");
+    setAssistantConflict(false);
     setQrDataUrl(null);
     setLinking(false);
     setViewState("loading");
@@ -261,6 +247,7 @@ export function LivePanel({ mode }: { mode: Mode }) {
     assistantSaveAttemptRef.current += 1;
     assistantPendingRef.current = false;
     setAssistantPending(false);
+    setAssistantConflict(false);
     if (mode === "login") {
       setData(null);
       setNotice("");
@@ -348,13 +335,23 @@ export function LivePanel({ mode }: { mode: Mode }) {
       if (monitorRef.current === controller) monitorRef.current = null;
     }
   };
-  const submit =
-    (work: (form: FormData) => Promise<unknown>, success: string) =>
-    async (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
-      const form = new FormData(event.currentTarget);
-      await run(() => work(form), success);
-    };
+  const runAdminMutation = async (
+    work: () => Promise<unknown>,
+    success: "Negocio creado" | "Negocio actualizado",
+  ) => {
+    setError("");
+    setNotice("");
+    try {
+      await work();
+      const businesses = await api.businesses();
+      setData(businesses);
+      setNotice(success);
+      return true;
+    } catch (cause) {
+      setError(await api.errorMessage(cause));
+      return false;
+    }
+  };
   const submitLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (loginPendingRef.current) return;
@@ -413,6 +410,7 @@ export function LivePanel({ mode }: { mode: Mode }) {
     const attempt = ++assistantSaveAttemptRef.current;
     assistantPendingRef.current = true;
     setAssistantPending(true);
+    setAssistantConflict(false);
     setError("");
     setNotice("");
     const form = new FormData(event.currentTarget);
@@ -425,9 +423,13 @@ export function LivePanel({ mode }: { mode: Mode }) {
       });
       if (assistantSaveAttemptRef.current !== attempt) return;
       setData(savedAssistant);
+      setAssistantConflict(false);
       setNotice("Asistente guardado");
     } catch (cause) {
       if (assistantSaveAttemptRef.current !== attempt) return;
+      setAssistantConflict(
+        cause instanceof ApiError && cause.code === "CONFLICT",
+      );
       setError(await api.errorMessage(cause));
     } finally {
       if (assistantSaveAttemptRef.current === attempt) {
@@ -535,7 +537,7 @@ export function LivePanel({ mode }: { mode: Mode }) {
     );
 
   if (mode === "admin") {
-    const rows = data as Business[];
+    const businesses = data as Business[];
     return (
       <AuthenticatedShell
         variant="admin"
@@ -543,115 +545,32 @@ export function LivePanel({ mode }: { mode: Mode }) {
         logoutPending={logoutPending}
         logoutAction={() => void logout()}
       >
-        <main>
-          <h1>Negocios</h1>
-          <p>Supervisión sin acceso a conversaciones ni secretos.</p>
-          {feedback}
-          <form
-            onSubmit={submit(async (form) => {
-              await api.createBusiness({
-                name: String(form.get("name")),
-                userEmail: String(form.get("userEmail")),
-                initialPassword: String(form.get("initialPassword")),
-              });
-              return api.businesses();
-            }, "Negocio creado")}
-          >
-            <label>
-              Nombre
-              <input name="name" required />
-            </label>
-            <label>
-              Correo del usuario
-              <input name="userEmail" type="email" required />
-            </label>
-            <label>
-              Contraseña inicial
-              <input
-                name="initialPassword"
-                type="password"
-                minLength={16}
-                required
-              />
-            </label>
-            <button>Crear negocio</button>
-          </form>
-          <table>
-            <thead>
-              <tr>
-                <th>Nombre</th>
-                <th>Negocio</th>
-                <th>Asistente</th>
-                <th>WhatsApp</th>
-                <th>Creación</th>
-                <th>Última actividad técnica</th>
-                <th>Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((business) => (
-                <tr key={business.id}>
-                  <td>{business.name}</td>
-                  <td>{business.status}</td>
-                  <td>{business.assistantStatus}</td>
-                  <td>{business.whatsappStatus}</td>
-                  <td>{business.createdAt}</td>
-                  <td>
-                    {formatActivityTimestamp(business.lastTechnicalActivityAt)}
-                  </td>
-                  <td>
-                    <form
-                      onSubmit={submit(async (form) => {
-                        const action = String(form.get("action"));
-                        if (action === "rename")
-                          await api.renameBusiness(
-                            business.id,
-                            String(form.get("name")),
-                          );
-                        else if (action === "password")
-                          await api.replacePassword(
-                            business.id,
-                            String(form.get("password")),
-                          );
-                        else
-                          await api.setBusinessStatus(
-                            business.id,
-                            business.status === "active"
-                              ? "suspended"
-                              : "active",
-                          );
-                        return api.businesses();
-                      }, "Negocio actualizado")}
-                    >
-                      <input
-                        name="name"
-                        aria-label={`Nombre de ${business.name}`}
-                        defaultValue={business.name}
-                      />
-                      <button name="action" value="rename">
-                        Renombrar
-                      </button>
-                      <input
-                        name="password"
-                        type="password"
-                        minLength={16}
-                        aria-label={`Nueva contraseña de ${business.name}`}
-                      />
-                      <button name="action" value="password">
-                        Cambiar contraseña
-                      </button>
-                      <button name="action" value="status">
-                        {business.status === "active"
-                          ? "Suspender"
-                          : "Reactivar"}
-                      </button>
-                    </form>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </main>
+        <AdminBusinessesScreen
+          businesses={businesses}
+          notice={notice}
+          error={error}
+          createAction={(input) =>
+            runAdminMutation(() => api.createBusiness(input), "Negocio creado")
+          }
+          renameAction={(id, name) =>
+            runAdminMutation(
+              () => api.renameBusiness(id, name),
+              "Negocio actualizado",
+            )
+          }
+          replacePasswordAction={(id, password) =>
+            runAdminMutation(
+              () => api.replacePassword(id, password),
+              "Negocio actualizado",
+            )
+          }
+          setStatusAction={(id, status) =>
+            runAdminMutation(
+              () => api.setBusinessStatus(id, status),
+              "Negocio actualizado",
+            )
+          }
+        />
       </AuthenticatedShell>
     );
   }
@@ -685,8 +604,10 @@ export function LivePanel({ mode }: { mode: Mode }) {
         <AssistantScreen
           assistant={assistant}
           feedback={feedback}
+          conflict={assistantConflict}
           savePending={assistantPending}
           submitAction={submitAssistant}
+          reloadAction={() => void load()}
         />
       </AuthenticatedShell>
     );

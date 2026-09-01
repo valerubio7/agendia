@@ -208,14 +208,16 @@ describe("Next web client against Fastify contracts", () => {
     expect(formatActivityTimestamp(activityAt)).toBe(
       "28 de ago de 2026, 10:00",
     );
-    const panel = await readFile(
-      join(import.meta.dir, "../../apps/web/src/live-panel.tsx"),
+    const adminScreen = await readFile(
+      join(
+        import.meta.dir,
+        "../../apps/web/src/ui/admin-businesses-screen.tsx",
+      ),
       "utf8",
     );
-    expect(panel).toContain("Última actividad técnica");
-    expect(panel).toContain(
-      "formatActivityTimestamp(business.lastTechnicalActivityAt)",
-    );
+    expect(adminScreen).toContain("Última actividad técnica");
+    expect(adminScreen).toContain("formatActivityTimestamp(");
+    expect(adminScreen).toContain("business.lastTechnicalActivityAt");
     await admin.renameBusiness(business.id, "Web tenant renamed");
     await admin.replacePassword(business.id, "replacement tenant password");
     await admin.setBusinessStatus(business.id, "suspended");
