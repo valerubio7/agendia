@@ -284,6 +284,74 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
     ).toBe(401);
   });
 
+  test("requires an active assistant before requesting a WhatsApp link", async () => {
+    await createBusiness("whatsapp-assistant-gate@example.test");
+    const tenant = await login(
+      "whatsapp-assistant-gate@example.test",
+      "tenant initial password safe",
+    );
+
+    const missingAssistantLink = await request("POST", "/me/whatsapp/link", {
+      ...tenant,
+      origin: ORIGIN,
+    });
+    expect(missingAssistantLink.statusCode).toBe(409);
+    expect(missingAssistantLink.json()).toMatchObject({ code: "CONFLICT" });
+
+    expect(
+      (
+        await request("PUT", "/me/assistant", {
+          ...tenant,
+          origin: ORIGIN,
+          body: {
+            personality: "",
+            tone: "",
+            instructions: "",
+            knowledge: "",
+            rules: "",
+            restrictions: "",
+            active: false,
+            expectedRevision: 0,
+          },
+        })
+      ).json(),
+    ).toMatchObject({ active: false, revision: 1 });
+
+    const inactiveAssistantLink = await request("POST", "/me/whatsapp/link", {
+      ...tenant,
+      origin: ORIGIN,
+    });
+    expect(inactiveAssistantLink.statusCode).toBe(409);
+    expect(inactiveAssistantLink.json()).toMatchObject({ code: "CONFLICT" });
+
+    expect(
+      (
+        await request("PUT", "/me/assistant", {
+          ...tenant,
+          origin: ORIGIN,
+          body: {
+            personality: "",
+            tone: "",
+            instructions: "",
+            knowledge: "",
+            rules: "",
+            restrictions: "",
+            active: true,
+            expectedRevision: 1,
+          },
+        })
+      ).json(),
+    ).toMatchObject({ active: true, revision: 2 });
+    expect(
+      (
+        await request("POST", "/me/whatsapp/link", {
+          ...tenant,
+          origin: ORIGIN,
+        })
+      ).statusCode,
+    ).toBe(202);
+  });
+
   test("derives tenant only from session for profile, assistant and WhatsApp routes", async () => {
     const a = await createBusiness("tenant-a@example.test");
     const b = await createBusiness("tenant-b@example.test");
