@@ -11,8 +11,10 @@ import type { Assistant } from "../api-client";
 type AssistantScreenProps = {
   assistant: Partial<Assistant>;
   feedback: ReactNode;
+  conflict: boolean;
   savePending: boolean;
   submitAction: FormEventHandler<HTMLFormElement>;
+  reloadAction: () => void;
 };
 
 type AssistantFieldProps = {
@@ -59,8 +61,10 @@ function AssistantField({
 export function AssistantScreen({
   assistant,
   feedback,
+  conflict,
   savePending,
   submitAction,
+  reloadAction,
 }: AssistantScreenProps) {
   const [active, setActive] = useState(Boolean(assistant.active));
   const savedActive = Boolean(assistant.active);
@@ -125,6 +129,15 @@ export function AssistantScreen({
 
       <div className="assistant-feedback" aria-label="Estado del guardado">
         {feedback}
+        {conflict && (
+          <button
+            className="assistant-conflict-action"
+            type="button"
+            onClick={reloadAction}
+          >
+            Recargar configuración
+          </button>
+        )}
       </div>
 
       <div className="assistant-layout">
