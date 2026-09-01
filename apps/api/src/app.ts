@@ -518,6 +518,17 @@ export function buildApi(input: AuthService | ApiOptions) {
   app.post("/me/whatsapp/link", async (request, reply) => {
     const auth = await requireTenant(request, reply, true);
     if (!auth) return;
+    const assistant = await pools.api.run(context(auth, request), (repo) =>
+      repo.assistant(),
+    );
+    if (!assistant || assistant.active !== true)
+      return fail(
+        reply,
+        request,
+        409,
+        "CONFLICT",
+        "Activate the assistant before linking WhatsApp",
+      );
     const current = await pools.api.run(context(auth, request), (repo) =>
       repo.whatsapp(),
     );
