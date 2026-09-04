@@ -1,0 +1,183 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-04T23:03:32Z",
+  "title": "Sistema de diseño de agendIA",
+  "extensions": {
+    "colorMeta": {
+      "ink": { "role": "neutral", "displayName": "Tinta vegetal", "canonical": "#172620", "tonalRamp": ["oklch(15% 0.0235 167.60)", "oklch(25% 0.0235 167.60)", "oklch(35% 0.0235 167.60)", "oklch(45% 0.0235 167.60)", "oklch(55% 0.0235 167.60)", "oklch(65% 0.0235 167.60)", "oklch(80% 0.0235 167.60)", "oklch(95% 0.0235 167.60)"], "purpose": "Texto principal y fondos profundos de marca." },
+      "ink-secondary": { "role": "neutral", "displayName": "Tinta secundaria", "canonical": "#213b31", "tonalRamp": ["oklch(15% 0.0370 167.65)", "oklch(25% 0.0370 167.65)", "oklch(35% 0.0370 167.65)", "oklch(45% 0.0370 167.65)", "oklch(55% 0.0370 167.65)", "oklch(65% 0.0370 167.65)", "oklch(80% 0.0370 167.65)", "oklch(95% 0.0370 167.65)"], "purpose": "Variación de fondos oscuros en acceso y navegación." },
+      "paper": { "role": "neutral", "displayName": "Papel cálido", "canonical": "#f1eee3", "tonalRamp": ["oklch(15% 0.0150 94.20)", "oklch(25% 0.0150 94.20)", "oklch(35% 0.0150 94.20)", "oklch(45% 0.0150 94.20)", "oklch(55% 0.0150 94.20)", "oklch(65% 0.0150 94.20)", "oklch(80% 0.0150 94.20)", "oklch(95% 0.0150 94.20)"], "purpose": "Lienzo de marca y texto sobre superficies oscuras." },
+      "surface": { "role": "neutral", "displayName": "Superficie marfil", "canonical": "#faf8f1", "tonalRamp": ["oklch(15% 0.0095 93.57)", "oklch(25% 0.0095 93.57)", "oklch(35% 0.0095 93.57)", "oklch(45% 0.0095 93.57)", "oklch(55% 0.0095 93.57)", "oklch(65% 0.0095 93.57)", "oklch(80% 0.0095 93.57)", "oklch(95% 0.0095 93.57)"], "purpose": "Tarjetas, formularios y contenido elevado." },
+      "surface-secondary": { "role": "neutral", "displayName": "Superficie secundaria", "canonical": "#f7f3e8", "tonalRamp": ["oklch(15% 0.0152 90.23)", "oklch(25% 0.0152 90.23)", "oklch(35% 0.0152 90.23)", "oklch(45% 0.0152 90.23)", "oklch(55% 0.0152 90.23)", "oklch(65% 0.0152 90.23)", "oklch(80% 0.0152 90.23)", "oklch(95% 0.0152 90.23)"], "purpose": "Fondo silencioso del espacio de trabajo." },
+      "coral": { "role": "primary", "displayName": "Coral de acción", "canonical": "#ff6b49", "tonalRamp": ["oklch(15% 0.1877 34.36)", "oklch(25% 0.1877 34.36)", "oklch(35% 0.1877 34.36)", "oklch(45% 0.1877 34.36)", "oklch(55% 0.1877 34.36)", "oklch(65% 0.1877 34.36)", "oklch(80% 0.1877 34.36)", "oklch(95% 0.1877 34.36)"], "purpose": "Marca, navegación activa y acciones prioritarias." },
+      "coral-hover": { "role": "primary", "displayName": "Coral elevado", "canonical": "#ff8064", "tonalRamp": ["oklch(15% 0.1607 33.72)", "oklch(25% 0.1607 33.72)", "oklch(35% 0.1607 33.72)", "oklch(45% 0.1607 33.72)", "oklch(55% 0.1607 33.72)", "oklch(65% 0.1607 33.72)", "oklch(80% 0.1607 33.72)", "oklch(95% 0.1607 33.72)"], "purpose": "Respuesta hover de acciones coral." },
+      "coral-soft": { "role": "primary", "displayName": "Coral suave", "canonical": "#ffe1d8", "tonalRamp": ["oklch(15% 0.0355 37.35)", "oklch(25% 0.0355 37.35)", "oklch(35% 0.0355 37.35)", "oklch(45% 0.0355 37.35)", "oklch(55% 0.0355 37.35)", "oklch(65% 0.0355 37.35)", "oklch(80% 0.0355 37.35)", "oklch(95% 0.0355 37.35)"], "purpose": "Fondo de selección y énfasis no destructivo." },
+      "pine": { "role": "secondary", "displayName": "Pino operativo", "canonical": "#2f6e52", "tonalRamp": ["oklch(15% 0.0798 162.07)", "oklch(25% 0.0798 162.07)", "oklch(35% 0.0798 162.07)", "oklch(45% 0.0798 162.07)", "oklch(55% 0.0798 162.07)", "oklch(65% 0.0798 162.07)", "oklch(80% 0.0798 162.07)", "oklch(95% 0.0798 162.07)"], "purpose": "Acciones operativas, foco y estados positivos." },
+      "pine-soft": { "role": "secondary", "displayName": "Pino suave", "canonical": "#ddebdf", "tonalRamp": ["oklch(15% 0.0219 149.70)", "oklch(25% 0.0219 149.70)", "oklch(35% 0.0219 149.70)", "oklch(45% 0.0219 149.70)", "oklch(55% 0.0219 149.70)", "oklch(65% 0.0219 149.70)", "oklch(80% 0.0219 149.70)", "oklch(95% 0.0219 149.70)"], "purpose": "Fondo de éxito y progreso." },
+      "sand": { "role": "neutral", "displayName": "Arena estructural", "canonical": "#d9d2be", "tonalRamp": ["oklch(15% 0.0281 90.93)", "oklch(25% 0.0281 90.93)", "oklch(35% 0.0281 90.93)", "oklch(45% 0.0281 90.93)", "oklch(55% 0.0281 90.93)", "oklch(65% 0.0281 90.93)", "oklch(80% 0.0281 90.93)", "oklch(95% 0.0281 90.93)"], "purpose": "Bordes y divisores de bajo contraste." },
+      "mid": { "role": "neutral", "displayName": "Texto medio", "canonical": "#7d887f", "tonalRamp": ["oklch(15% 0.0186 150.92)", "oklch(25% 0.0186 150.92)", "oklch(35% 0.0186 150.92)", "oklch(45% 0.0186 150.92)", "oklch(55% 0.0186 150.92)", "oklch(65% 0.0186 150.92)", "oklch(80% 0.0186 150.92)", "oklch(95% 0.0186 150.92)"], "purpose": "Apoyo, ayudas y metadatos secundarios." },
+      "danger": { "role": "error", "displayName": "Peligro controlado", "canonical": "#c24b3a", "tonalRamp": ["oklch(15% 0.1562 30.64)", "oklch(25% 0.1562 30.64)", "oklch(35% 0.1562 30.64)", "oklch(45% 0.1562 30.64)", "oklch(55% 0.1562 30.64)", "oklch(65% 0.1562 30.64)", "oklch(80% 0.1562 30.64)", "oklch(95% 0.1562 30.64)"], "purpose": "Errores y acciones administrativas de riesgo." },
+      "danger-soft": { "role": "error", "displayName": "Fondo de peligro", "canonical": "#f6e2de", "tonalRamp": ["oklch(15% 0.0227 31.11)", "oklch(25% 0.0227 31.11)", "oklch(35% 0.0227 31.11)", "oklch(45% 0.0227 31.11)", "oklch(55% 0.0227 31.11)", "oklch(65% 0.0227 31.11)", "oklch(80% 0.0227 31.11)", "oklch(95% 0.0227 31.11)"], "purpose": "Superficie de avisos de error." },
+      "white": { "role": "neutral", "displayName": "Blanco de campo", "canonical": "#ffffff", "tonalRamp": ["oklch(15% 0.0000 0.00)", "oklch(25% 0.0000 0.00)", "oklch(35% 0.0000 0.00)", "oklch(45% 0.0000 0.00)", "oklch(55% 0.0000 0.00)", "oklch(65% 0.0000 0.00)", "oklch(80% 0.0000 0.00)", "oklch(95% 0.0000 0.00)"], "purpose": "Campos y detalles de máximo contraste." },
+      "assistant-ink": { "role": "scoped-assistant", "displayName": "Tinta del asistente", "canonical": "#18231f", "tonalRamp": ["oklch(15% 0.0173 170.50)", "oklch(25% 0.0173 170.50)", "oklch(35% 0.0173 170.50)", "oklch(45% 0.0173 170.50)", "oklch(55% 0.0173 170.50)", "oklch(65% 0.0173 170.50)", "oklch(80% 0.0173 170.50)", "oklch(95% 0.0173 170.50)"], "purpose": "Texto dentro del estudio de dirección." },
+      "assistant-night": { "role": "scoped-assistant", "displayName": "Noche del asistente", "canonical": "#111c19", "tonalRamp": ["oklch(15% 0.0169 175.87)", "oklch(25% 0.0169 175.87)", "oklch(35% 0.0169 175.87)", "oklch(45% 0.0169 175.87)", "oklch(55% 0.0169 175.87)", "oklch(65% 0.0169 175.87)", "oklch(80% 0.0169 175.87)", "oklch(95% 0.0169 175.87)"], "purpose": "Fondos profundos de contexto y hero." },
+      "assistant-violet": { "role": "scoped-assistant", "displayName": "Violeta de dirección", "canonical": "#37314d", "tonalRamp": ["oklch(15% 0.0491 293.38)", "oklch(25% 0.0491 293.38)", "oklch(35% 0.0491 293.38)", "oklch(45% 0.0491 293.38)", "oklch(55% 0.0491 293.38)", "oklch(65% 0.0491 293.38)", "oklch(80% 0.0491 293.38)", "oklch(95% 0.0491 293.38)"], "purpose": "Foco, límites y recuperación de conflicto del asistente." },
+      "assistant-lilac": { "role": "scoped-assistant", "displayName": "Lila de señal", "canonical": "#bcb4df", "tonalRamp": ["oklch(15% 0.0609 293.49)", "oklch(25% 0.0609 293.49)", "oklch(35% 0.0609 293.49)", "oklch(45% 0.0609 293.49)", "oklch(55% 0.0609 293.49)", "oklch(65% 0.0609 293.49)", "oklch(80% 0.0609 293.49)", "oklch(95% 0.0609 293.49)"], "purpose": "Señales y contraste secundario dentro del asistente." },
+      "whatsapp-night": { "role": "scoped-whatsapp", "displayName": "Noche del canal", "canonical": "#0b2725", "tonalRamp": ["oklch(15% 0.0338 188.83)", "oklch(25% 0.0338 188.83)", "oklch(35% 0.0338 188.83)", "oklch(45% 0.0338 188.83)", "oklch(55% 0.0338 188.83)", "oklch(65% 0.0338 188.83)", "oklch(80% 0.0338 188.83)", "oklch(95% 0.0338 188.83)"], "purpose": "Hero y puente visual de WhatsApp." },
+      "whatsapp-deep": { "role": "scoped-whatsapp", "displayName": "Verde profundo del canal", "canonical": "#123c37", "tonalRamp": ["oklch(15% 0.0469 184.32)", "oklch(25% 0.0469 184.32)", "oklch(35% 0.0469 184.32)", "oklch(45% 0.0469 184.32)", "oklch(55% 0.0469 184.32)", "oklch(65% 0.0469 184.32)", "oklch(80% 0.0469 184.32)", "oklch(95% 0.0469 184.32)"], "purpose": "Acción de vinculación y nodos del canal." },
+      "whatsapp-green": { "role": "scoped-whatsapp", "displayName": "Verde WhatsApp", "canonical": "#25d366", "tonalRamp": ["oklch(15% 0.2015 149.74)", "oklch(25% 0.2015 149.74)", "oklch(35% 0.2015 149.74)", "oklch(45% 0.2015 149.74)", "oklch(55% 0.2015 149.74)", "oklch(65% 0.2015 149.74)", "oklch(80% 0.2015 149.74)", "oklch(95% 0.2015 149.74)"], "purpose": "Identidad del canal y conexión verificada." },
+      "whatsapp-mint": { "role": "scoped-whatsapp", "displayName": "Menta del canal", "canonical": "#bcebd2", "tonalRamp": ["oklch(15% 0.0593 161.73)", "oklch(25% 0.0593 161.73)", "oklch(35% 0.0593 161.73)", "oklch(45% 0.0593 161.73)", "oklch(55% 0.0593 161.73)", "oklch(65% 0.0593 161.73)", "oklch(80% 0.0593 161.73)", "oklch(95% 0.0593 161.73)"], "purpose": "Texto y superficies de apoyo del ámbito WhatsApp." },
+      "whatsapp-aqua": { "role": "scoped-whatsapp", "displayName": "Aqua de señal", "canonical": "#78d5d0", "tonalRamp": ["oklch(15% 0.0893 191.05)", "oklch(25% 0.0893 191.05)", "oklch(35% 0.0893 191.05)", "oklch(45% 0.0893 191.05)", "oklch(55% 0.0893 191.05)", "oklch(65% 0.0893 191.05)", "oklch(80% 0.0893 191.05)", "oklch(95% 0.0893 191.05)"], "purpose": "Señal animada y detalle del puente de canal." },
+      "admin-navy": { "role": "scoped-admin", "displayName": "Azul marino administrativo", "canonical": "#15263a", "tonalRamp": ["oklch(15% 0.0441 253.36)", "oklch(25% 0.0441 253.36)", "oklch(35% 0.0441 253.36)", "oklch(45% 0.0441 253.36)", "oklch(55% 0.0441 253.36)", "oklch(65% 0.0441 253.36)", "oklch(80% 0.0441 253.36)", "oklch(95% 0.0441 253.36)"], "purpose": "Hero, texto y acciones principales del registro." },
+      "admin-blue": { "role": "scoped-admin", "displayName": "Azul de gestión", "canonical": "#315d78", "tonalRamp": ["oklch(15% 0.0658 237.49)", "oklch(25% 0.0658 237.49)", "oklch(35% 0.0658 237.49)", "oklch(45% 0.0658 237.49)", "oklch(55% 0.0658 237.49)", "oklch(65% 0.0658 237.49)", "oklch(80% 0.0658 237.49)", "oklch(95% 0.0658 237.49)"], "purpose": "Foco y controles de gestión administrativa." },
+      "admin-muted": { "role": "scoped-admin", "displayName": "Gris administrativo", "canonical": "#627079", "tonalRamp": ["oklch(15% 0.0220 236.06)", "oklch(25% 0.0220 236.06)", "oklch(35% 0.0220 236.06)", "oklch(45% 0.0220 236.06)", "oklch(55% 0.0220 236.06)", "oklch(65% 0.0220 236.06)", "oklch(80% 0.0220 236.06)", "oklch(95% 0.0220 236.06)"], "purpose": "Vacíos y metadatos del inventario." },
+      "warning": { "role": "warning", "displayName": "Atención", "canonical": "#a66b19", "tonalRamp": ["oklch(15% 0.1173 68.85)", "oklch(25% 0.1173 68.85)", "oklch(35% 0.1173 68.85)", "oklch(45% 0.1173 68.85)", "oklch(55% 0.1173 68.85)", "oklch(65% 0.1173 68.85)", "oklch(80% 0.1173 68.85)", "oklch(95% 0.1173 68.85)"], "purpose": "Estado que requiere una nueva vinculación." },
+      "warning-soft": { "role": "warning", "displayName": "Fondo de atención", "canonical": "#f5e8cc", "tonalRamp": ["oklch(15% 0.0395 86.06)", "oklch(25% 0.0395 86.06)", "oklch(35% 0.0395 86.06)", "oklch(45% 0.0395 86.06)", "oklch(55% 0.0395 86.06)", "oklch(65% 0.0395 86.06)", "oklch(80% 0.0395 86.06)", "oklch(95% 0.0395 86.06)"], "purpose": "Superficie del estado de vinculación requerida." }
+    },
+    "typographyMeta": {
+      "hero": { "displayName": "Hero", "purpose": "Declaración principal y breve de cada pantalla editorial." },
+      "page-title": { "displayName": "Título de página", "purpose": "Jerarquía general y estados terminales." },
+      "brand-word": { "displayName": "Nombre de marca", "purpose": "Logotipo tipográfico agendIA junto al símbolo." },
+      "section-title": { "displayName": "Título de sección", "purpose": "Agrupación de tareas, paneles y formularios." },
+      "body": { "displayName": "Cuerpo", "purpose": "Explicaciones, ayudas e instrucciones de lectura continua." },
+      "label": { "displayName": "Etiqueta", "purpose": "Nombre visible y firme de cada control." },
+      "metadata": { "displayName": "Metadato", "purpose": "Índices, fechas y cejas operativas." },
+      "status": { "displayName": "Estado compacto", "purpose": "Badges de estado operativos con peso alto." }
+    },
+    "shadows": [
+      { "name": "tarjeta-elevada", "value": "0 1.25rem 3.5rem rgba(23, 38, 32, 0.09)", "purpose": "Tarjeta de acceso y estados terminales." },
+      { "name": "menu-movil", "value": "0 1rem 2.5rem rgba(23, 38, 32, 0.18)", "purpose": "Superposición temporal de navegación móvil." },
+      { "name": "hero-perfil", "value": "0 1.5rem 4rem rgba(23, 38, 32, 0.1)", "purpose": "Profundidad ambiental del hero de perfil." },
+      { "name": "hero-asistente", "value": "0 1.6rem 4rem rgba(17, 28, 25, 0.2)", "purpose": "Profundidad teñida del estudio del asistente." },
+      { "name": "hero-whatsapp", "value": "0 1.6rem 4rem rgba(8, 38, 34, 0.2)", "purpose": "Profundidad teñida del puente de WhatsApp." },
+      { "name": "hero-administracion", "value": "0 1.5rem 3.5rem rgba(21, 38, 58, 0.14)", "purpose": "Profundidad del registro administrativo." },
+      { "name": "accion-coral", "value": "0 0.7rem 1.5rem rgba(194, 75, 58, 0.18)", "purpose": "Elevación corta del botón coral en reposo." },
+      { "name": "campo-interior", "value": "inset 0 1px 0 rgba(23, 38, 32, 0.03)", "purpose": "Separación mínima del campo sobre fondos cálidos." }
+    ],
+    "motion": [
+      { "name": "estado-rapido", "value": "140ms ease", "purpose": "Color, borde, sombra y desplazamiento de controles." },
+      { "name": "estado-estructural", "value": "160ms ease", "purpose": "Activación del asistente y movimiento de su interruptor." },
+      { "name": "senal-whatsapp", "value": "3.2s ease-in-out infinite alternate", "purpose": "Recorrido del punto en el puente visual de WhatsApp." },
+      { "name": "movimiento-reducido", "value": "0.01ms; animation-iteration-count: 1", "purpose": "Sustitución implementada bajo prefers-reduced-motion: reduce." }
+    ],
+    "breakpoints": [
+      { "name": "admin-muy-estrecho", "value": "23rem" },
+      { "name": "login-estrecho", "value": "30rem" },
+      { "name": "movil", "value": "47.5rem" },
+      { "name": "columnas-formulario", "value": "48rem" },
+      { "name": "whatsapp-dividido", "value": "62rem" },
+      { "name": "login-escritorio", "value": "64rem" },
+      { "name": "alta-admin-compacta", "value": "68rem" },
+      { "name": "rieles-y-heroes-amplios", "value": "70rem" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Marca agendIA",
+      "kind": "custom",
+      "refersTo": "brand-lockup",
+      "description": "Bloque de marca con el SVG de calendario y verificación implementado en brand.tsx.",
+      "html": "<div class=\"ds-brand\" role=\"img\" aria-label=\"agendIA\"><svg class=\"ds-brand__mark\" viewBox=\"0 0 100 100\" aria-hidden=\"true\" focusable=\"false\"><rect x=\"15\" y=\"15\" width=\"70\" height=\"70\" rx=\"14\" fill=\"#2f6e52\"/><path d=\"M60 15H71A14 14 0 0 1 85 29V40H60Z\" fill=\"#ff6b49\"/><line x1=\"15\" y1=\"40\" x2=\"85\" y2=\"40\" stroke=\"#f1eee3\" stroke-width=\"5\"/><line x1=\"38\" y1=\"40\" x2=\"38\" y2=\"85\" stroke=\"#f1eee3\" stroke-width=\"4\"/><line x1=\"62\" y1=\"40\" x2=\"62\" y2=\"85\" stroke=\"#f1eee3\" stroke-width=\"4\"/><line x1=\"15\" y1=\"62.5\" x2=\"85\" y2=\"62.5\" stroke=\"#f1eee3\" stroke-width=\"4\"/><path d=\"M5 55L38 85L94 18\" fill=\"none\" stroke=\"#f1eee3\" stroke-width=\"18\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"M5 55L38 85L94 18\" fill=\"none\" stroke=\"#ff6b49\" stroke-width=\"10\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg><span class=\"ds-brand__name\">agend<strong>IA</strong></span></div>",
+      "css": ".ds-brand { display: inline-flex; align-items: center; gap: 0.7rem; color: #172620; font-family: \"Space Grotesk\", Inter, system-ui, sans-serif; } .ds-brand__mark { display: block; width: 2.75rem; height: 2.75rem; flex: 0 0 auto; } .ds-brand__name { font-size: 1.35rem; font-weight: 600; letter-spacing: -0.045em; } .ds-brand__name strong { color: #ff6b49; font-weight: 750; }"
+    },
+    {
+      "name": "Botón primario",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Acción prioritaria coral para acceso y compromisos principales.",
+      "html": "<button class=\"ds-btn-primary\" type=\"button\">Guardar cambios</button>",
+      "css": ".ds-btn-primary { min-height: 3rem; padding: 0.75rem 1rem; border: 1px solid transparent; border-radius: 0.75rem; background: #ff6b49; color: #172620; cursor: pointer; font-family: Inter, system-ui, sans-serif; font-weight: 800; box-shadow: 0 0.7rem 1.5rem rgba(194, 75, 58, 0.18); transition: background-color 140ms ease, box-shadow 140ms ease, transform 140ms ease; } .ds-btn-primary:hover:not(:disabled) { background: #ff8064; box-shadow: 0 0.85rem 1.75rem rgba(194, 75, 58, 0.24); transform: translateY(-1px); } .ds-btn-primary:focus-visible { outline: 0.2rem solid #2f6e52; outline-offset: 0.2rem; } .ds-btn-primary:disabled { cursor: wait; opacity: 0.72; box-shadow: none; }"
+    },
+    {
+      "name": "Campo de texto",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Campo etiquetado con ayuda persistente y foco de pino.",
+      "html": "<label class=\"ds-field\" for=\"ds-business-name\"><span class=\"ds-field__label\">Nombre comercial</span><input class=\"ds-field__input\" id=\"ds-business-name\" type=\"text\" aria-describedby=\"ds-business-name-hint\"/><small class=\"ds-field__hint\" id=\"ds-business-name-hint\">El nombre con el que presentás tu negocio</small></label>",
+      "css": ".ds-field { display: grid; gap: 0.45rem; color: #172620; font-family: Inter, system-ui, sans-serif; } .ds-field__label { font-size: 0.875rem; font-weight: 800; letter-spacing: -0.01em; } .ds-field__input { width: 100%; min-height: 3.25rem; padding: 0.8rem 0.9rem; border: 1px solid #c5c1b4; border-radius: 0.75rem; outline: none; background: rgba(255, 255, 255, 0.92); color: #172620; font: 450 1rem/1.55 Inter, system-ui, sans-serif; box-shadow: inset 0 1px 0 rgba(23, 38, 32, 0.03); transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease; } .ds-field__input:hover { border-color: #958f7f; background: #ffffff; } .ds-field__input:focus-visible { border-color: #2f6e52; background: #ffffff; box-shadow: 0 0 0 0.25rem rgba(47, 110, 82, 0.18); } .ds-field__input:disabled { cursor: not-allowed; opacity: 0.68; } .ds-field__hint { max-width: 65ch; color: #68766f; font-size: 0.72rem; font-weight: 500; line-height: 1.5; }"
+    },
+    {
+      "name": "Elemento de navegación del armazón",
+      "kind": "nav",
+      "refersTo": "navigation-item-active",
+      "description": "Ruta de negocio activa sobre la barra lateral oscura.",
+      "html": "<nav class=\"ds-shell-nav\" aria-label=\"Navegación del negocio\"><a class=\"ds-shell-nav__item\" href=\"#\">Perfil</a><a class=\"ds-shell-nav__item\" href=\"#\" aria-current=\"page\">Asistente</a><a class=\"ds-shell-nav__item\" href=\"#\">WhatsApp</a></nav>",
+      "css": ".ds-shell-nav { width: 17rem; display: grid; gap: 0.45rem; padding: 1rem; background: linear-gradient(165deg, #0d2a20, #213b31); color: #f1eee3; font-family: Inter, system-ui, sans-serif; } .ds-shell-nav__item { min-height: 2.9rem; display: flex; align-items: center; padding: 0.7rem 0.85rem; border: 1px solid transparent; border-radius: 0.75rem; color: inherit; font-weight: 700; line-height: 1.2; text-decoration: none; } .ds-shell-nav__item:hover { border-color: rgba(241, 238, 227, 0.2); background: rgba(241, 238, 227, 0.08); } .ds-shell-nav__item[aria-current=\"page\"] { border-color: rgba(255, 107, 73, 0.55); background: #ff6b49; color: #172620; } .ds-shell-nav__item:focus-visible { outline: 0.2rem solid #ff6b49; outline-offset: 0.18rem; }"
+    },
+    {
+      "name": "Aviso de estado",
+      "kind": "custom",
+      "refersTo": "notice-success",
+      "description": "Mensaje no urgente que conserva el contexto de la tarea.",
+      "html": "<p class=\"ds-notice ds-notice--success\" role=\"status\">Perfil guardado</p>",
+      "css": ".ds-notice { margin: 0; padding: 1rem 1.15rem; border: 1px solid rgba(47, 110, 82, 0.28); border-left: 0.3rem solid #2f6e52; border-radius: 0.85rem; background: #ddebdf; color: #172620; font: 650 1rem/1.5 Inter, system-ui, sans-serif; box-shadow: 0 0.65rem 1.8rem rgba(23, 38, 32, 0.07); }"
+    },
+    {
+      "name": "Badge de estado",
+      "kind": "chip",
+      "refersTo": "status-badge",
+      "description": "Estado de vinculación con texto e indicador redundante.",
+      "html": "<span class=\"ds-status-badge\" role=\"status\"><span class=\"ds-status-badge__dot\" aria-hidden=\"true\"></span>Requiere vinculación</span>",
+      "css": ".ds-status-badge { display: inline-flex; align-items: center; gap: 0.45rem; padding: 0.42rem 0.65rem; border: 1px solid rgba(166, 107, 25, 0.32); border-radius: 2rem; background: #f5e8cc; color: #a66b19; font: 850 0.65rem/1.2 \"JetBrains Mono\", ui-monospace, monospace; letter-spacing: 0.04em; text-transform: uppercase; } .ds-status-badge__dot { width: 0.52rem; height: 0.52rem; flex: 0 0 auto; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 0.2rem rgba(166, 107, 25, 0.14); }"
+    },
+    {
+      "name": "Tarjeta editorial",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Contenedor cálido para una sección de tarea y su contexto.",
+      "html": "<section class=\"ds-card\" aria-labelledby=\"ds-card-title\"><p class=\"ds-card__eyebrow\">El punto de partida</p><h3 class=\"ds-card__title\" id=\"ds-card-title\">Identidad y contacto</h3><p class=\"ds-card__copy\">Contá qué hace único a tu negocio y dejá claros sus canales de contacto.</p></section>",
+      "css": ".ds-card { padding: 1.25rem; border: 1px solid rgba(23, 38, 32, 0.14); border-radius: 1.25rem; background: #faf8f1; color: #172620; font-family: Inter, system-ui, sans-serif; box-shadow: 0 1rem 2.5rem rgba(23, 38, 32, 0.06); } .ds-card__eyebrow { margin: 0 0 0.25rem; color: #7d887f; font: 750 0.65rem/1.5 \"JetBrains Mono\", ui-monospace, monospace; letter-spacing: 0.07em; text-transform: uppercase; } .ds-card__title { margin: 0; font: 700 1.45rem/1.08 \"Space Grotesk\", Inter, system-ui, sans-serif; letter-spacing: -0.04em; } .ds-card__copy { max-width: 43rem; margin: 0.55rem 0 0; color: #54645d; font-size: 0.9rem; line-height: 1.55; }"
+    },
+    {
+      "name": "Activación del asistente",
+      "kind": "custom",
+      "refersTo": "button-operational",
+      "description": "Interruptor explícito para respuestas automáticas con foco violeta del ámbito.",
+      "html": "<label class=\"ds-assistant-switch\"><input class=\"ds-assistant-switch__input\" type=\"checkbox\" checked/><span class=\"ds-assistant-switch__track\" aria-hidden=\"true\"><span></span></span><strong>Respuestas automáticas activas</strong></label>",
+      "css": ".ds-assistant-switch { position: relative; min-height: 3.25rem; display: inline-flex; align-items: center; gap: 0.75rem; padding: 0.65rem 0.8rem; border: 1px solid rgba(55, 49, 77, 0.2); border-radius: 0.85rem; background: rgba(255, 255, 255, 0.6); color: #18231f; cursor: pointer; font-family: Inter, system-ui, sans-serif; } .ds-assistant-switch__input { position: absolute; width: 1px; height: 1px; opacity: 0; } .ds-assistant-switch__track { width: 3rem; height: 1.65rem; flex: 0 0 auto; padding: 0.2rem; border-radius: 2rem; background: #777184; transition: background-color 160ms ease; } .ds-assistant-switch__track span { display: block; width: 1.25rem; height: 1.25rem; border-radius: 50%; background: #ffffff; box-shadow: 0 0.15rem 0.35rem rgba(17, 28, 25, 0.25); transition: transform 160ms ease; } .ds-assistant-switch__input:checked + .ds-assistant-switch__track { background: #2f6e52; } .ds-assistant-switch__input:checked + .ds-assistant-switch__track span { transform: translateX(1.35rem); } .ds-assistant-switch__input:focus-visible + .ds-assistant-switch__track { outline: 0.2rem solid #37314d; outline-offset: 0.2rem; } .ds-assistant-switch strong { font-size: 0.8rem; line-height: 1.35; }"
+    },
+    {
+      "name": "Panel de vinculación WhatsApp",
+      "kind": "custom",
+      "refersTo": "whatsapp-action",
+      "description": "Estado previo al QR con zona de escaneo, explicación y acción real de vinculación.",
+      "html": "<section class=\"ds-wa-link\" aria-labelledby=\"ds-wa-title\"><p class=\"ds-wa-link__eyebrow\">Verificación del canal</p><h3 class=\"ds-wa-link__title\" id=\"ds-wa-title\">Conectá con un código temporal</h3><div class=\"ds-wa-link__target\"><span class=\"ds-wa-link__signal\" aria-hidden=\"true\"><i></i><i></i><i></i></span><strong>QR aún no solicitado</strong><p>El código real aparecerá acá cuando inicies la vinculación.</p></div><button class=\"ds-wa-link__button\" type=\"button\">Vincular WhatsApp</button></section>",
+      "css": ".ds-wa-link { display: grid; gap: 1.2rem; padding: 1.25rem; border: 1px solid rgba(18, 60, 55, 0.2); border-radius: 1.25rem; background: linear-gradient(180deg, rgba(188, 235, 210, 0.14), transparent 18rem), #faf8f1; color: #172620; font-family: Inter, system-ui, sans-serif; box-shadow: 0 1.3rem 3.4rem rgba(8, 38, 34, 0.09); } .ds-wa-link__eyebrow { margin: 0 0 -0.85rem; color: #65736c; font: 800 0.64rem/1.5 \"JetBrains Mono\", ui-monospace, monospace; letter-spacing: 0.08em; text-transform: uppercase; } .ds-wa-link__title { margin: 0; font: 700 1.45rem/1.08 \"Space Grotesk\", Inter, system-ui, sans-serif; letter-spacing: -0.045em; } .ds-wa-link__target { min-height: 18rem; display: grid; place-items: center; align-content: center; gap: 0.55rem; padding: 1rem; border: 1px dashed rgba(18, 60, 55, 0.32); border-radius: 1rem; background: linear-gradient(rgba(250, 248, 241, 0.92), rgba(250, 248, 241, 0.92)), repeating-linear-gradient(45deg, rgba(18, 60, 55, 0.08) 0 0.5rem, transparent 0.5rem 1rem); text-align: center; } .ds-wa-link__signal { width: 5rem; height: 5rem; display: flex; align-items: flex-end; justify-content: center; gap: 0.35rem; margin-bottom: 0.45rem; padding: 1rem; border: 1px solid rgba(18, 60, 55, 0.16); border-radius: 50% 50% 0.9rem 50%; background: rgba(188, 235, 210, 0.28); } .ds-wa-link__signal i { width: 0.36rem; border-radius: 1rem; background: #123c37; } .ds-wa-link__signal i:nth-child(1) { height: 1rem; } .ds-wa-link__signal i:nth-child(2) { height: 2rem; } .ds-wa-link__signal i:nth-child(3) { height: 2.8rem; background: #25d366; } .ds-wa-link__target p { max-width: 24rem; margin: 0; color: #65736c; font-size: 0.8rem; line-height: 1.55; } .ds-wa-link__button { width: 100%; min-height: 3.35rem; padding: 0.85rem 1rem; border: 1px solid transparent; border-radius: 0.8rem; background: #123c37; color: #ffffff; cursor: pointer; font-weight: 850; box-shadow: 0 0.8rem 1.8rem rgba(8, 38, 34, 0.2); transition: background-color 140ms ease, box-shadow 140ms ease, transform 140ms ease; } .ds-wa-link__button:hover:not(:disabled) { background: #185a50; box-shadow: 0 0.95rem 2rem rgba(8, 38, 34, 0.27); transform: translateY(-1px); } .ds-wa-link__button:focus-visible { outline: 0.22rem solid #ff6b49; outline-offset: 0.18rem; } .ds-wa-link__button:disabled { cursor: default; background: #62716b; opacity: 0.72; box-shadow: none; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "La Sala de Control Humana",
+    "overview": "La Sala de Control Humana traduce una operación técnica y multitenant en una interfaz cálida, comprensible y deliberadamente serena. El papel crema, la tinta vegetal y el pino construyen una base editorial; el coral señala marca, selección y acción sin convertir cada pantalla en una alarma.\n\nLa interfaz se siente operativa, no corporativa ni futurista: títulos compactos, etiquetas monoespaciadas, paneles amplios y estados escritos con lenguaje directo. La profundidad es suave y funcional; los detalles gráficos —órbitas, mapas, puentes y líneas— explican relaciones sin competir con formularios, inventarios o decisiones críticas.\n\nCada área conserva una identidad reconocible dentro del mismo producto. Asistente, WhatsApp y administración reciben acentos propios y acotados, mientras el armazón, la tipografía, el foco, los mensajes y la jerarquía mantienen continuidad.",
+    "keyCharacteristics": [
+      "Base editorial cálida de papel, tinta, pino y coral.",
+      "Jerarquía de sala de control: contexto visible, tarea principal clara y estado siempre legible.",
+      "Acentos por ámbito que distinguen funciones sin fragmentar la marca.",
+      "Formularios explícitos, información persistente y retroalimentación accesible.",
+      "Adaptación móvil que conserva rutas, acciones y significado."
+    ],
+    "rules": [
+      { "name": "Regla de los acentos con jurisdicción", "body": "El coral pertenece a la identidad común; violeta, verde/aqua de WhatsApp y azul administrativo solo actúan dentro de su ámbito y nunca son intercambiables como acentos globales.", "section": "colors" },
+      { "name": "Regla de estado pronunciable", "body": "Todo estado combina texto explícito con forma, indicador o estructura; el color nunca carga el significado por sí solo.", "section": "colors" },
+      { "name": "Regla de las tres voces", "body": "Space Grotesk presenta, Inter permite operar y JetBrains Mono orienta; mezclar sus funciones debilita la jerarquía.", "section": "typography" },
+      { "name": "Regla de la tarea primero", "body": "En flujo estrecho, formulario, estado o acción principal aparecen antes que relato auxiliar, mapas y guías; la adaptación nunca bloquea la operación.", "section": "layout" },
+      { "name": "Regla de navegación por rol", "body": "El negocio solo muestra Perfil, Asistente y WhatsApp; administración solo muestra Negocios. No se sugieren paneles de inicio, detalles administrativos ni bandejas de conversaciones inexistentes.", "section": "layout" },
+      { "name": "Regla de elevación con motivo", "body": "Una sombra debe explicar jerarquía, flotación temporal o capacidad de acción; no se agrega para decorar superficies ordinarias.", "section": "elevation" },
+      { "name": "Regla de esquinas con intención", "body": "La redondez comunica contención y cercanía; una esquina recta, un borde discontinuo o una rotación solo aparecen para expresar límite, proceso o cambio de categoría.", "section": "shapes" },
+      { "name": "Regla de compromiso explícito", "body": "Perfil, asistente, altas y cambios administrativos solo se aplican mediante una acción visible; el estado pendiente conserva contexto y nombre de la operación.", "section": "components" }
+    ],
+    "dos": [
+      "**Hacé** que papel, tinta, pino y coral mantengan la continuidad entre acceso, armazón y tareas.",
+      "**Hacé** que cada foco sea visible, cada estado sea legible por texto y cada aviso use la semántica accesible correspondiente.",
+      "**Hacé** que la navegación móvil y por rol preserve todas las rutas y el cierre de sesión realmente disponibles.",
+      "**Hacé** que la adaptación estrecha reordene, etiquete o apile contenido antes de ocultarlo.",
+      "**Hacé** que conflictos, carga, espera de QR, expiración, errores y estados deshabilitados expliquen qué ocurre y cuál es el siguiente paso posible."
+    ],
+    "donts": [
+      "**No uses** violeta, verde/aqua de WhatsApp o azul administrativo fuera de su ámbito como si fueran acentos globales intercambiables.",
+      "**No agregues** rutas, métricas, bandejas de conversación, recuperación de contraseña, ayuda, desvinculación de WhatsApp ni detalles administrativos que la interfaz actual no soporta.",
+      "**No conviertas** horarios o tono en controles estructurados: ambos son campos de texto libre en el producto vigente.",
+      "**No ocultes** columnas administrativas, acciones inline, etiquetas o significado de estado para resolver el móvil.",
+      "**No reemplaces** `apps/web/src/ui/brand.tsx` con una copia documental del símbolo; esa implementación continúa siendo la fuente de ejecución."
+    ]
+  }
+}
