@@ -6,26 +6,30 @@ project:
     Plataforma SaaS multiempresa que permite a los negocios configurar un asistente
     de inteligencia artificial y conectarlo con WhatsApp sin mantener infraestructura propia.
   repository_state: >-
-    Repositorio dedicado a documentación. Los requisitos completos del producto están en
-    docs/PRD.md; README.md contiene únicamente el título del proyecto. Actualmente no hay
-    código de aplicación ni herramientas de pruebas.
+    Monorepo implementado con una interfaz Next.js, API Fastify, workers con pg-boss,
+    PostgreSQL/Drizzle y adaptadores para DeepSeek y Baileys. PRODUCT.md conserva la verdad
+    durable del producto; OpenSpec, el código y las pruebas conservan el detalle de implementación.
 
 context: |
   agendIA es una plataforma SaaS multiempresa para asistentes de inteligencia artificial
   configurables conectados con WhatsApp. Cada negocio es un tenant aislado, con su propia
-  información, configuración del asistente, conexión de WhatsApp, usuarios, registros
-  técnicos y registros de auditoría.
+  información, configuración del asistente, conexión de WhatsApp, usuarios y registros
+  operativos.
 
-  El objetivo del SDD es lograr el cumplimiento completo de todos los requisitos de
-  docs/PRD.md. No se debe reducir el alcance a una primera parte ni excluir o aplazar
-  silenciosamente ningún requisito del PRD para el producto final.
+  PRODUCT.md es la autoridad canónica de verdad durable de producto y de los límites
+  confirmados de V1. No es una especificación detallada de implementación. Las propuestas,
+  especificaciones y diseños deben usarlo como restricción de producto y mantener el detalle
+  verificable en OpenSpec, código y pruebas.
 
-  Baileys y DeepSeek son las integraciones iniciales descritas por el PRD, y PostgreSQL
-  es la base de datos indicada allí. Sin embargo, las decisiones de arquitectura sobre
-  stack, implementación del aislamiento entre tenants, mecanismo de autenticación,
-  límites de despliegue y ejecución, modelo de persistencia y herramientas de pruebas
-  permanecen intencionalmente sin resolver. Deben decidirse en fases posteriores del
-  SDD; la inicialización no debe inferirlas ni fijarlas.
+  La superficie humana principal es apps/web. La API, los workers y el administrador de
+  WhatsApp son servicios de soporte. V1 admite una conexión de WhatsApp por negocio y solo
+  automatiza texto entrante en chats individuales; deduplica eventos e ignora grupos,
+  mensajes propios y contenido no textual. El negocio y el asistente deben estar activos.
+  Las conversaciones se consultan directamente en WhatsApp, no en una bandeja del panel.
+
+  La implementación actual usa Fastify, pg-boss, PostgreSQL/Drizzle, DeepSeek y Baileys,
+  con límites reemplazables para las integraciones externas. El mercado o vertical principal,
+  el modelo comercial y el alcance posterior a V1 permanecen sin confirmar y no deben inferirse.
 
 testing:
   methodology: strict-tdd
@@ -44,23 +48,23 @@ testing:
     - bun run db:check
     - bun run build
   note: >-
-    Tras el scaffolding, Vitest ejecutará unitarias, integración con PostgreSQL real,
-    contratos y aislamiento; Playwright ejecutará E2E. Las suites con PostgreSQL y E2E
-    usarán Testcontainers/Docker y dobles deterministas de Baileys y DeepSeek.
+    Vitest ejecuta pruebas unitarias, integración con PostgreSQL real, contratos y aislamiento;
+    Playwright ejecuta E2E. Las suites con PostgreSQL y E2E usan Testcontainers/Docker y dobles
+    deterministas de Baileys y DeepSeek cuando corresponde.
 
 rules:
   proposal:
-    - Mantener como objetivo el cumplimiento completo de todos los requisitos de docs/PRD.md.
-    - Preservar el aislamiento multiempresa exigido por el PRD y validado en el backend.
-    - Mantener sin decidir el stack, el aislamiento entre tenants y el mecanismo de autenticación.
+    - Tratar PRODUCT.md como autoridad de verdad durable del producto, no como especificación detallada de implementación.
+    - Preservar el aislamiento multiempresa y los límites confirmados de V1.
+    - Mantener explícitamente abiertas las decisiones de mercado, modelo comercial y alcance posterior a V1.
   spec:
     - Usar identificadores y nombres de directorio de especificaciones en inglés; mantener en español el contenido legible por humanos.
-    - Cubrir todos los requisitos del PRD sin reducir ni excluir el alcance final.
+    - Traducir la verdad de PRODUCT.md en requisitos verificables sin inventar capacidades ni compromisos futuros.
   design:
-    - Decidir explícitamente las cuestiones de arquitectura pendientes en esta fase posterior.
     - Mantener Baileys y DeepSeek detrás de límites reemplazables.
+    - Imponer autenticación, autorización y aislamiento de tenants desde el backend.
   tasks:
-    - Incluir verificación para todos los requisitos del PRD después de seleccionar el stack y el ejecutor de pruebas.
+    - Incluir verificación enfocada para cada requisito detallado por el incremento y sus límites de producto aplicables.
   implementation:
     - Aplicar autenticación, autorización y aislamiento entre tenants en el backend, no solamente en la interfaz.
     - Aplicar TDD estricto: escribir primero una prueba fallida del requisito, implementar lo mínimo para pasarla y luego refactorizar.
