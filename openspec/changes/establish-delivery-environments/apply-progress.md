@@ -52,10 +52,9 @@
 
 ## Next recommended task
 
-PR 1 lint prerequisite is next, but was intentionally not started. Parent lifecycle remains responsible for any delivery/review actions.
+PR 1 has since been completed in the cumulative update below. Parent lifecycle remains responsible for delivery/review actions.
 
 ## Remaining exact unchecked task lines
-- [ ] At `package.json`, the selected lint configuration, and `tests/contracts/lint*`, add the missing locked `bun run lint` contract. **RED:** capture the absent/invalid command and a known violation. **GREEN:** add the minimum Bun/TypeScript-compatible script/configuration. **TRIANGULATE:** prove TypeScript and one config/workflow/script surface are checked rather than ignored. **REFACTOR:** centralize rules/ignores; run `bun run lint`, `bun run typecheck`, and `bun run test:unit`. <!-- sdd-owner: implementation -->
 - [ ] At `deploy/release-manifest.schema.json` or its TypeScript equivalent and `tests/contracts/release-manifest*`, implement the discriminated digest contract for `universal-image` and `release-set`, `linux/amd64`, commit, compatibility, and immutable `@sha256` references. **RED:** reject a tag, wrong platform, missing/extra process, mixed image set, and altered linked digest. **GREEN:** add the minimal validator and canonical serialization. **TRIANGULATE:** accept both artifact kinds regardless of P0 result and reject an attestation/Compose disagreement fixture. **REFACTOR:** share digest parsing; run `bun run test:contracts`, `bun run lint`, `bun run typecheck`, and `bun run build`. <!-- sdd-owner: implementation -->
 - [ ] At `Dockerfile`/bounded process Dockerfiles, `.dockerignore`, release dispatcher/build helpers, and `deploy/images.lock`, implement only the P0-selected artifact: universal image when P0 is green, otherwise the bounded release-set and manifest assembly. **RED:** show an unpinned base or runtime source/`tsx`/`next dev` layout fails. **GREEN:** pin bases, run as UID/GID 10001, exclude toolchain/tests/secrets/sources, and start each supported command from generated output. **TRIANGULATE:** prove API/manager/worker native loading and Next standalone separately. **REFACTOR:** deduplicate build/entrypoint logic; run `bun run test:contracts`, `bun run test:integration`, `bun run lint`, `bun run typecheck`, and `bun run build`. <!-- sdd-owner: implementation -->
 - [ ] At `tests/e2e/release-image-readonly*` and the selected packaging/entrypoint surfaces, enforce the four-command read-only-root contract with ephemeral PostgreSQL, no provider egress, exact tmpfs paths, meaningful readiness/work, denied writes to `/opt/agendia`, `/etc`, and sibling paths, and restart independence from tmpfs. **RED:** fail on an undeclared mount or forbidden write. **GREEN:** add only required HOME/mount setup. **TRIANGULATE:** cover all four commands and each applicable selected artifact. **REFACTOR:** consolidate container harness setup; run `bun run test:contracts`, `bun run test:e2e`, `bun run lint`, `bun run typecheck`, and `bun run build`. <!-- sdd-owner: implementation -->
@@ -73,3 +72,24 @@ PR 1 lint prerequisite is next, but was intentionally not started. Parent lifecy
 - [ ] At `docs/runbooks/{host-provisioning,deploy,staging-window,backup-restore,rollback,disaster-recovery,host-health}.md` and documentation contract tests, distinguish repository artifacts, host provisioning, promotion, application rollback, data recovery, full reconstruction, staging capacity, and deferred external gates using precheck → proposed command → verification → rollback guidance. **RED:** reject missing sections, unsafe port forwarding, or conflated application/data rollback. **GREEN:** add concise runbooks and explicit human approval points. **TRIANGULATE:** cover universal/release-set instructions and SOLO/MULTI distinctions. **REFACTOR:** normalize terminology/links; run `bun run test:contracts`, `bun run lint`, and `bun run typecheck`. <!-- sdd-owner: implementation -->
 - [ ] At `tests/e2e/release-promotion*` and bounded verification helpers, simulate ephemeral Compose/Testcontainers staging and same-digest production promotion: selected identity, isolated config/secrets/roles/volumes, migrate then queue-init, four readiness/heartbeat checks, private smoke, evidence, safe teardown, and rollback compatibility. **RED:** fail a cross-environment resource or changed-digest promotion. **GREEN:** add only missing orchestration. **TRIANGULATE:** exercise selected behavior plus fallback fixture resolution and preservation of production IDs. **REFACTOR:** remove duplicate harness setup; run `bun run lint`, `bun run typecheck`, `bun run test:unit`, `bun run test:integration`, `bun run test:contracts`, `bun run test:tenant-isolation`, `bun run test:e2e`, `bun run test`, `bun run db:check`, and `bun run build`. No real host, Cloudflare, DNS, secrets, WhatsApp number, or external backup destination is used. <!-- sdd-owner: implementation -->
 - [ ] Confirm authorized humans have supplied external-gate evidence before real-user enablement; repository tests, placeholders, and runbooks are not completion. <!-- sdd-owner: parent -->
+
+## PR 1 lint prerequisite update
+
+- Status consumed: OpenSpec `ready`; repo-local root and allowed edit root `/home/valerubio7/Projects/agendia`; attempt work unit `pr1-lint-prerequisite` only.
+- Workload boundary: explicit `size:exception`/`exception-ok`; PR 1 stayed isolated and no PR 2 or parent-owned lifecycle action started.
+- Completed: the PR 1 implementation row is visibly checked in persisted `tasks.md`.
+- Files: `package.json`, `bun.lock`, `biome.json`, `tests/contracts/lint.contract.test.ts`, `tasks.md`, and this cumulative progress file.
+
+### TDD Cycle Evidence
+
+| Task | Test file | Layer | Safety net | RED | GREEN | TRIANGULATE | REFACTOR |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| PR 1 | `tests/contracts/lint.contract.test.ts` | Contract | `test:unit` 53/53; typecheck pass | 0/1: `Script not found "lint"`; violation was not diagnosed | 1/1: pinned Biome rejected TypeScript `noDoubleEquals` | 2/2: TypeScript and JSON duplicate-key violations were both diagnosed | Table-driven fixture cases plus centralized rules/includes/ignores; final 1/1 pass |
+
+### Verification
+
+- `bun install --frozen-lockfile` → pass in the checkout (390 installs/479 packages, no changes) and from a clean `HEAD` archive (373 packages installed).
+- `bun test tests/contracts/lint.contract.test.ts` → pass, 1 test/6 assertions covering two distinct violation surfaces.
+- `bun run lint` → pass, 150 files checked; `bun run typecheck` → pass; `bun run test:unit` → 53 pass/0 fail.
+- Deviation/risk: Bun required `$HOME/.bun/bin` on PATH; the five pre-existing dirty files were excluded and a clean `HEAD` archive passed all PR 1 gates.
+- Remaining implementation starts at PR 2; exact unchecked rows remain listed above. Parent lifecycle remains deferred.

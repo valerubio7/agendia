@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "bun --env-file=\"$HOME/.config/agendia/dev.env\" run scripts/dev-stack.ts",
     "bootstrap:admin": "bun --env-file=\"$HOME/.config/agendia/dev.env\" run scripts/bootstrap-admin.ts",
+    "lint": "biome lint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:scaffolding": "bun test tests/scaffolding.test.ts",
     "test:unit": "bun test tests/unit packages apps",
@@ -28,6 +29,7 @@
     "build": "tsc -p tsconfig.json --noEmit && bun run --cwd apps/web build"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.12",
     "@playwright/test": "1.62.1",
     "@testcontainers/postgresql": "12.1.0",
     "@types/bun": "latest",

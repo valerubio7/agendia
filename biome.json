@@ -1,0 +1,23 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.12/schema.json",
+  "files": {
+    "ignoreUnknown": true,
+    "includes": [
+      "**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx,json,jsonc}",
+      "!!**/.next/**",
+      "!!**/node_modules/**",
+      "!!**/dist/**",
+      "!!**/coverage/**"
+    ]
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "none",
+      "suspicious": {
+        "noDoubleEquals": "error",
+        "noDuplicateObjectKeys": "error"
+      }
+    }
+  }
+}
