@@ -15,3 +15,13 @@ export async function startApi(env: NodeJS.ProcessEnv = process.env) {
   await runtime.app.listen({ host: env.API_HOST ?? "0.0.0.0", port: Number(env.API_PORT ?? 3001) });
   return runtime;
 }
+
+if (import.meta.main)
+  void startApi().then((runtime) => {
+    const stop = () => void runtime.app.close().then(() => runtime.pools.end());
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+  }).catch(() => {
+    console.error(JSON.stringify({ code: "api.bootstrap_failed" }));
+    process.exitCode = 1;
+  });
