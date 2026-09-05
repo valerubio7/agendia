@@ -28,7 +28,7 @@ All estimates are additions plus deletions for one autonomous PR. Every PR keeps
 
 ### PR 1 — Lint prerequisite (40–70 lines; 2–3 files; depends on P0 evidence only)
 
-- [ ] At `package.json`, the selected lint configuration, and `tests/contracts/lint*`, add the missing locked `bun run lint` contract. **RED:** capture the absent/invalid command and a known violation. **GREEN:** add the minimum Bun/TypeScript-compatible script/configuration. **TRIANGULATE:** prove TypeScript and one config/workflow/script surface are checked rather than ignored. **REFACTOR:** centralize rules/ignores; run `bun run lint`, `bun run typecheck`, and `bun run test:unit`. <!-- sdd-owner: implementation -->
+- [x] At `package.json`, the selected lint configuration, and `tests/contracts/lint*`, add the missing locked `bun run lint` contract. **RED:** capture the absent/invalid command and a known violation. **GREEN:** add the minimum Bun/TypeScript-compatible script/configuration. **TRIANGULATE:** prove TypeScript and one config/workflow/script surface are checked rather than ignored. **REFACTOR:** centralize rules/ignores; run `bun run lint`, `bun run typecheck`, and `bun run test:unit`. <!-- sdd-owner: implementation -->
 
 ### PR 2 — Immutable release manifest (90–150 lines; 2–4 files; depends on PR 1)
 
