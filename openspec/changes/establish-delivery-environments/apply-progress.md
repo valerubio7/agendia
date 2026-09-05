@@ -55,7 +55,7 @@
 PR 1 has since been completed in the cumulative update below. Parent lifecycle remains responsible for delivery/review actions.
 
 ## Remaining exact unchecked task lines
-- [ ] At `deploy/release-manifest.schema.json` or its TypeScript equivalent and `tests/contracts/release-manifest*`, implement the discriminated digest contract for `universal-image` and `release-set`, `linux/amd64`, commit, compatibility, and immutable `@sha256` references. **RED:** reject a tag, wrong platform, missing/extra process, mixed image set, and altered linked digest. **GREEN:** add the minimal validator and canonical serialization. **TRIANGULATE:** accept both artifact kinds regardless of P0 result and reject an attestation/Compose disagreement fixture. **REFACTOR:** share digest parsing; run `bun run test:contracts`, `bun run lint`, `bun run typecheck`, and `bun run build`. <!-- sdd-owner: implementation -->
+- PR 2 immutable release manifest is complete; its persisted task checkbox is checked in `tasks.md`.
 - [ ] At `Dockerfile`/bounded process Dockerfiles, `.dockerignore`, release dispatcher/build helpers, and `deploy/images.lock`, implement only the P0-selected artifact: universal image when P0 is green, otherwise the bounded release-set and manifest assembly. **RED:** show an unpinned base or runtime source/`tsx`/`next dev` layout fails. **GREEN:** pin bases, run as UID/GID 10001, exclude toolchain/tests/secrets/sources, and start each supported command from generated output. **TRIANGULATE:** prove API/manager/worker native loading and Next standalone separately. **REFACTOR:** deduplicate build/entrypoint logic; run `bun run test:contracts`, `bun run test:integration`, `bun run lint`, `bun run typecheck`, and `bun run build`. <!-- sdd-owner: implementation -->
 - [ ] At `tests/e2e/release-image-readonly*` and the selected packaging/entrypoint surfaces, enforce the four-command read-only-root contract with ephemeral PostgreSQL, no provider egress, exact tmpfs paths, meaningful readiness/work, denied writes to `/opt/agendia`, `/etc`, and sibling paths, and restart independence from tmpfs. **RED:** fail on an undeclared mount or forbidden write. **GREEN:** add only required HOME/mount setup. **TRIANGULATE:** cover all four commands and each applicable selected artifact. **REFACTOR:** consolidate container harness setup; run `bun run test:contracts`, `bun run test:e2e`, `bun run lint`, `bun run typecheck`, and `bun run build`. <!-- sdd-owner: implementation -->
 - [ ] At `packages/runtime-config/**`, `deploy/config/*.example.env`, four process entrypoints, and `tests/unit/runtime-config*`, add centralized per-process configuration and safe `_FILE` loading. **RED:** reject absent files, inline unsafe secrets, malformed digest/origin, and secret-bearing errors. **GREEN:** implement the minimum Zod loader requiring process/environment/release identity and process-specific DB URL files while rejecting generic release `DATABASE_URL`. **TRIANGULATE:** validate API, manager, worker, web, and one-shot variants with valid file-backed values. **REFACTOR:** share parsing/redaction; run `bun run test:unit`, `bun run test:contracts`, `bun run lint`, and `bun run typecheck`. <!-- sdd-owner: implementation -->
@@ -92,4 +92,24 @@ PR 1 has since been completed in the cumulative update below. Parent lifecycle r
 - `bun test tests/contracts/lint.contract.test.ts` → pass, 1 test/6 assertions covering two distinct violation surfaces.
 - `bun run lint` → pass, 150 files checked; `bun run typecheck` → pass; `bun run test:unit` → 53 pass/0 fail.
 - Deviation/risk: Bun required `$HOME/.bun/bin` on PATH; the five pre-existing dirty files were excluded and a clean `HEAD` archive passed all PR 1 gates.
-- Remaining implementation starts at PR 2; exact unchecked rows remain listed above. Parent lifecycle remains deferred.
+- This historical PR 1 update preceded PR 2. Parent lifecycle remains deferred.
+
+## PR 2 immutable release manifest update
+
+- Status consumed: `openspec`, `ready`, repo-local `/home/valerubio7/Projects/agendia`, allowed root matched; no action-context warnings. Delivery boundary: `pr2-immutable-release-manifest`, explicit `exception-ok`/`size:exception`.
+- Completed: `packages/release-manifest/src/index.ts` validates strict discriminated `universal-image` and `release-set` manifests, immutable image/digest references, commit, `linux/amd64`, database compatibility, canonical serialization, and attestation/Compose bindings. The PR 2 implementation checkbox is visibly checked in `tasks.md`.
+- Files changed: `packages/release-manifest/src/index.ts`, `tests/contracts/release-manifest.contract.test.ts`, `openspec/changes/establish-delivery-environments/{tasks.md,apply-progress.md}`.
+- Design deviation: none. Both artifact kinds are validated independently of P0's universal-image result; the release-set identity remains its own manifest digest.
+
+### TDD Cycle Evidence
+
+| Task | Test file | Layer | Safety net | RED | GREEN | TRIANGULATE | REFACTOR |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| PR 2 | `tests/contracts/release-manifest.contract.test.ts` | Contract/pure validator | New implementation; focused final 3/3 | 0/1 with missing module | 3/3 after the minimal Zod validator and canonical serializer | Both artifact kinds pass; mismatched attestation and Compose images fail | Shared Zod digest schema; formatted and focused 3/3 green |
+
+### Verification
+
+- `bun test tests/contracts/release-manifest.contract.test.ts` → RED 0 pass/1 error (missing module); GREEN/REFACTOR 3 pass/0 fail, 11 assertions.
+- `bun run test:contracts` → 41 pass/0 fail; `bun run lint` → 152 files checked; `bun run typecheck` → pass; `bun run build` → pass (7 static routes).
+- Workload/PR boundary: PR 2 only; no downstream or parent-owned task changed. CodeGraph CLI exploration was used after the indexed MCP endpoint was unavailable.
+- Remaining tasks: PR 3 and later implementation rows, plus the unchanged parent-owned external-gate confirmation, remain unchecked in `tasks.md`.
