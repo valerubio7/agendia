@@ -17,17 +17,26 @@ export const writableMounts: Record<string, string[]> = {
 
 export function inspectReleaseLayout(paths: string[]) {
   const missing: string[] = [];
-  if (!paths.some((path) => /^api\/argon2\.linux-x64-(gnu|musl).*\.node$/.test(path)))
+  if (
+    !paths.some((path) =>
+      /^api\/argon2\.linux-x64-(gnu|musl).*\.node$/.test(path),
+    )
+  )
     missing.push("native-argon2");
-  if (!paths.includes("probe/runtime-probe.js")) missing.push("dynamic-baileys-probe");
+  if (!paths.includes("probe/runtime-probe.js"))
+    missing.push("dynamic-baileys-probe");
   if (!paths.some((path) => path.startsWith("web/.next/static/")))
     missing.push("next-static");
   return { viable: missing.length === 0, missing };
 }
 
 export function listFiles(root: string, directory = root): string[] {
-  return readdirSync(directory).flatMap((name) => {
-    const path = join(directory, name);
-    return statSync(path).isDirectory() ? listFiles(root, path) : [relative(root, path)];
-  }).sort();
+  return readdirSync(directory)
+    .flatMap((name) => {
+      const path = join(directory, name);
+      return statSync(path).isDirectory()
+        ? listFiles(root, path)
+        : [relative(root, path)];
+    })
+    .sort();
 }
