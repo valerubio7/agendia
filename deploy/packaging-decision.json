@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "outcome": "universal-image",
+  "scope": "P0 feasibility only; final Docker and release packaging remain downstream",
+  "platform": "linux/amd64",
+  "toolchain": {
+    "bun": "1.4.0",
+    "packageManager": "bun@1.4.0",
+    "frozenInstall": "bun install --frozen-lockfile",
+    "builderRuntime": "oven/bun@sha256:5ff609364c049b54eb0ff560ec96319729a972078ef2c755d758f0c6ef89c2d6"
+  },
+  "generatedCommands": {
+    "web": ["bun", "/opt/agendia/web/server.js"],
+    "api": ["bun", "/opt/agendia/api/index.js"],
+    "whatsapp-manager": ["bun", "/opt/agendia/whatsapp-manager/index.js"],
+    "message-worker": ["bun", "/opt/agendia/message-worker/index.js"]
+  },
+  "evidence": {
+    "cleanBuild": "pass: 369 frozen packages; API 503, manager 611, worker 295 and probe 497 modules bundled; Next standalone built 7 static routes",
+    "layout": "pass: 1519 generated files, zero .ts/.tsx paths, zero tsx or next-dev runtime paths",
+    "nativeArgon2Red": "pass: removing generated native assets exits 1 with Cannot find native binding",
+    "nativeArgon2Green": "pass: Argon2id hash/verify returned nativeArgon2=true",
+    "baileysDouble": "pass: generated probe emitted deterministic QR/open and browser [Ubuntu, Chrome, 22.04.4] without network",
+    "pgBoss": "pass: generated probe published and consumed published-and-consumed against ephemeral PostgreSQL 16",
+    "managerWorker": "pass: both generated commands remained running against migrated ephemeral PostgreSQL with read-only root",
+    "webApi": "pass: API login repository operation returned controlled 401; standalone page/static returned 200; /api rewrite returned API 401",
+    "readOnly": "pass: all nine declared tmpfs paths accepted writes as UID 10001 and /opt/agendia denied writes",
+    "focusedSuites": "pass: contracts 37/37; integration 36/36; typecheck and build passed"
+  },
+  "sha256": {
+    "api": "128bba68f73affd38a1dec0ad06fe221654a9db3ccdfeb7aa689db000e76d0ac",
+    "whatsappManager": "1debfea2d01e44728eab31f6d5cc05c8251ad7e4c142f78ac7ef7fabbb5f0306",
+    "messageWorker": "4f701b3b3c72757c9ee3125fed77c9bbe6ee9634f62b9c0ecff4cdf87a9c16f1",
+    "runtimeProbe": "1ac7d38b859ae7541bd670feb03d7f26c75ea992d9a73bdfcc5b1b2886dfbef2",
+    "webServer": "ffae4596b1e386f6c9b6ed1b8da428b88cb82f3c91185bffe88e91bed4c883f1",
+    "argon2Gnu": "a334e4081516aa2d3bd245ecffd1fd26690c0f54b8b48a3a5ae09631a3a7d5ae"
+  },
+  "localizedRequirements": [
+    "Link workspace packages into the clean builder root after frozen install so transitive workspace imports resolve.",
+    "Copy Bun-emitted argon2 native assets beside each bundle that imports argon2.",
+    "Normalize the monorepo Next standalone server/static layout and preserve its traced node_modules symlinks.",
+    "Use the generated API entrypoint main guard added by P0."
+  ],
+  "limitations": [
+    "This gate used a generated layout mounted into clean Bun containers; PR 3 still owns the final OCI Dockerfile and dispatcher.",
+    "Provider behavior was deterministic and local; no real Baileys or DeepSeek network was contacted."
+  ]
+}
