@@ -32,7 +32,7 @@ All estimates are additions plus deletions for one autonomous PR. Every PR keeps
 
 ### PR 2 — Immutable release manifest (90–150 lines; 2–4 files; depends on PR 1)
 
-- [ ] At `deploy/release-manifest.schema.json` or its TypeScript equivalent and `tests/contracts/release-manifest*`, implement the discriminated digest contract for `universal-image` and `release-set`, `linux/amd64`, commit, compatibility, and immutable `@sha256` references. **RED:** reject a tag, wrong platform, missing/extra process, mixed image set, and altered linked digest. **GREEN:** add the minimal validator and canonical serialization. **TRIANGULATE:** accept both artifact kinds regardless of P0 result and reject an attestation/Compose disagreement fixture. **REFACTOR:** share digest parsing; run `bun run test:contracts`, `bun run lint`, `bun run typecheck`, and `bun run build`. <!-- sdd-owner: implementation -->
+- [x] At `deploy/release-manifest.schema.json` or its TypeScript equivalent and `tests/contracts/release-manifest*`, implement the discriminated digest contract for `universal-image` and `release-set`, `linux/amd64`, commit, compatibility, and immutable `@sha256` references. **RED:** reject a tag, wrong platform, missing/extra process, mixed image set, and altered linked digest. **GREEN:** add the minimal validator and canonical serialization. **TRIANGULATE:** accept both artifact kinds regardless of P0 result and reject an attestation/Compose disagreement fixture. **REFACTOR:** share digest parsing; run `bun run test:contracts`, `bun run lint`, `bun run typecheck`, and `bun run build`. <!-- sdd-owner: implementation -->
 
 ### PR 3 — P0-selected release packaging (200–320 lines; 3–6 files; depends on P0 and PR 2)
 
