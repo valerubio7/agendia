@@ -33,7 +33,7 @@ const fail = (
 };
 
 function readSecretFile(env: RuntimeEnvironment, name: string): string {
-	if (env[name.slice(0, -5)]) fail(name, "is required");
+	if (Object.hasOwn(env, name.slice(0, -5))) fail(name, "is required");
 	const path = env[name];
 	if (!path) return fail(name, "is required");
 	try {
@@ -47,13 +47,37 @@ function readSecretFile(env: RuntimeEnvironment, name: string): string {
 	}
 }
 
+function validateDatabaseUrl(value: string, name: string): string {
+	try {
+		const url = new URL(value);
+		if (
+			(url.protocol !== "postgres:" && url.protocol !== "postgresql:") ||
+			!url.hostname ||
+			url.pathname === "/"
+		)
+			throw new Error();
+		return value;
+	} catch {
+		return fail(name, "is invalid");
+	}
+}
+
 function validateOrigin(value: string | undefined, environment: string) {
-	if (!value) return undefined;
+	if (!value) {
+		if (environment === "staging" || environment === "production")
+			fail("APP_ORIGIN", "is required");
+		return undefined;
+	}
 	try {
 		const origin = new URL(value);
+		const isLocalDevelopmentOrigin =
+			origin.protocol === "http:" &&
+			["localhost", "127.0.0.1", "::1", "[::1]"].includes(origin.hostname);
 		if (
 			origin.origin !== value ||
-			(environment !== "development" && origin.protocol !== "https:")
+			(environment === "development"
+				? !isLocalDevelopmentOrigin
+				: origin.protocol !== "https:")
 		)
 			throw new Error();
 		return origin.origin;
@@ -76,7 +100,8 @@ export function loadRuntimeConfig(
 	runtimeProcess: RuntimeProcess,
 	env: RuntimeEnvironment = process.env,
 ): RuntimeConfig {
-	if (env.DATABASE_URL) throw new Error("DATABASE_URL is forbidden");
+	if (Object.hasOwn(env, "DATABASE_URL"))
+		throw new Error("DATABASE_URL is forbidden");
 	if (env.AGENDIA_PROCESS !== runtimeProcess)
 		fail("AGENDIA_PROCESS", "is invalid");
 	const parsed = identity.safeParse(env);
@@ -86,12 +111,10 @@ export function loadRuntimeConfig(
 		return fail(name, env[name] ? "is invalid" : "is required");
 	}
 	const values = parsed.data;
-	const databaseUrl = readSecretFile(env, databaseVariable(runtimeProcess));
-	if (
-		!databaseUrl.startsWith("postgres://") &&
-		!databaseUrl.startsWith("postgresql://")
-	)
-		fail(databaseVariable(runtimeProcess), "is invalid");
+	const databaseUrl = validateDatabaseUrl(
+		readSecretFile(env, databaseVariable(runtimeProcess)),
+		databaseVariable(runtimeProcess),
+	);
 	const appOrigin = validateOrigin(env.APP_ORIGIN, values.AGENDIA_ENVIRONMENT);
 	return {
 		process: runtimeProcess,

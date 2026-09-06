@@ -44,7 +44,7 @@ All estimates are additions plus deletions for one autonomous PR. Every PR keeps
 
 ### PR 5 — Runtime configuration and secret files (150–260 lines; 3–5 files; depends on PR 2)
 
-- [ ] At `packages/runtime-config/**`, `deploy/config/*.example.env`, four process entrypoints, and `tests/unit/runtime-config*`, add centralized per-process configuration and safe `_FILE` loading. **RED:** reject absent files, inline unsafe secrets, malformed digest/origin, and secret-bearing errors. **GREEN:** implement the minimum Zod loader requiring process/environment/release identity and process-specific DB URL files while rejecting generic release `DATABASE_URL`. **TRIANGULATE:** validate API, manager, worker, web, and one-shot variants with valid file-backed values. **REFACTOR:** share parsing/redaction; run `bun run test:unit`, `bun run test:contracts`, `bun run lint`, and `bun run typecheck`. <!-- sdd-owner: implementation -->
+- [x] At `packages/runtime-config/**`, `deploy/config/*.example.env`, four process entrypoints, and `tests/unit/runtime-config*`, add centralized per-process configuration and safe `_FILE` loading. **RED:** reject absent files, inline unsafe secrets, malformed digest/origin, and secret-bearing errors. **GREEN:** implement the minimum Zod loader requiring process/environment/release identity and process-specific DB URL files while rejecting generic release `DATABASE_URL`. **TRIANGULATE:** validate API, manager, worker, web, and one-shot variants with valid file-backed values. **REFACTOR:** share parsing/redaction; run `bun run test:unit`, `bun run test:contracts`, `bun run lint`, and `bun run typecheck`. <!-- sdd-owner: implementation -->
 
 ### PR 6 — Cross-environment preflight (120–200 lines; 2–4 files; depends on PR 5)
 

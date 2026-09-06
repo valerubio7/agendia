@@ -126,3 +126,10 @@ PR 1 has since been completed in the cumulative update below. Parent lifecycle r
 - The minimal shared startup prerequisite is included in this work unit: generated runtime-config bootstrap plus API/manager/worker release entry wiring. This exists only so the packaged processes can start under the PR 4 contract; PR 5 remains unchecked until its complete `_FILE` validation, rejection matrix, examples, and focused unit contract are delivered.
 - Definitive Terra verification: focused 5/5 with 121 assertions; contracts 46/46 with 202 assertions; lint 158 files; typecheck and build passed; Playwright 8/8; `git diff --check` passed.
 - Cleanup: attributable containers, images, volumes, and networks all zero. No provider egress, external infrastructure, credentials, push, or deployment occurred.
+
+## PR 5 — Runtime configuration and secret files
+
+- Completed centralized per-process release identity and safe `_FILE` database loading for web, API, manager, worker, and one-shot commands. Generic and process-specific inline database variables fail closed even when empty; errors disclose field names without secret values.
+- PostgreSQL URLs are parsed structurally and require an allowed scheme, host, and database path. Non-development origins require canonical HTTPS; development HTTP is limited to explicit localhost/loopback origins. The example configuration contains non-usable placeholders only.
+- Strict TDD: RED — ✅ Written: 5 pass / 2 fail / 47 assertions exposed malformed URL and unbounded development-origin acceptance. GREEN/TRIANGULATE — ✅ Passed: 7 pass / 0 fail / 52 assertions.
+- Definitive verification: focused 7/7 (52 assertions), unit 60/60 (243), contracts 46/46 (202), lint 158 files, typecheck and diff checks passed. PR6 and later tasks remain unchecked.
