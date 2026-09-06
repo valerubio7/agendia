@@ -2,7 +2,11 @@ import { PgBoss } from "pg-boss";
 import { containQueueErrors, createRuntimePools } from "@agendia/db";
 import { DeepSeekAdapter, DeepSeekSummarizer } from "@agendia/ai-deepseek";
 import type { AiProvider } from "@agendia/domain";
-import { loadRuntimeConfig } from "@agendia/runtime-config";
+import {
+  loadRuntimeConfig,
+  preflightReleaseEnvironment,
+  runPreflightBeforeActivity,
+} from "@agendia/runtime-config";
 import {
   PostgresAiJobProcessor,
   PostgresSummaryJobProcessor,
@@ -81,11 +85,15 @@ export async function startMessageWorker(
 }
 if (process.env.AGENDIA_RUN_MESSAGE_WORKER === "1") {
   const config = loadRuntimeConfig("message-worker");
-  void startMessageWorker({
-    ...process.env,
-    DATABASE_URL: undefined,
-    WORKER_DATABASE_URL: config.databaseUrl,
-  })
+  void runPreflightBeforeActivity(
+    () => preflightReleaseEnvironment(config),
+    () =>
+      startMessageWorker({
+        ...process.env,
+        DATABASE_URL: undefined,
+        WORKER_DATABASE_URL: config.databaseUrl,
+      }),
+  )
     .then((runtime) => {
       const stop = () => void runtime.stop().finally(() => process.exit());
       process.once("SIGINT", stop);

@@ -133,3 +133,10 @@ PR 1 has since been completed in the cumulative update below. Parent lifecycle r
 - PostgreSQL URLs are parsed structurally and require an allowed scheme, host, and database path. Non-development origins require canonical HTTPS; development HTTP is limited to explicit localhost/loopback origins. The example configuration contains non-usable placeholders only.
 - Strict TDD: RED — ✅ Written: 5 pass / 2 fail / 47 assertions exposed malformed URL and unbounded development-origin acceptance. GREEN/TRIANGULATE — ✅ Passed: 7 pass / 0 fail / 52 assertions.
 - Definitive verification: focused 7/7 (52 assertions), unit 60/60 (243), contracts 46/46 (202), lint 158 files, typecheck and diff checks passed. PR6 and later tasks remain unchecked.
+
+## PR 6 — Cross-environment preflight
+
+- Added a versioned, file-backed nonsecret paired isolation manifest and singleton database marker preflight. Staging/production database identity, environment/secret-set IDs, critical SHA-256 separation, and staging WhatsApp identity boundaries fail closed before API listen, manager sessions/queues, or worker registration.
+- Every manifest object is strict: unknown root or nested secret-bearing keys are rejected with stable non-disclosing errors. The migration adds only the environment marker structure; PR9 role provisioning and PR10 governed migration work remain out of scope.
+- Strict TDD: RED — ✅ Written: focused integration exposed crossed identities, marker mismatches, equal hashes, production E.164 leakage, startup ordering, and unknown-key acceptance. GREEN — ✅ Passed: final focused 8/8 with 18 assertions.
+- Definitive verification: focused 8/8, unit 60/60, integration 44/44, tenant isolation 9/9, lint, typecheck, diff and generated-mutation checks passed. PR7 and later tasks remain unchecked.
