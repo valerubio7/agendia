@@ -113,3 +113,9 @@ PR 1 has since been completed in the cumulative update below. Parent lifecycle r
 - `bun run test:contracts` → 41 pass/0 fail; `bun run lint` → 152 files checked; `bun run typecheck` → pass; `bun run build` → pass (7 static routes).
 - Workload/PR boundary: PR 2 only; no downstream or parent-owned task changed. CodeGraph CLI exploration was used after the indexed MCP endpoint was unavailable.
 - Remaining tasks: PR 3 and later implementation rows, plus the unchanged parent-owned external-gate confirmation, remain unchecked in `tasks.md`.
+
+## PR 3 — P0-selected release packaging
+
+- Completed the universal linux/amd64 image selected by P0 with immutable Bun bases, generated-only runtime output, UID/GID `10001`, a bounded dispatcher, and pinned image evidence.
+- Strict TDD: focused packaging contract RED 0/3 before the Dockerfile existed, then GREEN 3/3 with 16 assertions; Docker build, contracts 46/46, integration 36/36, lint, typecheck, and build passed.
+- Commit boundary: `.dockerignore`, `Dockerfile`, `deploy/entrypoint`, `deploy/images.lock`, `tests/contracts/release-image.contract.test.ts`. PR 4 and PR 5 remain outside this snapshot.

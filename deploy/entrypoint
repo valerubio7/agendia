@@ -1,0 +1,38 @@
+#!/bin/sh
+set -eu
+
+command="${1:-}"
+case "$command" in
+  web|api|whatsapp-manager|message-worker|migrate|queue-init|bootstrap-admin|verify-config)
+    :
+    ;;
+  *)
+    echo "usage: agendia {web|api|whatsapp-manager|message-worker|migrate|queue-init|bootstrap-admin|verify-config}" >&2
+    exit 64
+    ;;
+esac
+
+case "$command" in
+  web)
+    exec bun /opt/agendia/web/apps/web/server.js
+    ;;
+  api)
+    exec bun /opt/agendia/api/index.js
+    ;;
+  whatsapp-manager)
+    export AGENDIA_RUN_WHATSAPP_MANAGER=1
+    exec bun /opt/agendia/whatsapp-manager/index.js
+    ;;
+  message-worker)
+    export AGENDIA_RUN_MESSAGE_WORKER=1
+    exec bun /opt/agendia/message-worker/index.js
+    ;;
+  migrate|queue-init|bootstrap-admin|verify-config)
+    echo "release command $command is not available until its governed implementation is installed" >&2
+    exit 64
+    ;;
+  *)
+    # The command was validated above; retain this defensive fallback.
+    exit 64
+    ;;
+esac
