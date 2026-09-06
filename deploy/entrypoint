@@ -4,7 +4,7 @@ set -eu
 command="${1:-}"
 case "$command" in
   web|api|whatsapp-manager|message-worker|migrate|queue-init|bootstrap-admin|verify-config)
-    :
+    bun /opt/agendia/runtime-config/release-entrypoint-config.js "$command"
     ;;
   *)
     echo "usage: agendia {web|api|whatsapp-manager|message-worker|migrate|queue-init|bootstrap-admin|verify-config}" >&2
@@ -14,16 +14,24 @@ esac
 
 case "$command" in
   web)
+    export HOME=/run/agendia/web/home
+    mkdir -p "$HOME"
     exec bun /opt/agendia/web/apps/web/server.js
     ;;
   api)
+    export HOME=/run/agendia/api/home
+    mkdir -p "$HOME"
     exec bun /opt/agendia/api/index.js
     ;;
   whatsapp-manager)
+    export HOME=/run/agendia/whatsapp-manager/home
+    mkdir -p "$HOME"
     export AGENDIA_RUN_WHATSAPP_MANAGER=1
     exec bun /opt/agendia/whatsapp-manager/index.js
     ;;
   message-worker)
+    export HOME=/run/agendia/message-worker/home
+    mkdir -p "$HOME"
     export AGENDIA_RUN_MESSAGE_WORKER=1
     exec bun /opt/agendia/message-worker/index.js
     ;;

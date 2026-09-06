@@ -9,7 +9,8 @@ COPY scripts ./scripts
 RUN bun install --frozen-lockfile
 RUN bun build apps/api/src/index.ts --target=bun --outdir /release/api \
  && bun build apps/whatsapp-manager/src/index.ts --target=bun --outdir /release/whatsapp-manager \
- && bun build apps/message-worker/src/index.ts --target=bun --outdir /release/message-worker
+ && bun build apps/message-worker/src/index.ts --target=bun --outdir /release/message-worker \
+ && bun build scripts/release-entrypoint-config.ts --target=bun --outdir /release/runtime-config
 RUN AGENDIA_API_ORIGIN=http://api:3001 NEXT_TELEMETRY_DISABLED=1 bun run --cwd apps/web build \
  && mkdir -p /release/web \
  && cp -a apps/web/.next/standalone/. /release/web/ \
@@ -25,6 +26,7 @@ COPY --from=builder --chown=10001:10001 /release/api ./api
 COPY --from=builder --chown=10001:10001 /release/whatsapp-manager ./whatsapp-manager
 COPY --from=builder --chown=10001:10001 /release/message-worker ./message-worker
 COPY --from=builder --chown=10001:10001 /release/web ./web
+COPY --from=builder --chown=10001:10001 /release/runtime-config ./runtime-config
 COPY --chown=10001:10001 deploy/entrypoint /opt/agendia/bin/agendia
 RUN chmod 0555 /opt/agendia/bin/agendia
 USER 10001:10001
