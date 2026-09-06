@@ -7,9 +7,14 @@ import {
   tenantContext,
 } from "@agendia/db";
 import {
+  createDrain,
+  createDurableReadiness,
+  createHeartbeat,
+  createLoopbackProbe,
   loadRuntimeConfig,
   preflightReleaseEnvironment,
   runPreflightBeforeActivity,
+  serializeOperationalLog,
 } from "@agendia/runtime-config";
 import {
   BaileysAuthStateAdapter,
@@ -66,20 +71,16 @@ const whatsappLifecycleCodes = new Set([
   "whatsapp.logout",
   "whatsapp.corrupt",
 ]);
-export function createWhatsAppLifecycleLogger(
-  write: (line: string) => void = (line) => console.info(line),
-) {
+export function createWhatsAppLifecycleLogger(write?: (line: string) => void) {
   return (record: Record<string, unknown>) => {
     if (!whatsappLifecycleCodes.has(String(record.code))) return;
-    if (
-      !(
-        record.statusCode === "unknown" ||
-        (typeof record.statusCode === "number" &&
-          Number.isFinite(record.statusCode))
-      )
-    )
-      return;
-    write(JSON.stringify({ code: record.code, statusCode: record.statusCode }));
+    if (!(
+      record.statusCode === "unknown" ||
+      (typeof record.statusCode === "number" && Number.isFinite(record.statusCode))
+    )) return;
+    const safe = JSON.stringify({ code: record.code, statusCode: record.statusCode });
+    if (write) return write(safe);
+    console.info(serializeOperationalLog({ level: "warn", service: "whatsapp-manager", environment: process.env.AGENDIA_ENVIRONMENT ?? "development", releaseDigest: process.env.AGENDIA_RELEASE_DIGEST ?? "development", instanceId: process.env.AGENDIA_INSTANCE_ID ?? "manager", code: "timeout", details: { lifecycleCode: record.code, statusCode: record.statusCode } }));
   };
 }
 export function createWhatsAppManager(options: {
@@ -202,17 +203,19 @@ export async function startWhatsAppManager(
     void messaging.aiOutbox.dispatchBatch();
     void messaging.outbound.dispatchNext();
   }, pollMs);
-  return {
-    ...runtime,
-    ...messaging,
-    boss,
-    stop: async () => {
-      clearInterval(timer);
-      await boss.stop();
-      await runtime.manager.stop();
-      await runtime.pools.end();
-    },
-  };
+  const readiness = createDurableReadiness({
+    persistDraining: () => runtime.pools.manager.run(undefined, (repo) =>
+      repo.upsertServiceHeartbeat({ service: "whatsapp-manager", instanceId: runtime.ownerId, releaseDigest: env.AGENDIA_RELEASE_DIGEST ?? "development", state: "draining" }),
+    ),
+  });
+  const heartbeat = createHeartbeat({
+    write: () => runtime.pools.manager.run(undefined, (repo) => repo.upsertServiceHeartbeat({ service: "whatsapp-manager", instanceId: runtime.ownerId, releaseDigest: env.AGENDIA_RELEASE_DIGEST ?? "development", state: "ready" })),
+  });
+  await heartbeat.start();
+  const probe = createLoopbackProbe({ ready: () => !readiness.ready().ready ? readiness.ready() : heartbeat.isFresh() ? { ready: true, code: "ready" } : { ready: false, code: "heartbeat.stale" } });
+  await probe.start();
+  const stop = createDrain({ timeoutMs: 90_000, markUnready: () => readiness.markUnready(), stopIntake: async () => {}, stopTimers: async () => { clearInterval(timer); heartbeat.stop(); }, stopProbe: () => probe.stop(), stopRuntime: () => boss.stop(), releaseLocks: () => runtime.manager.stop(), awaitInFlightLockCleanup: async () => {}, closePools: () => runtime.pools.end() });
+  return { ...runtime, ...messaging, boss, stop };
 }
 
 if (process.env.AGENDIA_RUN_WHATSAPP_MANAGER === "1") {
@@ -228,14 +231,14 @@ if (process.env.AGENDIA_RUN_WHATSAPP_MANAGER === "1") {
       }),
   )
     .then((runtime) => {
-      const shutdown = () => void runtime.stop().finally(() => process.exit());
+      const log = (level: "info" | "warn" | "error", code: "startup" | "draining" | "stopped" | "timeout") => console.info(serializeOperationalLog({ level, service: "whatsapp-manager", environment: config.environment, releaseDigest: config.releaseDigest, instanceId: runtime.ownerId, code }));
+      log("info", "startup");
+      const shutdown = () => { log("info", "draining"); return void runtime.stop().then(() => log("info", "stopped")).finally(() => process.exit()); };
       process.once("SIGINT", shutdown);
       process.once("SIGTERM", shutdown);
     })
     .catch(() => {
-      console.error(
-        JSON.stringify({ code: "whatsapp.manager.bootstrap_failed" }),
-      );
+      console.info(serializeOperationalLog({ level: "error", service: "whatsapp-manager", environment: config.environment, releaseDigest: config.releaseDigest, instanceId: "bootstrap", code: "stopped" }));
       process.exitCode = 1;
     });
 }

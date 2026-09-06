@@ -70,6 +70,11 @@ export function buildApi(input: AuthService | ApiOptions) {
   const idleTtl = input.idleTtlMs ?? 30 * 60_000;
   const app = Fastify({ logger: false });
   void app.register(cookie);
+  app.get("/internal/live", async () => ({ code: "live" }));
+  app.get("/internal/ready", async (_request, reply) => {
+    const readiness = await pools.api.run(undefined, (repo) => repo.releaseReadiness());
+    return reply.code(readiness.ready ? 200 : 503).send({ code: readiness.code });
+  });
   const fail = (
     reply: FastifyReply,
     request: FastifyRequest,

@@ -329,3 +329,5 @@ export function validateReleaseCommand(
 ): RuntimeConfig {
 	return loadRuntimeConfig(runtimeProcess, env);
 }
+
+export * from "./operations.ts";
