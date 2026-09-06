@@ -1,5 +1,9 @@
 import { createRuntimePools, linkCodeKeyFromEnv } from "@agendia/db";
-import { loadRuntimeConfig } from "@agendia/runtime-config";
+import {
+	loadRuntimeConfig,
+	preflightReleaseEnvironment,
+	runPreflightBeforeActivity,
+} from "@agendia/runtime-config";
 import { buildApi } from "./app.ts";
 export { buildApi } from "./app.ts";
 
@@ -38,11 +42,15 @@ const isReleaseEntrypoint = /(?:^|\/)index\.(?:ts|js)$/.test(
 );
 if (isReleaseEntrypoint) {
 	const config = loadRuntimeConfig("api");
-	void startApi({
-		...process.env,
-		DATABASE_URL: undefined,
-		API_DATABASE_URL: config.databaseUrl,
-	})
+	void runPreflightBeforeActivity(
+		() => preflightReleaseEnvironment(config),
+		() =>
+			startApi({
+				...process.env,
+				DATABASE_URL: undefined,
+				API_DATABASE_URL: config.databaseUrl,
+			}),
+	)
 		.then((runtime) => {
 			const stop = () =>
 				void runtime.app.close().then(() => runtime.pools.end());
