@@ -647,6 +647,22 @@ export class PostgresRepositories {
       )[0]?.release_ai_outbox,
     );
   }
+  async upsertServiceHeartbeat(row: {
+    service: "whatsapp-manager" | "message-worker";
+    instanceId: string;
+    releaseDigest: string;
+    state: "ready" | "draining";
+  }) {
+    await this.db`insert into agendia_service_heartbeats(service,instance_id,release_digest,state,started_at,last_seen_at) values(${row.service},${row.instanceId},${row.releaseDigest},${row.state},now(),now()) on conflict(service,instance_id) do update set release_digest=excluded.release_digest,state=excluded.state,last_seen_at=now()`;
+  }
+  async serviceHeartbeatReady(service: string, instanceId: string, staleMs: number) {
+    const fresh = await this.db<{ fresh: boolean }[]>`select exists(select 1 from agendia_service_heartbeats where service=${service} and instance_id=${instanceId} and state='ready' and last_seen_at >= now() - (${staleMs}::text || ' milliseconds')::interval) fresh`;
+    return fresh[0]?.fresh ? { ready: true as const, code: "ready" } : { ready: false as const, code: "heartbeat.stale" };
+  }
+  async releaseReadiness() {
+    const marker = await this.db<{ found: boolean }[]>`select exists(select 1 from agendia_environment) found`;
+    return marker[0]?.found ? { ready: true as const, code: "ready" } : { ready: false as const, code: "environment.marker_missing" };
+  }
   async appendAudit(
     businessId: string,
     event: { eventType: string; outcome: string; eventHash: string },

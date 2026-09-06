@@ -140,3 +140,10 @@ PR 1 has since been completed in the cumulative update below. Parent lifecycle r
 - Every manifest object is strict: unknown root or nested secret-bearing keys are rejected with stable non-disclosing errors. The migration adds only the environment marker structure; PR9 role provisioning and PR10 governed migration work remain out of scope.
 - Strict TDD: RED — ✅ Written: focused integration exposed crossed identities, marker mismatches, equal hashes, production E.164 leakage, startup ordering, and unknown-key acceptance. GREEN — ✅ Passed: final focused 8/8 with 18 assertions.
 - Definitive verification: focused 8/8, unit 60/60, integration 44/44, tenant isolation 9/9, lint, typecheck, diff and generated-mutation checks passed. PR7 and later tasks remain unchecked.
+
+## PR 7 — Health, heartbeat, logs, and shutdown
+
+- Added dependency-free web/API liveness, coded readiness, loopback-only manager/worker probes, durable 30-second service heartbeats with a 60-second freshness boundary, and provider-independent healthy-idle semantics.
+- Added recursively redacted structured lifecycle logs and bounded single-flight drains. Local readiness flips before durable `draining` persistence; timeout/failure cannot skip mandatory lock cleanup or pool closure.
+- Strict TDD — ✅ Written: focused unit, integration, and contract tests failed before operational primitives, persistence, routes, and runtime wiring existed. ✅ Passed: final focused PR7 tests are green with runtime repository and concrete entrypoint coverage.
+- Definitive verification: focused operations unit, service-health integration, health contracts, full unit/integration/contracts, lint, typecheck, diff, generated-file and primary LSP checks all passed once. PR8 and later tasks remain unchecked.
