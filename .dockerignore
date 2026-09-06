@@ -1,0 +1,15 @@
+.git
+.codegraph
+node_modules
+**/node_modules
+.next
+**/.next
+.env
+.env*
+!.env.example
+tests/
+coverage/
+playwright-report/
+test-results/
+openspec/
+*.log
