@@ -6,6 +6,7 @@ import {
   linkCodeKeyFromEnv,
   tenantContext,
 } from "@agendia/db";
+import { loadRuntimeConfig } from "@agendia/runtime-config";
 import {
   BaileysAuthStateAdapter,
   BaileysGateway,
@@ -211,7 +212,13 @@ export async function startWhatsAppManager(
 }
 
 if (process.env.AGENDIA_RUN_WHATSAPP_MANAGER === "1") {
-  void startWhatsAppManager()
+  const config = loadRuntimeConfig("whatsapp-manager");
+  void startWhatsAppManager({
+    ...process.env,
+    DATABASE_URL: undefined,
+    MANAGER_DATABASE_URL: config.databaseUrl,
+    WORKER_DATABASE_URL: config.databaseUrl,
+  })
     .then((runtime) => {
       const shutdown = () => void runtime.stop().finally(() => process.exit());
       process.once("SIGINT", shutdown);

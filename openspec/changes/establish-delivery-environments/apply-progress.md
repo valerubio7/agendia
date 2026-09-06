@@ -119,3 +119,10 @@ PR 1 has since been completed in the cumulative update below. Parent lifecycle r
 - Completed the universal linux/amd64 image selected by P0 with immutable Bun bases, generated-only runtime output, UID/GID `10001`, a bounded dispatcher, and pinned image evidence.
 - Strict TDD: focused packaging contract RED 0/3 before the Dockerfile existed, then GREEN 3/3 with 16 assertions; Docker build, contracts 46/46, integration 36/36, lint, typecheck, and build passed.
 - Commit boundary: `.dockerignore`, `Dockerfile`, `deploy/entrypoint`, `deploy/images.lock`, `tests/contracts/release-image.contract.test.ts`. PR 4 and PR 5 remain outside this snapshot.
+
+## PR 4 — Read-only runtime contract
+
+- Completed all four generated commands under a read-only root on an internal Docker network with ephemeral PostgreSQL, exact declared tmpfs, UID/GID `10001:10001`, denied root/sibling writes, meaningful work before and after restart, and tmpfs marker loss.
+- The minimal shared startup prerequisite is included in this work unit: generated runtime-config bootstrap plus API/manager/worker release entry wiring. This exists only so the packaged processes can start under the PR 4 contract; PR 5 remains unchecked until its complete `_FILE` validation, rejection matrix, examples, and focused unit contract are delivered.
+- Definitive Terra verification: focused 5/5 with 121 assertions; contracts 46/46 with 202 assertions; lint 158 files; typecheck and build passed; Playwright 8/8; `git diff --check` passed.
+- Cleanup: attributable containers, images, volumes, and networks all zero. No provider egress, external infrastructure, credentials, push, or deployment occurred.
