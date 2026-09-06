@@ -95,4 +95,34 @@ describe("immutable release manifest", () => {
 			}),
 		).toThrow();
 	});
+
+	test("rejects missing or malformed commit identity and compatibility data", () => {
+		for (const manifest of [
+			{ ...universal, commit: undefined },
+			{ ...universal, commit: "not-a-commit" },
+			{ ...universal, database: undefined },
+			{ ...universal, database: { ...universal.database, compatibility: "unsafe" } },
+			{ ...universal, database: { compatibility: "expand-compatible" } },
+		])
+			expect(() => validateReleaseManifest(manifest)).toThrow();
+	});
+
+	test("canonical serialization ignores equivalent property insertion order", () => {
+		const reordered = {
+			database: {
+			minimumLedger: universal.database.minimumLedger,
+			previousReleaseDigest: universal.database.previousReleaseDigest,
+			compatibility: universal.database.compatibility,
+		},
+		images: Object.fromEntries(Object.entries(universal.images).reverse()),
+		platform: universal.platform,
+		releaseDigest: universal.releaseDigest,
+		commit: universal.commit,
+		artifactKind: universal.artifactKind,
+		schemaVersion: universal.schemaVersion,
+		};
+		expect(canonicalizeReleaseManifest(reordered)).toBe(
+			canonicalizeReleaseManifest(universal),
+		);
+	});
 });
