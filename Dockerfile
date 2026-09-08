@@ -11,6 +11,7 @@ RUN bun build apps/api/src/index.ts --target=bun --outdir /release/api \
  && bun build apps/whatsapp-manager/src/index.ts --target=bun --outdir /release/whatsapp-manager \
  && bun build apps/message-worker/src/index.ts --target=bun --outdir /release/message-worker \
  && bun build scripts/queue-init.ts --target=bun --outdir /release/queue-init \
+ && bun build scripts/migrate.ts --target=bun --outdir /release/migrate \
  && bun build scripts/release-entrypoint-config.ts --target=bun --outdir /release/runtime-config
 RUN AGENDIA_API_ORIGIN=http://api:3001 NEXT_TELEMETRY_DISABLED=1 bun run --cwd apps/web build \
  && mkdir -p /release/web \
@@ -28,6 +29,8 @@ COPY --from=builder --chown=10001:10001 /release/whatsapp-manager ./whatsapp-man
 COPY --from=builder --chown=10001:10001 /release/message-worker ./message-worker
 COPY --from=builder --chown=10001:10001 /release/web ./web
 COPY --from=builder --chown=10001:10001 /release/queue-init ./queue-init
+COPY --from=builder --chown=10001:10001 /release/migrate ./migrate
+COPY --from=builder --chown=10001:10001 /build/packages/db/migrations ./migrations
 COPY --from=builder --chown=10001:10001 /release/runtime-config ./runtime-config
 COPY --chown=10001:10001 deploy/entrypoint /opt/agendia/bin/agendia
 RUN chmod 0555 /opt/agendia/bin/agendia
