@@ -38,7 +38,10 @@ case "$command" in
   queue-init)
     exec bun /opt/agendia/queue-init/queue-init.js
     ;;
-  migrate|bootstrap-admin|verify-config)
+  migrate)
+    exec bun /opt/agendia/migrate/migrate.js
+    ;;
+  bootstrap-admin|verify-config)
     echo "release command $command is not available until its governed implementation is installed" >&2
     exit 64
     ;;

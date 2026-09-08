@@ -26,8 +26,19 @@ describe("universal release image", () => {
 		expect(dispatcher).toMatch(
 			/web\|api\|whatsapp-manager\|message-worker\|migrate\|queue-init\|bootstrap-admin\|verify-config/,
 		);
-		for (const command of ["web", "api", "whatsapp-manager", "message-worker"])
+		for (const command of [
+			"web",
+			"api",
+			"whatsapp-manager",
+			"message-worker",
+			"migrate",
+		])
 			expect(dispatcher).toContain(`${command})`);
+		expect(dockerfile).toContain("bun build scripts/migrate.ts");
+		expect(dockerfile).toContain("/release/migrate");
+		expect(dispatcher).toMatch(
+			/migrate\)\n\s*exec bun \/opt\/agendia\/migrate\/migrate\.js/,
+		);
 		expect(dockerfile).toContain("bun build scripts/queue-init.ts");
 		expect(dockerfile).toContain("/release/queue-init");
 		expect(dispatcher).toMatch(
