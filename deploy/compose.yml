@@ -1,0 +1,197 @@
+# Render only with scripts/render-compose.ts; this template does not accept user paths or project names.
+name: "{{PROJECT}}"
+
+x-managed-labels: &managed-labels
+  com.agendia.environment: "{{ENVIRONMENT}}"
+  com.agendia.project: "{{PROJECT}}"
+  com.agendia.managed: "true"
+
+x-app-hardening: &app-hardening
+  read_only: true
+  user: "10001:10001"
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  init: true
+  pids_limit: 128
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  postgres:
+    image: "{{POSTGRES_IMAGE}}"
+    restart: "{{RESTART}}"
+    cpus: "{{POSTGRES_CPUS}}"
+    mem_limit: "{{POSTGRES_MEMORY}}"
+    pids_limit: 256
+    stop_grace_period: 120s
+    labels: *managed-labels
+    volumes:
+      - "{{POSTGRES_BIND}}:/var/lib/postgresql/data"
+      - "{{CONFIG_DIR}}:/run/agendia/config:ro"
+      - "{{SECRETS_DIR}}:/run/secrets:ro"
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+
+  api:
+    <<: *app-hardening
+    image: "{{API_IMAGE}}"
+    command: ["api"]
+    restart: "{{RESTART}}"
+    cpus: "{{API_CPUS}}"
+    mem_limit: "{{API_MEMORY}}"
+    stop_grace_period: 30s
+    labels: *managed-labels
+    volumes:
+      - "{{CONFIG_DIR}}:/run/agendia/config:ro"
+      - "{{SECRETS_DIR}}:/run/secrets:ro"
+    tmpfs:
+      - /tmp:uid=10001,gid=10001,mode=1777,nosuid,nodev,noexec
+      - /run/agendia/api:uid=10001,gid=10001,mode=0750,nosuid,nodev,noexec
+    networks: [app, data]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://127.0.0.1:3001/internal/live >/dev/null && wget -qO- http://127.0.0.1:3001/internal/ready >/dev/null",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+
+  web:
+    <<: *app-hardening
+    image: "{{WEB_IMAGE}}"
+    command: ["web"]
+    restart: "{{RESTART}}"
+    cpus: "{{WEB_CPUS}}"
+    mem_limit: "{{WEB_MEMORY}}"
+    stop_grace_period: 20s
+    labels: *managed-labels
+    volumes:
+      - "{{CONFIG_DIR}}:/run/agendia/config:ro"
+      - "{{SECRETS_DIR}}:/run/secrets:ro"
+    tmpfs:
+      - /tmp:uid=10001,gid=10001,mode=1777,nosuid,nodev,noexec
+      - /run/agendia/web:uid=10001,gid=10001,mode=0750,nosuid,nodev,noexec
+      - /opt/agendia/web/.next/cache:uid=10001,gid=10001,mode=0750,nosuid,nodev,noexec
+    networks: [edge, app]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://127.0.0.1:3000/_health/live >/dev/null && wget -qO- http://127.0.0.1:3000/_health/ready >/dev/null",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+
+  whatsapp-manager:
+    <<: *app-hardening
+    image: "{{MANAGER_IMAGE}}"
+    command: ["whatsapp-manager"]
+    restart: "{{RESTART}}"
+    cpus: "{{MANAGER_CPUS}}"
+    mem_limit: "{{MANAGER_MEMORY}}"
+    stop_grace_period: 90s
+    labels: *managed-labels
+    volumes:
+      - "{{CONFIG_DIR}}:/run/agendia/config:ro"
+      - "{{SECRETS_DIR}}:/run/secrets:ro"
+    tmpfs:
+      - /tmp:uid=10001,gid=10001,mode=1777,nosuid,nodev,noexec
+      - /run/agendia/whatsapp-manager:uid=10001,gid=10001,mode=0750,nosuid,nodev,noexec
+    networks: [edge, data]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://127.0.0.1:9090/live >/dev/null && wget -qO- http://127.0.0.1:9090/ready >/dev/null",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+
+  message-worker:
+    <<: *app-hardening
+    image: "{{WORKER_IMAGE}}"
+    command: ["message-worker"]
+    restart: "{{RESTART}}"
+    cpus: "{{WORKER_CPUS}}"
+    mem_limit: "{{WORKER_MEMORY}}"
+    stop_grace_period: 90s
+    labels: *managed-labels
+    volumes:
+      - "{{CONFIG_DIR}}:/run/agendia/config:ro"
+      - "{{SECRETS_DIR}}:/run/secrets:ro"
+    tmpfs:
+      - /tmp:uid=10001,gid=10001,mode=1777,nosuid,nodev,noexec
+      - /run/agendia/message-worker:uid=10001,gid=10001,mode=0750,nosuid,nodev,noexec
+    networks: [edge, data]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://127.0.0.1:9090/live >/dev/null && wget -qO- http://127.0.0.1:9090/ready >/dev/null",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+
+  cloudflared:
+    image: "{{CLOUDFLARED_IMAGE}}"
+    command:
+      [
+        "tunnel",
+        "--no-autoupdate",
+        "--logformat",
+        "json",
+        "--config",
+        "/run/agendia/config/cloudflared.yml",
+        "run",
+      ]
+    restart: "{{RESTART}}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    init: true
+    pids_limit: 64
+    cpus: "{{CLOUDFLARED_CPUS}}"
+    mem_limit: "{{CLOUDFLARED_MEMORY}}"
+    stop_grace_period: 20s
+    labels: *managed-labels
+    volumes:
+      - "{{CONFIG_DIR}}:/run/agendia/config:ro"
+      - "{{SECRETS_DIR}}:/run/secrets:ro"
+    networks: [edge]
+    healthcheck:
+      test: ["CMD", "cloudflared", "tunnel", "ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 10s
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+
+networks:
+  edge:
+    name: "{{PROJECT}}-edge"
+    labels: *managed-labels
+  app:
+    name: "{{PROJECT}}-app"
+    internal: true
+    labels: *managed-labels
+  data:
+    name: "{{PROJECT}}-data"
+    internal: true
+    labels: *managed-labels

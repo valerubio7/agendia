@@ -1,0 +1,9 @@
+# Staging requires externally provisioned Cloudflare Access deny-by-default; this file provisions no policy.
+tunnel: {{TUNNEL_NAME}}
+credentials-file: {{CREDENTIALS_FILE}}
+loglevel: info
+logformat: json
+ingress:
+  - hostname: {{HOSTNAME}}
+    service: http://web:3000
+  - service: http_status:404
