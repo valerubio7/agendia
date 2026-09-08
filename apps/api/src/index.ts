@@ -54,8 +54,20 @@ if (isReleaseEntrypoint) {
 			}),
 	)
 		.then((runtime) => {
-			const log = (level: "info" | "warn" | "error", code: "startup" | "draining" | "stopped" | "timeout") =>
-				console.info(serializeOperationalLog({ level, service: "api", environment: config.environment, releaseDigest: config.releaseDigest, instanceId: process.pid.toString(), code }));
+			const log = (
+				level: "info" | "warn" | "error",
+				code: "startup" | "draining" | "stopped" | "timeout",
+			) =>
+				console.info(
+					serializeOperationalLog({
+						level,
+						service: "api",
+						environment: config.environment,
+						releaseDigest: config.releaseDigest,
+						instanceId: process.pid.toString(),
+						code,
+					}),
+				);
 			log("info", "startup");
 			const drain = createDrain({
 				timeoutMs: 30_000,
@@ -69,12 +81,24 @@ if (isReleaseEntrypoint) {
 				closePools: () => runtime.pools.end(),
 				onTimeout: () => log("warn", "timeout"),
 			});
-			const stop = async () => { await drain(); log("info", "stopped"); };
+			const stop = async () => {
+				await drain();
+				log("info", "stopped");
+			};
 			process.once("SIGINT", () => void stop());
 			process.once("SIGTERM", () => void stop());
 		})
 		.catch(() => {
-			console.info(serializeOperationalLog({ level: "error", service: "api", environment: config.environment, releaseDigest: config.releaseDigest, instanceId: process.pid.toString(), code: "stopped" }));
+			console.info(
+				serializeOperationalLog({
+					level: "error",
+					service: "api",
+					environment: config.environment,
+					releaseDigest: config.releaseDigest,
+					instanceId: process.pid.toString(),
+					code: "stopped",
+				}),
+			);
 			process.exitCode = 1;
 		});
 }
