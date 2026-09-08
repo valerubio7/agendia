@@ -22,6 +22,8 @@
 		"test": "bun run test:scaffolding && bun run test:unit && bun run test:integration && bun run test:contracts && bun run test:harness && bun run test:e2e",
 		"db:generate": "bun run scripts/db-generate.ts",
 		"db:migrate": "bun run scripts/db-migrate.ts",
+		"db:provision-roles": "bun run scripts/provision-roles.ts",
+		"db:queue-init": "bun run scripts/queue-init.ts",
 		"db:check": "bun run scripts/db-check.ts",
 		"backup:drill": "bun run scripts/restore-drill.ts",
 		"security:scan": "bun run scripts/secret-scan.ts",

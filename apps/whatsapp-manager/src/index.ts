@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { PgBoss } from "pg-boss";
 import {
 	containQueueErrors,
@@ -187,11 +188,14 @@ export async function startWhatsAppManager(
 ) {
 	let inbound: PostgresInboundHandler | undefined;
 	const runtime = createProductionWhatsAppManager(env, socketFactory, (event) =>
-			inbound?.handle(event),
-		),
-		queueUrl = env.WORKER_DATABASE_URL ?? env.DATABASE_URL;
+		inbound?.handle(event),
+	);
+	const queuePublisherFile = env.QUEUE_PUBLISHER_DATABASE_URL_FILE;
+	if (!queuePublisherFile)
+		throw new Error("QUEUE_PUBLISHER_DATABASE_URL_FILE is required");
+	const queueUrl = readFileSync(queuePublisherFile, "utf8").trim();
 	if (!queueUrl)
-		throw new Error("WORKER_DATABASE_URL or DATABASE_URL is required");
+		throw new Error("QUEUE_PUBLISHER_DATABASE_URL_FILE is unavailable");
 	const boss = new PgBoss({
 		connectionString: queueUrl,
 		schema: "pgboss",
@@ -199,7 +203,6 @@ export async function startWhatsAppManager(
 	});
 	containQueueErrors(boss, "whatsapp-manager");
 	await boss.start();
-	await boss.createQueue("ai-generate");
 	const messaging = createMessagingRuntime(
 		runtime.pools,
 		boss,
@@ -278,7 +281,6 @@ if (process.env.AGENDIA_RUN_WHATSAPP_MANAGER === "1") {
 				...process.env,
 				DATABASE_URL: undefined,
 				MANAGER_DATABASE_URL: config.databaseUrl,
-				WORKER_DATABASE_URL: config.databaseUrl,
 			}),
 	)
 		.then((runtime) => {
