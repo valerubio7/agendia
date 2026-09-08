@@ -170,18 +170,23 @@ function validateDatabaseIdentity(config: RuntimeConfig): void {
 	}
 }
 
-function validateManifest(manifest: IsolationManifest, config: RuntimeConfig): void {
+function validateManifest(
+	manifest: IsolationManifest,
+	config: RuntimeConfig,
+): void {
 	const parsed = isolationManifestSchema.safeParse(manifest);
-	if (!parsed.success) throw new EnvironmentPreflightError("environment.manifest_invalid");
+	if (!parsed.success)
+		throw new EnvironmentPreflightError("environment.manifest_invalid");
 	const environments = parsed.data.environments;
 	if (
-		environments.staging.environmentId === environments.production.environmentId ||
+		environments.staging.environmentId ===
+			environments.production.environmentId ||
 		environments.staging.secretSetId === environments.production.secretSetId
 	)
 		preflightFail("environment.identity_reused");
-	for (const key of Object.keys(environments.staging.criticalSecretHashes) as Array<
-		keyof typeof environments.staging.criticalSecretHashes
-	>)
+	for (const key of Object.keys(
+		environments.staging.criticalSecretHashes,
+	) as Array<keyof typeof environments.staging.criticalSecretHashes>)
 		if (
 			environments.staging.criticalSecretHashes[key] ===
 			environments.production.criticalSecretHashes[key]
@@ -197,15 +202,21 @@ function validateManifest(manifest: IsolationManifest, config: RuntimeConfig): v
 	const e164 = /^\+[1-9]\d{7,14}$/;
 	if (
 		!e164.test(environments.staging.whatsapp.identity) ||
-		environments.staging.whatsapp.allowlist.some((identity) => !e164.test(identity))
+		environments.staging.whatsapp.allowlist.some(
+			(identity) => !e164.test(identity),
+		)
 	)
 		preflightFail("environment.staging_whatsapp_invalid");
 	if (
-		environments.staging.whatsapp.identity === environments.production.whatsapp.identity ||
-		environments.staging.whatsapp.allowlist.includes(environments.production.whatsapp.identity)
+		environments.staging.whatsapp.identity ===
+			environments.production.whatsapp.identity ||
+		environments.staging.whatsapp.allowlist.includes(
+			environments.production.whatsapp.identity,
+		)
 	)
 		preflightFail("environment.staging_whatsapp_production_identity");
-	const manifestEnvironment = environments[config.environment as "staging" | "production"];
+	const manifestEnvironment =
+		environments[config.environment as "staging" | "production"];
 	if (
 		!manifestEnvironment ||
 		manifestEnvironment.environmentId !== config.environmentId ||
@@ -255,13 +266,16 @@ export async function preflightReleaseEnvironment(
 	config: RuntimeConfig,
 	env: RuntimeEnvironment = process.env,
 ): Promise<void> {
-	if (config.environment !== "staging" && config.environment !== "production") return;
+	if (config.environment !== "staging" && config.environment !== "production")
+		return;
 	const manifestFile = env.AGENDIA_ISOLATION_MANIFEST_FILE;
 	if (!manifestFile)
 		throw new EnvironmentPreflightError("environment.manifest_unavailable");
 	let manifest!: IsolationManifest;
 	try {
-		manifest = JSON.parse(readFileSync(manifestFile, "utf8")) as IsolationManifest;
+		manifest = JSON.parse(
+			readFileSync(manifestFile, "utf8"),
+		) as IsolationManifest;
 	} catch {
 		preflightFail("environment.manifest_unavailable");
 	}
@@ -271,7 +285,9 @@ export async function preflightReleaseEnvironment(
 			config,
 			manifest,
 			queryMarker: async () =>
-				(await sql<EnvironmentMarker[]>`select environment, environment_id as "environmentId", secret_set_id as "secretSetId" from agendia_environment`) as EnvironmentMarker[],
+				(await sql<
+					EnvironmentMarker[]
+				>`select environment, environment_id as "environmentId", secret_set_id as "secretSetId" from agendia_environment`) as EnvironmentMarker[],
 		});
 	} catch (error) {
 		if (error instanceof EnvironmentPreflightError) throw error;
