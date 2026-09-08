@@ -147,3 +147,10 @@ PR 1 has since been completed in the cumulative update below. Parent lifecycle r
 - Added recursively redacted structured lifecycle logs and bounded single-flight drains. Local readiness flips before durable `draining` persistence; timeout/failure cannot skip mandatory lock cleanup or pool closure.
 - Strict TDD — ✅ Written: focused unit, integration, and contract tests failed before operational primitives, persistence, routes, and runtime wiring existed. ✅ Passed: final focused PR7 tests are green with runtime repository and concrete entrypoint coverage.
 - Definitive verification: focused operations unit, service-health integration, health contracts, full unit/integration/contracts, lint, typecheck, diff, generated-file and primary LSP checks all passed once. PR8 and later tasks remain unchecked.
+
+## PR 8 — Compose isolation and capacity policy
+
+- Added a valid bounded Compose template and closed production/staging renderer with literal project, network, host-path, config/secret, hardening, resource, restart, log, tmpfs, and health contracts. All image inputs require immutable `@sha256` references; release-set inputs are bound to the validated PR2 manifest.
+- Added separate cloudflared configuration with web-only ingress, terminal 404, native readiness healthcheck, no-autoupdate, JSON logs, and no provisioning claims. Staging capacity/window conflicts fail closed while measured gates remain PR13 scope.
+- Added staging-only teardown that validates managed staging labels, refuses every production candidate and `--rmi`, and compares injected production IDs/checksums before and after mocked staging destruction.
+- Strict TDD — ✅ Written: missing renderer/template and unsafe image/port/path/label/teardown fixtures failed. ✅ Passed: final focused 6/6 with 43 assertions. Definitive verification: contracts 56/56, integration 46/46, lint, typecheck, build, raw/rendered YAML, diff and stable production Next declaration checks passed. PR9+ remain unchecked.
