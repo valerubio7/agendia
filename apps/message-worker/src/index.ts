@@ -42,8 +42,6 @@ export async function startMessageWorker(
 		});
 	containQueueErrors(boss, "message-worker");
 	await boss.start();
-	await boss.createQueue("ai-generate");
-	await boss.createQueue("conversation-summary");
 	const options = {
 			apiKey: env.DEEPSEEK_API_KEY,
 			fetcher,
