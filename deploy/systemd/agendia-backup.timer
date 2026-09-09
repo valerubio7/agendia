@@ -1,0 +1,11 @@
+[Unit]
+Description=Schedule Agendia production backup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=30m
+Persistent=true
+Unit=agendia-backup.service
+
+[Install]
+WantedBy=timers.target

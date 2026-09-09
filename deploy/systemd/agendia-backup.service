@@ -1,0 +1,37 @@
+[Unit]
+Description=Agendia production encrypted backup
+Wants=network-online.target
+After=network-online.target
+# PR16 packaging installs this generated executable; this repository artifact does not claim installation.
+ConditionPathIsExecutable=/usr/libexec/agendia/agendia-backup
+
+[Service]
+Type=oneshot
+# Root is required only for root:root 0400 restic and backup-DB credential separation.
+# The backup executable must not run TypeScript, tsx, or a checkout.
+User=root
+Group=root
+UMask=0077
+EnvironmentFile=/etc/agendia/backup/repository.env
+EnvironmentFile=/etc/agendia/production/release.env
+# The generated executable owns UTC boundary derivation and runs daily maintenance plus backup.
+ExecStart=/usr/libexec/agendia/agendia-backup --scheduled
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+ReadWritePaths=/srv/agendia/production/backup-staging /srv/agendia/production/evidence
+ReadOnlyPaths=/etc/agendia/backup/repository.env /etc/agendia/backup/restic-password /etc/agendia/backup/database-url /etc/agendia/production/secrets
+# No age private identity is mounted or read by this unit; only a public recipient is configured.
