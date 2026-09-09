@@ -72,7 +72,7 @@ All estimates are additions plus deletions for one autonomous PR. Every PR keeps
 
 ### PR 12 — SOLO PILOT authorization (110–180 lines; 2–4 files; depends on PR 2 and PR 11)
 
-- [ ] At `.github/CODEOWNERS`, `authorize-promotion.yml`, governance matrix/runbook source, and authorization contract tests, implement manual same-digest staging then production authorization with truthful GitHub-plan fallback; keep MULTI-MAINTAINER controls documented but inactive. **RED:** reject missing staging evidence, digest mismatch, absent check, and claims of unavailable controls. **GREEN:** add minimum SOLO authorization manifest/checks without fictitious reviewers. **TRIANGULATE:** cover Environment available/unavailable paths and reject MULTI-only enforcement in SOLO mode. **REFACTOR:** centralize evidence schema; run `bun run test:contracts`, `bun run lint`, and `bun run typecheck`. <!-- sdd-owner: implementation -->
+- [x] At `.github/CODEOWNERS`, `authorize-promotion.yml`, governance matrix/runbook source, and authorization contract tests, implement manual same-digest staging then production authorization with truthful GitHub-plan fallback; keep MULTI-MAINTAINER controls documented but inactive. **RED:** reject missing staging evidence, digest mismatch, absent check, and claims of unavailable controls. **GREEN:** add minimum SOLO authorization manifest/checks without fictitious reviewers. **TRIANGULATE:** cover Environment available/unavailable paths and reject MULTI-only enforcement in SOLO mode. **REFACTOR:** centralize evidence schema; run `bun run test:contracts`, `bun run lint`, and `bun run typecheck`. <!-- sdd-owner: implementation -->
 
 ### PR 13 — Pull-based deployctl (190–300 lines; 3–5 files; depends on PR 8, PR 10, PR 11, and PR 12)
 

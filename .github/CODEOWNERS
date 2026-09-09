@@ -1,0 +1,6 @@
+# Advisory only while deploy/governance-matrix.json declares SOLO_PILOT.
+# MULTI-MAINTAINER enforcement is a future policy transition, not active control.
+/.github/ @valerubio7
+/deploy/ @valerubio7
+/packages/db/migrations/ @valerubio7
+/docs/runbooks/ @valerubio7

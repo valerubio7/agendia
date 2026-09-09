@@ -1,0 +1,126 @@
+name: Authorize promotion
+on:
+  workflow_dispatch:
+    inputs:
+      target: { required: true, type: choice, options: [staging, production] }
+      release_digest: { required: true, type: string }
+      release_workflow_run_id: { required: true, type: string }
+      staging_authorization_workflow_run_id: { required: false, type: string }
+permissions:
+  contents: read
+  actions: read
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      authorization_path: "${{ steps.governance.outputs.authorization_path }}"
+      draft: "${{ steps.draft.outputs.draft }}"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with: { bun-version: 1.4.0 }
+      - run: bun install --frozen-lockfile
+      - id: governance
+        run: |
+          path=$(bun -e 'const p=await import("./scripts/promotion-authorization.ts"),m=await Bun.file("deploy/governance-matrix.json").json();console.log(p.authorizationPathForMatrix(m))')
+          echo "authorization_path=$path" >> "$GITHUB_OUTPUT"
+      - id: release
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          RELEASE_RUN_ID: "${{ inputs.release_workflow_run_id }}"
+        with:
+          script: |
+            const id=Number(process.env.RELEASE_RUN_ID),{owner,repo}=context.repo,run=await github.rest.actions.getWorkflowRun({owner,repo,run_id:id});
+            if(!Number.isSafeInteger(id)||id<1||run.data.name!=="Release evidence"||run.data.conclusion!=="success"||run.data.event!=="workflow_run"||run.data.repository.full_name.toLowerCase()!==`${owner}/${repo}`.toLowerCase())throw Error("authorization.release_run_invalid");
+            const name=`release-evidence-${run.data.head_sha}`,artifacts=await github.paginate(github.rest.actions.listWorkflowRunArtifacts,{owner,repo,run_id:id,per_page:100});
+            if(artifacts.filter(a=>a.name===name&&!a.expired).length!==1)throw Error("authorization.release_artifact_invalid");
+            core.setOutput("artifact",name);core.setOutput("context",JSON.stringify({workflowRunId:id,name:run.data.name,event:run.data.event,headSha:run.data.head_sha,artifactName:name,sourceRepository:run.data.repository.full_name.toLowerCase(),conclusion:run.data.conclusion}));
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: "${{ steps.release.outputs.artifact }}"
+          run-id: "${{ inputs.release_workflow_run_id }}"
+          github-token: "${{ github.token }}"
+          path: release-evidence
+      - id: staging
+        if: inputs.target == 'production'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          STAGING_RUN_ID: "${{ inputs.staging_authorization_workflow_run_id }}"
+        with:
+          script: |
+            const id=Number(process.env.STAGING_RUN_ID),{owner,repo}=context.repo,run=await github.rest.actions.getWorkflowRun({owner,repo,run_id:id});
+            if(!Number.isSafeInteger(id)||id<1||run.data.name!=="Authorize promotion"||run.data.conclusion!=="success"||run.data.event!=="workflow_dispatch"||run.data.repository.full_name.toLowerCase()!==`${owner}/${repo}`.toLowerCase())throw Error("authorization.staging_run_invalid");
+            const name=`promotion-authorization-${id}`,artifacts=await github.paginate(github.rest.actions.listWorkflowRunArtifacts,{owner,repo,run_id:id,per_page:100});
+            if(artifacts.filter(a=>a.name===name&&!a.expired).length!==1)throw Error("authorization.staging_artifact_invalid");
+            core.setOutput("context",JSON.stringify({workflowRunId:id,name:run.data.name,event:run.data.event,artifactName:name,sourceRepository:run.data.repository.full_name.toLowerCase(),conclusion:run.data.conclusion}));
+      - if: inputs.target == 'production'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: "promotion-authorization-${{ inputs.staging_authorization_workflow_run_id }}"
+          run-id: "${{ inputs.staging_authorization_workflow_run_id }}"
+          github-token: "${{ github.token }}"
+          path: staging-authorization
+      - id: draft
+        env:
+          TARGET: "${{ inputs.target }}"
+          DIGEST: "${{ inputs.release_digest }}"
+          RELEASE_RUN: "${{ steps.release.outputs.context }}"
+          STAGING_RUN: "${{ steps.staging.outputs.context }}"
+        run: |
+          assert_flat_files() {
+            directory=$1 error=$2; shift 2
+            expected=$(printf '%s\n' "$@" | sort)
+            actual=$(find "$directory" -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | sort)
+            entries=$(find "$directory" -mindepth 1 -maxdepth 1 -printf . | wc -c)
+            [ "$entries" -eq "$#" ] && [ "$actual" = "$expected" ] || { echo "$error" >&2; exit 1; }
+          }
+          assert_flat_files release-evidence authorization.release_artifact_contents_invalid release-context.json release-manifest.json release-evidence.json sbom.spdx.json
+          if [ "$TARGET" = production ]; then
+            assert_flat_files staging-authorization authorization.staging_artifact_contents_invalid promotion-authorization.json
+          fi
+          bun -e 'import {createHash} from "node:crypto";const p=await import("./scripts/promotion-authorization.ts"),[e,r,c,m]=await Promise.all([Bun.file("release-evidence/release-evidence.json").json(),Bun.file("release-evidence/release-manifest.json").json(),Bun.file("release-evidence/release-context.json").json(),Bun.file("deploy/governance-matrix.json").json()]),sbomDigest=`sha256:${createHash("sha256").update(Buffer.from(await Bun.file("release-evidence/sbom.spdx.json").arrayBuffer())).digest("hex")}`,s=process.env.TARGET==="production"?await Bun.file("staging-authorization/promotion-authorization.json").json():undefined,d=p.preparePromotionAuthorization({target:process.env.TARGET,releaseDigest:process.env.DIGEST,releaseEvidence:e,releaseManifest:r,releaseContext:c,sbomDigest,matrix:m,releaseRun:JSON.parse(process.env.RELEASE_RUN),stagingAuthorization:s,stagingRun:process.env.STAGING_RUN?JSON.parse(process.env.STAGING_RUN):undefined});await Bun.write("promotion-draft.json",JSON.stringify(d))'
+          echo "draft=$(base64 -w0 promotion-draft.json)" >> "$GITHUB_OUTPUT"
+  finalize-fallback:
+    needs: prepare
+    if: needs.prepare.outputs.authorization_path == 'workflow-dispatch-fallback'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with: { bun-version: 1.4.0 }
+      - run: bun install --frozen-lockfile
+      - id: final
+        env:
+          DRAFT: "${{ needs.prepare.outputs.draft }}"
+          ACTOR: "${{ github.actor }}"
+          RUN_ID: "${{ github.run_id }}"
+          SHA: "${{ github.sha }}"
+        run: echo "$DRAFT"|base64 -d > promotion-draft.json && bun -e 'const p=await import("./scripts/promotion-authorization.ts"),d=await Bun.file("promotion-draft.json").json();await Bun.write("promotion-authorization.json",JSON.stringify(p.finalizePromotionAuthorization({draft:d,actor:process.env.ACTOR,authorizedAt:new Date().toISOString(),authorizationWorkflowRunId:Number(process.env.RUN_ID),sourceCommit:process.env.SHA})))'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: "promotion-authorization-${{ github.run_id }}"
+          path: promotion-authorization.json
+  finalize-environment:
+    needs: prepare
+    if: needs.prepare.outputs.authorization_path == 'github-environment'
+    runs-on: ubuntu-latest
+    environment: "${{ inputs.target }}"
+    permissions:
+      contents: read
+      actions: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with: { bun-version: 1.4.0 }
+      - run: bun install --frozen-lockfile
+      - env:
+          DRAFT: "${{ needs.prepare.outputs.draft }}"
+          ACTOR: "${{ github.actor }}"
+          RUN_ID: "${{ github.run_id }}"
+          SHA: "${{ github.sha }}"
+        run: echo "$DRAFT"|base64 -d > promotion-draft.json && bun -e 'const p=await import("./scripts/promotion-authorization.ts"),d=await Bun.file("promotion-draft.json").json();await Bun.write("promotion-authorization.json",JSON.stringify(p.finalizePromotionAuthorization({draft:d,actor:process.env.ACTOR,authorizedAt:new Date().toISOString(),authorizationWorkflowRunId:Number(process.env.RUN_ID),sourceCommit:process.env.SHA})))'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: "promotion-authorization-${{ github.run_id }}"
+          path: promotion-authorization.json

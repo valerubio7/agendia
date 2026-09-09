@@ -1,0 +1,69 @@
+{
+	"schemaVersion": 1,
+	"mode": "SOLO_PILOT",
+	"controls": [
+		{
+			"control": "pr-entry",
+			"desired": "required",
+			"availability": "available",
+			"effective": "policy-and-release-verifier",
+			"evidence": "pull-request-history"
+		},
+		{
+			"control": "squash-integration",
+			"desired": "required",
+			"availability": "unconfirmed",
+			"effective": "policy-and-release-verifier",
+			"evidence": "release-evidence"
+		},
+		{
+			"control": "main-integrity",
+			"desired": "desired",
+			"availability": "unconfirmed",
+			"effective": "policy-and-release-verifier",
+			"evidence": "release-evidence"
+		},
+		{
+			"control": "ci",
+			"desired": "required",
+			"availability": "available",
+			"effective": "required-checks",
+			"evidence": "release-evidence"
+		},
+		{
+			"control": "codeowners",
+			"desired": "advisory",
+			"availability": "available",
+			"effective": "advisory",
+			"evidence": "CODEOWNERS"
+		},
+		{
+			"control": "github-environments",
+			"desired": "desired",
+			"availability": "unconfirmed",
+			"effective": "workflow-dispatch-fallback",
+			"evidence": "github-plan-unconfirmed"
+		},
+		{
+			"control": "promotion",
+			"desired": "required",
+			"availability": "available",
+			"effective": "two-manual-workflow-dispatches",
+			"evidence": "promotion-authorization"
+		},
+		{
+			"control": "independent-reviewer",
+			"desired": "desired",
+			"availability": "unavailable",
+			"effective": "inactive",
+			"evidence": "multi-maintainer-transition"
+		},
+		{
+			"control": "self-review-prevention",
+			"desired": "desired",
+			"availability": "unavailable",
+			"effective": "inactive",
+			"evidence": "multi-maintainer-transition"
+		}
+	]
+}
