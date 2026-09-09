@@ -332,7 +332,10 @@ function validateRelease(input: {
 		throw new Error("authorization.required_checks_invalid");
 	return { evidence, context, hash: hash(evidence) };
 }
-function validateFinal(value: unknown): PromotionAuthorization {
+/** Validates the integrity-protected final authorization for local deploy consumers. */
+export function validateFinalPromotionAuthorization(
+	value: unknown,
+): PromotionAuthorization {
 	const authorization = finalSchema.parse(value);
 	const { authorizationId: _authorizationId, ...withoutId } = authorization;
 	if (authorization.authorizationId !== hash(withoutId))
@@ -375,7 +378,9 @@ export function preparePromotionAuthorization(input: {
 		throw new Error("authorization.staging_evidence_forbidden");
 	let stagingAuthorization: PromotionAuthorization | null = null;
 	if (input.target === "production") {
-		stagingAuthorization = validateFinal(input.stagingAuthorization);
+		stagingAuthorization = validateFinalPromotionAuthorization(
+			input.stagingAuthorization,
+		);
 		const stagingRun = stagingRunSchema.parse(input.stagingRun);
 		const summary = summarizeStaging(stagingAuthorization);
 		if (
