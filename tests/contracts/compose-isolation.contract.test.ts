@@ -4,6 +4,7 @@ import {
 	renderCloudflaredConfig,
 	renderCompose,
 } from "../../scripts/render-compose";
+import { postgresImage } from "../../scripts/support/locked-images.ts";
 import {
 	teardownStaging,
 	type ManagedResource,
@@ -14,7 +15,7 @@ const digest = (name: string) =>
 
 const universalImages = {
 	app: digest("app"),
-	postgres: digest("postgres"),
+	postgres: postgresImage,
 	cloudflared: digest("cloudflared"),
 };
 
@@ -45,6 +46,12 @@ describe("server Compose isolation", () => {
 			environment: "production",
 			images: universalImages,
 		});
+		expect(() =>
+			renderCompose({
+				environment: "production",
+				images: { ...universalImages, postgres: digest("not-postgres") },
+			}),
+		).toThrow("locked PostgreSQL image required");
 
 		expect(rendered).toContain('name: "agendia-prod"');
 		expect(rendered).toContain("agendia-prod-edge");
@@ -73,7 +80,7 @@ describe("server Compose isolation", () => {
 
 	test("renders staging only with explicit conflict-free capacity clearance and accepts release-set images", () => {
 		const releaseSet = {
-			postgres: digest("postgres"),
+			postgres: postgresImage,
 			cloudflared: digest("cloudflared"),
 			app: {
 				web: digest("web"),
@@ -150,7 +157,7 @@ describe("server Compose isolation", () => {
 
 	test("binds a release-set render to its validated immutable PR2 manifest", () => {
 		const releaseSet = {
-			postgres: digest("postgres"),
+			postgres: postgresImage,
 			cloudflared: digest("cloudflared"),
 			app: releaseSetImages,
 		};

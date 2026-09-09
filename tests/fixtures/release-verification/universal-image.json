@@ -1,0 +1,62 @@
+{
+	"commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	"ciConclusion": "success",
+	"pullRequests": [
+		{
+			"number": 1,
+			"merged": true,
+			"mergeCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"mergeMethod": "squash"
+		}
+	],
+	"checks": [
+		{
+			"name": "quality",
+			"status": "completed",
+			"conclusion": "success"
+		},
+		{
+			"name": "unit",
+			"status": "completed",
+			"conclusion": "success"
+		},
+		{
+			"name": "postgres",
+			"status": "completed",
+			"conclusion": "success"
+		},
+		{
+			"name": "browser",
+			"status": "completed",
+			"conclusion": "success"
+		},
+		{
+			"name": "aggregate-contract",
+			"status": "completed",
+			"conclusion": "success"
+		},
+		{
+			"name": "source-build",
+			"status": "completed",
+			"conclusion": "success"
+		}
+	],
+	"manifest": {
+		"schemaVersion": 1,
+		"artifactKind": "universal-image",
+		"commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"releaseDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+		"platform": "linux/amd64",
+		"images": {
+			"web": "ghcr.io/agendia/agendia@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+			"api": "ghcr.io/agendia/agendia@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+			"whatsapp-manager": "ghcr.io/agendia/agendia@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+			"message-worker": "ghcr.io/agendia/agendia@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+		},
+		"database": {
+			"compatibility": "expand-compatible",
+			"previousReleaseDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+			"minimumLedger": "0001_initial"
+		}
+	}
+}

@@ -13,6 +13,13 @@ describe("universal release image", () => {
 		expect(dockerfile).toMatch(/FROM oven\/bun@sha256:[a-f0-9]{64} AS builder/);
 		expect(dockerfile).toMatch(/FROM oven\/bun@sha256:[a-f0-9]{64} AS runtime/);
 		expect(dockerfile).toMatch(/USER 10001:10001/);
+		expect(dockerfile).toContain(
+			"org.opencontainers.image.revision=$OCI_REVISION",
+		);
+		expect(dockerfile).toContain(
+			"org.opencontainers.image.created=$OCI_CREATED",
+		);
+		expect(dockerfile).toContain("org.opencontainers.image.source=$OCI_SOURCE");
 		expect(dockerfile).not.toMatch(/next dev|tsx|COPY \. \/opt\/agendia/);
 		expect(ignore).toContain(".env*");
 		expect(ignore).toContain("tests/");

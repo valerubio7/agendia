@@ -1,0 +1,7 @@
+{
+	"schemaVersion": 1,
+	"compatibility": "expand-compatible",
+	"previousReleaseDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+	"minimumLedger": "0022_service_heartbeats.sql",
+	"previousReleaseDigestMeaning": "The zero digest is a genesis sentinel for the first release and is not observed deployment history."
+}

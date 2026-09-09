@@ -1,0 +1,138 @@
+name: Release evidence
+on: # zizmor: ignore[dangerous-triggers] -- only trusted successful CI push runs on main are accepted.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+permissions:
+  contents: read
+  actions: read
+  checks: read
+  pull-requests: read
+  packages: write
+  attestations: write
+  id-token: write
+concurrency:
+  group: release-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.run_attempt == 1
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Verify exact merged SHA, run jobs, and squash-only policy
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          ACTOR: ${{ github.event.workflow_run.actor.login }}
+        with:
+          script: |
+            const fs = require("fs"), owner = context.repo.owner, repo = context.repo.repo;
+            const sha = process.env.HEAD_SHA, runId = Number(process.env.RUN_ID);
+            const required = ["quality", "unit", "postgres", "browser", "aggregate-contract", "source-build"];
+            const [settings, prs, jobs] = await Promise.all([
+              github.rest.repos.get({ owner, repo }),
+              github.paginate(github.rest.repos.listPullRequestsAssociatedWithCommit, { owner, repo, commit_sha: sha, per_page: 100 }),
+              github.paginate(github.rest.actions.listJobsForWorkflowRun, { owner, repo, run_id: runId, per_page: 100 }),
+            ]);
+            if (!settings.data.allow_squash_merge || settings.data.allow_merge_commit || settings.data.allow_rebase_merge) throw new Error("release.squash_only_policy_required");
+            const merged = prs.find(pr => pr.merged_at && pr.merge_commit_sha === sha);
+            if (!merged) throw new Error("release.merged_squash_pr_missing");
+            const checks = required.map(name => {
+              const matches = jobs.filter(job => job.name === name);
+              if (matches.length !== 1 || matches[0].status !== "completed" || matches[0].conclusion !== "success") throw new Error(`release.required_check_invalid:${name}`);
+              return { name, status: matches[0].status, conclusion: matches[0].conclusion };
+            });
+            fs.writeFileSync("release-context.json", JSON.stringify({ sourceRepository: `${owner.toLowerCase()}/${repo.toLowerCase()}`, imageRepository: `ghcr.io/${owner.toLowerCase()}/${repo.toLowerCase()}`, actor: process.env.ACTOR, commit: sha, mergedPullRequest: merged.number, checks, workflowRunId: runId }));
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with: { bun-version: 1.4.0 }
+      - run: bun install --frozen-lockfile
+      - id: metadata
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          epoch=$(git show -s --format=%ct "$HEAD_SHA")
+          created=$(date -u -d "@${epoch}" +%Y-%m-%dT%H:%M:%SZ)
+          echo "image_repository=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "created=$created" >> "$GITHUB_OUTPUT"
+          echo "source=https://github.com/${GITHUB_REPOSITORY}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build one immutable linux/amd64 candidate locally
+        env:
+          REPOSITORY: ${{ steps.metadata.outputs.image_repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          CREATED: ${{ steps.metadata.outputs.created }}
+          SOURCE: ${{ steps.metadata.outputs.source }}
+        run: docker buildx build --platform linux/amd64 --load --tag "$REPOSITORY:$HEAD_SHA" --build-arg OCI_REVISION="$HEAD_SHA" --build-arg OCI_CREATED="$CREATED" --build-arg OCI_SOURCE="$SOURCE" .
+      - name: Run the read-only contract against the already-built candidate
+        env:
+          AGENDIA_RELEASE_IMAGE: ${{ steps.metadata.outputs.image_repository }}:${{ github.event.workflow_run.head_sha }}
+        run: bun test tests/e2e/release-image-readonly.contract.test.ts
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.metadata.outputs.image_repository }}:${{ github.event.workflow_run.head_sha }}
+          format: json
+          output: trivy.json
+          exit-code: "0"
+      - name: Enforce fail-closed Trivy policy
+        run: bun -e 'const {verifyScanPolicy}=await import("./scripts/release-verification.ts"); verifyScanPolicy(await Bun.file("trivy.json").json(), await Bun.file("deploy/security/high-exceptions.json").json())'
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push scanned bytes, parse, and inspect the immutable identity
+        id: image
+        env:
+          REPOSITORY: ${{ steps.metadata.outputs.image_repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          pushed_reference="$REPOSITORY:$HEAD_SHA"
+          output=$(docker push "$pushed_reference" 2>&1); printf '%s\n' "$output"; export PUSH_OUTPUT="$output" PUSHED_REFERENCE="$pushed_reference"
+          reference=$(bun -e 'const {parseDockerPushDigest}=await import("./scripts/release-verification.ts"); console.log(parseDockerPushDigest(process.env.PUSH_OUTPUT, process.env.PUSHED_REFERENCE))')
+          docker buildx imagetools inspect "$reference" >/dev/null
+          echo "reference=$reference" >> "$GITHUB_OUTPUT"; echo "digest=${reference##*@}" >> "$GITHUB_OUTPUT"
+      - name: Build and validate the universal release manifest
+        env:
+          REPOSITORY: ${{ steps.metadata.outputs.image_repository }}
+          COMMIT: ${{ github.event.workflow_run.head_sha }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: bun -e 'const d=await Bun.file("deploy/release-database.json").json(),p=await Bun.file("deploy/packaging-decision.json").json();const {createUniversalReleaseManifest}=await import("./scripts/release-verification.ts");await Bun.write("release-manifest.json",JSON.stringify(createUniversalReleaseManifest({packagingDecision:p,database:d,commit:process.env.COMMIT,repository:process.env.REPOSITORY,releaseDigest:process.env.DIGEST})));'
+      - uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+        with:
+          image: ${{ steps.image.outputs.reference }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+      - id: sbom-attestation
+        uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b # v2
+        with:
+          subject-name: ${{ steps.metadata.outputs.image_repository }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          sbom-path: sbom.spdx.json
+          push-to-registry: true
+      - id: provenance-attestation
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-name: ${{ steps.metadata.outputs.image_repository }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+      - name: Write strict immutable release evidence
+        env:
+          SBOM_URL: ${{ steps.sbom-attestation.outputs.attestation-url }}
+          PROVENANCE_URL: ${{ steps.provenance-attestation.outputs.attestation-url }}
+        run: |
+          now=$(date -u +%Y-%m-%dT%H:%M:%SZ); sbom_digest="sha256:$(sha256sum sbom.spdx.json | awk '{print $1}')"; export NOW="$now" SBOM_DIGEST="$sbom_digest" SBOM_ID="${SBOM_URL##*/}" PROVENANCE_ID="${PROVENANCE_URL##*/}"
+          bun -e 'const c=await Bun.file("release-context.json").json(),d=await Bun.file("deploy/release-database.json").json(),manifest=await Bun.file("release-manifest.json").json();const {createReleaseEvidence}=await import("./scripts/release-verification.ts");const candidate={commit:c.commit,ciConclusion:"success",pullRequests:[{number:c.mergedPullRequest,merged:true,mergeCommit:c.commit,mergeMethod:"squash"}],checks:c.checks,manifest};const evidence=createReleaseEvidence({candidate,sourceRepository:c.sourceRepository,imageRepository:c.imageRepository,workflowRunId:c.workflowRunId,mergedPullRequest:c.mergedPullRequest,actor:c.actor,timestamp:process.env.NOW,checks:c.checks,database:d,generatedCommands:{web:["bun","/opt/agendia/web/server.js"],api:["bun","/opt/agendia/api/index.js"],"whatsapp-manager":["bun","/opt/agendia/whatsapp-manager/index.js"],"message-worker":["bun","/opt/agendia/message-worker/index.js"]},sbom:{path:"sbom.spdx.json",format:"spdx-json",digest:process.env.SBOM_DIGEST},sbomAttestation:{id:process.env.SBOM_ID,url:process.env.SBOM_URL},provenanceAttestation:{id:process.env.PROVENANCE_ID,url:process.env.PROVENANCE_URL}});await Bun.write("release-evidence.json",JSON.stringify(evidence));'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-evidence-${{ github.event.workflow_run.head_sha }}
+          path: |
+            release-context.json
+            release-manifest.json
+            release-evidence.json
+            sbom.spdx.json
+          if-no-files-found: error
