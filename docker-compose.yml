@@ -1,6 +1,7 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    # Keep local development on the same verified linux/amd64 PostgreSQL bytes as CI.
+    image: postgres@sha256:075f7ba66bc9b3ce7d6b8b635208ff61cd7cf1a67d71ec530eec5d7ae0cbe571
     environment:
       POSTGRES_USER: agendia_migrator
       POSTGRES_PASSWORD: agendia

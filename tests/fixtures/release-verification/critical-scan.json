@@ -1,0 +1,12 @@
+{
+	"Results": [
+		{
+			"Vulnerabilities": [
+				{
+					"VulnerabilityID": "CVE-2026-9999",
+					"Severity": "CRITICAL"
+				}
+			]
+		}
+	]
+}

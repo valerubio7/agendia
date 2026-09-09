@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { validateReleaseManifest } from "@agendia/release-manifest";
+import { postgresImage } from "./support/locked-images.ts";
 
 export type Environment = "production" | "staging";
 type AppImages =
@@ -142,6 +143,8 @@ export function renderCompose(input: RenderInput): string {
 	requireEnvironment(input.environment);
 	if (input.environment === "staging") requireStagingClearance(input.capacity);
 	const environment = environments[input.environment];
+	if (input.images.postgres !== postgresImage)
+		throw new Error("locked PostgreSQL image required");
 	const apps = resolveApps(
 		input.images.app,
 		input.releaseManifest,

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { ReleaseManifest } from "@agendia/release-manifest";
 import { validateReleaseManifest } from "@agendia/release-manifest";
 import type { Sql } from "postgres";
+import { postgresImage } from "./locked-images.ts";
 
 const schemaQuery = `
   select kind, identity, definition from (
@@ -66,7 +67,7 @@ async function startVerificationPostgres() {
 	const postgresModule = "postgres";
 	const { PostgreSqlContainer } = await import(testcontainersModule);
 	const postgres = (await import(postgresModule)).default;
-	const container = await new PostgreSqlContainer("postgres:16-alpine").start();
+	const container = await new PostgreSqlContainer(postgresImage).start();
 	const sql = postgres(container.getConnectionUri(), { max: 4 });
 	return {
 		sql,

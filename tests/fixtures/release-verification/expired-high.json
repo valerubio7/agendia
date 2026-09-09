@@ -1,0 +1,12 @@
+{
+	"Results": [
+		{
+			"Vulnerabilities": [
+				{
+					"VulnerabilityID": "CVE-2026-0001",
+					"Severity": "HIGH"
+				}
+			]
+		}
+	]
+}

@@ -23,6 +23,12 @@ RUN AGENDIA_API_ORIGIN=http://api:3001 NEXT_TELEMETRY_DISABLED=1 bun run --cwd a
 RUN test -n "$(find /release/api -name 'argon2.linux-x64*' -print -quit)"
 
 FROM oven/bun@sha256:5ff609364c049b54eb0ff560ec96319729a972078ef2c755d758f0c6ef89c2d6 AS runtime
+ARG OCI_REVISION
+ARG OCI_CREATED
+ARG OCI_SOURCE
+LABEL org.opencontainers.image.revision=$OCI_REVISION \
+      org.opencontainers.image.created=$OCI_CREATED \
+      org.opencontainers.image.source=$OCI_SOURCE
 WORKDIR /opt/agendia
 COPY --from=builder --chown=10001:10001 /release/api ./api
 COPY --from=builder --chown=10001:10001 /release/whatsapp-manager ./whatsapp-manager

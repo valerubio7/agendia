@@ -4,6 +4,7 @@ import { PgBoss } from "pg-boss";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { postgresImage } from "../../scripts/support/locked-images.ts";
 import {
 	assertReadonlyRuntime,
 	readonlyDockerRunArguments,
@@ -11,7 +12,9 @@ import {
 } from "../../deploy/p0/readonly-runtime.ts";
 
 const commands = ["web", "api", "whatsapp-manager", "message-worker"] as const;
-const image = "agendia-release-pr4-readonly:test";
+const image =
+	process.env.AGENDIA_RELEASE_IMAGE ?? "agendia-release-pr4-readonly:test";
+const buildLocally = process.env.AGENDIA_RELEASE_IMAGE === undefined;
 const docker = (args: string[], options: { allowFailure?: boolean } = {}) => {
 	try {
 		return execFileSync("docker", args, { encoding: "utf8", stdio: "pipe" });
@@ -25,6 +28,15 @@ const docker = (args: string[], options: { allowFailure?: boolean } = {}) => {
 			return `${String(error.stdout)}${"stderr" in error ? String(error.stderr) : ""}`;
 		throw error;
 	}
+};
+const ensureImage = () => {
+	if (buildLocally)
+		docker(["build", "--platform", "linux/amd64", "-t", image, "."]);
+};
+const cleanupImage = () => {
+	if (!buildLocally) return;
+	docker(["image", "rm", "-f", image], { allowFailure: true });
+	expect(() => docker(["image", "inspect", image])).toThrow();
 };
 const runtimeEnvironment = (databaseFile: string) => [
 	"-e",
@@ -179,7 +191,7 @@ describe("release image read-only runtime", () => {
 		);
 		chmodSync(configDir, 0o755);
 		try {
-			docker(["build", "--platform", "linux/amd64", "-t", image, "."]);
+			ensureImage();
 			docker(["network", "create", "--internal", "--label", label, network]);
 			docker([
 				"run",
@@ -196,7 +208,7 @@ describe("release image read-only runtime", () => {
 				"postgres",
 				"-e",
 				"POSTGRES_PASSWORD=postgres",
-				"postgres:16-alpine",
+				postgresImage,
 			]);
 			docker([
 				"run",
@@ -240,8 +252,7 @@ describe("release image read-only runtime", () => {
 				.split("\n")
 				.filter(Boolean))
 				docker(["volume", "rm", "-f", volume], { allowFailure: true });
-			docker(["image", "rm", "-f", image], { allowFailure: true });
-			expect(() => docker(["image", "inspect", image])).toThrow();
+			cleanupImage();
 			expect(docker(["ps", "-aq", "--filter", `label=${label}`]).trim()).toBe(
 				"",
 			);
@@ -270,7 +281,7 @@ describe("release image read-only runtime", () => {
 		chmodSync(configDir, 0o755);
 		const applications: string[] = [];
 		try {
-			docker(["build", "--platform", "linux/amd64", "-t", image, "."]);
+			ensureImage();
 			docker(["network", "create", "--internal", "--label", label, network]);
 			docker([
 				"run",
@@ -289,7 +300,7 @@ describe("release image read-only runtime", () => {
 				`${process.cwd()}/packages/db/migrations:/migrations:ro`,
 				"-e",
 				"POSTGRES_PASSWORD=postgres",
-				"postgres:16-alpine",
+				postgresImage,
 			]);
 			for (let retry = 0; retry < 30; retry++) {
 				if (
@@ -525,8 +536,7 @@ describe("release image read-only runtime", () => {
 				.split("\n")
 				.filter(Boolean))
 				docker(["volume", "rm", "-f", volume], { allowFailure: true });
-			docker(["image", "rm", "-f", image], { allowFailure: true });
-			expect(() => docker(["image", "inspect", image])).toThrow();
+			cleanupImage();
 			expect(docker(["ps", "-aq", "--filter", `label=${label}`]).trim()).toBe(
 				"",
 			);
