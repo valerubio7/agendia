@@ -43,6 +43,38 @@ export * from "./outbound-dispatcher.ts";
 
 export const MIN_RECONNECT_INTERVAL_MS = 15_000;
 
+export function resolveLoopbackProbePort(value: string | undefined) {
+	if (value === undefined) return 9090;
+	if (!/^[1-9]\d{0,4}$/.test(value) || Number(value) > 65_535)
+		throw new Error("LOOPBACK_PROBE_PORT must be an integer from 1 to 65535");
+	return Number(value);
+}
+
+export function createInFlightOperations() {
+	const operations = new Set<Promise<unknown>>();
+	return {
+		track<T>(work: () => Promise<T>) {
+			const operation = work();
+			operations.add(operation);
+			void operation.then(
+				() => operations.delete(operation),
+				() => operations.delete(operation),
+			);
+			return operation;
+		},
+		async wait() {
+			const errors: unknown[] = [];
+			while (operations.size) {
+				const results = await Promise.allSettled([...operations]);
+				for (const result of results)
+					if (result.status === "rejected") errors.push(result.reason);
+			}
+			if (errors.length)
+				throw new AggregateError(errors, "In-flight runtime work failed");
+		},
+	};
+}
+
 export function createReconnectThrottle(options: {
 	run: () => Promise<unknown>;
 	intervalMs: number;
@@ -51,17 +83,21 @@ export function createReconnectThrottle(options: {
 	const now = options.now ?? Date.now,
 		intervalMs = Math.max(MIN_RECONNECT_INTERVAL_MS, options.intervalMs);
 	let running = false,
-		nextAt = now() + MIN_RECONNECT_INTERVAL_MS;
+		nextAt = now() + MIN_RECONNECT_INTERVAL_MS,
+		inFlight: Promise<unknown> | undefined;
 	return {
 		snapshot: () => ({ running, nextAt }),
 		tryRun: () => {
 			if (running || now() < nextAt) return false;
 			running = true;
-			void options.run().finally(() => {
+			inFlight = options.run().finally(() => {
 				running = false;
 				nextAt = now() + intervalMs;
 			});
 			return true;
+		},
+		waitForIdle: async () => {
+			await inFlight;
 		},
 	};
 }
@@ -217,11 +253,12 @@ export async function startWhatsAppManager(
 			run: () => runtime.manager.restart(),
 			intervalMs: pollMs,
 		});
+	const timerOperations = createInFlightOperations();
 	const timer = setInterval(() => {
-		void runtime.manager.processNext();
+		void timerOperations.track(() => runtime.manager.processNext());
 		reconnect.tryRun();
-		void messaging.aiOutbox.dispatchBatch();
-		void messaging.outbound.dispatchNext();
+		void timerOperations.track(() => messaging.aiOutbox.dispatchBatch());
+		void timerOperations.track(() => messaging.outbound.dispatchNext());
 	}, pollMs);
 	const readiness = createDurableReadiness({
 		persistDraining: () =>
@@ -247,6 +284,7 @@ export async function startWhatsAppManager(
 	});
 	await heartbeat.start();
 	const probe = createLoopbackProbe({
+		port: resolveLoopbackProbePort(env.LOOPBACK_PROBE_PORT),
 		ready: () =>
 			!readiness.ready().ready
 				? readiness.ready()
@@ -262,6 +300,15 @@ export async function startWhatsAppManager(
 		stopTimers: async () => {
 			clearInterval(timer);
 			heartbeat.stop();
+			const results = await Promise.allSettled([
+				timerOperations.wait(),
+				reconnect.waitForIdle(),
+			]);
+			const errors = results
+				.filter((result) => result.status === "rejected")
+				.map((result) => (result as PromiseRejectedResult).reason);
+			if (errors.length)
+				throw new AggregateError(errors, "Runtime timer shutdown failed");
 		},
 		stopProbe: () => probe.stop(),
 		stopRuntime: () => boss.stop(),

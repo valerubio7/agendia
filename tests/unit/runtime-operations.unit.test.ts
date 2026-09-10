@@ -8,8 +8,28 @@ import {
 	redactOperationsValue,
 	serializeOperationalLog,
 } from "@agendia/runtime-config";
+import {
+	createInFlightOperations,
+	resolveLoopbackProbePort as resolveManagerLoopbackProbePort,
+} from "../../apps/whatsapp-manager/src/index.ts";
+import { resolveLoopbackProbePort as resolveWorkerLoopbackProbePort } from "../../apps/message-worker/src/index.ts";
 
 describe("release operations primitives", () => {
+	test("RED: defaults probes to 9090 and accepts only explicit valid override ports", () => {
+		for (const resolve of [
+			resolveManagerLoopbackProbePort,
+			resolveWorkerLoopbackProbePort,
+		]) {
+			expect(resolve(undefined)).toBe(9090);
+			expect(resolve("9091")).toBe(9091);
+			expect(resolve("65535")).toBe(65535);
+			for (const value of ["", "0", "-1", "9090.5", " 9090", "65536", "1e3"])
+				expect(() => resolve(value)).toThrow(
+					"LOOPBACK_PROBE_PORT must be an integer from 1 to 65535",
+				);
+		}
+	});
+
 	test("RED: recursively removes sensitive payload values while preserving approved opaque IDs", () => {
 		const output = redactOperationsValue({
 			cookie: "session=private",
@@ -108,6 +128,26 @@ describe("release operations primitives", () => {
 		persistDraining?.();
 		await marked;
 		expect(writes).toEqual(["draining"]);
+	});
+
+	test("RED: waits for timer work that began before shutdown", async () => {
+		let release!: () => void;
+		const operations = createInFlightOperations();
+		operations.track(
+			() =>
+				new Promise<void>((resolve) => {
+					release = resolve;
+				}),
+		);
+		let settled = false;
+		const waiting = operations.wait().then(() => {
+			settled = true;
+		});
+		await Promise.resolve();
+		expect(settled).toBe(false);
+		release();
+		await waiting;
+		expect(settled).toBe(true);
 	});
 
 	test("RED: marks unready then drains once, continuing mandatory cleanup after runtime timeout", async () => {
