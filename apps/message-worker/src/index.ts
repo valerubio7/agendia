@@ -22,6 +22,12 @@ import {
 
 export const serviceName = "message-worker" as const;
 export * from "./ai-job.ts";
+export function resolveLoopbackProbePort(value: string | undefined) {
+	if (value === undefined) return 9090;
+	if (!/^[1-9]\d{0,4}$/.test(value) || Number(value) > 65_535)
+		throw new Error("LOOPBACK_PROBE_PORT must be an integer from 1 to 65535");
+	return Number(value);
+}
 export const createMessageWorker = (
 	pools: ReturnType<typeof createRuntimePools>,
 	provider: AiProvider,
@@ -115,6 +121,7 @@ export async function startMessageWorker(
 	});
 	await heartbeat.start();
 	const probe = createLoopbackProbe({
+		port: resolveLoopbackProbePort(env.LOOPBACK_PROBE_PORT),
 		ready: () =>
 			!readiness.ready().ready
 				? readiness.ready()

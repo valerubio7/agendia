@@ -1,9 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-const lock = readFileSync(
-	join(import.meta.dir, "../../deploy/images.lock"),
-	"utf8",
-);
+const lock = readFileSync(join(__dirname, "../../deploy/images.lock"), "utf8");
 
 export function lockedImage(name: "BUN_IMAGE" | "POSTGRES_IMAGE"): string {
 	const match = lock.match(new RegExp(`^${name}=([^\\s]+)$`, "m"));
