@@ -30,8 +30,8 @@ services:
     labels: *managed-labels
     volumes:
       - "{{POSTGRES_BIND}}:/var/lib/postgresql/data"
-      - "{{CONFIG_DIR}}:/run/agendia/config:ro"
-      - "{{SECRETS_DIR}}:/run/secrets:ro"
+      - "{{CONFIG_DIR}}/postgres.env:/run/agendia/config/postgres.env:ro"
+      - "{{SECRETS_DIR}}/postgres-password:/run/secrets/postgres-password:ro"
     networks: [data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
@@ -51,9 +51,17 @@ services:
     mem_limit: "{{API_MEMORY}}"
     stop_grace_period: 30s
     labels: *managed-labels
+    env_file:
+      - path: "{{CONFIG_DIR}}/api.env"
+        required: true
+        format: raw
+    environment:
+      AGENDIA_PROCESS: "api"
+      AGENDIA_ENVIRONMENT: "{{ENVIRONMENT}}"
+      AGENDIA_RELEASE_DIGEST: "{{RELEASE_DIGEST}}"
     volumes:
-      - "{{CONFIG_DIR}}:/run/agendia/config:ro"
-      - "{{SECRETS_DIR}}:/run/secrets:ro"
+      - "{{CONFIG_DIR}}/isolation-manifest.json:/run/agendia/config/isolation-manifest.json:ro"
+      - "{{SECRETS_DIR}}/api-database-url:/run/secrets/api-database-url:ro"
     tmpfs:
       - /tmp:uid=10001,gid=10001,mode=1777,nosuid,nodev,noexec
       - /run/agendia/api:uid=10001,gid=10001,mode=0750,nosuid,nodev,noexec
@@ -77,9 +85,17 @@ services:
     mem_limit: "{{WEB_MEMORY}}"
     stop_grace_period: 20s
     labels: *managed-labels
+    env_file:
+      - path: "{{CONFIG_DIR}}/web.env"
+        required: true
+        format: raw
+    environment:
+      AGENDIA_PROCESS: "web"
+      AGENDIA_ENVIRONMENT: "{{ENVIRONMENT}}"
+      AGENDIA_RELEASE_DIGEST: "{{RELEASE_DIGEST}}"
     volumes:
-      - "{{CONFIG_DIR}}:/run/agendia/config:ro"
-      - "{{SECRETS_DIR}}:/run/secrets:ro"
+      - "{{CONFIG_DIR}}/isolation-manifest.json:/run/agendia/config/isolation-manifest.json:ro"
+      - "{{SECRETS_DIR}}/web-database-url:/run/secrets/web-database-url:ro"
     tmpfs:
       - /tmp:uid=10001,gid=10001,mode=1777,nosuid,nodev,noexec
       - /run/agendia/web:uid=10001,gid=10001,mode=0750,nosuid,nodev,noexec
@@ -104,9 +120,17 @@ services:
     mem_limit: "{{MANAGER_MEMORY}}"
     stop_grace_period: 90s
     labels: *managed-labels
+    env_file:
+      - path: "{{CONFIG_DIR}}/whatsapp-manager.env"
+        required: true
+        format: raw
+    environment:
+      AGENDIA_PROCESS: "whatsapp-manager"
+      AGENDIA_ENVIRONMENT: "{{ENVIRONMENT}}"
+      AGENDIA_RELEASE_DIGEST: "{{RELEASE_DIGEST}}"
     volumes:
-      - "{{CONFIG_DIR}}:/run/agendia/config:ro"
-      - "{{SECRETS_DIR}}:/run/secrets:ro"
+      - "{{CONFIG_DIR}}/isolation-manifest.json:/run/agendia/config/isolation-manifest.json:ro"
+      - "{{SECRETS_DIR}}/whatsapp-manager-database-url:/run/secrets/whatsapp-manager-database-url:ro"
     tmpfs:
       - /tmp:uid=10001,gid=10001,mode=1777,nosuid,nodev,noexec
       - /run/agendia/whatsapp-manager:uid=10001,gid=10001,mode=0750,nosuid,nodev,noexec
@@ -130,9 +154,17 @@ services:
     mem_limit: "{{WORKER_MEMORY}}"
     stop_grace_period: 90s
     labels: *managed-labels
+    env_file:
+      - path: "{{CONFIG_DIR}}/message-worker.env"
+        required: true
+        format: raw
+    environment:
+      AGENDIA_PROCESS: "message-worker"
+      AGENDIA_ENVIRONMENT: "{{ENVIRONMENT}}"
+      AGENDIA_RELEASE_DIGEST: "{{RELEASE_DIGEST}}"
     volumes:
-      - "{{CONFIG_DIR}}:/run/agendia/config:ro"
-      - "{{SECRETS_DIR}}:/run/secrets:ro"
+      - "{{CONFIG_DIR}}/isolation-manifest.json:/run/agendia/config/isolation-manifest.json:ro"
+      - "{{SECRETS_DIR}}/message-worker-database-url:/run/secrets/message-worker-database-url:ro"
     tmpfs:
       - /tmp:uid=10001,gid=10001,mode=1777,nosuid,nodev,noexec
       - /run/agendia/message-worker:uid=10001,gid=10001,mode=0750,nosuid,nodev,noexec
@@ -146,6 +178,72 @@ services:
       interval: 15s
       timeout: 5s
       retries: 4
+
+  provision-roles: &one-shot
+    <<: *app-hardening
+    image: "{{API_IMAGE}}"
+    command: ["provision-roles"]
+    profiles: [oneshot]
+    restart: "no"
+    logging: { driver: "none" }
+    env_file:
+      - path: "{{CONFIG_DIR}}/provision-roles.env"
+        required: true
+        format: raw
+    environment: { AGENDIA_PROCESS: "provision-roles", AGENDIA_ENVIRONMENT: "{{ENVIRONMENT}}", AGENDIA_RELEASE_DIGEST: "{{RELEASE_DIGEST}}" }
+    volumes:
+      - "{{CONFIG_DIR}}/isolation-manifest.json:/run/agendia/config/isolation-manifest.json:ro"
+      - "{{SECRETS_DIR}}/cluster-admin-database-url:/run/secrets/cluster-admin-database-url:ro"
+      - "{{SECRETS_DIR}}/role-cluster-admin-password:/run/secrets/role-cluster-admin-password:ro"
+      - "{{SECRETS_DIR}}/role-migrator-password:/run/secrets/role-migrator-password:ro"
+      - "{{SECRETS_DIR}}/role-api-password:/run/secrets/role-api-password:ro"
+      - "{{SECRETS_DIR}}/role-manager-password:/run/secrets/role-manager-password:ro"
+      - "{{SECRETS_DIR}}/role-queue-publisher-password:/run/secrets/role-queue-publisher-password:ro"
+      - "{{SECRETS_DIR}}/role-worker-password:/run/secrets/role-worker-password:ro"
+      - "{{SECRETS_DIR}}/role-queue-owner-password:/run/secrets/role-queue-owner-password:ro"
+      - "{{SECRETS_DIR}}/role-backup-password:/run/secrets/role-backup-password:ro"
+    networks: [data]
+
+  migrate:
+    <<: *one-shot
+    command: ["migrate"]
+    env_file:
+      - path: "{{CONFIG_DIR}}/migrate.env"
+        required: true
+        format: raw
+    environment: { AGENDIA_PROCESS: "migrate", AGENDIA_ENVIRONMENT: "{{ENVIRONMENT}}", AGENDIA_RELEASE_DIGEST: "{{RELEASE_DIGEST}}", AGENDIA_RELEASE_MANIFEST_FILE: "/run/agendia/config/release-manifest.json", AGENDIA_MIGRATION_EVIDENCE_FILE: "/run/agendia/config/migration-evidence.json" }
+    volumes:
+      - "{{CONFIG_DIR}}/isolation-manifest.json:/run/agendia/config/isolation-manifest.json:ro"
+      - "{{CONFIG_DIR}}/release-manifest.json:/run/agendia/config/release-manifest.json:ro"
+      - "{{CONFIG_DIR}}/migration-evidence.json:/run/agendia/config/migration-evidence.json:ro"
+      - "{{SECRETS_DIR}}/migrate-database-url:/run/secrets/migrate-database-url:ro"
+
+  queue-init:
+    <<: *one-shot
+    command: ["queue-init"]
+    env_file:
+      - path: "{{CONFIG_DIR}}/queue-init.env"
+        required: true
+        format: raw
+    environment: { AGENDIA_PROCESS: "queue-init", AGENDIA_ENVIRONMENT: "{{ENVIRONMENT}}", AGENDIA_RELEASE_DIGEST: "{{RELEASE_DIGEST}}" }
+    volumes:
+      - "{{CONFIG_DIR}}/isolation-manifest.json:/run/agendia/config/isolation-manifest.json:ro"
+      - "{{SECRETS_DIR}}/queue-init-database-url:/run/secrets/queue-init-database-url:ro"
+
+  bootstrap-admin:
+    <<: *one-shot
+    user: "0:0"
+    command: ["bootstrap-admin"]
+    env_file:
+      - path: "{{CONFIG_DIR}}/bootstrap-admin.env"
+        required: true
+        format: raw
+    environment: { AGENDIA_PROCESS: "bootstrap-admin", AGENDIA_ENVIRONMENT: "{{ENVIRONMENT}}", AGENDIA_RELEASE_DIGEST: "{{RELEASE_DIGEST}}", AGENDIA_ADMIN_PASSWORD_FILE: "/run/agendia/{{ENVIRONMENT}}/bootstrap/admin-password" }
+    volumes:
+      - "{{CONFIG_DIR}}/isolation-manifest.json:/run/agendia/config/isolation-manifest.json:ro"
+      - "{{SECRETS_DIR}}/bootstrap-admin-database-url:/run/secrets/bootstrap-admin-database-url:ro"
+      - "/run/agendia/{{ENVIRONMENT}}/bootstrap/admin-password:/run/agendia/{{ENVIRONMENT}}/bootstrap/admin-password:ro"
+    networks: [data]
 
   cloudflared:
     image: "{{CLOUDFLARED_IMAGE}}"
@@ -169,9 +267,17 @@ services:
     mem_limit: "{{CLOUDFLARED_MEMORY}}"
     stop_grace_period: 20s
     labels: *managed-labels
+    env_file:
+      - path: "{{CONFIG_DIR}}/cloudflared.env"
+        required: true
+        format: raw
+    environment:
+      AGENDIA_PROCESS: "cloudflared"
+      AGENDIA_ENVIRONMENT: "{{ENVIRONMENT}}"
+      AGENDIA_RELEASE_DIGEST: "{{RELEASE_DIGEST}}"
     volumes:
-      - "{{CONFIG_DIR}}:/run/agendia/config:ro"
-      - "{{SECRETS_DIR}}:/run/secrets:ro"
+      - "{{CONFIG_DIR}}/cloudflared.yml:/run/agendia/config/cloudflared.yml:ro"
+      - "{{SECRETS_DIR}}/cloudflared-{{ENVIRONMENT}}.json:/run/secrets/cloudflared-{{ENVIRONMENT}}.json:ro"
     networks: [edge]
     healthcheck:
       test: ["CMD", "cloudflared", "tunnel", "ready"]

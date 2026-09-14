@@ -1,12 +1,18 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
+	closeSync,
 	existsSync,
+	fsyncSync,
+	mkdirSync,
+	openSync,
 	readFileSync,
 	renameSync,
+	statSync,
+	rmSync,
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
 	validateReleaseManifest,
 	type ReleaseManifest,
@@ -24,6 +30,125 @@ const cloudflaredRepository = "cloudflare/cloudflared";
 type Environment = "staging" | "production";
 type ImageMap = Record<(typeof processes)[number], string>;
 type RecordValue = Record<string, unknown>;
+type HostOperation =
+	| "plan"
+	| "apply"
+	| "bootstrap"
+	| "status"
+	| "smoke"
+	| "rollback";
+export type HostCommand = {
+	operation: HostOperation;
+	environment: Environment;
+	commit: string;
+	digest: string;
+};
+
+/** Parses only the direct-source operator grammar; it never accepts paths, JSON, or flags through. */
+export function parseHostCommand(argv: readonly string[]): HostCommand {
+	const [operation, target, commitFlag, commit, digestFlag, digest, ...rest] =
+		argv;
+	if (
+		rest.length ||
+		!["plan", "apply", "bootstrap", "status", "smoke", "rollback"].includes(
+			String(operation),
+		) ||
+		(target !== "staging" && target !== "production") ||
+		commitFlag !== "--commit" ||
+		typeof commit !== "string" ||
+		!/^[a-f0-9]{40}$/.test(commit) ||
+		digestFlag !== "--digest" ||
+		typeof digest !== "string" ||
+		!/^sha256:[a-f0-9]{64}$/.test(digest)
+	)
+		throw new Error("deploy.command_invalid");
+	return {
+		operation: operation as HostOperation,
+		environment: target,
+		commit,
+		digest,
+	};
+}
+
+function releaseRoot(environment: Environment) {
+	return `/srv/agendia/${environment}/release`;
+}
+function matchesCommandPlan(command: HostCommand, plan: DeploymentPlan) {
+	return (
+		plan.environment === command.environment &&
+		plan.snapshot.audit.commit === command.commit &&
+		plan.snapshot.releaseDigest === command.digest
+	);
+}
+function approvedPlan(command: HostCommand): DeploymentPlan {
+	const path = join(
+		releaseRoot(command.environment),
+		"inputs",
+		"approved-plan.json",
+	);
+	const info = statSync(path);
+	if (info.uid !== 0 || (info.mode & 0o022) !== 0)
+		throw new Error("deploy.approved_input_invalid");
+	try {
+		const plan = planDeployment(JSON.parse(readFileSync(path, "utf8")));
+		if (!matchesCommandPlan(command, plan))
+			throw new Error("deploy.approved_input_invalid");
+		return plan;
+	} catch {
+		throw new Error("deploy.approved_input_invalid");
+	}
+}
+
+/** Executes only a sealed plan stored in the fixed root-owned release-input location. */
+export async function runApprovedHostCommand(
+	command: HostCommand,
+	plan: DeploymentPlan,
+	adapter: DeploymentAdapter,
+): Promise<void> {
+	if (!matchesCommandPlan(command, plan))
+		throw new Error("deploy.approved_input_invalid");
+	if (command.operation === "plan") return;
+	if (command.operation === "status") {
+		assertCanonicalPlan(plan);
+		const state = parseState(adapter.readState(), command.environment).current;
+		if (
+			state &&
+			(!equal(state, plan.snapshot) ||
+				hash(adapter.readCompose() ?? "") !== state.composeHash)
+		)
+			throw new Error("deploy.status_invalid");
+		return;
+	}
+	if (command.operation === "apply" || command.operation === "bootstrap")
+		return applyDeployment(plan, adapter, command.operation === "bootstrap");
+	if (command.operation === "rollback")
+		return rollbackDeployment(plan, adapter);
+	throw new Error("deploy.operation_unavailable");
+}
+
+/** Preflights the actual executing checkout before dispatching its fixed approved input. */
+export async function main(argv = process.argv.slice(2)): Promise<void> {
+	const command = parseHostCommand(argv),
+		root = dirname(import.meta.dir);
+	const { createHostRuntime, hostSourcePreflight } = await import(
+		"./host-deployment-runtime.ts"
+	);
+	hostSourcePreflight(root, command.commit);
+	const release = releaseRoot(command.environment);
+	await runApprovedHostCommand(
+		command,
+		approvedPlan(command),
+		createFilesystemDeploymentAdapter(
+			release,
+			createHostRuntime({ environment: command.environment, root: release }),
+		),
+	);
+}
+if (import.meta.main)
+	main().catch(() => {
+		console.error("deploy.command_failed");
+		process.exitCode = 1;
+	});
 
 interface StateEnvelope {
 	schemaVersion: 1;
@@ -35,6 +160,7 @@ export interface DeploymentRuntime {
 	pull(reference: string): Promise<void>;
 	inspect(reference: string): Promise<{ reference: string; platform: string }>;
 	converge(compose: string): Promise<void>;
+	runOrdered?(bootstrapRequired: boolean): Promise<void>;
 }
 /** Bounded local adapter: state is one envelope and Compose is an independently staged byte file. */
 export interface DeploymentAdapter extends DeploymentRuntime {
@@ -42,7 +168,14 @@ export interface DeploymentAdapter extends DeploymentRuntime {
 	writeStateAtomic(state: StateEnvelope | undefined): void;
 	readCompose(): string | undefined;
 	stageComposeAtomic(compose: string | undefined): void;
+	readEvidence?(): string | undefined;
+	writeEvidenceAtomic?(evidence: string | undefined): void;
+	withLock?<T>(operation: () => Promise<T>): Promise<T>;
 }
+export type AtomicStep = "temp-open" | "file-sync" | "rename" | "parent-sync";
+export type PersistenceHooks = {
+	beforeAtomicStep?(step: AtomicStep): void;
+};
 export interface ReleaseSnapshot {
 	schemaVersion: 1;
 	releaseDigest: string;
@@ -496,13 +629,86 @@ function parseSnapshot(
 		audit: audit as ReleaseSnapshot["audit"],
 	} as ReleaseSnapshot;
 }
-function restore(
-	adapter: DeploymentAdapter,
-	state: StateEnvelope | undefined,
-	compose: string | undefined,
+function operationEvidence(
+	plan: DeploymentPlan,
+	phase: "apply" | "rollback",
+	result: "started" | "pass" | "fail",
+	snapshot = plan.snapshot,
 ) {
-	adapter.writeStateAtomic(state);
-	adapter.stageComposeAtomic(compose);
+	return JSON.stringify({
+		schemaVersion: 1,
+		environment: plan.environment,
+		toolingCommit: plan.snapshot.audit.commit,
+		bunVersion: "1.4.0",
+		releaseDigest: snapshot.releaseDigest,
+		phase,
+		result,
+		occurredAt: new Date().toISOString(),
+		sqlRollback: false,
+		externalRestore: false,
+	});
+}
+function operationFailure(
+	adapter: DeploymentAdapter,
+	plan: DeploymentPlan,
+	phase: "apply" | "rollback",
+	snapshot = plan.snapshot,
+) {
+	try {
+		adapter.writeEvidenceAtomic?.(
+			operationEvidence(plan, phase, "fail", snapshot),
+		);
+		return true;
+	} catch {
+		return false;
+	}
+}
+async function underLock<T>(
+	adapter: DeploymentAdapter,
+	operation: () => Promise<T>,
+) {
+	return adapter.withLock ? adapter.withLock(operation) : operation();
+}
+async function convergeSnapshot(
+	adapter: DeploymentAdapter,
+	snapshot: ReleaseSnapshot,
+	bootstrapRequired = false,
+	ordered = false,
+) {
+	for (const reference of snapshot.imageReferences) {
+		await adapter.pull(reference);
+		const inspected = await adapter.inspect(reference);
+		if (
+			inspected.reference !== reference ||
+			inspected.platform !== "linux/amd64"
+		)
+			throw new Error("deploy.image_inspection_invalid");
+	}
+	const compose = adapter.readCompose();
+	if (compose === undefined || hash(compose) !== snapshot.composeHash)
+		throw new Error("deploy.compose_hash_invalid");
+	if (ordered) {
+		if (!adapter.runOrdered) throw new Error("deploy.ordered_runtime_required");
+		await adapter.runOrdered(bootstrapRequired);
+	} else await adapter.converge(compose);
+}
+
+/** Acquires an exclusive release-directory lock; callers never wait behind another environment operation. */
+export async function withEnvironmentLock<T>(
+	root: string,
+	operation: () => Promise<T>,
+): Promise<T> {
+	const lock = join(root, ".deploy.lock");
+	try {
+		mkdirSync(lock, { mode: 0o700 });
+	} catch {
+		throw new Error("deploy.operation_locked");
+	}
+	try {
+		return await operation();
+	} finally {
+		rmSync(lock, { recursive: true, force: true });
+	}
 }
 
 /** Validates data supplied by an external GitHub artifact verifier; deployctl makes no GitHub call. */
@@ -619,134 +825,134 @@ export function planDeployment(value: unknown): DeploymentPlan {
 	};
 	return sealPlan(plan);
 }
-/** Stages Compose, then verifies persisted bytes after all pulls before atomically switching the state envelope. */
+/** Publishes state only after convergence; a started effect is never automatically reconverged or rolled back. */
 export async function applyDeployment(
 	plan: DeploymentPlan,
 	adapter: DeploymentAdapter,
+	bootstrapRequired = false,
 ) {
 	assertCanonicalPlan(plan);
-	const beforeState = adapter.readState(),
-		beforeCompose = adapter.readCompose(),
-		prior = parseState(beforeState, plan.environment);
-	if (
-		(plan.manifest.database.previousReleaseDigest === genesisDigest &&
-			prior.current) ||
-		(plan.manifest.database.previousReleaseDigest !== genesisDigest &&
-			prior.current?.releaseDigest !==
-				plan.manifest.database.previousReleaseDigest)
-	)
-		throw new Error("deploy.current_identity_invalid");
-	adapter.stageComposeAtomic(plan.compose);
-	try {
-		for (const reference of plan.imageReferences) {
-			await adapter.pull(reference);
-			const inspected = await adapter.inspect(reference);
-			if (
-				inspected.reference !== reference ||
-				inspected.platform !== "linux/amd64"
-			)
-				throw new Error("deploy.image_inspection_invalid");
-		}
+	if (!adapter.runOrdered) throw new Error("deploy.ordered_runtime_required");
+	return underLock(adapter, async () => {
+		const prior = parseState(adapter.readState(), plan.environment);
 		if (
-			adapter.readCompose() === undefined ||
-			hash(adapter.readCompose()!) !== plan.composeHash
+			(plan.manifest.database.previousReleaseDigest === genesisDigest &&
+				prior.current) ||
+			(plan.manifest.database.previousReleaseDigest !== genesisDigest &&
+				prior.current?.releaseDigest !==
+					plan.manifest.database.previousReleaseDigest)
 		)
-			throw new Error("deploy.compose_hash_invalid");
-		adapter.writeStateAtomic(
-			stateEnvelope({
-				current: plan.snapshot,
-				...(prior.current ? { previous: prior.current } : {}),
-			}),
-		);
+			throw new Error("deploy.current_identity_invalid");
+		adapter.stageComposeAtomic(plan.compose);
+		adapter.writeEvidenceAtomic?.(operationEvidence(plan, "apply", "started"));
 		try {
-			await adapter.converge(adapter.readCompose()!);
-		} catch (error) {
-			restore(adapter, beforeState, beforeCompose);
-			if (prior.current)
-				await adapter.converge(prior.current.compose).catch(() => undefined);
-			throw error;
+			await convergeSnapshot(adapter, plan.snapshot, bootstrapRequired, true);
+		} catch {
+			if (!operationFailure(adapter, plan, "apply"))
+				throw new Error("deploy.persistence_unknown");
+			throw new Error("deploy.operation_failed");
 		}
-	} catch (error) {
-		if (
-			adapter.readState() !== beforeState ||
-			adapter.readCompose() !== beforeCompose
-		)
-			restore(adapter, beforeState, beforeCompose);
-		throw error;
-	}
+		try {
+			adapter.writeStateAtomic(
+				stateEnvelope({
+					current: plan.snapshot,
+					...(prior.current ? { previous: prior.current } : {}),
+				}),
+			);
+			adapter.writeEvidenceAtomic?.(operationEvidence(plan, "apply", "pass"));
+		} catch {
+			operationFailure(adapter, plan, "apply");
+			throw new Error("deploy.persistence_unknown");
+		}
+	});
 }
-/** Rolls back only an image-compatible historical snapshot; it never performs a data rollback. */
+/** Rolls back only image and Compose from an expand-compatible snapshot; it never invokes SQL or one-shots. */
 export async function rollbackDeployment(
 	plan: DeploymentPlan,
 	adapter: DeploymentAdapter,
 ) {
 	assertCanonicalPlan(plan);
-	const beforeState = adapter.readState(),
-		beforeCompose = adapter.readCompose(),
-		state = parseState(beforeState, plan.environment),
-		current = state.current,
-		previous = state.previous;
-	if (
-		!current ||
-		!previous ||
-		!equal(current, plan.snapshot) ||
-		current.compatibility !== "expand-compatible" ||
-		current.manifest.database.previousReleaseDigest !== previous.releaseDigest
-	)
-		throw new Error("deploy.rollback_invalid");
-	adapter.stageComposeAtomic(previous.compose);
-	try {
-		for (const reference of previous.imageReferences) {
-			await adapter.pull(reference);
-			const inspected = await adapter.inspect(reference);
-			if (
-				inspected.reference !== reference ||
-				inspected.platform !== "linux/amd64"
-			)
-				throw new Error("deploy.image_inspection_invalid");
-		}
+	return underLock(adapter, async () => {
+		const state = parseState(adapter.readState(), plan.environment),
+			current = state.current,
+			previous = state.previous;
 		if (
-			adapter.readCompose() === undefined ||
-			hash(adapter.readCompose()!) !== previous.composeHash
+			!current ||
+			!previous ||
+			!equal(current, plan.snapshot) ||
+			current.compatibility !== "expand-compatible" ||
+			current.manifest.database.previousReleaseDigest !== previous.releaseDigest
 		)
-			throw new Error("deploy.compose_hash_invalid");
-		adapter.writeStateAtomic(
-			stateEnvelope({ current: previous, previous: current }),
+			throw new Error("deploy.rollback_invalid");
+		adapter.stageComposeAtomic(previous.compose);
+		adapter.writeEvidenceAtomic?.(
+			operationEvidence(plan, "rollback", "started", previous),
 		);
 		try {
-			await adapter.converge(adapter.readCompose()!);
-		} catch (error) {
-			restore(adapter, beforeState, beforeCompose);
-			await adapter.converge(current.compose).catch(() => undefined);
-			throw error;
+			await convergeSnapshot(adapter, previous);
+		} catch {
+			if (!operationFailure(adapter, plan, "rollback", previous))
+				throw new Error("deploy.persistence_unknown");
+			throw new Error("deploy.operation_failed");
 		}
-	} catch (error) {
-		if (
-			adapter.readState() !== beforeState ||
-			adapter.readCompose() !== beforeCompose
-		)
-			restore(adapter, beforeState, beforeCompose);
-		throw error;
-	}
+		try {
+			adapter.writeStateAtomic(
+				stateEnvelope({ current: previous, previous: current }),
+			);
+			adapter.writeEvidenceAtomic?.(
+				operationEvidence(plan, "rollback", "pass", previous),
+			);
+		} catch {
+			operationFailure(adapter, plan, "rollback", previous);
+			throw new Error("deploy.persistence_unknown");
+		}
+	});
 }
-/** A testable local implementation using temp-file plus rename; it has no shell, host, network, or credential capability. */
+/** A testable local store with exclusive temp files, file sync, rename, and parent-directory sync. */
 export function createFilesystemDeploymentAdapter(
 	root: string,
 	runtime: DeploymentRuntime,
+	hooks: PersistenceHooks = {},
 ): DeploymentAdapter {
 	const statePath = join(root, "state.json"),
-		composePath = join(root, "compose.yml");
+		composePath = join(root, "compose.yml"),
+		evidencePath = join(root, "evidence.json");
 	const atomic = (path: string, value: string | undefined) => {
 		if (value === undefined) {
 			if (existsSync(path)) unlinkSync(path);
 			return;
 		}
-		const temporary = `${path}.${process.pid}.tmp`;
-		writeFileSync(temporary, value, { mode: 0o600 });
-		renameSync(temporary, path);
+		const temporary = `${path}.${randomUUID()}.tmp`;
+		let descriptor: number | undefined,
+			renamed = false;
+		try {
+			hooks.beforeAtomicStep?.("temp-open");
+			descriptor = openSync(temporary, "wx", 0o600);
+			writeFileSync(descriptor, value);
+			hooks.beforeAtomicStep?.("file-sync");
+			fsyncSync(descriptor);
+			closeSync(descriptor);
+			descriptor = undefined;
+			hooks.beforeAtomicStep?.("rename");
+			renameSync(temporary, path);
+			renamed = true;
+			hooks.beforeAtomicStep?.("parent-sync");
+			const parent = openSync(dirname(path), "r");
+			try {
+				fsyncSync(parent);
+			} finally {
+				closeSync(parent);
+			}
+		} catch (error) {
+			if (descriptor !== undefined) closeSync(descriptor);
+			if (!renamed && existsSync(temporary)) unlinkSync(temporary);
+			if (renamed) throw new Error("deploy.persistence_unknown");
+			throw error;
+		}
 	};
 	return {
 		...runtime,
+		withLock: (operation) => withEnvironmentLock(root, operation),
 		readState: () => {
 			if (!existsSync(statePath)) return undefined;
 			const bytes = readFileSync(statePath, "utf8");
@@ -767,5 +973,10 @@ export function createFilesystemDeploymentAdapter(
 				? readFileSync(composePath, "utf8") || undefined
 				: undefined,
 		stageComposeAtomic: (compose) => atomic(composePath, compose),
+		readEvidence: () =>
+			existsSync(evidencePath)
+				? readFileSync(evidencePath, "utf8") || undefined
+				: undefined,
+		writeEvidenceAtomic: (evidence) => atomic(evidencePath, evidence),
 	};
 }

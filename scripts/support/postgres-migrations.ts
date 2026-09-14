@@ -3,7 +3,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ReleaseManifest } from "@agendia/release-manifest";
 import { validateReleaseManifest } from "@agendia/release-manifest";
-import type { Sql } from "postgres";
+import type { Sql, TransactionSql } from "postgres";
+import type { RuntimeConfig } from "@agendia/runtime-config";
 import { postgresImage } from "./locked-images.ts";
 
 const schemaQuery = `
@@ -137,6 +138,28 @@ export interface MigrationEvidence {
 	cleanSchemaFingerprint?: string;
 }
 
+export interface GenesisInput {
+	environment: "staging" | "production";
+	environmentId: string;
+	secretSetId: string;
+	releaseDigest: string;
+	expected: Pick<
+		RuntimeConfig,
+		"environment" | "environmentId" | "secretSetId" | "releaseDigest"
+	>;
+}
+
+/** Genesis has no marker yet, so it verifies only static release identity before database activity. */
+export function validateGenesisInput(input: GenesisInput): void {
+	if (
+		input.environment !== input.expected.environment ||
+		input.environmentId !== input.expected.environmentId ||
+		input.secretSetId !== input.expected.secretSetId ||
+		input.releaseDigest !== input.expected.releaseDigest
+	)
+		throw new Error("migration.genesis_identity_invalid");
+}
+
 export interface GovernedMigrationOptions {
 	sql: Sql;
 	migrationDirectory: string;
@@ -144,6 +167,7 @@ export interface GovernedMigrationOptions {
 	evidence: MigrationEvidence;
 	environment?: string;
 	releaseDigest?: string;
+	genesis?: GenesisInput;
 	now?: Date;
 }
 
@@ -185,6 +209,32 @@ async function hasApplicationSchema(sql: Sql): Promise<boolean> {
       and c.relname <> 'agendia_schema_migrations'
   ) as exists`);
 	return row?.exists ?? false;
+}
+
+async function insertOrValidateGenesisMarker(
+	sql: Sql | TransactionSql,
+	genesis: GenesisInput,
+	insert = true,
+): Promise<boolean> {
+	const rows = await sql.unsafe<
+		{ environment: string; environmentId: string; secretSetId: string }[]
+	>(
+		`select environment, environment_id as "environmentId", secret_set_id as "secretSetId" from agendia_environment`,
+	);
+	if (rows.length === 0) {
+		if (insert)
+			await sql`insert into agendia_environment (singleton, environment, environment_id, secret_set_id) values (true, ${genesis.environment}, ${genesis.environmentId}, ${genesis.secretSetId})`;
+		return false;
+	}
+	const marker = rows[0];
+	if (
+		rows.length !== 1 ||
+		marker?.environment !== genesis.environment ||
+		marker.environmentId !== genesis.environmentId ||
+		marker.secretSetId !== genesis.secretSetId
+	)
+		throw new Error("migration.genesis_marker_mismatch");
+	return true;
 }
 
 async function baselineMatches(
@@ -259,11 +309,13 @@ export async function runGovernedMigrations(options: GovernedMigrationOptions) {
 		)
 			throw new Error("migration.minimum_ledger_missing");
 		const existingSchema = await hasApplicationSchema(options.sql);
+		const genesis = options.genesis;
+		if (genesis) validateGenesisInput(genesis);
 		await options.sql.unsafe(ledgerBootstrap);
 		const ledger = await options.sql.unsafe<
-			{ filename: string; sha256: string }[]
+			{ filename: string; sha256: string; releaseDigest: string }[]
 		>(
-			"select filename, sha256 from agendia_schema_migrations order by filename",
+			'select filename, sha256, release_digest as "releaseDigest" from agendia_schema_migrations order by filename',
 		);
 		const byName = new Map(
 			ledger.map((entry) => [entry.filename, entry.sha256]),
@@ -275,7 +327,21 @@ export async function runGovernedMigrations(options: GovernedMigrationOptions) {
 			)
 				throw new Error("migration.checksum_mismatch");
 		const pending = files.filter((file) => !byName.has(file.filename));
+		if (genesis) {
+			const [markerTable] = await options.sql.unsafe<{ exists: boolean }[]>(
+				"select to_regclass('public.agendia_environment') is not null as exists",
+			);
+			const marked = markerTable?.exists
+				? await insertOrValidateGenesisMarker(options.sql, genesis, false)
+				: false;
+			if (
+				!marked &&
+				ledger.some((entry) => entry.releaseDigest !== releaseDigest)
+			)
+				throw new Error("migration.genesis_release_digest_mismatch");
+		}
 		if (ledger.length === 0 && existingSchema) {
+			if (genesis) throw new Error("migration.genesis_catalog_invalid");
 			if (!(await baselineMatches(options.sql, options.evidence)))
 				throw new Error("migration.unledgered_drift");
 			await options.sql.begin(async (tx) => {
@@ -294,6 +360,10 @@ export async function runGovernedMigrations(options: GovernedMigrationOptions) {
 				await tx.unsafe(file.sql);
 				await tx`insert into agendia_schema_migrations (filename, sha256, release_digest, execution) values (${file.filename}, ${file.sha256}, ${releaseDigest}, 'migrated')`;
 			});
+		if (genesis)
+			await options.sql.begin((tx) =>
+				insertOrValidateGenesisMarker(tx, genesis),
+			);
 		return {
 			schemaVersion: 1,
 			execution: "migrated" as const,

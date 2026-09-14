@@ -150,6 +150,8 @@ export async function provisionRoles(sql: Sql, input: RoleProvisioningInput) {
 	await sql.unsafe(
 		`alter schema public owner to ${assertIdentifier(roles.migrator)}`,
 	);
+	// The schema must exist before ownership changes; queue tables remain queue-init's responsibility.
+	await sql.unsafe("create schema if not exists pgboss");
 	await sql.unsafe(
 		`alter schema pgboss owner to ${assertIdentifier(roles.queueOwner)}`,
 	);

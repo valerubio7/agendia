@@ -17,11 +17,11 @@ Return to a known immutable application digest only when its declared compatibil
 test -f scripts/deployctl.ts
 ```
 
-`scripts/deployctl.ts` is the real repository artifact, but this repository ships no host `deployctl` executable. An authorized operator must verify a separately reviewed host package against that source and the approved `@sha256` before application rollback. Never rebuild, choose a tag, mix a release-set image, or copy a checkout to the host.
+`scripts/deployctl.ts` runs only from the separately prepared, root-owned clean checkout with the fixed Bun path described in `deploy.md`; it is not a host package or installed executable. Use the same digest-bound authorization context selected for the compatible snapshot. Never rebuild, choose a tag, mix a release-set image, or copy a development checkout to the host.
 
 ## Verification
 
-Confirm the previous digest and Compose hash are active, then repeat readiness and private smoke checks. Record the incident and preserve the failed-release evidence.
+Confirm the previous same digest and Compose hash are active, then repeat readiness and private smoke checks. Record the incident and preserve the failed-release evidence.
 
 ## Rollback
 

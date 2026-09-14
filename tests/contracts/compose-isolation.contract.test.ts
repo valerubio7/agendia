@@ -56,9 +56,7 @@ describe("server Compose isolation", () => {
 		expect(rendered).toContain('name: "agendia-prod"');
 		expect(rendered).toContain("agendia-prod-edge");
 		expect(rendered).toContain("/srv/agendia/production/postgres");
-		expect(rendered).toContain(
-			"/etc/agendia/production/config:/run/agendia/config:ro",
-		);
+		expect(rendered).toContain("/etc/agendia/production/config/api.env");
 		expect(rendered).toContain('restart: "unless-stopped"');
 		expect(rendered).toContain("read_only: true");
 		expect(rendered).toContain('user: "10001:10001"');

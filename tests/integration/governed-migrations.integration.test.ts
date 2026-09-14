@@ -132,6 +132,125 @@ describe("governed migrations", () => {
 		).rejects.toThrow("migration.checksum_mismatch");
 	}, 120_000);
 
+	test("TRIANGULATE: governs empty genesis, retry, marker mismatch, and unmarked catalog rejection under the migration lock", async () => {
+		const clean = await startTestPostgres();
+		const environmentId = randomUUID();
+		const secretSetId = randomUUID();
+		const expected = {
+			environment: "staging" as const,
+			environmentId,
+			secretSetId,
+			releaseDigest: manifest.releaseDigest,
+		};
+		try {
+			const options = {
+				sql: clean.sql,
+				migrationDirectory: migrations,
+				manifest,
+				evidence,
+				genesis: { ...expected, expected },
+			};
+			await expect(runGovernedMigrations(options)).resolves.toMatchObject({
+				execution: "migrated",
+			});
+			expect(
+				Array.from(
+					await clean.sql`select environment, environment_id as "environmentId", secret_set_id as "secretSetId" from agendia_environment`,
+				),
+			).toEqual([{ environment: "staging", environmentId, secretSetId }]);
+			await expect(runGovernedMigrations(options)).resolves.toMatchObject({
+				applied: [],
+			});
+			const upgrade: ReleaseManifest = {
+				...manifest,
+				releaseDigest: digest("3"),
+				images: Object.fromEntries(
+					Object.keys(manifest.images).map((name) => [
+						name,
+						`ghcr.io/agendia/agendia@${digest("3")}`,
+					]),
+				) as ReleaseManifest["images"],
+				database: {
+					...manifest.database,
+					previousReleaseDigest: manifest.releaseDigest,
+				},
+			};
+			const upgradeGenesis = {
+				...expected,
+				releaseDigest: upgrade.releaseDigest,
+				expected: { ...expected, releaseDigest: upgrade.releaseDigest },
+			};
+			await expect(
+				runGovernedMigrations({
+					...options,
+					manifest: upgrade,
+					evidence: {
+						...evidence,
+						backup: {
+							...evidence.backup!,
+							releaseDigest: upgrade.releaseDigest,
+						},
+						previousReleaseDigest: manifest.releaseDigest,
+					},
+					genesis: upgradeGenesis,
+				}),
+			).resolves.toMatchObject({ applied: [] });
+			await clean.sql`delete from agendia_environment`;
+			await expect(
+				runGovernedMigrations({
+					...options,
+					manifest: upgrade,
+					evidence: {
+						...evidence,
+						backup: {
+							...evidence.backup!,
+							releaseDigest: upgrade.releaseDigest,
+						},
+						previousReleaseDigest: manifest.releaseDigest,
+					},
+					genesis: upgradeGenesis,
+				}),
+			).rejects.toThrow("migration.genesis_release_digest_mismatch");
+			await expect(runGovernedMigrations(options)).resolves.toMatchObject({
+				applied: [],
+			});
+			await clean.sql`delete from agendia_schema_migrations where filename = (select max(filename) from agendia_schema_migrations)`;
+			const [partialLedger] = await clean.sql<
+				{ count: string }[]
+			>`select count(*)::text as count from agendia_schema_migrations`;
+			const mismatched = { ...expected, secretSetId: randomUUID() };
+			await expect(
+				runGovernedMigrations({
+					...options,
+					genesis: { ...mismatched, expected: mismatched },
+				}),
+			).rejects.toThrow("migration.genesis_marker_mismatch");
+			expect(
+				(
+					await clean.sql<
+						{ count: string }[]
+					>`select count(*)::text as count from agendia_schema_migrations`
+				)[0]?.count,
+			).toBe(partialLedger?.count);
+			await clean.sql`delete from agendia_environment`;
+			await clean.sql`update agendia_schema_migrations set release_digest = ${digest("3")} where filename = (select min(filename) from agendia_schema_migrations)`;
+			await expect(runGovernedMigrations(options)).rejects.toThrow(
+				"migration.genesis_release_digest_mismatch",
+			);
+			const unmarked = await startTestPostgres();
+			try {
+				await applyPostgresMigrations(unmarked.sql, migrations);
+				await expect(
+					runGovernedMigrations({ ...options, sql: unmarked.sql }),
+				).rejects.toThrow("migration.genesis_catalog_invalid");
+			} finally {
+				await unmarked.stop();
+			}
+		} finally {
+			await clean.stop();
+		}
+	}, 120_000);
+
 	test("TRIANGULATE: migrate stops before governed work on marker mismatch and rejects future backup evidence", async () => {
 		const environmentId = randomUUID();
 		const secretSetId = randomUUID();
