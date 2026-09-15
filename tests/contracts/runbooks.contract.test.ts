@@ -136,4 +136,25 @@ describe("operational runbooks", () => {
 		for (const name of runbooks)
 			expect(await readRunbook(name)).toContain("Human approval required");
 	});
+
+	test("RED: documents direct pinned-source operation while keeping backup and real-user gates blocked", async () => {
+		const [deploy, rollback, host, backup] = await Promise.all([
+			readRunbook("deploy"),
+			readRunbook("rollback"),
+			readRunbook("host-provisioning"),
+			readRunbook("backup-restore"),
+		]);
+		expect(deploy).toContain("/opt/agendia/tools/bun-1.4.0/bin/bun");
+		expect(deploy).toContain("gh 2.76.2");
+		expect(host).toContain("StrictHostKeyChecking=yes");
+		expect(host).toContain("checkout detached");
+		expect(rollback).not.toContain("separately reviewed host package");
+		expect(rollback).toContain("same digest");
+		expect(backup).toContain("disabled");
+		expect(backup).toContain("no backup executable");
+		for (const content of [deploy, rollback, host, backup])
+			expect(content).toMatch(
+				/tunnel.*domain.*DNS|backup.*restore|separate identities/i,
+			);
+	});
 });

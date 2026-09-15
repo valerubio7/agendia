@@ -3,11 +3,14 @@ set -eu
 
 command="${1:-}"
 case "$command" in
+  provision-roles)
+    bun /opt/agendia/runtime-config/release-entrypoint-config.js "$command"
+    ;;
   web|api|whatsapp-manager|message-worker|migrate|queue-init|bootstrap-admin|verify-config)
     bun /opt/agendia/runtime-config/release-entrypoint-config.js "$command"
     ;;
   *)
-    echo "usage: agendia {web|api|whatsapp-manager|message-worker|migrate|queue-init|bootstrap-admin|verify-config}" >&2
+    echo "usage: agendia {web|api|whatsapp-manager|message-worker|provision-roles|migrate|queue-init|bootstrap-admin|verify-config}" >&2
     exit 64
     ;;
 esac
@@ -35,13 +38,19 @@ case "$command" in
     export AGENDIA_RUN_MESSAGE_WORKER=1
     exec bun /opt/agendia/message-worker/index.js
     ;;
+  provision-roles)
+    exec bun /opt/agendia/provision-roles/provision-roles.js
+    ;;
   queue-init)
     exec bun /opt/agendia/queue-init/queue-init.js
     ;;
   migrate)
     exec bun /opt/agendia/migrate/migrate.js
     ;;
-  bootstrap-admin|verify-config)
+  bootstrap-admin)
+    exec bun /opt/agendia/bootstrap-admin/bootstrap-admin.js
+    ;;
+  verify-config)
     echo "release command $command is not available until its governed implementation is installed" >&2
     exit 64
     ;;

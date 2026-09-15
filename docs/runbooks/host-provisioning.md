@@ -5,14 +5,15 @@ Repository artifacts define the release path; this runbook proposes one-time hos
 ## Precheck
 
 - Confirm console access, a second LAN SSH session, Ubuntu x86_64, and a configuration backup.
+- Prepare the approved checkout detached at its exact commit, root-owned under `/opt/agendia/tooling/<40-hex>`; do not reuse a development tree.
 - Record disk, SMART, RAM, swap, Wi-Fi, and Docker capacity before changing the host.
 - **Human approval required:** approve the host baseline and local-risk acceptance.
 
 ## Proposed command
 
 ```sh
-sudo install -d -m 0750 /etc/agendia/production /etc/agendia/staging /srv/agendia
-sudo docker version
+ssh -o StrictHostKeyChecking=yes -o ForwardAgent=no <host> 'sudo install -d -m 0750 /etc/agendia/production /etc/agendia/staging /srv/agendia'
+ssh -o StrictHostKeyChecking=yes -o ForwardAgent=no <host> 'sudo docker version'
 ```
 
 Install Docker only from the reviewed vendor repository for the detected Ubuntu release; abort if it is unsupported. The service account must not join the `docker` group.

@@ -101,6 +101,50 @@ jobs:
           COMMIT: ${{ github.event.workflow_run.head_sha }}
           DIGEST: ${{ steps.image.outputs.digest }}
         run: bun -e 'const d=await Bun.file("deploy/release-database.json").json(),p=await Bun.file("deploy/packaging-decision.json").json();const {createUniversalReleaseManifest}=await import("./scripts/release-verification.ts");await Bun.write("release-manifest.json",JSON.stringify(createUniversalReleaseManifest({packagingDecision:p,database:d,commit:process.env.COMMIT,repository:process.env.REPOSITORY,releaseDigest:process.env.DIGEST})));'
+      - name: Build host bundle twice and compare bytes
+        env:
+          GITHUB_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          bun scripts/package-host-bundle.ts release-manifest.json host-bundle-a/agendia-host-linux-x64.tar
+          bun scripts/package-host-bundle.ts release-manifest.json host-bundle-b/agendia-host-linux-x64.tar
+          cmp host-bundle-a/agendia-host-linux-x64.tar host-bundle-b/agendia-host-linux-x64.tar
+          mv host-bundle-a/agendia-host-linux-x64.tar agendia-host-linux-x64.tar
+          sha256sum agendia-host-linux-x64.tar > agendia-host-linux-x64.SHA256SUMS
+      - uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+        with:
+          scan-target: agendia-host-linux-x64.tar
+          format: spdx-json
+          output-file: host-bundle.spdx.json
+          upload-artifact: false
+      - id: host-bundle-sbom-attestation
+        uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b # v2
+        with:
+          subject-path: agendia-host-linux-x64.tar
+          sbom-path: host-bundle.spdx.json
+      - id: host-bundle-provenance-attestation
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: agendia-host-linux-x64.tar
+      - name: Materialize host attestation bundles
+        env:
+          SBOM_BUNDLE: ${{ steps.host-bundle-sbom-attestation.outputs.bundle-path }}
+          PROVENANCE_BUNDLE: ${{ steps.host-bundle-provenance-attestation.outputs.bundle-path }}
+        run: |
+          cp "$SBOM_BUNDLE" host-bundle-sbom.attestation.json
+          cp "$PROVENANCE_BUNDLE" host-bundle-provenance.attestation.json
+          sha256sum host-bundle-*.attestation.json > host-bundle-attestations.SHA256SUMS
+      - name: Write same-run host bundle context
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RELEASE_DIGEST: ${{ steps.image.outputs.digest }}
+          CI_WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+          CI_WORKFLOW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          RELEASE_WORKFLOW_RUN_ID: ${{ github.run_id }}
+          RELEASE_WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
+          RELEASE_WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          export BUNDLE_SHA256="sha256:$(sha256sum agendia-host-linux-x64.tar | awk '{print $1}')" SBOM_SHA256="sha256:$(sha256sum host-bundle.spdx.json | awk '{print $1}')" SBOM_ATTESTATION_SHA256="sha256:$(sha256sum host-bundle-sbom.attestation.json | awk '{print $1}')" PROVENANCE_ATTESTATION_SHA256="sha256:$(sha256sum host-bundle-provenance.attestation.json | awk '{print $1}')"
+          bun -e 'await Bun.write("host-bundle-context.json",JSON.stringify({schemaVersion:1,commit:process.env.HEAD_SHA,releaseDigest:process.env.RELEASE_DIGEST,bundleSha256:process.env.BUNDLE_SHA256,sbomSha256:process.env.SBOM_SHA256,sbomAttestationSha256:process.env.SBOM_ATTESTATION_SHA256,provenanceAttestationSha256:process.env.PROVENANCE_ATTESTATION_SHA256,workflow:process.env.RELEASE_WORKFLOW_REF,ciWorkflowRunId:Number(process.env.CI_WORKFLOW_RUN_ID),ciWorkflowRunAttempt:Number(process.env.CI_WORKFLOW_RUN_ATTEMPT),releaseWorkflowRunId:Number(process.env.RELEASE_WORKFLOW_RUN_ID),releaseWorkflowRunAttempt:Number(process.env.RELEASE_WORKFLOW_RUN_ATTEMPT)}))'
       - uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
         with:
           image: ${{ steps.image.outputs.reference }}
@@ -135,4 +179,11 @@ jobs:
             release-manifest.json
             release-evidence.json
             sbom.spdx.json
+            agendia-host-linux-x64.tar
+            agendia-host-linux-x64.SHA256SUMS
+            host-bundle.spdx.json
+            host-bundle-sbom.attestation.json
+            host-bundle-provenance.attestation.json
+            host-bundle-attestations.SHA256SUMS
+            host-bundle-context.json
           if-no-files-found: error

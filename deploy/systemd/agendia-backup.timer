@@ -7,5 +7,4 @@ RandomizedDelaySec=30m
 Persistent=true
 Unit=agendia-backup.service
 
-[Install]
-WantedBy=timers.target
+# Deliberately no [Install] section: this timer remains disabled until an external backup provider and restore evidence are accepted.

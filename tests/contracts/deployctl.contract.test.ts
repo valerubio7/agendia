@@ -6,8 +6,11 @@ import { describe, expect, test } from "bun:test";
 import {
 	applyDeployment,
 	createFilesystemDeploymentAdapter,
+	parseHostCommand,
 	planDeployment,
 	rollbackDeployment,
+	runApprovedHostCommand,
+	withEnvironmentLock,
 	type DeploymentAdapter,
 } from "../../scripts/deployctl.ts";
 import {
@@ -248,14 +251,16 @@ function gates(currentReleaseDigest = digest("0")) {
 		backlog: { oldestSeconds: 60 },
 	};
 }
-function fake(): DeploymentAdapter & {
+function fake(ordered = true): DeploymentAdapter & {
 	events: string[];
 	state?: ReturnType<DeploymentAdapter["readState"]>;
 	compose?: string;
+	evidence?: string;
 } {
 	const events: string[] = [];
 	let state: ReturnType<DeploymentAdapter["readState"]>;
 	let compose: string | undefined;
+	let evidence: string | undefined;
 	return {
 		events,
 		readState: () => state,
@@ -268,6 +273,11 @@ function fake(): DeploymentAdapter & {
 			events.push("compose");
 			compose = next;
 		},
+		readEvidence: () => evidence,
+		writeEvidenceAtomic: (next) => {
+			events.push("evidence");
+			evidence = next;
+		},
 		pull: async (reference) => {
 			events.push(`pull:${reference}`);
 		},
@@ -278,10 +288,106 @@ function fake(): DeploymentAdapter & {
 		converge: async () => {
 			events.push("converge");
 		},
+		...(ordered
+			? {
+					async runOrdered(bootstrapRequired: boolean) {
+						events.push(`ordered:${bootstrapRequired}`);
+						await this.converge("");
+					},
+				}
+			: {}),
 	};
 }
 
 describe("pull-based deployctl", () => {
+	test("RED: accepts only the fixed direct-source grammar", () => {
+		const command = parseHostCommand([
+			"apply",
+			"staging",
+			"--commit",
+			commit,
+			"--digest",
+			digest("a"),
+		]);
+		expect(command).toEqual({
+			operation: "apply",
+			environment: "staging",
+			commit,
+			digest: digest("a"),
+		});
+		for (const argv of [
+			["apply", "staging", "--digest", digest("a"), "--commit", commit],
+			["build", "staging", "--commit", commit, "--digest", digest("a")],
+			["apply", "staging", "--commit", `${commit};sh`, "--digest", digest("a")],
+			["apply", "staging", "--commit", commit, "--digest", "latest"],
+		])
+			expect(() => parseHostCommand(argv)).toThrow("deploy.command_invalid");
+	});
+	test("RED: dispatches only approved plan, apply, and compatible rollback inputs", async () => {
+		const plan = planDeployment({ ...fixture(), gates: gates() });
+		const adapter = fake();
+		await runApprovedHostCommand(
+			{
+				operation: "plan",
+				environment: "staging",
+				commit,
+				digest: plan.snapshot.releaseDigest,
+			},
+			plan,
+			adapter,
+		);
+		expect(adapter.events).toEqual([]);
+		await expect(
+			runApprovedHostCommand(
+				{
+					operation: "status",
+					environment: "staging",
+					commit,
+					digest: plan.snapshot.releaseDigest,
+				},
+				plan,
+				adapter,
+			),
+		).resolves.toBeUndefined();
+		expect(adapter.events).toEqual([]);
+		adapter.writeStateAtomic({
+			schemaVersion: 1,
+			current: plan.snapshot,
+			previous: null,
+		});
+		adapter.stageComposeAtomic("tampered");
+		adapter.events.length = 0;
+		await expect(
+			runApprovedHostCommand(
+				{
+					operation: "status",
+					environment: "staging",
+					commit,
+					digest: plan.snapshot.releaseDigest,
+				},
+				plan,
+				adapter,
+			),
+		).rejects.toThrow("deploy.status_invalid");
+		expect(adapter.events).toEqual([]);
+		await expect(
+			runApprovedHostCommand(
+				{
+					...parseHostCommand([
+						"apply",
+						"staging",
+						"--commit",
+						commit,
+						"--digest",
+						digest("c"),
+					]),
+				},
+				plan,
+				adapter,
+			),
+		).rejects.toThrow("deploy.approved_input_invalid");
+	});
+
 	test("RED: requires independent exact-artifact authorization proof and exact image repository binding", () => {
 		const input = fixture();
 		expect(() =>
@@ -328,6 +434,32 @@ describe("pull-based deployctl", () => {
 		expect(plan.snapshot.audit.authorizationId).toBe(
 			input.authorization.authorizationId,
 		);
+		expect(adapter.events).toContain("ordered:false");
+	});
+
+	test("RED: requires an ordered runtime before apply effects and excludes it from rollback", async () => {
+		const first = planDeployment({ ...fixture(), gates: gates() });
+		const adapter = fake(false);
+		await expect(applyDeployment(first, adapter)).rejects.toThrow(
+			"deploy.ordered_runtime_required",
+		);
+		expect(adapter.events).toEqual([]);
+		const ordered = fake();
+		await applyDeployment(first, ordered);
+		const second = planDeployment({
+			...fixture(
+				"universal-image",
+				"staging",
+				"c",
+				first.manifest.releaseDigest,
+			),
+			gates: gates(first.manifest.releaseDigest),
+		});
+		await applyDeployment(second, ordered);
+		ordered.events.length = 0;
+		await rollbackDeployment(second, ordered);
+		expect(ordered.events).not.toContain("ordered:false");
+		expect(ordered.events).toContain("converge");
 	});
 	test("uses persisted Compose bytes and restores exact absent state and Compose after failed convergence", async () => {
 		const input = fixture();
@@ -337,18 +469,31 @@ describe("pull-based deployctl", () => {
 			throw new Error("convergence failed");
 		};
 		await expect(applyDeployment(plan, adapter)).rejects.toThrow(
-			"convergence failed",
+			"deploy.operation_failed",
 		);
 		expect(adapter.readState()).toBeUndefined();
-		expect(adapter.readCompose()).toBeUndefined();
+		expect(adapter.readCompose()).toBe(plan.compose);
 		const tampered = fake();
 		tampered.stageComposeAtomic = () => {
 			tampered.compose = "tampered";
 		};
 		tampered.converge = async () => {};
 		await expect(applyDeployment(plan, tampered)).rejects.toThrow(
-			"deploy.compose_hash_invalid",
+			"deploy.operation_failed",
 		);
+	});
+	test("RED: does not publish state when closed evidence persistence fails before convergence", async () => {
+		const adapter = fake();
+		adapter.writeEvidenceAtomic = () => {
+			throw new Error("evidence failure");
+		};
+		const plan = planDeployment({ ...fixture(), gates: gates() });
+		await expect(applyDeployment(plan, adapter)).rejects.toThrow(
+			"evidence failure",
+		);
+		expect(adapter.readState()).toBeUndefined();
+		expect(adapter.readCompose()).toBe(plan.compose);
+		expect(adapter.readEvidence?.()).toBeUndefined();
 	});
 	test("RED: accepts the actual PR11 repository boundary, rejects siblings and official-cloudflared substitution", () => {
 		const input = fixture("release-set");
@@ -473,45 +618,123 @@ describe("pull-based deployctl", () => {
 		failing.stageComposeAtomic(second.compose);
 		const beforeState = failing.readState();
 		failing.converge = async () => {
+			failing.events.push("converge");
 			throw new Error("rollback convergence failed");
 		};
 		await expect(rollbackDeployment(second, failing)).rejects.toThrow(
-			"rollback convergence failed",
+			"deploy.operation_failed",
 		);
 		expect(failing.readState()).toEqual(beforeState);
-		expect(failing.readCompose()).toBe(second.compose);
+		expect(failing.readCompose()).toBe(first.compose);
+		expect(failing.events.filter((event) => event === "converge")).toHaveLength(
+			1,
+		);
 	});
-	test("filesystem store atomically persists a single envelope and generated Compose then restores bytes", async () => {
-		const root = await mkdtemp(join(tmpdir(), "agendia-deployctl-"));
-		try {
-			const runtime = fake();
-			const store = createFilesystemDeploymentAdapter(root, runtime);
-			const input = fixture();
-			const plan = planDeployment({ ...input, gates: gates() });
-			await applyDeployment(plan, store);
-			const before = await readFile(join(root, "state.json"), "utf8");
-			await writeFile(join(root, "compose.yml"), "old-compose-bytes");
-			store.converge = async () => {
-				throw new Error("convergence failed");
-			};
-			const candidate = fixture(
+	test("RED: records the executing tooling commit rather than the rollback snapshot commit", async () => {
+		const first = planDeployment({ ...fixture(), gates: gates() });
+		const second = planDeployment({
+			...fixture(
 				"universal-image",
 				"staging",
 				"c",
-				input.manifest.releaseDigest,
+				first.manifest.releaseDigest,
+			),
+			gates: gates(first.manifest.releaseDigest),
+		});
+		const previous = structuredClone(first.snapshot);
+		const priorCommit = "d".repeat(40);
+		previous.manifest.commit = priorCommit;
+		previous.audit.commit = priorCommit;
+		previous.audit.manifest = previous.manifest;
+		const adapter = fake();
+		adapter.writeStateAtomic({
+			schemaVersion: 1,
+			current: second.snapshot,
+			previous,
+		});
+		adapter.stageComposeAtomic(second.compose);
+		await rollbackDeployment(second, adapter);
+		expect(adapter.readEvidence?.()).toContain(`"toolingCommit":"${commit}"`);
+	});
+
+	test("RED: reports persistence uncertainty when it cannot record a failed unsafe effect", async () => {
+		const adapter = fake();
+		let writes = 0;
+		adapter.writeEvidenceAtomic = () => {
+			if (++writes > 1) throw new Error("fault evidence unavailable");
+		};
+		adapter.converge = async () => {
+			throw new Error("unsafe effect failed");
+		};
+		const plan = planDeployment({ ...fixture(), gates: gates() });
+		await expect(applyDeployment(plan, adapter)).rejects.toThrow(
+			"deploy.persistence_unknown",
+		);
+		expect(adapter.readState()).toBeUndefined();
+	});
+
+	test("TRIANGULATE: retains staged Compose and closed failed evidence after an unsafe effect without reconverging", async () => {
+		const adapter = fake();
+		const plan = planDeployment({ ...fixture(), gates: gates() });
+		adapter.converge = async () => {
+			adapter.events.push("converge");
+			throw new Error("postgres://operator:secret@example.test failed");
+		};
+		await expect(applyDeployment(plan, adapter)).rejects.toThrow(
+			"deploy.operation_failed",
+		);
+		expect(adapter.readState()).toBeUndefined();
+		expect(adapter.readCompose()).toBe(plan.compose);
+		expect(adapter.events.filter((event) => event === "converge")).toHaveLength(
+			1,
+		);
+		const evidence = adapter.readEvidence?.() ?? "";
+		expect(evidence).toContain('"result":"fail"');
+		expect(evidence).not.toContain("secret");
+		expect(evidence).not.toContain("postgres:");
+	});
+
+	test("TRIANGULATE: holds a per-environment lock and preserves prior bytes before a durability fault", async () => {
+		const root = await mkdtemp(join(tmpdir(), "agendia-deployctl-"));
+		try {
+			await writeFile(join(root, "compose.yml"), "old-compose-bytes");
+			await withEnvironmentLock(root, async () => {
+				await expect(withEnvironmentLock(root, async () => {})).rejects.toThrow(
+					"deploy.operation_locked",
+				);
+			});
+			const runtime = fake();
+			const store = createFilesystemDeploymentAdapter(root, runtime, {
+				beforeAtomicStep: (step) => {
+					if (step === "file-sync")
+						throw new Error("injected durability fault");
+				},
+			});
+			expect(() => store.stageComposeAtomic("new-compose-bytes")).toThrow(
+				"injected durability fault",
 			);
-			await expect(
-				applyDeployment(
-					planDeployment({
-						...candidate,
-						gates: gates(input.manifest.releaseDigest),
-					}),
-					store,
-				),
-			).rejects.toThrow("convergence failed");
-			expect(await readFile(join(root, "state.json"), "utf8")).toBe(before);
 			expect(await readFile(join(root, "compose.yml"), "utf8")).toBe(
 				"old-compose-bytes",
+			);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	test("TRIANGULATE: reports post-rename durability uncertainty without restoring partial state", async () => {
+		const root = await mkdtemp(join(tmpdir(), "agendia-deployctl-"));
+		try {
+			const store = createFilesystemDeploymentAdapter(root, fake(), {
+				beforeAtomicStep: (step) => {
+					if (step === "parent-sync")
+						throw new Error("injected parent sync fault");
+				},
+			});
+			expect(() => store.writeEvidenceAtomic?.('{"result":"pass"}')).toThrow(
+				"deploy.persistence_unknown",
+			);
+			expect(await readFile(join(root, "evidence.json"), "utf8")).toBe(
+				'{"result":"pass"}',
 			);
 		} finally {
 			await rm(root, { recursive: true, force: true });
