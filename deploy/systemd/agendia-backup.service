@@ -2,8 +2,8 @@
 Description=Agendia production encrypted backup
 Wants=network-online.target
 After=network-online.target
-# PR16 packaging installs this generated executable; this repository artifact does not claim installation.
-ConditionPathIsExecutable=/usr/libexec/agendia/agendia-backup
+# No backup executable/provider is delivered by this repository slice; keep this unit disabled.
+ConditionPathExists=/run/agendia/backup-provider-not-delivered
 
 [Service]
 Type=oneshot
@@ -14,8 +14,8 @@ Group=root
 UMask=0077
 EnvironmentFile=/etc/agendia/backup/repository.env
 EnvironmentFile=/etc/agendia/production/release.env
-# The generated executable owns UTC boundary derivation and runs daily maintenance plus backup.
-ExecStart=/usr/libexec/agendia/agendia-backup --scheduled
+# This explicit failure prevents accidental operation if a maintainer enables the unit prematurely.
+ExecStart=/usr/bin/false
 NoNewPrivileges=yes
 PrivateTmp=yes
 PrivateDevices=yes

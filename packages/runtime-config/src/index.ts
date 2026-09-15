@@ -8,6 +8,7 @@ export const runtimeProcesses = [
 	"whatsapp-manager",
 	"message-worker",
 	"migrate",
+	"provision-roles",
 	"queue-init",
 	"bootstrap-admin",
 	"verify-config",
@@ -24,7 +25,9 @@ const identity = z.object({
 });
 
 const databaseVariable = (process: RuntimeProcess) =>
-	`${process.toUpperCase().replaceAll("-", "_")}_DATABASE_URL_FILE`;
+	process === "provision-roles"
+		? "CLUSTER_ADMIN_DATABASE_URL_FILE"
+		: `${process.toUpperCase().replaceAll("-", "_")}_DATABASE_URL_FILE`;
 
 const fail = (
 	name: string,
@@ -158,10 +161,17 @@ function validateDatabaseIdentity(config: RuntimeConfig): void {
 	if (!expected) return;
 	try {
 		const url = new URL(config.databaseUrl);
+		let expectedLogin: string | undefined;
+		if (config.process === "provision-roles") {
+			const roleEnvironment = config.environment === "staging" ? "stg" : "prod";
+			expectedLogin = `${roleEnvironment}_cluster_admin`;
+		}
 		if (
 			url.hostname !== "postgres" ||
 			url.pathname !== `/${expected.name}` ||
-			!url.username.startsWith(expected.loginPrefix)
+			(expectedLogin
+				? url.username !== expectedLogin
+				: !url.username.startsWith(expected.loginPrefix))
 		)
 			preflightFail("environment.database_identity_invalid");
 	} catch (error) {
@@ -225,21 +235,26 @@ function validateManifest(
 		preflightFail("environment.runtime_identity_mismatch");
 }
 
+export function preflightStaticEnvironment(options: {
+	config: RuntimeConfig;
+	manifest: IsolationManifest;
+}): void {
+	if (
+		options.config.environment !== "staging" &&
+		options.config.environment !== "production"
+	)
+		return;
+	validateDatabaseIdentity(options.config);
+	validateManifest(options.manifest, options.config);
+}
+
 export async function preflightEnvironment(options: {
 	config: RuntimeConfig;
 	manifest: IsolationManifest;
 	queryMarker: () => Promise<EnvironmentMarker | EnvironmentMarker[]>;
 	afterPreflight?: () => void | Promise<void>;
 }): Promise<void> {
-	if (
-		options.config.environment !== "staging" &&
-		options.config.environment !== "production"
-	) {
-		await options.afterPreflight?.();
-		return;
-	}
-	validateDatabaseIdentity(options.config);
-	validateManifest(options.manifest, options.config);
+	preflightStaticEnvironment(options);
 	const result = await options.queryMarker();
 	const markers = Array.isArray(result) ? result : [result];
 	if (markers.length === 0) preflightFail("environment.marker_missing");
@@ -327,7 +342,7 @@ export function loadRuntimeConfig(
 		databaseVariable(runtimeProcess),
 	);
 	const appOrigin = validateOrigin(env.APP_ORIGIN, values.AGENDIA_ENVIRONMENT);
-	return {
+	const config = {
 		process: runtimeProcess,
 		environment: values.AGENDIA_ENVIRONMENT,
 		environmentId: values.AGENDIA_ENVIRONMENT_ID,
@@ -336,6 +351,8 @@ export function loadRuntimeConfig(
 		databaseUrl,
 		...(appOrigin ? { appOrigin } : {}),
 	};
+	validateDatabaseIdentity(config);
+	return config;
 }
 
 /** The release dispatcher calls this for every long-running and one-shot command. */

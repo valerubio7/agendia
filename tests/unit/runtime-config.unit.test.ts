@@ -13,10 +13,11 @@ const secretSetId = "22222222-2222-4222-8222-222222222222";
 
 function validEnvironment(directory: string, process: string) {
 	const database = join(directory, `${process}-database-url`);
-	writeFileSync(
-		database,
-		`postgres://agendia_stg_${process}:safe@postgres/agendia_stg`,
-	);
+	const login =
+		process === "provision-roles"
+			? "stg_cluster_admin"
+			: `agendia_stg_${process}`;
+	writeFileSync(database, `postgres://${login}:safe@postgres/agendia_stg`);
 	return {
 		AGENDIA_PROCESS: process,
 		AGENDIA_ENVIRONMENT: "staging",
@@ -24,7 +25,9 @@ function validEnvironment(directory: string, process: string) {
 		AGENDIA_SECRET_SET_ID: secretSetId,
 		AGENDIA_RELEASE_DIGEST: digest,
 		APP_ORIGIN: "https://staging.example",
-		[`${process.toUpperCase().replaceAll("-", "_")}_DATABASE_URL_FILE`]:
+		[process === "provision-roles"
+			? "CLUSTER_ADMIN_DATABASE_URL_FILE"
+			: `${process.toUpperCase().replaceAll("-", "_")}_DATABASE_URL_FILE`]:
 			database,
 	};
 }
@@ -77,11 +80,15 @@ describe("runtime configuration", () => {
 				"message-worker",
 				"web",
 				"migrate",
+				"provision-roles",
 				"queue-init",
 				"bootstrap-admin",
 				"verify-config",
 			] as const)
-				expect(validateReleaseCommand(process, validEnvironment(directory, process)).process).toBe(process);
+				expect(
+					validateReleaseCommand(process, validEnvironment(directory, process))
+						.process,
+				).toBe(process);
 		} finally {
 			rmSync(directory, { recursive: true, force: true });
 		}
@@ -96,6 +103,7 @@ describe("runtime configuration", () => {
 				"message-worker",
 				"web",
 				"migrate",
+				"provision-roles",
 				"queue-init",
 			] as const) {
 				const config = loadRuntimeConfig(
@@ -110,6 +118,28 @@ describe("runtime configuration", () => {
 		}
 	});
 
+	test("triangulates role provisioning and rejects a crossed staging database before activity", () => {
+		const directory = mkdtempSync(join(tmpdir(), "agendia-runtime-config-"));
+		try {
+			expect(
+				loadRuntimeConfig(
+					"provision-roles",
+					validEnvironment(directory, "provision-roles"),
+				).process,
+			).toBe("provision-roles");
+			const api = validEnvironment(directory, "api");
+			writeFileSync(
+				api.API_DATABASE_URL_FILE!,
+				"postgres://agendia_prod_api:secret@postgres/agendia_prod",
+			);
+			expect(() => loadRuntimeConfig("api", api)).toThrow(
+				"environment.database_identity_invalid",
+			);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
 	test("requires a canonical HTTPS origin for staging and redacts invalid file values", () => {
 		const directory = mkdtempSync(join(tmpdir(), "agendia-runtime-config-"));
 		try {
@@ -119,7 +149,10 @@ describe("runtime configuration", () => {
 				"APP_ORIGIN is required",
 			);
 			expect(() =>
-				loadRuntimeConfig("web", { ...env, APP_ORIGIN: "https://app.example/" }),
+				loadRuntimeConfig("web", {
+					...env,
+					APP_ORIGIN: "https://app.example/",
+				}),
 			).toThrow("APP_ORIGIN is invalid");
 			const secret = "must-not-appear";
 			writeFileSync(env.WEB_DATABASE_URL_FILE!, `not-a-url:${secret}`);
@@ -167,15 +200,17 @@ describe("runtime configuration", () => {
 				AGENDIA_ENVIRONMENT: "development",
 				APP_ORIGIN: "http://localhost:3000",
 			};
-			expect(loadRuntimeConfig("api", env).appOrigin).toBe("http://localhost:3000");
-			for (const origin of ["ftp://localhost:3000", "http://example.test"]) {
-				expect(() => loadRuntimeConfig("api", { ...env, APP_ORIGIN: origin })).toThrow(
-					"APP_ORIGIN is invalid",
-				);
-			}
-			expect(() => loadRuntimeConfig("api", { ...env, DATABASE_URL: "" })).toThrow(
-				"DATABASE_URL is forbidden",
+			expect(loadRuntimeConfig("api", env).appOrigin).toBe(
+				"http://localhost:3000",
 			);
+			for (const origin of ["ftp://localhost:3000", "http://example.test"]) {
+				expect(() =>
+					loadRuntimeConfig("api", { ...env, APP_ORIGIN: origin }),
+				).toThrow("APP_ORIGIN is invalid");
+			}
+			expect(() =>
+				loadRuntimeConfig("api", { ...env, DATABASE_URL: "" }),
+			).toThrow("DATABASE_URL is forbidden");
 			expect(() =>
 				loadRuntimeConfig("api", { ...env, API_DATABASE_URL: "" }),
 			).toThrow("API_DATABASE_URL_FILE is required");
@@ -190,7 +225,9 @@ describe("runtime configuration", () => {
 		for (const line of example.split("\n")) {
 			if (!line || line.startsWith("#")) continue;
 			const [, value] = line.split("=", 2);
-			expect(value).toMatch(/^(?:__[A-Z0-9_]+__|\/run\/secrets\/[\w-]+\.invalid)$/);
+			expect(value).toMatch(
+				/^(?:__[A-Z0-9_]+__|\/run\/secrets\/[\w-]+\.invalid)$/,
+			);
 		}
 	});
 });

@@ -163,6 +163,7 @@ export function renderCompose(input: RenderInput): string {
 		API_IMAGE: apps.api,
 		MANAGER_IMAGE: apps["whatsapp-manager"],
 		WORKER_IMAGE: apps["message-worker"],
+		RELEASE_DIGEST: input.releaseIdentity ?? apps.web.split("@")[1]!,
 	};
 	const keys = [
 		"POSTGRES_CPUS",
