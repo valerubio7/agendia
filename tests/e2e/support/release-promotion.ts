@@ -130,6 +130,10 @@ function runtime(): Runtime {
 	let state: ReturnType<DeploymentAdapter["readState"]>;
 	let compose: string | undefined;
 	const events: string[] = [];
+	const converge = async (rendered: string) => {
+		if (!rendered.includes("ports:")) events.push("converge:private");
+		else throw new Error("promotion.public_port");
+	};
 	return {
 		events,
 		readState: () => state,
@@ -146,10 +150,8 @@ function runtime(): Runtime {
 			events.push(`pull:${reference}`);
 		},
 		inspect: async (reference) => ({ reference, platform: "linux/amd64" }),
-		converge: async (rendered) => {
-			if (!rendered.includes("ports:")) events.push("converge:private");
-			else throw new Error("promotion.public_port");
-		},
+		converge,
+		runOrdered: async () => converge(compose!),
 	};
 }
 function gates(currentReleaseDigest = digest("0")) {
@@ -368,9 +370,22 @@ export async function runReleasePromotionSimulation(
 	)
 		throw new Error("promotion.digest_mismatch");
 	const root = await mkdtemp(join(tmpdir(), "agendia-promotion-"));
-	const database = await startTestPostgres();
-	const events: string[] = [];
+	const log = console.log;
+	console.log = (...values) => {
+		if (
+			values.length === 1 &&
+			typeof values[0] === "object" &&
+			values[0] !== null &&
+			(values[0] as { code?: unknown; severity?: unknown }).code === "42P06" &&
+			(values[0] as { severity?: unknown }).severity === "NOTICE"
+		)
+			return;
+		log(...values);
+	};
+	let database: Awaited<ReturnType<typeof startTestPostgres>> | undefined;
 	try {
+		database = await startTestPostgres();
+		const events: string[] = [];
 		const staging = runtime(),
 			production = runtime();
 		await applyDeployment(planDeployment(initialProduction), production);
@@ -469,8 +484,12 @@ export async function runReleasePromotionSimulation(
 			productionAfter,
 		};
 	} finally {
-		await database.stop();
-		await rm(root, { recursive: true, force: true });
+		console.log = log;
+		const databaseToStop = database;
+		const stop = databaseToStop
+			? Promise.resolve().then(() => databaseToStop.stop())
+			: Promise.resolve();
+		await Promise.all([stop, rm(root, { recursive: true, force: true })]);
 	}
 }
 
