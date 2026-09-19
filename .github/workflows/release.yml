@@ -20,14 +20,43 @@ concurrency:
   group: release-${{ github.event.workflow_run.id }}
   cancel-in-progress: false
 jobs:
+  merge-policy:
+    if: github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.run_attempt == 1
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Verify squash-only merge policy
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const { data: settings } = await github.rest.repos.get({ owner: context.repo.owner, repo: context.repo.repo });
+            const mergePolicyKeys = [
+              "allow_squash_merge",
+              "allow_merge_commit",
+              "allow_rebase_merge",
+            ];
+            const mergePolicy = Object.fromEntries(
+              mergePolicyKeys.map(key => [
+                key,
+                {
+                  present: Object.prototype.hasOwnProperty.call(settings, key),
+                  type: typeof settings[key],
+                  value: typeof settings[key] === "boolean" ? settings[key] : null,
+                },
+              ]),
+            );
+            core.info(`release.merge_policy=${JSON.stringify(mergePolicy)}`);
+            if (!settings.allow_squash_merge || settings.allow_merge_commit || settings.allow_rebase_merge) throw new Error("release.squash_only_policy_required");
   publish:
+    needs: merge-policy
     if: github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.run_attempt == 1
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
-      - name: Verify exact merged SHA, run jobs, and squash-only policy
+      - name: Verify exact merged SHA and run jobs
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -38,36 +67,10 @@ jobs:
             const fs = require("fs"), owner = context.repo.owner, repo = context.repo.repo;
             const sha = process.env.HEAD_SHA, runId = Number(process.env.RUN_ID);
             const required = ["quality", "unit", "postgres", "browser", "aggregate-contract", "source-build"];
-            const [settings, prs, jobs] = await Promise.all([
-              github.rest.repos.get({ owner, repo }),
+            const [prs, jobs] = await Promise.all([
               github.paginate(github.rest.repos.listPullRequestsAssociatedWithCommit, { owner, repo, commit_sha: sha, per_page: 100 }),
               github.paginate(github.rest.actions.listJobsForWorkflowRun, { owner, repo, run_id: runId, per_page: 100 }),
             ]);
-            const mergePolicyKeys = [
-              "allow_squash_merge",
-              "allow_merge_commit",
-              "allow_rebase_merge",
-            ];
-            const mergePolicy = Object.fromEntries(
-              mergePolicyKeys.map(key => [
-                key,
-                {
-                  present: Object.prototype.hasOwnProperty.call(
-                    settings.data,
-                    key,
-                  ),
-                  type: typeof settings.data[key],
-                  value:
-                    typeof settings.data[key] === "boolean"
-                      ? settings.data[key]
-                      : null,
-                },
-              ]),
-            );
-            core.info(
-              `release.merge_policy=${JSON.stringify(mergePolicy)}`,
-            );
-            if (!settings.data.allow_squash_merge || settings.data.allow_merge_commit || settings.data.allow_rebase_merge) throw new Error("release.squash_only_policy_required");
             const merged = prs.find(pr => pr.merged_at && pr.merge_commit_sha === sha);
             if (!merged) throw new Error("release.merged_squash_pr_missing");
             const checks = required.map(name => {
