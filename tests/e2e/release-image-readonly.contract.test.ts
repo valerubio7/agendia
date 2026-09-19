@@ -404,6 +404,8 @@ describe("release image read-only runtime", () => {
 				schema: "pgboss",
 			});
 			await bootstrap.start();
+			await bootstrap.createQueue("ai-generate");
+			await bootstrap.createQueue("conversation-summary");
 			await bootstrap.stop();
 			for (const command of commands) {
 				const application = `${name}-${command}`;
