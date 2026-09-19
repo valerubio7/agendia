@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { PgBoss } from "pg-boss";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -38,6 +38,47 @@ const cleanupImage = () => {
 	docker(["image", "rm", "-f", image], { allowFailure: true });
 	expect(() => docker(["image", "inspect", image])).toThrow();
 };
+const runReleaseEntrypoint = (
+	environment: "development" | "test" | "staging" | "production",
+) => {
+	const configDir = mkdtempSync(join(tmpdir(), "agendia-release-config-"));
+	const databaseFile = join(configDir, "api-database-url");
+	const { AGENDIA_ISOLATION_MANIFEST_FILE, DATABASE_URL, ...inherited } =
+		process.env;
+	const databaseUrl =
+		environment === "staging"
+			? "postgres://agendia_stg_api:secret@postgres/agendia_stg"
+			: environment === "production"
+				? "postgres://agendia_prod_api:secret@postgres/agendia_prod"
+				: "postgres://api:secret@postgres/agendia_test";
+	writeFileSync(databaseFile, `${databaseUrl}\n`, { mode: 0o644 });
+	try {
+		execFileSync(
+			process.execPath,
+			["scripts/release-entrypoint-config.ts", "api"],
+			{
+				cwd: process.cwd(),
+				env: {
+					...inherited,
+					AGENDIA_PROCESS: "api",
+					AGENDIA_ENVIRONMENT: environment,
+					AGENDIA_ENVIRONMENT_ID: "00000000-0000-4000-8000-000000000001",
+					AGENDIA_SECRET_SET_ID: "00000000-0000-4000-8000-000000000002",
+					AGENDIA_RELEASE_DIGEST: `sha256:${"a".repeat(64)}`,
+					API_DATABASE_URL_FILE: databaseFile,
+					APP_ORIGIN:
+						environment === "development"
+							? "http://localhost:3000"
+							: "https://readonly.test",
+				},
+				encoding: "utf8",
+				stdio: "pipe",
+			},
+		);
+	} finally {
+		rmSync(configDir, { recursive: true, force: true });
+	}
+};
 const runtimeEnvironment = (databaseFile: string) => [
 	"-e",
 	"AGENDIA_PROCESS=api",
@@ -58,6 +99,25 @@ const runtimeEnvironment = (databaseFile: string) => [
 ];
 
 type EffectiveMount = { Destination: string; RW: boolean; Type: string };
+
+const containerDiagnostics = (application: string) => {
+	const logs = spawnSync("docker", ["logs", application], { encoding: "utf8" });
+	return {
+		running: docker(["inspect", "-f", "{{.State.Running}}", application]).trim(),
+		exitCode: docker([
+			"inspect",
+			"-f",
+			"{{.State.ExitCode}}",
+			application,
+		]).trim(),
+		error: docker(["inspect", "-f", "{{.State.Error}}", application]).trim(),
+		logs: `${logs.stdout ?? ""}${logs.stderr ?? ""}`,
+	};
+};
+
+const expectContainerRunning = (application: string) => {
+	expect(containerDiagnostics(application)).toMatchObject({ running: "true" });
+};
 
 const effectiveMounts = (application: string): EffectiveMount[] => {
 	const mounts = JSON.parse(
@@ -130,6 +190,13 @@ const assertHttpResponse = async (
 };
 
 describe("release image read-only runtime", () => {
+	test("validates every environment but requires the isolation manifest only for releases", () => {
+		expect(() => runReleaseEntrypoint("development")).not.toThrow();
+		expect(() => runReleaseEntrypoint("test")).not.toThrow();
+		expect(() => runReleaseEntrypoint("staging")).toThrow();
+		expect(() => runReleaseEntrypoint("production")).toThrow();
+	});
+
 	test("fails closed for an undeclared mount or a forbidden write", () => {
 		expect(() =>
 			assertReadonlyRuntime({
@@ -231,12 +298,12 @@ describe("release image read-only runtime", () => {
 				"api",
 			]);
 			await Bun.sleep(2_500);
-			const state = docker(
-				["inspect", "-f", "{{.State.Running}}", application],
-				{ allowFailure: true },
-			).trim();
-			const logs = docker(["logs", application], { allowFailure: true });
-			expect({ state, logs }).toEqual({ state: "true", logs: "" });
+			expect(containerDiagnostics(application)).toEqual({
+				running: "true",
+				exitCode: "0",
+				error: "",
+				logs: "",
+			});
 			assertEffectiveMountContract(application, "api");
 		} finally {
 			docker(["rm", "-f", application, database], { allowFailure: true });
@@ -381,9 +448,7 @@ describe("release image read-only runtime", () => {
 					command,
 				]);
 				await Bun.sleep(1_000);
-				expect(
-					docker(["inspect", "-f", "{{.State.Running}}", application]).trim(),
-				).toBe("true");
+				expectContainerRunning(application);
 				assertEffectiveMountContract(application, command);
 				if (command === "whatsapp-manager")
 					expect(
