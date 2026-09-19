@@ -25,6 +25,18 @@ describe("universal release image", () => {
 		expect(ignore).toContain("tests/");
 	});
 
+	test("installs the CVE-2026-53612 fixed runtime packages and cleans apt lists", () => {
+		const dockerfile = read("Dockerfile");
+		const runtimeStart = dockerfile.indexOf(" AS runtime");
+		const runtime = dockerfile.slice(runtimeStart);
+		const builder = dockerfile.slice(0, runtimeStart);
+		const normalizedRuntime = runtime.replace(/\\\n\s*/g, " ");
+		expect(builder).not.toMatch(/apt-get (?:update|install)/);
+		expect(normalizedRuntime).toContain(
+			"RUN apt-get update  && apt-get install -y --no-install-recommends  util-linux=2.41.5-0+deb13u1  mount=2.41.5-0+deb13u1  && rm -rf /var/lib/apt/lists/*",
+		);
+	});
+
 	test("dispatches every supported release command from generated output only", () => {
 		const dockerfile = read("Dockerfile");
 		const dispatcher = read("deploy/entrypoint");
