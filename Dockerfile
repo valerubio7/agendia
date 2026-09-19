@@ -31,6 +31,11 @@ ARG OCI_SOURCE
 LABEL org.opencontainers.image.revision=$OCI_REVISION \
       org.opencontainers.image.created=$OCI_CREATED \
       org.opencontainers.image.source=$OCI_SOURCE
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      util-linux=2.41.5-0+deb13u1 \
+      mount=2.41.5-0+deb13u1 \
+ && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt/agendia
 COPY --from=builder --chown=10001:10001 /release/api ./api
 COPY --from=builder --chown=10001:10001 /release/whatsapp-manager ./whatsapp-manager
