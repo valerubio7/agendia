@@ -15,14 +15,16 @@ if (!runtimeProcesses.includes(command as RuntimeProcess)) {
 
 try {
 	const config = validateReleaseCommand(command as RuntimeProcess);
-	const manifestFile = process.env.AGENDIA_ISOLATION_MANIFEST_FILE;
-	if (!manifestFile) throw new Error("environment.manifest_unavailable");
-	preflightStaticEnvironment({
-		config,
-		manifest: JSON.parse(
-			readFileSync(manifestFile, "utf8"),
-		) as IsolationManifest,
-	});
+	if (config.environment === "staging" || config.environment === "production") {
+		const manifestFile = process.env.AGENDIA_ISOLATION_MANIFEST_FILE;
+		if (!manifestFile) throw new Error("environment.manifest_unavailable");
+		preflightStaticEnvironment({
+			config,
+			manifest: JSON.parse(
+				readFileSync(manifestFile, "utf8"),
+			) as IsolationManifest,
+		});
+	}
 } catch {
 	console.error(
 		JSON.stringify({ code: "runtime.configuration_invalid", process: command }),
