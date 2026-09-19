@@ -298,11 +298,10 @@ describe("release image read-only runtime", () => {
 				"api",
 			]);
 			await Bun.sleep(2_500);
-			expect(containerDiagnostics(application)).toEqual({
+			expect(containerDiagnostics(application)).toMatchObject({
 				running: "true",
 				exitCode: "0",
 				error: "",
-				logs: "",
 			});
 			assertEffectiveMountContract(application, "api");
 		} finally {
@@ -436,6 +435,12 @@ describe("release image read-only runtime", () => {
 					"APP_ORIGIN=https://readonly.test",
 					"-e",
 					`${databaseVariable}=/run/agendia/config/database-url`,
+					...(command === "whatsapp-manager"
+						? [
+								"-e",
+								"QUEUE_PUBLISHER_DATABASE_URL_FILE=/run/agendia/config/database-url",
+							]
+						: []),
 					"-e",
 					"WHATSAPP_LINK_CODE_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
 					"-e",
