@@ -97,7 +97,7 @@ describe("CI and immutable release verification", () => {
 			);
 	});
 
-	test("requires a current owned HIGH exception while CRITICAL findings always block", async () => {
+	test("requires a current owned HIGH exception while CRITICAL and UNKNOWN findings always block", async () => {
 		const { verifyScanPolicy } = await loadVerifier();
 		const emptyRegistry = { schemaVersion: 1, exceptions: [] };
 		expect(() =>
@@ -107,6 +107,21 @@ describe("CI and immutable release verification", () => {
 				new Date("2026-04-01"),
 			),
 		).toThrow("scan.critical:CVE-2026-9999");
+		expect(() =>
+			verifyScanPolicy(
+				{
+					Results: [
+						{
+							Vulnerabilities: [
+								{ VulnerabilityID: "CVE-2026-0002", Severity: "UNKNOWN" },
+							],
+						},
+					],
+				},
+				emptyRegistry,
+				new Date("2026-04-01"),
+			),
+		).toThrow("scan.unknown:CVE-2026-0002");
 		expect(() =>
 			verifyScanPolicy(
 				fixture("unapproved-high"),
@@ -189,24 +204,27 @@ describe("CI and immutable release verification", () => {
 
 	test("fails closed for malformed Trivy data and every invalid exception registry entry", async () => {
 		const { verifyScanPolicy } = await loadVerifier();
+		expect(() =>
+			verifyScanPolicy(
+				{
+					Results: [
+						{
+							Vulnerabilities: [
+								{ VulnerabilityID: "CVE-1", Severity: "UNRECOGNIZED" },
+							],
+						},
+					],
+				},
+				{ schemaVersion: 1, exceptions: [] },
+				new Date("2026-04-01"),
+			),
+		).toThrow("scan.report_invalid");
 		for (const [report, registry] of [
 			[{ Results: {} }, { schemaVersion: 1, exceptions: [] }],
 			[
 				{
 					Results: [
 						{ Vulnerabilities: [{ VulnerabilityID: "", Severity: "HIGH" }] },
-					],
-				},
-				{ schemaVersion: 1, exceptions: [] },
-			],
-			[
-				{
-					Results: [
-						{
-							Vulnerabilities: [
-								{ VulnerabilityID: "CVE-1", Severity: "UNKNOWN" },
-							],
-						},
 					],
 				},
 				{ schemaVersion: 1, exceptions: [] },

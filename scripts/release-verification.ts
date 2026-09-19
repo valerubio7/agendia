@@ -24,7 +24,10 @@ export type ReleaseCandidate = {
 	checks: Check[];
 	manifest: ReleaseManifest | unknown;
 };
-type Finding = { id: string; severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" };
+type Finding = {
+	id: string;
+	severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN";
+};
 type HighException = {
 	id: string;
 	owner: string;
@@ -124,7 +127,7 @@ function parseTrivyReport(value: unknown): Finding[] {
 				typeof value.VulnerabilityID !== "string" ||
 				!value.VulnerabilityID.trim() ||
 				typeof value.Severity !== "string" ||
-				!(["CRITICAL", "HIGH", "MEDIUM", "LOW"] as const).includes(
+				!(["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"] as const).includes(
 					value.Severity as Finding["severity"],
 				)
 			)
@@ -146,6 +149,8 @@ export function verifyScanPolicy(
 	for (const finding of parseTrivyReport(report)) {
 		if (finding.severity === "CRITICAL")
 			throw new Error(`scan.critical:${finding.id}`);
+		if (finding.severity === "UNKNOWN")
+			throw new Error(`scan.unknown:${finding.id}`);
 		if (finding.severity !== "HIGH") continue;
 		if (!exceptions.some((entry) => entry.id === finding.id))
 			throw new Error(`scan.high_unapproved:${finding.id}`);
