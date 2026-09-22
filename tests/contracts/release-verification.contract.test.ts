@@ -145,6 +145,65 @@ describe("CI and immutable release verification", () => {
 		).toEqual({ highExceptions: ["CVE-2026-0001"] });
 	});
 
+	test("permits only the staging CVE exception until its exact expiry", async () => {
+		const { verifyScanPolicy } = await loadVerifier();
+		const registry = JSON.parse(read("deploy/security/high-exceptions.json"));
+		const exception = {
+			id: "CVE-2026-76642",
+			owner: "valerubio7",
+			reason:
+				"Temporary exception while Debian Trixie util-linux lacks an official fix; staging-only is an operational hold, not technically enforced by the scanner, and production promotion is not authorized.",
+			expiresAt: "2026-09-29T22:32:30Z",
+			version: 1,
+		};
+		const report = (id: string, severity: string) => ({
+			Results: [
+				{ Vulnerabilities: [{ VulnerabilityID: id, Severity: severity }] },
+			],
+		});
+
+		expect(registry).toEqual({ schemaVersion: 1, exceptions: [exception] });
+		expect(
+			verifyScanPolicy(
+				report(exception.id, "HIGH"),
+				registry,
+				new Date("2026-09-29T22:32:29.999Z"),
+			),
+		).toEqual({ highExceptions: [exception.id] });
+		expect(() =>
+			verifyScanPolicy(
+				report(exception.id, "HIGH"),
+				registry,
+				new Date(exception.expiresAt),
+			),
+		).toThrow("scan.exception_registry_invalid");
+		expect(() =>
+			verifyScanPolicy(
+				report(exception.id, "HIGH"),
+				registry,
+				new Date("2026-09-29T22:32:30.001Z"),
+			),
+		).toThrow("scan.exception_registry_invalid");
+		expect(() =>
+			verifyScanPolicy(
+				report("CVE-2026-0001", "HIGH"),
+				registry,
+				new Date("2026-09-29T22:32:29.999Z"),
+			),
+		).toThrow("scan.high_unapproved:CVE-2026-0001");
+		for (const [id, severity, error] of [
+			["CVE-2026-76642", "CRITICAL", "scan.critical:CVE-2026-76642"],
+			["CVE-2026-76642", "UNKNOWN", "scan.unknown:CVE-2026-76642"],
+		] as const)
+			expect(() =>
+				verifyScanPolicy(
+					report(id, severity),
+					registry,
+					new Date("2026-09-29T22:32:29.999Z"),
+				),
+			).toThrow(error);
+	});
+
 	test("supports universal-image and release-set evidence without branch-selected bytes", async () => {
 		const { createReleaseEvidence, verifyReleaseCandidate } =
 			await loadVerifier();
