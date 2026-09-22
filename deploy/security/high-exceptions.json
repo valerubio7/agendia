@@ -7,6 +7,13 @@
 			"reason": "Temporary exception while Debian Trixie util-linux lacks an official fix; staging-only is an operational hold, not technically enforced by the scanner, and production promotion is not authorized.",
 			"expiresAt": "2026-09-29T22:32:30Z",
 			"version": 1
+		},
+		{
+			"id": "CVE-2026-78408",
+			"owner": "valerubio7",
+			"reason": "Temporary exception while Debian Trixie util-linux lacks an official fix for nsenter --join-cgroup; it requires a privileged operator on the attacker target, staging-only is an operational hold, not technically enforced by the scanner, and production promotion is not authorized.",
+			"expiresAt": "2026-09-29T22:32:30Z",
+			"version": 1
 		}
 	]
 }
