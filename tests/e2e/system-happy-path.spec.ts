@@ -144,17 +144,18 @@ test("real services complete the deterministic multi-tenant happy path", async (
       (ack, index) => ack.jid === accepted[index]?.remoteJid,
     ),
   });
-  const evidence = await system.deliveryEvidence();
-  expect(evidence).toEqual(
-    expect.arrayContaining(
-      accepted.map((item) =>
-        expect.objectContaining({
-          connection_id: item.connectionId,
-          state: "sent",
-        }),
+  await expect
+    .poll(() => system.deliveryEvidence())
+    .toEqual(
+      expect.arrayContaining(
+        accepted.map((item) =>
+          expect.objectContaining({
+            connection_id: item.connectionId,
+            state: "sent",
+          }),
+        ),
       ),
-    ),
-  );
+    );
   expect(system.providers.deepSeek.calls[0]).toContain("Clínica Norte");
   expect(system.providers.deepSeek.calls[0]).not.toContain("Taller Sur");
   expect(system.providers.deepSeek.calls[1]).toContain("Taller Sur");
