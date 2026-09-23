@@ -215,27 +215,32 @@ describe("CI and immutable release verification", () => {
 		).toEqual({ highExceptions: ["CVE-2026-0001"] });
 	});
 
-	test("permits only the two staging CVE exceptions until their exact expiry", async () => {
+	test("permits only the frozen staging HIGH inventory until its exact expiry", async () => {
 		const { verifyScanPolicy } = await loadVerifier();
 		const registry = JSON.parse(read("deploy/security/high-exceptions.json"));
-		const exceptions = [
-			{
-				id: "CVE-2026-76642",
-				owner: "valerubio7",
-				reason:
-					"Temporary exception while Debian Trixie util-linux lacks an official fix; staging-only is an operational hold, not technically enforced by the scanner, and production promotion is not authorized.",
-				expiresAt: "2026-09-29T22:32:30Z",
-				version: 1,
-			},
-			{
-				id: "CVE-2026-78408",
-				owner: "valerubio7",
-				reason:
-					"Temporary exception while Debian Trixie util-linux lacks an official fix for nsenter --join-cgroup; it requires a privileged operator on the attacker target, staging-only is an operational hold, not technically enforced by the scanner, and production promotion is not authorized.",
-				expiresAt: "2026-09-29T22:32:30Z",
-				version: 1,
-			},
+		const ids = [
+			"CVE-2025-69720",
+			"CVE-2026-11822",
+			"CVE-2026-11824",
+			"CVE-2026-14456",
+			"CVE-2026-16742",
+			"CVE-2026-41992",
+			"CVE-2026-42497",
+			"CVE-2026-48962",
+			"CVE-2026-54369",
+			"CVE-2026-57432",
+			"CVE-2026-57433",
+			"CVE-2026-76642",
+			"CVE-2026-78408",
+			"CVE-2026-78409",
+			"CVE-2026-78410",
+			"CVE-2026-86145",
+			"CVE-2026-89157",
+			"CVE-2026-89161",
+			"CVE-2026-9538",
+			"GHSA-rgj7-g3m4-5g8c",
 		];
+		const expiresAt = "2026-09-29T22:32:30Z";
 		const report = (id: string, severity: string) => ({
 			Results: [
 				{ Vulnerabilities: [{ VulnerabilityID: id, Severity: severity }] },
@@ -243,13 +248,31 @@ describe("CI and immutable release verification", () => {
 		});
 		const beforeExpiry = new Date("2026-09-29T22:32:29.999Z");
 
-		expect(registry).toEqual({ schemaVersion: 1, exceptions });
-		for (const exception of exceptions) {
+		expect(registry.schemaVersion).toBe(1);
+		expect(
+			registry.exceptions.map((entry: { id: string }) => entry.id).sort(),
+		).toEqual(ids);
+		expect(new Set(ids).size).toBe(20);
+		for (const exception of registry.exceptions) {
+			expect(exception.owner).toBe("valerubio7");
+			expect(exception.version).toBe(1);
+			expect(exception.expiresAt).toBe(expiresAt);
+			expect(exception.reason.trim().length).toBeGreaterThan(0);
+			expect(exception.reason.length).toBeLessThanOrEqual(512);
+			expect(exception.reason).toMatch(/staging/i);
+			expect(exception.reason).toMatch(/operational hold/i);
+			expect(exception.reason).toMatch(
+				/production promotion is not authorized/i,
+			);
+			if (exception.id === "GHSA-rgj7-g3m4-5g8c")
+				expect(exception.reason).toMatch(
+					/remote code execution if processing untrusted images/i,
+				);
 			expect(
 				verifyScanPolicy(report(exception.id, "HIGH"), registry, beforeExpiry),
 			).toEqual({ highExceptions: [exception.id] });
 			for (const expiredAt of [
-				new Date(exception.expiresAt),
+				new Date(expiresAt),
 				new Date("2026-09-29T22:32:30.001Z"),
 			])
 				expect(() =>
@@ -259,7 +282,7 @@ describe("CI and immutable release verification", () => {
 		expect(() =>
 			verifyScanPolicy(report("CVE-2026-0001", "HIGH"), registry, beforeExpiry),
 		).toThrow("scan.high_unapproved:CVE-2026-0001");
-		for (const exception of exceptions)
+		for (const exception of registry.exceptions)
 			for (const [severity, error] of [
 				["CRITICAL", `scan.critical:${exception.id}`],
 				["UNKNOWN", `scan.unknown:${exception.id}`],

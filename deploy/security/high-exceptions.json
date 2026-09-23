@@ -2,6 +2,83 @@
 	"schemaVersion": 1,
 	"exceptions": [
 		{
+			"id": "CVE-2025-69720",
+			"owner": "valerubio7",
+			"reason": "Temporary risk acceptance for staging-only image publication; staging is an operational hold, not a scanner-enforced production gate. Production promotion is not authorized.",
+			"expiresAt": "2026-09-29T22:32:30Z",
+			"version": 1
+		},
+		{
+			"id": "CVE-2026-11822",
+			"owner": "valerubio7",
+			"reason": "Temporary risk acceptance for staging-only image publication; staging is an operational hold, not a scanner-enforced production gate. Production promotion is not authorized.",
+			"expiresAt": "2026-09-29T22:32:30Z",
+			"version": 1
+		},
+		{
+			"id": "CVE-2026-11824",
+			"owner": "valerubio7",
+			"reason": "Temporary risk acceptance for staging-only image publication; staging is an operational hold, not a scanner-enforced production gate. Production promotion is not authorized.",
+			"expiresAt": "2026-09-29T22:32:30Z",
+			"version": 1
+		},
+		{
+			"id": "CVE-2026-14456",
+			"owner": "valerubio7",
+			"reason": "Temporary risk acceptance for staging-only image publication; staging is an operational hold, not a scanner-enforced production gate. Production promotion is not authorized.",
+			"expiresAt": "2026-09-29T22:32:30Z",
+			"version": 1
+		},
+		{
+			"id": "CVE-2026-16742",
+			"owner": "valerubio7",
+			"reason": "Temporary risk acceptance for staging-only image publication; staging is an operational hold, not a scanner-enforced production gate. Production promotion is not authorized.",
+			"expiresAt": "2026-09-29T22:32:30Z",
+			"version": 1
+		},
+		{
+			"id": "CVE-2026-41992",
+			"owner": "valerubio7",
+			"reason": "Temporary risk acceptance for staging-only image publication; staging is an operational hold, not a scanner-enforced production gate. Production promotion is not authorized.",
+			"expiresAt": "2026-09-29T22:32:30Z",
+			"version": 1
+		},
+		{
+			"id": "CVE-2026-42497",
+			"owner": "valerubio7",
+			"reason": "Temporary risk acceptance for staging-only image publication; staging is an operational hold, not a scanner-enforced production gate. Production promotion is not authorized.",
+			"expiresAt": "2026-09-29T22:32:30Z",
+			"version": 1
+		},
+		{
+			"id": "CVE-2026-48962",
+			"owner": "valerubio7",
+			"reason": "Temporary risk acceptance for staging-only image publication; staging is an operational hold, not a scanner-enforced production gate. Production promotion is not authorized.",
+			"expiresAt": "2026-09-29T22:32:30Z",
+			"version": 1
+		},
+		{
+			"id": "CVE-2026-54369",
+			"owner": "valerubio7",
+			"reason": "Temporary risk acceptance for staging-only image publication; staging is an operational hold, not a scanner-enforced production gate. Production promotion is not authorized.",
+			"expiresAt": "2026-09-29T22:32:30Z",
+			"version": 1
+		},
+		{
+			"id": "CVE-2026-57432",
+			"owner": "valerubio7",
+			"reason": "Temporary risk acceptance for staging-only image publication; staging is an operational hold, not a scanner-enforced production gate. Production promotion is not authorized.",
+			"expiresAt": "2026-09-29T22:32:30Z",
+			"version": 1
+		},
+		{
+			"id": "CVE-2026-57433",
+			"owner": "valerubio7",
+			"reason": "Temporary risk acceptance for staging-only image publication; staging is an operational hold, not a scanner-enforced production gate. Production promotion is not authorized.",
+			"expiresAt": "2026-09-29T22:32:30Z",
+			"version": 1
+		},
+		{
 			"id": "CVE-2026-76642",
 			"owner": "valerubio7",
 			"reason": "Temporary exception while Debian Trixie util-linux lacks an official fix; staging-only is an operational hold, not technically enforced by the scanner, and production promotion is not authorized.",
@@ -12,6 +89,55 @@
 			"id": "CVE-2026-78408",
 			"owner": "valerubio7",
 			"reason": "Temporary exception while Debian Trixie util-linux lacks an official fix for nsenter --join-cgroup; it requires a privileged operator on the attacker target, staging-only is an operational hold, not technically enforced by the scanner, and production promotion is not authorized.",
+			"expiresAt": "2026-09-29T22:32:30Z",
+			"version": 1
+		},
+		{
+			"id": "CVE-2026-78409",
+			"owner": "valerubio7",
+			"reason": "Temporary risk acceptance for staging-only image publication; staging is an operational hold, not a scanner-enforced production gate. Production promotion is not authorized.",
+			"expiresAt": "2026-09-29T22:32:30Z",
+			"version": 1
+		},
+		{
+			"id": "CVE-2026-78410",
+			"owner": "valerubio7",
+			"reason": "Temporary risk acceptance for staging-only image publication; staging is an operational hold, not a scanner-enforced production gate. Production promotion is not authorized.",
+			"expiresAt": "2026-09-29T22:32:30Z",
+			"version": 1
+		},
+		{
+			"id": "CVE-2026-86145",
+			"owner": "valerubio7",
+			"reason": "Temporary risk acceptance for staging-only image publication; staging is an operational hold, not a scanner-enforced production gate. Production promotion is not authorized.",
+			"expiresAt": "2026-09-29T22:32:30Z",
+			"version": 1
+		},
+		{
+			"id": "CVE-2026-89157",
+			"owner": "valerubio7",
+			"reason": "Temporary risk acceptance for staging-only image publication; staging is an operational hold, not a scanner-enforced production gate. Production promotion is not authorized.",
+			"expiresAt": "2026-09-29T22:32:30Z",
+			"version": 1
+		},
+		{
+			"id": "CVE-2026-89161",
+			"owner": "valerubio7",
+			"reason": "Temporary risk acceptance for staging-only image publication; staging is an operational hold, not a scanner-enforced production gate. Production promotion is not authorized.",
+			"expiresAt": "2026-09-29T22:32:30Z",
+			"version": 1
+		},
+		{
+			"id": "CVE-2026-9538",
+			"owner": "valerubio7",
+			"reason": "Temporary risk acceptance for staging-only image publication; staging is an operational hold, not a scanner-enforced production gate. Production promotion is not authorized.",
+			"expiresAt": "2026-09-29T22:32:30Z",
+			"version": 1
+		},
+		{
+			"id": "GHSA-rgj7-g3m4-5g8c",
+			"owner": "valerubio7",
+			"reason": "Temporary risk acceptance for staging-only image publication; potential remote code execution if processing untrusted images. Staging is an operational hold, not a scanner-enforced production gate; production promotion is not authorized.",
 			"expiresAt": "2026-09-29T22:32:30Z",
 			"version": 1
 		}
