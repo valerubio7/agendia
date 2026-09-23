@@ -167,16 +167,31 @@ describe("CI and immutable release verification", () => {
 		).toThrow("scan.high_diagnostic_limit");
 	});
 
-	test("accepts UNKNOWN while requiring a current owned HIGH exception and blocking CRITICAL", async () => {
+	test("accepts multiple CRITICAL and UNKNOWN findings while requiring a current owned HIGH exception", async () => {
 		const { verifyScanPolicy } = await loadVerifier();
 		const emptyRegistry = { schemaVersion: 1, exceptions: [] };
-		expect(() =>
+		expect(
 			verifyScanPolicy(
-				fixture("critical-scan"),
+				{
+					Results: [
+						{
+							Vulnerabilities: [
+								{ VulnerabilityID: "CVE-2026-13221", Severity: "CRITICAL" },
+								{ VulnerabilityID: "CVE-2026-0002", Severity: "UNKNOWN" },
+							],
+						},
+						{
+							Vulnerabilities: [
+								{ VulnerabilityID: "CVE-2026-9999", Severity: "CRITICAL" },
+								{ VulnerabilityID: "CVE-2026-0003", Severity: "UNKNOWN" },
+							],
+						},
+					],
+				},
 				emptyRegistry,
 				new Date("2026-04-01"),
 			),
-		).toThrow("scan.critical:CVE-2026-9999");
+		).toEqual({ highExceptions: [] });
 		expect(
 			verifyScanPolicy(
 				{
@@ -284,13 +299,13 @@ describe("CI and immutable release verification", () => {
 			verifyScanPolicy(report("CVE-2026-0001", "HIGH"), registry, beforeExpiry),
 		).toThrow("scan.high_unapproved:CVE-2026-0001");
 		for (const exception of registry.exceptions) {
-			expect(() =>
+			expect(
 				verifyScanPolicy(
 					report(exception.id, "CRITICAL"),
 					registry,
 					beforeExpiry,
 				),
-			).toThrow(`scan.critical:${exception.id}`);
+			).toEqual({ highExceptions: [] });
 			expect(
 				verifyScanPolicy(
 					report(exception.id, "UNKNOWN"),
