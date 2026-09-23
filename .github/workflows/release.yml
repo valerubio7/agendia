@@ -109,6 +109,8 @@ jobs:
           format: json
           output: trivy.json
           exit-code: "0"
+      - name: Log bounded Trivy HIGH advisory IDs
+        run: bun -e 'const {listHighTrivyIds}=await import("./scripts/release-verification.ts"); console.log(`release.trivy.high_ids=${JSON.stringify(listHighTrivyIds(await Bun.file("trivy.json").json()))}`)'
       - name: Enforce fail-closed Trivy policy
         run: bun -e 'const {verifyScanPolicy}=await import("./scripts/release-verification.ts"); verifyScanPolicy(await Bun.file("trivy.json").json(), await Bun.file("deploy/security/high-exceptions.json").json())'
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
