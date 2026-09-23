@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import {
 	assertSourcePreflight,
 	createBoundedHostRunner,
@@ -258,6 +262,21 @@ describe("direct pinned-source host runtime", () => {
 	});
 
 	test("accepts exactly the seven workspace dependency directories in any order", () => {
+		const calls: string[][] = [];
+		const fixture = source();
+		assertSourcePreflight(
+			source({
+				git: (args: readonly string[]) => {
+					calls.push([...args]);
+					return fixture.git(args);
+				},
+			}),
+		);
+		expect(calls).toEqual([
+			["rev-parse", "HEAD"],
+			["status", "--porcelain=v1", "--untracked-files=all"],
+			["status", "--porcelain=v1", "--ignored", "--untracked-files=normal"],
+		]);
 		expect(() => assertSourcePreflight(source())).not.toThrow();
 		expect(() =>
 			assertSourcePreflight(
@@ -271,6 +290,59 @@ describe("direct pinned-source host runtime", () => {
 				}),
 			),
 		).not.toThrow();
+	});
+
+	test("real Git collapses ignored dependencies only in normal mode and rejects extra drift", () => {
+		const directory = mkdtempSync(join(tmpdir(), "agendia-preflight-"));
+		try {
+			const git = (args: readonly string[]) =>
+				execFileSync("git", args, { cwd: directory, encoding: "utf8" });
+			git(["init", "-q"]);
+			git(["config", "user.name", "Preflight Fixture"]);
+			git(["config", "user.email", "fixture@example.invalid"]);
+			writeFileSync(join(directory, ".gitignore"), "node_modules/\n");
+			for (const entry of ignoredDependencies.slice(1)) {
+				const marker = join(directory, dirname(entry.slice(3)), ".gitkeep");
+				mkdirSync(dirname(marker), { recursive: true });
+				writeFileSync(marker, "");
+			}
+			git(["add", "."]);
+			git(["commit", "-qm", "Fixture ignore rules"]);
+			for (const entry of ignoredDependencies) {
+				const path = join(directory, entry.slice(3), "dependency.txt");
+				mkdirSync(dirname(path), { recursive: true });
+				writeFileSync(path, "fixture\n");
+			}
+			const status = (mode: "all" | "normal") =>
+				git([
+					"status",
+					"--porcelain=v1",
+					"--ignored",
+					`--untracked-files=${mode}`,
+				]);
+			expect(status("all").trim().split("\n")).toHaveLength(7);
+			expect(status("all")).toContain("node_modules/dependency.txt");
+			expect(status("normal").trim().split("\n").sort()).toEqual(
+				[...ignoredDependencies].sort(),
+			);
+			const realSource = source({
+				git: (args: readonly string[]) =>
+					args[0] === "rev-parse" ? `${commit}\n` : git(args),
+			});
+			expect(() => assertSourcePreflight(realSource)).not.toThrow();
+			writeFileSync(join(directory, "unexpected.ignore"), "drift\n");
+			writeFileSync(
+				join(directory, ".gitignore"),
+				"node_modules/\nunexpected.ignore\n",
+			);
+			git(["add", ".gitignore"]);
+			git(["commit", "-qm", "Ignore unexpected path"]);
+			expect(() => assertSourcePreflight(realSource)).toThrow(
+				"host.source_drift_invalid",
+			);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
 	});
 
 	test("rejects missing, duplicate, and extra ignored entries", () => {
