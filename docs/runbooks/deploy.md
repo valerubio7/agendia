@@ -11,30 +11,7 @@ Use repository-produced authorization, manifest, provenance, SBOM, and Compose a
 
 ## Proposed command
 
-```sh
-sudo env -i PATH=/usr/bin:/bin sh -ceu '
-r=/opt/agendia/tooling/<40-hex-commit>
-cd "$r"
-test "$PWD" = "$r"
-test -s bun.lock
-test "$(git rev-parse HEAD)" = "<40-hex-commit>"
-test -z "$(git status --porcelain=v1 --untracked-files=all)"
-expected=$(printf "%s\n" \
-  "!! node_modules/" \
-  "!! apps/api/node_modules/" \
-  "!! apps/message-worker/node_modules/" \
-  "!! apps/web/node_modules/" \
-  "!! apps/whatsapp-manager/node_modules/" \
-  "!! packages/ai-deepseek/node_modules/" \
-  "!! packages/whatsapp-baileys/node_modules/" | sort)
-actual=$(git status --porcelain=v1 --ignored --untracked-files=all | sort)
-test "$actual" = "$expected"
-unsafe=$(find -L "$r" -xdev \( ! -user root -o -perm /022 \) -print -quit)
-test -z "$unsafe"
-'
-```
-
-Run that separate pre-import guard after root-owned `bun install --frozen-lockfile --ignore-scripts`; it checks checkout identity, lock presence, clean tracked/untracked status, exactly seven expected ignored workspace dependency directories (no missing, duplicate, or extra entries), and recursive ownership, not ignored dependency-byte integrity.
+After root-owned `bun install --frozen-lockfile --ignore-scripts`, run the separate [pinned source pre-import guard](deploy-source-preflight.md) before importing `scripts/deployctl.ts`. Stop if the guard fails; it does not check ignored dependency byte integrity.
 
 ```sh
 sudo env -i PATH=/usr/bin:/bin /opt/agendia/tools/bun-1.4.0/bin/bun --no-env-file /opt/agendia/tooling/<40-hex-commit>/scripts/deployctl.ts status staging --commit <40-hex-commit> --digest sha256:<64-hex-digest>
