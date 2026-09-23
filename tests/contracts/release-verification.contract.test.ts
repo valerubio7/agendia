@@ -79,8 +79,41 @@ describe("CI and immutable release verification", () => {
 		expect(
 			parseDockerPushDigest(`${tag}: digest: ${digest} size: 1234\n`, tag),
 		).toBe(`${repository}@${digest}`);
+		const header = `The push refers to repository [${repository}]`;
+		const realOutput = `${header}\nabc123: Layer already exists\n${"a".repeat(40)}: digest: ${digest} size: 4714\n`;
+		expect(parseDockerPushDigest(realOutput, tag)).toBe(
+			`${repository}@${digest}`,
+		);
 		for (const [candidate, output] of [
 			[tag, `${repository}:${"c".repeat(40)}: digest: ${digest} size: 1\n`],
+			[tag, `${"a".repeat(40)}: digest: ${digest} size: 4714\n`],
+			[
+				tag,
+				`The push refers to repository [ghcr.io/other/agendia]\n${"a".repeat(40)}: digest: ${digest} size: 4714\n`,
+			],
+			[
+				tag,
+				`${header}\n${header}\n${"a".repeat(40)}: digest: ${digest} size: 4714\n`,
+			],
+			[
+				tag,
+				`The push refers to repository [ghcrXio/agendia/agendia]\n${"a".repeat(40)}: digest: ${digest} size: 4714\n`,
+			],
+			[tag, `${header}\n${"c".repeat(40)}: digest: ${digest} size: 4714\n`],
+			[
+				tag,
+				`${header}\nghcrXio/other/agendia: digest: ${digest} size: 4714\n${"a".repeat(40)}: digest: ${digest} size: 4714\n`,
+			],
+			[
+				tag,
+				`${header}\n${"a".repeat(40)}: digest: ${digest} size: 4714\n${tag}: digest: ${digest} size: 4714\n`,
+			],
+			[
+				tag,
+				`${header}\n${"a".repeat(40)}: digest: ${digest} size: 4714\nDone\n`,
+			],
+			[tag, `${header}\n${"a".repeat(40)}: digest: sha256:bad size: 4714\n`],
+			[tag, `${header}\n${"a".repeat(40)}: digest: ${digest} size: unknown\n`],
 			[
 				`ghcrXio/agendia/agendia:${"a".repeat(40)}`,
 				`ghcrXio/agendia/agendia:${"a".repeat(40)}: digest: ${digest} size: 1\n`,

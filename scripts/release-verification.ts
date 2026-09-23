@@ -183,22 +183,27 @@ export function parseDockerPushDigest(
 	);
 	if (!tag?.[1] || !tag[2]) throw new Error("release.push_digest_invalid");
 	const repository = normalizeGhcrRepository(tag[1]);
-	const prefix = `${pushedReference}: digest: `;
-	const parseSummary = (line: string) => {
-		if (!line.startsWith(prefix)) return undefined;
-		return line
-			.slice(prefix.length)
-			.match(/^(sha256:[a-f0-9]{64}) size: ([0-9]+)$/)?.[1];
-	};
 	const lines = output.split(/\r?\n/).filter(Boolean);
-	const matches = lines.map(parseSummary).filter(Boolean);
+	const headers = lines.filter((line) =>
+		line.startsWith("The push refers to repository ["),
+	);
+	const summaries = lines.filter((line) => line.includes(": digest:"));
+	const summary = summaries[0];
+	const match = summary?.match(
+		/^([^\s]+): digest: (sha256:[a-f0-9]{64}) size: ([0-9]+)$/,
+	);
 	if (
-		matches.length !== 1 ||
-		!matches[0] ||
-		parseSummary(lines.at(-1) ?? "") !== matches[0]
+		(headers.length !== 0 &&
+			(headers.length !== 1 ||
+				headers[0] !== `The push refers to repository [${repository}]`)) ||
+		(match?.[1] === tag[2] && headers.length !== 1) ||
+		summaries.length !== 1 ||
+		summary !== lines.at(-1) ||
+		!match ||
+		(match[1] !== tag[2] && match[1] !== pushedReference)
 	)
 		throw new Error("release.push_digest_invalid");
-	return `${repository}@${matches[0]}`;
+	return `${repository}@${match[2]}`;
 }
 const genesisDigest = `sha256:${"0".repeat(64)}`;
 const genesisMeaning =
