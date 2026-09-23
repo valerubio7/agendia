@@ -11,11 +11,7 @@ Use repository-produced authorization, manifest, provenance, SBOM, and Compose a
 
 ## Proposed command
 
-```sh
-sudo env -i PATH=/usr/bin:/bin sh -ceu 'r=/opt/agendia/tooling/<40-hex-commit>; cd "$r"; test "$PWD" = "$r"; test -s bun.lock; test "$(git rev-parse HEAD)" = "<40-hex-commit>"; test -z "$(git status --porcelain=v1 --untracked-files=all | grep -v "^!! node_modules/$")"; ! find "$r" -xdev \( ! -user root -o -perm /022 \) -print -quit | grep -q .'
-```
-
-Run that separate pre-import guard after root-owned `bun install --frozen-lockfile --ignore-scripts`; it checks checkout identity, lock presence, and recursive ownership, not ignored dependency-byte integrity.
+After root-owned `bun install --frozen-lockfile --ignore-scripts`, run the separate [pinned source pre-import guard](deploy-source-preflight.md) before importing `scripts/deployctl.ts`. Stop if the guard fails; it does not check ignored dependency byte integrity.
 
 ```sh
 sudo env -i PATH=/usr/bin:/bin /opt/agendia/tools/bun-1.4.0/bin/bun --no-env-file /opt/agendia/tooling/<40-hex-commit>/scripts/deployctl.ts status staging --commit <40-hex-commit> --digest sha256:<64-hex-digest>

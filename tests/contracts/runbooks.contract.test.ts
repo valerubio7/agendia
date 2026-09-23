@@ -75,6 +75,45 @@ describe("operational runbooks", () => {
 		expect(health).not.toContain("sudo agendia-host-health");
 	});
 
+	test("links an exact, fail-closed pinned-source pre-import guard", async () => {
+		const deploy = await readRunbook("deploy");
+		const guardPath = "docs/runbooks/deploy-source-preflight.md";
+		expect(deploy).toContain(
+			"[pinned source pre-import guard](deploy-source-preflight.md)",
+		);
+		expect(await Bun.file(guardPath).exists()).toBe(true);
+		const guard = await Bun.file(guardPath).text();
+		expect(guard).toContain("sudo env -i PATH=/usr/bin:/bin sh -ceu '");
+		expect(guard).toContain(
+			'test -z "$(git status --porcelain=v1 --untracked-files=all)"',
+		);
+		for (const path of [
+			"node_modules/",
+			"apps/api/node_modules/",
+			"apps/message-worker/node_modules/",
+			"apps/web/node_modules/",
+			"apps/whatsapp-manager/node_modules/",
+			"packages/ai-deepseek/node_modules/",
+			"packages/whatsapp-baileys/node_modules/",
+		])
+			expect(guard).toContain(`"!! ${path}"`);
+		const expectedEntries = guard.match(/"!! [^"\n]+"/g) ?? [];
+		expect(expectedEntries).toHaveLength(7);
+		expect(
+			expectedEntries.every((entry) => entry.endsWith('node_modules/"')),
+		).toBe(true);
+		expect(guard).not.toMatch(/"!! [^"\n]*[?*][^"\n]*"/);
+		expect(guard).toContain(
+			"actual=$(git status --porcelain=v1 --ignored --untracked-files=all | sort)",
+		);
+		expect(guard).toContain('test "$actual" = "$expected"');
+		expect(guard).toContain(
+			'unsafe=$(find -L "$r" -xdev \\( ! -user root -o -perm /022 \\) -print -quit)',
+		);
+		expect(guard).toContain('test -z "$unsafe"');
+		expect(guard).not.toMatch(/!\s*find[^\n]*\|\s*grep/);
+	});
+
 	test("rejects unsafe operational fiction and keeps the runbook semantics separate", async () => {
 		const [deploy, backup, rollback, recovery] = await Promise.all([
 			readRunbook("deploy"),
