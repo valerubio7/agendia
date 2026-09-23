@@ -1,6 +1,6 @@
 import {
-	validateReleaseManifest,
 	type ReleaseManifest,
+	validateReleaseManifest,
 } from "@agendia/release-manifest";
 export const requiredReleaseChecks = [
 	"quality",
@@ -36,6 +36,8 @@ type HighException = {
 	version: 1;
 };
 type ExceptionRegistry = { schemaVersion: 1; exceptions: HighException[] };
+const highDiagnosticId = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const highDiagnosticLimit = 64;
 const sha = /^[a-f0-9]{40}$/;
 const digest = /^sha256:[a-f0-9]{64}$/;
 const rfc3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
@@ -138,6 +140,18 @@ function parseTrivyReport(value: unknown): Finding[] {
 			};
 		});
 	});
+}
+export function listHighTrivyIds(report: unknown): string[] {
+	const ids = new Set<string>();
+	for (const finding of parseTrivyReport(report)) {
+		if (finding.severity !== "HIGH") continue;
+		if (!highDiagnosticId.test(finding.id) || finding.id.trim() !== finding.id)
+			throw new Error("scan.high_diagnostic_invalid");
+		ids.add(finding.id);
+		if (ids.size > highDiagnosticLimit)
+			throw new Error("scan.high_diagnostic_limit");
+	}
+	return [...ids].sort();
 }
 export function verifyScanPolicy(
 	report: unknown,

@@ -97,6 +97,76 @@ describe("CI and immutable release verification", () => {
 			);
 	});
 
+	test("logs only bounded sorted HIGH advisory IDs before enforcing the unchanged policy", () => {
+		const release = read(".github/workflows/release.yml");
+		const trivy = release.indexOf("output: trivy.json");
+		const diagnostic = release.indexOf(
+			"- name: Log bounded Trivy HIGH advisory IDs",
+		);
+		const policy = release.indexOf("- name: Enforce fail-closed Trivy policy");
+		const upload = release.slice(release.indexOf("actions/upload-artifact"));
+
+		expect(trivy).toBeGreaterThan(-1);
+		expect(diagnostic).toBeGreaterThan(trivy);
+		expect(policy).toBeGreaterThan(diagnostic);
+		expect(release.slice(diagnostic, policy)).toContain(
+			'release.trivy.high_ids=${JSON.stringify(listHighTrivyIds(await Bun.file("trivy.json").json()))}',
+		);
+		expect(upload).not.toContain("trivy.json");
+	});
+
+	test("lists sorted unique HIGH IDs and rejects unsafe or excessive diagnostic output", async () => {
+		const { listHighTrivyIds } = await loadVerifier();
+		expect(
+			listHighTrivyIds({
+				Results: [
+					{
+						Vulnerabilities: [
+							{ VulnerabilityID: "CVE-2026-0002", Severity: "HIGH" },
+							{ VulnerabilityID: "CVE-2026-0001", Severity: "MEDIUM" },
+							{ VulnerabilityID: "CVE-2026-0001", Severity: "HIGH" },
+						],
+					},
+					{
+						Vulnerabilities: [
+							{ VulnerabilityID: "CVE-2026-0003", Severity: "CRITICAL" },
+							{ VulnerabilityID: "CVE-2026-0001", Severity: "HIGH" },
+						],
+					},
+				],
+			}),
+		).toEqual(["CVE-2026-0001", "CVE-2026-0002"]);
+		expect(listHighTrivyIds({ Results: [] })).toEqual([]);
+		for (const id of [
+			"CVE 2026-0001",
+			"CVE-2026-0001\nnext",
+			"CVE-2026-0001\n",
+			"CVE-2026-0001\r\n",
+			'CVE-2026-"0001',
+			"A".repeat(129),
+			`${"A".repeat(128)}\n`,
+		])
+			expect(() =>
+				listHighTrivyIds({
+					Results: [
+						{ Vulnerabilities: [{ VulnerabilityID: id, Severity: "HIGH" }] },
+					],
+				}),
+			).toThrow("scan.high_diagnostic_invalid");
+		expect(() =>
+			listHighTrivyIds({
+				Results: [
+					{
+						Vulnerabilities: Array.from({ length: 65 }, (_, index) => ({
+							VulnerabilityID: `CVE-2026-${index}`,
+							Severity: "HIGH",
+						})),
+					},
+				],
+			}),
+		).toThrow("scan.high_diagnostic_limit");
+	});
+
 	test("requires a current owned HIGH exception while CRITICAL and UNKNOWN findings always block", async () => {
 		const { verifyScanPolicy } = await loadVerifier();
 		const emptyRegistry = { schemaVersion: 1, exceptions: [] };
