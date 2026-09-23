@@ -5,11 +5,11 @@ import {
 	fstatSync,
 	lstatSync,
 	openSync,
-	readFileSync,
 	readdirSync,
+	readFileSync,
 	realpathSync,
-	statSync,
 	statfsSync,
+	statSync,
 	unlinkSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -174,10 +174,23 @@ export function assertSourcePreflight(source: SourcePreflight): void {
 		throw new Error("host.source_commit_invalid");
 	if (source.git(["status", "--porcelain=v1", "--untracked-files=all"]).trim())
 		throw new Error("host.source_dirty");
+	const expectedIgnored = new Set([
+		"!! node_modules/",
+		"!! apps/api/node_modules/",
+		"!! apps/message-worker/node_modules/",
+		"!! apps/web/node_modules/",
+		"!! apps/whatsapp-manager/node_modules/",
+		"!! packages/ai-deepseek/node_modules/",
+		"!! packages/whatsapp-baileys/node_modules/",
+	]);
+	const ignored = source
+		.git(["status", "--porcelain=v1", "--ignored", "--untracked-files=all"])
+		.trim()
+		.split("\n");
 	if (
-		source
-			.git(["status", "--porcelain=v1", "--ignored", "--untracked-files=all"])
-			.trim() !== "!! node_modules/"
+		ignored.length !== expectedIgnored.size ||
+		new Set(ignored).size !== expectedIgnored.size ||
+		ignored.some((entry) => !expectedIgnored.has(entry))
 	)
 		throw new Error("host.source_drift_invalid");
 }

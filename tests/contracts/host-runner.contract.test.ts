@@ -1,16 +1,25 @@
 import { describe, expect, test } from "bun:test";
-import { postgresImage } from "../../scripts/support/locked-images.ts";
 import {
 	assertSourcePreflight,
 	createBoundedHostRunner,
 	createHostRuntime,
-	redactOperationsValue,
 	type HostRunner,
+	redactOperationsValue,
 } from "../../scripts/host-deployment-runtime.ts";
+import { postgresImage } from "../../scripts/support/locked-images.ts";
 
 const commit = "a".repeat(40);
 const digest = `sha256:${"b".repeat(64)}`;
 const appReference = `ghcr.io/valerubio7/agendia@${digest}`;
+const ignoredDependencies = [
+	"!! node_modules/",
+	"!! apps/api/node_modules/",
+	"!! apps/message-worker/node_modules/",
+	"!! apps/web/node_modules/",
+	"!! apps/whatsapp-manager/node_modules/",
+	"!! packages/ai-deepseek/node_modules/",
+	"!! packages/whatsapp-baileys/node_modules/",
+];
 
 function source(overrides: Record<string, unknown> = {}) {
 	const root = `/opt/agendia/tooling/${commit}`;
@@ -30,7 +39,7 @@ function source(overrides: Record<string, unknown> = {}) {
 					: "",
 		git: (arguments_: readonly string[]) =>
 			arguments_.includes("--ignored")
-				? "!! node_modules/\n"
+				? `${ignoredDependencies.join("\n")}\n`
 				: arguments_[0] === "rev-parse"
 					? `${commit}\n`
 					: "",
@@ -246,6 +255,43 @@ describe("direct pinned-source host runtime", () => {
 		await expect(
 			runtime.pull("postgres@sha256:" + "c".repeat(64)),
 		).rejects.toThrow("host.image_invalid");
+	});
+
+	test("accepts exactly the seven workspace dependency directories in any order", () => {
+		expect(() => assertSourcePreflight(source())).not.toThrow();
+		expect(() =>
+			assertSourcePreflight(
+				source({
+					git: (args: readonly string[]) =>
+						args.includes("--ignored")
+							? `${ignoredDependencies.toReversed().join("\n")}\n`
+							: args[0] === "rev-parse"
+								? `${commit}\n`
+								: "",
+				}),
+			),
+		).not.toThrow();
+	});
+
+	test("rejects missing, duplicate, and extra ignored entries", () => {
+		for (const entries of [
+			ignoredDependencies.slice(1),
+			[...ignoredDependencies, ignoredDependencies[0]],
+			[...ignoredDependencies, "!! node_modules/extra/"],
+			[...ignoredDependencies, "!! .env.production"],
+		]) {
+			expectSourceFailure(
+				{
+					git: (args: readonly string[]) =>
+						args.includes("--ignored")
+							? `${entries.join("\n")}\n`
+							: args[0] === "rev-parse"
+								? `${commit}\n`
+								: "",
+				},
+				"host.source_drift_invalid",
+			);
+		}
 	});
 
 	test("RED: binds preflight to its executing root and rejects ignored source drift", () => {
