@@ -18,7 +18,7 @@ expected=$(printf "%s\n" \
   "!! apps/whatsapp-manager/node_modules/" \
   "!! packages/ai-deepseek/node_modules/" \
   "!! packages/whatsapp-baileys/node_modules/" | sort)
-actual=$(git status --porcelain=v1 --ignored --untracked-files=all | sort)
+actual=$(git status --porcelain=v1 --ignored --untracked-files=normal | sort)
 test "$actual" = "$expected"
 unsafe=$(find -L "$r" -xdev \( ! -user root -o -perm /022 \) -print -quit)
 test -z "$unsafe"
