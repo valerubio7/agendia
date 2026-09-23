@@ -1,0 +1,12 @@
+# Learning production release
+
+Goal: publish an immutable GHCR image and deploy Agendia to the learning production host. User explicitly prioritizes deployment, authorizes vulnerability exceptions including the new UNKNOWN finding and production despite untested backup/restore. Do not claim deployment without a real digest, host access, and working configuration/secrets. Never put secrets in Git or chat.
+
+Decision: keep the Trivy scan and malformed-report rejection. Permit UNKNOWN findings in the learning release policy to avoid the first-finding loop, while retaining exact, expiring HIGH acceptance and the CRITICAL stop for now. If CRITICAL blocks, report its identity and request a focused next decision. Record UNKNOWN IDs in bounded, sanitized release logs where feasible. This deliberately weakens the UNKNOWN release gate with user authorization; do not present it as safe production practice.
+
+Worktree: `fix/learning-release-unknown` at `/home/valerubio7/Projects/agendia-release-unblock`, based on `c0b22708458c4ca07b0ccce58b5bdc6bf7153e05`. Existing uncommitted notes in the original checkout remain untouched. No SDD selection; ordinary ODD. TDD disabled by explicit user choice in this session (normal tests for speed); exact focused runner: `bun test tests/contracts/release-verification.contract.test.ts` using Bun 1.4.0. Native review mode off at last check.
+
+## Tasks
+- [x] P1 — Change UNKNOWN release policy and focused contract; preserve Trivy, CRITICAL and malformed-report gates. Route: delegated writer (two nontrivial files); independent verifier (native assessment unavailable/high). Evidence: Bun 1.4.0 focused contract 9 passed; Biome, TypeScript and diff-check passed (TypeScript needed temporary workspace-local dependency symlinks, removed afterward). UNKNOWN IDs are not separately logged; scan still runs and the report is validated. Commit: `4054d7b7b65971722350fb15bf8870677d540782`.
+- [ ] P2 — Deliver PR and observe exact-SHA CI/Release; confirm published immutable GHCR digest and artifacts. User separately authorized issue/commit/push/PR and conditional squash merge only after six CI checks pass. Issue #29 approved. Don't invent a digest. Evidence/commit: pending.
+- [ ] P3 — Assess production host readiness and deploy the published digest with real external secrets/config; verify status and smoke, report missing access/preconditions plainly. Do not copy secrets into repo or chat. Evidence: pending.
