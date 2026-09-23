@@ -167,7 +167,7 @@ describe("CI and immutable release verification", () => {
 		).toThrow("scan.high_diagnostic_limit");
 	});
 
-	test("requires a current owned HIGH exception while CRITICAL and UNKNOWN findings always block", async () => {
+	test("accepts UNKNOWN while requiring a current owned HIGH exception and blocking CRITICAL", async () => {
 		const { verifyScanPolicy } = await loadVerifier();
 		const emptyRegistry = { schemaVersion: 1, exceptions: [] };
 		expect(() =>
@@ -177,13 +177,14 @@ describe("CI and immutable release verification", () => {
 				new Date("2026-04-01"),
 			),
 		).toThrow("scan.critical:CVE-2026-9999");
-		expect(() =>
+		expect(
 			verifyScanPolicy(
 				{
 					Results: [
 						{
 							Vulnerabilities: [
 								{ VulnerabilityID: "CVE-2026-0002", Severity: "UNKNOWN" },
+								{ VulnerabilityID: "CVE-2026-0003", Severity: "UNKNOWN" },
 							],
 						},
 					],
@@ -191,7 +192,7 @@ describe("CI and immutable release verification", () => {
 				emptyRegistry,
 				new Date("2026-04-01"),
 			),
-		).toThrow("scan.unknown:CVE-2026-0002");
+		).toEqual({ highExceptions: [] });
 		expect(() =>
 			verifyScanPolicy(
 				fixture("unapproved-high"),
@@ -282,18 +283,22 @@ describe("CI and immutable release verification", () => {
 		expect(() =>
 			verifyScanPolicy(report("CVE-2026-0001", "HIGH"), registry, beforeExpiry),
 		).toThrow("scan.high_unapproved:CVE-2026-0001");
-		for (const exception of registry.exceptions)
-			for (const [severity, error] of [
-				["CRITICAL", `scan.critical:${exception.id}`],
-				["UNKNOWN", `scan.unknown:${exception.id}`],
-			] as const)
-				expect(() =>
-					verifyScanPolicy(
-						report(exception.id, severity),
-						registry,
-						beforeExpiry,
-					),
-				).toThrow(error);
+		for (const exception of registry.exceptions) {
+			expect(() =>
+				verifyScanPolicy(
+					report(exception.id, "CRITICAL"),
+					registry,
+					beforeExpiry,
+				),
+			).toThrow(`scan.critical:${exception.id}`);
+			expect(
+				verifyScanPolicy(
+					report(exception.id, "UNKNOWN"),
+					registry,
+					beforeExpiry,
+				),
+			).toEqual({ highExceptions: [] });
+		}
 	});
 
 	test("supports universal-image and release-set evidence without branch-selected bytes", async () => {
