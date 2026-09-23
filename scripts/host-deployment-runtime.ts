@@ -184,7 +184,7 @@ export function assertSourcePreflight(source: SourcePreflight): void {
 		"!! packages/whatsapp-baileys/node_modules/",
 	]);
 	const ignored = source
-		.git(["status", "--porcelain=v1", "--ignored", "--untracked-files=all"])
+		.git(["status", "--porcelain=v1", "--ignored", "--untracked-files=normal"])
 		.trim()
 		.split("\n");
 	if (

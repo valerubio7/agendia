@@ -104,7 +104,7 @@ describe("operational runbooks", () => {
 		).toBe(true);
 		expect(guard).not.toMatch(/"!! [^"\n]*[?*][^"\n]*"/);
 		expect(guard).toContain(
-			"actual=$(git status --porcelain=v1 --ignored --untracked-files=all | sort)",
+			"actual=$(git status --porcelain=v1 --ignored --untracked-files=normal | sort)",
 		);
 		expect(guard).toContain('test "$actual" = "$expected"');
 		expect(guard).toContain(
