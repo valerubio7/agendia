@@ -3,24 +3,24 @@ import { randomUUID } from "node:crypto";
 import { cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import postgres from "postgres";
 import type { ReleaseManifest } from "@agendia/release-manifest";
 import {
-	preflightEnvironment,
 	type IsolationManifest,
+	preflightEnvironment,
 	type RuntimeConfig,
 } from "@agendia/runtime-config";
+import postgres from "postgres";
 import { runMigrate } from "../../scripts/migrate.ts";
+import {
+	type MigrationEvidence,
+	runGovernedMigrations,
+	schemaFingerprint,
+} from "../../scripts/support/postgres-migrations.ts";
 import {
 	applyPostgresMigrations,
 	startTestPostgres,
 	type TestPostgres,
 } from "../support/postgres.ts";
-import {
-	runGovernedMigrations,
-	schemaFingerprint,
-	type MigrationEvidence,
-} from "../../scripts/support/postgres-migrations.ts";
 
 const migrations = join(import.meta.dir, "../../packages/db/migrations");
 const digest = (value: string) => `sha256:${value.repeat(64)}`;
@@ -74,7 +74,7 @@ describe("governed migrations", () => {
 	let database: TestPostgres;
 	beforeAll(async () => {
 		database = await startTestPostgres();
-	});
+	}, 120_000);
 	afterAll(async () => {
 		await database.stop();
 		for (const directory of temporaryDirectories)
@@ -343,6 +343,203 @@ describe("governed migrations", () => {
 			}),
 		).rejects.toThrow("migration.backup_evidence_invalid");
 	});
+
+	test.each(["staging", "production"] as const)(
+		"permits truthful blank %s genesis without backup",
+		async (environment) => {
+			const clean = await startTestPostgres();
+			const environmentId = randomUUID();
+			const secretSetId = randomUUID();
+			const identity = {
+				environment,
+				environmentId,
+				secretSetId,
+				releaseDigest: manifest.releaseDigest,
+			};
+			const genesisManifest = {
+				...manifest,
+				database: { ...manifest.database, previousReleaseDigest: digest("0") },
+			};
+			const { backup: _backup, ...withoutBackup } = evidence;
+			const options = {
+				sql: clean.sql,
+				migrationDirectory: migrations,
+				manifest: genesisManifest,
+				evidence: { ...withoutBackup, previousReleaseDigest: digest("0") },
+				environment,
+				genesis: { ...identity, expected: identity },
+			};
+			try {
+				await clean.sql`create schema pgboss`;
+				await expect(runGovernedMigrations(options)).resolves.toMatchObject({
+					execution: "migrated",
+					rollback: "not-promised",
+				});
+				const [ledger] = await clean.sql<
+					{ count: string }[]
+				>`select count(*)::text as count from agendia_schema_migrations where filename = ${manifest.database.minimumLedger}`;
+				expect(ledger?.count).toBe("1");
+				expect(
+					Array.from(
+						await clean.sql`select environment, environment_id as "environmentId", secret_set_id as "secretSetId" from agendia_environment`,
+					),
+				).toEqual([{ environment, environmentId, secretSetId }]);
+				await expect(runGovernedMigrations(options)).rejects.toThrow(
+					"migration.backup_evidence_invalid",
+				);
+			} finally {
+				await clean.stop();
+			}
+		},
+		120_000,
+	);
+
+	test("rejects false genesis identities, sentinel and supplied invalid backup", async () => {
+		const clean = await startTestPostgres();
+		const identity = {
+			environment: "staging" as const,
+			environmentId: randomUUID(),
+			secretSetId: randomUUID(),
+			releaseDigest: manifest.releaseDigest,
+		};
+		const { backup: _backup, ...withoutBackup } = evidence;
+		const options = {
+			sql: clean.sql,
+			migrationDirectory: migrations,
+			manifest: {
+				...manifest,
+				database: { ...manifest.database, previousReleaseDigest: digest("0") },
+			},
+			evidence: { ...withoutBackup, previousReleaseDigest: digest("0") },
+			environment: "staging",
+			genesis: { ...identity, expected: identity },
+		};
+		try {
+			await expect(
+				runGovernedMigrations({
+					...options,
+					genesis: { ...options.genesis, environmentId: randomUUID() },
+				}),
+			).rejects.toThrow("migration.genesis_identity_invalid");
+			await expect(
+				runGovernedMigrations({ ...options, environment: "production" }),
+			).rejects.toThrow("migration.backup_evidence_invalid");
+			await expect(
+				runGovernedMigrations({
+					...options,
+					evidence: { ...options.evidence, previousReleaseDigest: digest("2") },
+				}),
+			).rejects.toThrow("migration.backup_evidence_invalid");
+			await expect(
+				runGovernedMigrations({ ...options, manifest }),
+			).rejects.toThrow("migration.backup_evidence_invalid");
+			await expect(
+				runGovernedMigrations({
+					...options,
+					evidence: {
+						...options.evidence,
+						backup: { ...evidence.backup!, result: "fail" },
+					},
+				}),
+			).rejects.toThrow("migration.backup_evidence_invalid");
+			await clean.sql`create table agendia_environment (id integer)`;
+			await expect(runGovernedMigrations(options)).rejects.toThrow(
+				"migration.backup_evidence_invalid",
+			);
+		} finally {
+			await clean.stop();
+		}
+	}, 120_000);
+
+	test.each([
+		["public relation", "create table public.existing (id integer)"],
+		[
+			"custom schema relation",
+			"create schema unexpected; create table unexpected.existing (id integer)",
+		],
+		[
+			"populated pgboss",
+			"create schema pgboss; create table pgboss.existing (id integer)",
+		],
+	] as const)(
+		"rejects backup-free genesis with %s",
+		async (_name, setup) => {
+			const clean = await startTestPostgres();
+			const identity = {
+				environment: "staging" as const,
+				environmentId: randomUUID(),
+				secretSetId: randomUUID(),
+				releaseDigest: manifest.releaseDigest,
+			};
+			const { backup: _backup, ...withoutBackup } = evidence;
+			try {
+				await clean.sql.unsafe(setup);
+				await expect(
+					runGovernedMigrations({
+						sql: clean.sql,
+						migrationDirectory: migrations,
+						manifest: {
+							...manifest,
+							database: {
+								...manifest.database,
+								previousReleaseDigest: digest("0"),
+							},
+						},
+						evidence: { ...withoutBackup, previousReleaseDigest: digest("0") },
+						environment: "staging",
+						genesis: { ...identity, expected: identity },
+					}),
+				).rejects.toThrow("migration.backup_evidence_invalid");
+				const [catalog] = await clean.sql<
+					{ ledger: boolean; marker: boolean }[]
+				>`
+				select to_regclass('public.agendia_schema_migrations') is not null as ledger,
+				to_regclass('public.agendia_environment') is not null as marker`;
+				expect(catalog).toEqual({ ledger: false, marker: false });
+			} finally {
+				await clean.stop();
+			}
+		},
+		120_000,
+	);
+
+	test.each([false, true])(
+		"rejects backup-free genesis with an existing ledger (row present: %s)",
+		async (withRow) => {
+			const clean = await startTestPostgres();
+			const identity = {
+				environment: "staging" as const,
+				environmentId: randomUUID(),
+				secretSetId: randomUUID(),
+				releaseDigest: manifest.releaseDigest,
+			};
+			const { backup: _backup, ...withoutBackup } = evidence;
+			try {
+				await clean.sql`create table agendia_schema_migrations (filename text primary key)`;
+				if (withRow)
+					await clean.sql`insert into agendia_schema_migrations (filename) values ('existing.sql')`;
+				await expect(
+					runGovernedMigrations({
+						sql: clean.sql,
+						migrationDirectory: migrations,
+						manifest: {
+							...manifest,
+							database: {
+								...manifest.database,
+								previousReleaseDigest: digest("0"),
+							},
+						},
+						evidence: { ...withoutBackup, previousReleaseDigest: digest("0") },
+						environment: "staging",
+						genesis: { ...identity, expected: identity },
+					}),
+				).rejects.toThrow("migration.backup_evidence_invalid");
+			} finally {
+				await clean.stop();
+			}
+		},
+		120_000,
+	);
 
 	test("RED: rejects finite advisory-lock contention", async () => {
 		const lock = postgres(database.container.getConnectionUri(), { max: 1 });
