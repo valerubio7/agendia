@@ -3,8 +3,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ReleaseManifest } from "@agendia/release-manifest";
 import { validateReleaseManifest } from "@agendia/release-manifest";
-import type { Sql, TransactionSql } from "postgres";
 import type { RuntimeConfig } from "@agendia/runtime-config";
+import type { Sql, TransactionSql } from "postgres";
 import { postgresImage } from "./locked-images.ts";
 
 const schemaQuery = `
@@ -211,6 +211,14 @@ async function hasApplicationSchema(sql: Sql): Promise<boolean> {
 	return row?.exists ?? false;
 }
 
+async function hasGenesisApplicationRelations(sql: Sql): Promise<boolean> {
+	const [row] = await sql.unsafe<{ occupied: boolean }[]>(`select exists (
+    select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname <> 'information_schema' and n.nspname !~ '^pg_'
+  ) as occupied`);
+	return row?.occupied ?? true;
+}
+
 async function insertOrValidateGenesisMarker(
 	sql: Sql | TransactionSql,
 	genesis: GenesisInput,
@@ -292,12 +300,17 @@ export async function runGovernedMigrations(options: GovernedMigrationOptions) {
 	const releaseDigest = options.releaseDigest ?? manifest.releaseDigest;
 	if (releaseDigest !== manifest.releaseDigest)
 		throw new Error("migration.release_digest_mismatch");
-	const rollback = validateEvidence(
-		manifest,
-		options.evidence,
-		environment,
-		options.now ?? new Date(),
-	);
+	const genesis = options.genesis;
+	if (genesis) validateGenesisInput(genesis);
+	const missingGenesisBackup =
+		genesis !== undefined &&
+		options.evidence.backup === undefined &&
+		manifest.database.compatibility === "expand-compatible" &&
+		manifest.database.previousReleaseDigest === `sha256:${"0".repeat(64)}` &&
+		options.evidence.previousReleaseDigest ===
+			manifest.database.previousReleaseDigest &&
+		genesis.environment === environment &&
+		genesis.releaseDigest === releaseDigest;
 	const [lock] = await options.sql.unsafe<{ acquired: boolean }[]>(
 		"select pg_try_advisory_lock(hashtextextended('agendia:migrations', 0)) as acquired",
 	);
@@ -309,8 +322,26 @@ export async function runGovernedMigrations(options: GovernedMigrationOptions) {
 		)
 			throw new Error("migration.minimum_ledger_missing");
 		const existingSchema = await hasApplicationSchema(options.sql);
-		const genesis = options.genesis;
-		if (genesis) validateGenesisInput(genesis);
+		const [catalog] = await options.sql.unsafe<
+			{ marker: boolean; ledger: boolean }[]
+		>(`select to_regclass('public.agendia_environment') is not null as marker,
+			to_regclass('public.agendia_schema_migrations') is not null as ledger`);
+		if (
+			missingGenesisBackup &&
+			(!catalog ||
+				catalog.marker ||
+				catalog.ledger ||
+				(await hasGenesisApplicationRelations(options.sql)))
+		)
+			throw new Error("migration.backup_evidence_invalid");
+		const rollback = missingGenesisBackup
+			? ("not-promised" as const)
+			: validateEvidence(
+					manifest,
+					options.evidence,
+					environment,
+					options.now ?? new Date(),
+				);
 		await options.sql.unsafe(ledgerBootstrap);
 		const ledger = await options.sql.unsafe<
 			{ filename: string; sha256: string; releaseDigest: string }[]
@@ -328,10 +359,7 @@ export async function runGovernedMigrations(options: GovernedMigrationOptions) {
 				throw new Error("migration.checksum_mismatch");
 		const pending = files.filter((file) => !byName.has(file.filename));
 		if (genesis) {
-			const [markerTable] = await options.sql.unsafe<{ exists: boolean }[]>(
-				"select to_regclass('public.agendia_environment') is not null as exists",
-			);
-			const marked = markerTable?.exists
+			const marked = catalog?.marker
 				? await insertOrValidateGenesisMarker(options.sql, genesis, false)
 				: false;
 			if (
