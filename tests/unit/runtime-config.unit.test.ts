@@ -14,9 +14,7 @@ const secretSetId = "22222222-2222-4222-8222-222222222222";
 function validEnvironment(directory: string, process: string) {
 	const database = join(directory, `${process}-database-url`);
 	const login =
-		process === "provision-roles"
-			? "stg_cluster_admin"
-			: `agendia_stg_${process}`;
+		process === "provision-roles" ? "postgres" : `agendia_stg_${process}`;
 	writeFileSync(database, `postgres://${login}:safe@postgres/agendia_stg`);
 	return {
 		AGENDIA_PROCESS: process,
@@ -127,6 +125,20 @@ describe("runtime configuration", () => {
 					validEnvironment(directory, "provision-roles"),
 				).process,
 			).toBe("provision-roles");
+			const provision = validEnvironment(directory, "provision-roles");
+			for (const login of [
+				"stg_cluster_admin",
+				"prod_cluster_admin",
+				"agendia_stg_api_login",
+			]) {
+				writeFileSync(
+					provision.CLUSTER_ADMIN_DATABASE_URL_FILE!,
+					`postgres://${login}:safe@postgres/agendia_stg`,
+				);
+				expect(() => loadRuntimeConfig("provision-roles", provision)).toThrow(
+					"environment.database_identity_invalid",
+				);
+			}
 			const api = validEnvironment(directory, "api");
 			writeFileSync(
 				api.API_DATABASE_URL_FILE!,
