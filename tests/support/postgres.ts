@@ -13,8 +13,13 @@ export interface TestPostgres {
 	stop(): Promise<void>;
 }
 
-export async function startTestPostgres(): Promise<TestPostgres> {
-	const container = await new PostgreSqlContainer(postgresImage).start();
+export async function startTestPostgres(
+	options: { username?: string; database?: string } = {},
+): Promise<TestPostgres> {
+	let pending = new PostgreSqlContainer(postgresImage);
+	if (options.username) pending = pending.withUsername(options.username);
+	if (options.database) pending = pending.withDatabase(options.database);
+	const container = await pending.start();
 	const sql = postgres(container.getConnectionUri(), { max: 4 });
 	return {
 		container,

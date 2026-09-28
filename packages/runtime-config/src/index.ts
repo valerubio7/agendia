@@ -161,16 +161,11 @@ function validateDatabaseIdentity(config: RuntimeConfig): void {
 	if (!expected) return;
 	try {
 		const url = new URL(config.databaseUrl);
-		let expectedLogin: string | undefined;
-		if (config.process === "provision-roles") {
-			const roleEnvironment = config.environment === "staging" ? "stg" : "prod";
-			expectedLogin = `${roleEnvironment}_cluster_admin`;
-		}
 		if (
 			url.hostname !== "postgres" ||
 			url.pathname !== `/${expected.name}` ||
-			(expectedLogin
-				? url.username !== expectedLogin
+			(config.process === "provision-roles"
+				? url.username !== "postgres"
 				: !url.username.startsWith(expected.loginPrefix))
 		)
 			preflightFail("environment.database_identity_invalid");

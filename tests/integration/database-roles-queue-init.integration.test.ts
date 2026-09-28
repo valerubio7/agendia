@@ -6,8 +6,8 @@ import {
 	roleNamesForEnvironment,
 } from "../../scripts/support/database-role-provisioning.ts";
 import {
-	initializeQueues,
 	expectedPgBossVersion,
+	initializeQueues,
 } from "../../scripts/support/queue-initialization.ts";
 import {
 	applyPostgresMigrations,
@@ -50,6 +50,87 @@ afterAll(async () => {
 });
 
 describe("environment-scoped database roles and queue initialization", () => {
+	test("provisions a fresh PostgreSQL 16 cluster with a separate postgres bootstrap login", async () => {
+		const fresh = await startTestPostgres({
+			username: "postgres",
+			database: "agendia_stg",
+		});
+		try {
+			const bootstrap = await fresh.sql<
+				{ current_user: string; rolsuper: boolean }[]
+			>`
+				select current_user, rolsuper from pg_roles where rolname = current_user
+			`;
+			expect(bootstrap[0]).toEqual({
+				current_user: "postgres",
+				rolsuper: true,
+			});
+			const roles = roleNamesForEnvironment("staging");
+			const freshCredentials = Object.fromEntries(
+				Object.values(roles).map((name, index) => [
+					name,
+					`fresh-role-password-${index}`,
+				]),
+			);
+			await provisionRoles(fresh.sql, {
+				environment: "staging",
+				databaseName: "agendia_stg",
+				credentials: freshCredentials,
+			});
+			const attributes = await fresh.sql<
+				{
+					rolname: string;
+					rolsuper: boolean;
+					rolbypassrls: boolean;
+					rolcreaterole: boolean;
+					rolcreatedb: boolean;
+				}[]
+			>`
+				select rolname, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb
+				from pg_roles where rolname = any(${fresh.sql.array(["postgres", roles.clusterAdmin, roles.backup])})
+				order by rolname
+			`;
+			expect(
+				attributes.find((role) => role.rolname === "postgres")?.rolsuper,
+			).toBeTrue();
+			expect(
+				attributes.find((role) => role.rolname === roles.clusterAdmin),
+			).toEqual({
+				rolname: roles.clusterAdmin,
+				rolsuper: false,
+				rolbypassrls: false,
+				rolcreaterole: true,
+				rolcreatedb: true,
+			});
+			expect(
+				attributes.find((role) => role.rolname === roles.backup)?.rolbypassrls,
+			).toBeTrue();
+			expect(
+				attributes.find((role) => role.rolname === roles.backup)?.rolsuper,
+			).toBeFalse();
+			const grants = await fresh.sql<{ member: string; capability: string }[]>`
+				select member.rolname as member, capability.rolname as capability
+				from pg_auth_members membership
+				join pg_roles member on member.oid = membership.member
+				join pg_roles capability on capability.oid = membership.roleid
+				where member.rolname in (${roles.api}, ${roles.backup})
+			`;
+			expect(grants).toContainEqual({
+				member: roles.api,
+				capability: "agendia_runtime",
+			});
+			expect(grants).toContainEqual({
+				member: roles.backup,
+				capability: "pg_read_all_data",
+			});
+			const owner = await fresh.sql<{ owner: string }[]>`
+				select pg_get_userbyid(datdba) as owner from pg_database where datname = 'agendia_stg'
+			`;
+			expect(owner[0]?.owner).toBe(roles.migrator);
+		} finally {
+			await fresh.stop();
+		}
+	}, 120_000);
 	test("provisions distinct production credentials idempotently without runtime DDL or cross-capability membership", async () => {
 		const input = {
 			environment: "production" as const,
