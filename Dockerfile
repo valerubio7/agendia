@@ -47,6 +47,7 @@ COPY --from=builder --chown=10001:10001 /release/migrate ./migrate
 COPY --from=builder --chown=10001:10001 /release/bootstrap-admin ./bootstrap-admin
 COPY --from=builder --chown=10001:10001 /build/packages/db/migrations ./migrations
 COPY --from=builder --chown=10001:10001 /release/runtime-config ./runtime-config
+COPY --chown=10001:10001 deploy/images.lock /build/deploy/images.lock
 COPY --chown=10001:10001 deploy/entrypoint /opt/agendia/bin/agendia
 RUN chmod 0555 /opt/agendia/bin/agendia
 USER 10001:10001
