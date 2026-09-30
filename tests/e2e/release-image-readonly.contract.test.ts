@@ -1,15 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import { execFileSync, spawnSync } from "node:child_process";
-import { PgBoss } from "pg-boss";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { postgresImage } from "../../scripts/support/locked-images.ts";
+import { PgBoss } from "pg-boss";
 import {
 	assertReadonlyRuntime,
 	readonlyDockerRunArguments,
 	readonlyRuntimePlans,
 } from "../../deploy/p0/readonly-runtime.ts";
+import { postgresImage } from "../../scripts/support/locked-images.ts";
 
 const commands = ["web", "api", "whatsapp-manager", "message-worker"] as const;
 const image =
@@ -103,7 +109,12 @@ type EffectiveMount = { Destination: string; RW: boolean; Type: string };
 const containerDiagnostics = (application: string) => {
 	const logs = spawnSync("docker", ["logs", application], { encoding: "utf8" });
 	return {
-		running: docker(["inspect", "-f", "{{.State.Running}}", application]).trim(),
+		running: docker([
+			"inspect",
+			"-f",
+			"{{.State.Running}}",
+			application,
+		]).trim(),
 		exitCode: docker([
 			"inspect",
 			"-f",
@@ -179,7 +190,7 @@ const assertHttpResponse = async (
 				application,
 				"bun",
 				"-e",
-				`const host=${command === "web" ? "process.env.HOSTNAME" : "'127.0.0.1'"};const r=await fetch(\`http://\${host}:${port}/${path}\`);if(r.status!==${expectedStatus})throw new Error(String(r.status))`,
+				`const r=await fetch('http://127.0.0.1:${port}/${path}');if(r.status!==${expectedStatus})throw new Error(String(r.status))`,
 			],
 			{ allowFailure: true },
 		);
@@ -348,6 +359,23 @@ describe("release image read-only runtime", () => {
 		const applications: string[] = [];
 		try {
 			ensureImage();
+			expect(
+				docker([
+					"run",
+					"--rm",
+					"--network",
+					"none",
+					"--read-only",
+					"--entrypoint",
+					"bun",
+					image,
+					"-e",
+					"await import('/opt/agendia/migrate/migrate.js');process.stdout.write(await Bun.file('/build/deploy/images.lock').text())",
+				]),
+			).toBe(readFileSync("deploy/images.lock", "utf8"));
+			console.info(
+				`Built image: ${docker(["image", "inspect", "-f", "{{.Id}}", image]).trim()}`,
+			);
 			docker(["network", "create", "--internal", "--label", label, network]);
 			docker([
 				"run",
@@ -435,6 +463,9 @@ describe("release image read-only runtime", () => {
 					`AGENDIA_RELEASE_DIGEST=sha256:${"b".repeat(64)}`,
 					"-e",
 					"APP_ORIGIN=https://readonly.test",
+					...(command === "web"
+						? ["-e", "AGENDIA_API_ORIGIN=http://127.0.0.1:3001"]
+						: []),
 					"-e",
 					`${databaseVariable}=/run/agendia/config/database-url`,
 					...(command === "whatsapp-manager"
@@ -457,6 +488,59 @@ describe("release image read-only runtime", () => {
 				await Bun.sleep(1_000);
 				expectContainerRunning(application);
 				assertEffectiveMountContract(application, command);
+				if (command === "web") {
+					const check = (status: number) =>
+						docker([
+							"exec",
+							application,
+							"bun",
+							"-e",
+							`for(const [path,status] of [['live',200],['ready',${status}]]){const r=await fetch('http://127.0.0.1:3000/_health/'+path);if(r.status!==status)throw Error(path+':'+r.status);await r.body?.cancel()}`,
+						]);
+					const probe = JSON.parse(
+						readFileSync("deploy/compose.yml", "utf8")
+							.match(/"await Promise\.all\([^\n]*3000[^\n]*/)?.[0]
+							.trim()
+							.replace(/,$/, "") ?? "null",
+					) as string;
+					expect(check(503)).toBe("");
+					expect(() =>
+						docker(["exec", application, "bun", "-e", probe]),
+					).toThrow();
+					docker([
+						"exec",
+						"-d",
+						application,
+						"bun",
+						"-e",
+						"let healthy=false;Bun.serve({hostname:'127.0.0.1',port:3001,fetch(r){if(new URL(r.url).pathname==='/healthy')healthy=true;return Response.json({code:healthy?'ready':'api.unavailable'},{status:healthy?200:503})}})",
+					]);
+					await Bun.sleep(250);
+					expect(check(503)).toBe("");
+					docker([
+						"exec",
+						application,
+						"bun",
+						"-e",
+						"await fetch('http://127.0.0.1:3001/healthy')",
+					]);
+					expect(check(200)).toBe("");
+					expect(docker(["exec", application, "bun", "-e", probe])).toBe("");
+					expect(
+						docker([
+							"run",
+							"--rm",
+							"--read-only",
+							"--network",
+							network,
+							"--entrypoint",
+							"bun",
+							image,
+							"-e",
+							`for(const path of ['live','ready']){const r=await fetch('http://${application}:3000/_health/'+path);if(r.status!==200)throw Error(String(r.status));await r.body?.cancel()}`,
+						]),
+					).toBe("");
+				}
 				if (command === "whatsapp-manager")
 					expect(
 						docker([
@@ -485,7 +569,7 @@ describe("release image read-only runtime", () => {
 								application,
 								"bun",
 								"-e",
-								`const host=${command === "web" ? "process.env.HOSTNAME" : "'127.0.0.1'"};const r=await fetch(\`http://\${host}:${port}/${command === "api" ? "auth/session" : ""}\`);if(r.status!==${expectedStatus})throw new Error(String(r.status))`,
+								`const r=await fetch('http://127.0.0.1:${port}/${command === "api" ? "auth/session" : ""}');if(r.status!==${expectedStatus})throw new Error(String(r.status))`,
 							],
 							{ allowFailure: true },
 						);

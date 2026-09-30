@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { PgBoss } from "pg-boss";
 import {
 	containQueueErrors,
 	createRuntimePools,
@@ -24,21 +23,22 @@ import {
 	PostgresBaileysAuthStore,
 	type SocketFactory,
 } from "@agendia/whatsapp-baileys";
-import { PostgresWhatsAppManager, type WhatsAppGateway } from "./lifecycle.ts";
-import { PostgresInboundHandler } from "./inbound-handler.ts";
+import { PgBoss } from "pg-boss";
 import {
 	AiOutboxDispatcher,
 	type JobPublisher,
 } from "./ai-outbox-dispatcher.ts";
+import { PostgresInboundHandler } from "./inbound-handler.ts";
+import { PostgresWhatsAppManager, type WhatsAppGateway } from "./lifecycle.ts";
 import {
-	PostgresOutboundDispatcher,
 	type OutboundGateway,
+	PostgresOutboundDispatcher,
 } from "./outbound-dispatcher.ts";
 
 export const serviceName = "whatsapp-manager" as const;
-export * from "./lifecycle.ts";
-export * from "./inbound-handler.ts";
 export * from "./ai-outbox-dispatcher.ts";
+export * from "./inbound-handler.ts";
+export * from "./lifecycle.ts";
 export * from "./outbound-dispatcher.ts";
 
 export const MIN_RECONNECT_INTERVAL_MS = 15_000;
@@ -236,6 +236,9 @@ export async function startWhatsAppManager(
 		connectionString: queueUrl,
 		schema: "pgboss",
 		createSchema: false,
+		migrate: false,
+		schedule: false,
+		supervise: false,
 	});
 	containQueueErrors(boss, "whatsapp-manager");
 	await boss.start();

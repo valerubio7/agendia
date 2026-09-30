@@ -1,14 +1,14 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import {
 	renderCloudflaredConfig,
 	renderCompose,
 } from "../../scripts/render-compose";
-import { postgresImage } from "../../scripts/support/locked-images.ts";
 import {
-	teardownStaging,
 	type ManagedResource,
+	teardownStaging,
 } from "../../scripts/staging-teardown";
+import { postgresImage } from "../../scripts/support/locked-images.ts";
 
 const digest = (name: string) =>
 	`registry.example/agendia/${name}@sha256:${"a".repeat(64)}`;
@@ -238,9 +238,33 @@ describe("server Compose isolation", () => {
 			'test: ["CMD", "cloudflared", "tunnel", "ready"]',
 		);
 		expect(rendered).toContain("start_period: 10s");
+		expect(rendered).not.toContain("--logformat");
 		expect(rendered).not.toMatch(
 			/cloudflared:[\s\S]*CMD-SHELL|cloudflared:[\s\S]*(curl|wget)/,
 		);
+	});
+
+	test("uses bounded Bun probes for both live and ready without shell utilities", () => {
+		const source = readFileSync("deploy/compose.yml", "utf8");
+		const probes = [...source.matchAll(/"await Promise\.all\([^\n]+/g)].map(
+			([line]) => JSON.parse(line.trim().replace(/,$/, "")) as string,
+		);
+		expect(probes).toHaveLength(4);
+		for (const [index, paths] of [
+			["3001/internal/live", "3001/internal/ready"],
+			["3000/_health/live", "3000/_health/ready"],
+			["9090/live", "9090/ready"],
+			["9090/live", "9090/ready"],
+		].entries()) {
+			const probe = probes[index]!;
+			for (const path of paths)
+				expect(probe).toContain(`http://127.0.0.1:${path}`);
+			expect(probe).toContain("AbortSignal.timeout(3000)");
+			expect(probe).toContain("redirect:'error'");
+			expect(probe).toContain("r.body?.cancel()");
+			expect(probe).toContain("r.status!==200");
+		}
+		expect(source).not.toContain("wget");
 	});
 
 	test("removes staged resources while the teardown adapter proves production is unchanged", async () => {

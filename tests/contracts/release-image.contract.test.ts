@@ -42,6 +42,11 @@ describe("universal release image", () => {
 		const dispatcher = read("deploy/entrypoint");
 		expect(dockerfile).toContain("/release/api");
 		expect(dockerfile).toContain("/release/web");
+		expect(dockerfile).toContain(
+			"COPY --chown=10001:10001 deploy/images.lock /build/deploy/images.lock",
+		);
+		expect(dispatcher).toMatch(/web\)\n\s*export HOSTNAME=0\.0\.0\.0/);
+		expect(dispatcher.match(/export HOSTNAME=/g)).toHaveLength(1);
 		expect(dispatcher).toMatch(
 			/web\|api\|whatsapp-manager\|message-worker\|migrate\|queue-init\|bootstrap-admin\|verify-config/,
 		);
