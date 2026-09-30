@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { PgBoss } from "pg-boss";
-import { containQueueErrors, createRuntimePools } from "@agendia/db";
 import { DeepSeekAdapter, DeepSeekSummarizer } from "@agendia/ai-deepseek";
+import { containQueueErrors, createRuntimePools } from "@agendia/db";
 import type { AiProvider } from "@agendia/domain";
 import {
 	createDrain,
@@ -13,11 +12,12 @@ import {
 	runPreflightBeforeActivity,
 	serializeOperationalLog,
 } from "@agendia/runtime-config";
+import { PgBoss } from "pg-boss";
 import {
-	PostgresAiJobProcessor,
-	PostgresSummaryJobProcessor,
 	type PostgresAiJob,
+	PostgresAiJobProcessor,
 	type PostgresSummaryJob,
+	PostgresSummaryJobProcessor,
 } from "./ai-job.ts";
 
 export const serviceName = "message-worker" as const;
@@ -45,6 +45,9 @@ export async function startMessageWorker(
 			connectionString: database,
 			schema: "pgboss",
 			createSchema: false,
+			migrate: false,
+			schedule: false,
+			supervise: false,
 		});
 	containQueueErrors(boss, "message-worker");
 	await boss.start();
