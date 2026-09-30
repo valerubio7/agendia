@@ -69,8 +69,8 @@ services:
     healthcheck:
       test:
         [
-          "CMD-SHELL",
-          "wget -qO- http://127.0.0.1:3001/internal/live >/dev/null && wget -qO- http://127.0.0.1:3001/internal/ready >/dev/null",
+          "CMD", "bun", "-e",
+          "await Promise.all(['http://127.0.0.1:3001/internal/live','http://127.0.0.1:3001/internal/ready'].map(async url=>{const r=await fetch(url,{redirect:'error',signal:AbortSignal.timeout(3000)});await r.body?.cancel();if(r.status!==200)throw new Error('unready')}))",
         ]
       interval: 15s
       timeout: 5s
@@ -104,8 +104,8 @@ services:
     healthcheck:
       test:
         [
-          "CMD-SHELL",
-          "wget -qO- http://127.0.0.1:3000/_health/live >/dev/null && wget -qO- http://127.0.0.1:3000/_health/ready >/dev/null",
+          "CMD", "bun", "-e",
+          "await Promise.all(['http://127.0.0.1:3000/_health/live','http://127.0.0.1:3000/_health/ready'].map(async url=>{const r=await fetch(url,{redirect:'error',signal:AbortSignal.timeout(3000)});await r.body?.cancel();if(r.status!==200)throw new Error('unready')}))",
         ]
       interval: 15s
       timeout: 5s
@@ -138,8 +138,8 @@ services:
     healthcheck:
       test:
         [
-          "CMD-SHELL",
-          "wget -qO- http://127.0.0.1:9090/live >/dev/null && wget -qO- http://127.0.0.1:9090/ready >/dev/null",
+          "CMD", "bun", "-e",
+          "await Promise.all(['http://127.0.0.1:9090/live','http://127.0.0.1:9090/ready'].map(async url=>{const r=await fetch(url,{redirect:'error',signal:AbortSignal.timeout(3000)});await r.body?.cancel();if(r.status!==200)throw new Error('unready')}))",
         ]
       interval: 15s
       timeout: 5s
@@ -172,8 +172,8 @@ services:
     healthcheck:
       test:
         [
-          "CMD-SHELL",
-          "wget -qO- http://127.0.0.1:9090/live >/dev/null && wget -qO- http://127.0.0.1:9090/ready >/dev/null",
+          "CMD", "bun", "-e",
+          "await Promise.all(['http://127.0.0.1:9090/live','http://127.0.0.1:9090/ready'].map(async url=>{const r=await fetch(url,{redirect:'error',signal:AbortSignal.timeout(3000)});await r.body?.cancel();if(r.status!==200)throw new Error('unready')}))",
         ]
       interval: 15s
       timeout: 5s
@@ -251,8 +251,6 @@ services:
       [
         "tunnel",
         "--no-autoupdate",
-        "--logformat",
-        "json",
         "--config",
         "/run/agendia/config/cloudflared.yml",
         "run",

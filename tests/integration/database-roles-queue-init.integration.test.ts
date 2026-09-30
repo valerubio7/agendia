@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { PgBoss } from "pg-boss";
 import postgres, { type Sql } from "postgres";
 import {
 	provisionRoles,
@@ -254,6 +256,109 @@ describe("environment-scoped database roles and queue initialization", () => {
 			await publisher.end();
 			await consumer.end();
 		}
+	}, 30_000);
+
+	test("real runtime clients publish and complete jobs without queue lifecycle privileges", async () => {
+		const roles = roleNamesForEnvironment("production");
+		const runtimeOptions = {
+			schema: "pgboss",
+			createSchema: false,
+			migrate: false,
+			schedule: false,
+			supervise: false,
+		};
+		// Bind the real-client regression to both production constructor options.
+		for (const app of ["message-worker", "whatsapp-manager"]) {
+			const source = readFileSync(
+				join(import.meta.dir, `../../apps/${app}/src/index.ts`),
+				"utf8",
+			);
+			const constructor = source.match(/new PgBoss\(\{([\s\S]*?)\}\)/)?.[1];
+			expect(constructor).toBeDefined();
+			for (const flag of ["createSchema", "migrate", "schedule", "supervise"])
+				expect(constructor).toMatch(new RegExp(`${flag}:\\s*false`));
+			expect(source).toContain("await boss.start()");
+		}
+		const snapshot = async () => ({
+			queues: await database.sql`select * from pgboss.queue order by name`,
+			version: await database.sql`select * from pgboss.version`,
+			namespace: await database.sql`
+				select nspname, nspowner, nspacl::text from pg_namespace where nspname = 'pgboss'
+			`,
+			roles: await database.sql`
+				select rolname, rolsuper, rolbypassrls, rolcreatedb, rolcreaterole,
+					has_schema_privilege(rolname, 'pgboss', 'create') as schema_create,
+					has_table_privilege(rolname, 'pgboss.queue', 'insert') as queue_insert,
+					has_table_privilege(rolname, 'pgboss.queue', 'update') as queue_update
+				from pg_roles where rolname in (${roles.queuePublisher}, ${roles.worker})
+				order by rolname
+			`,
+		});
+		const before = await snapshot();
+		expect(before.queues.map((queue) => queue.name)).toContain("ai-generate");
+		for (const role of before.roles) {
+			for (const key of [
+				"rolsuper",
+				"rolbypassrls",
+				"rolcreatedb",
+				"rolcreaterole",
+				"schema_create",
+				"queue_insert",
+				"queue_update",
+			])
+				expect(role[key]).toBeFalse();
+		}
+		const publisher = new PgBoss({
+			...runtimeOptions,
+			connectionString: connectionUrlFor(roles.queuePublisher),
+		});
+		const consumer = new PgBoss({
+			...runtimeOptions,
+			connectionString: connectionUrlFor(roles.worker),
+		});
+		const errors: Error[] = [];
+		publisher.on("error", (error) => errors.push(error));
+		consumer.on("error", (error) => errors.push(error));
+		const payload = {
+			businessId: "11111111-1111-4111-8111-111111111111",
+			messageId: "22222222-2222-4222-8222-222222222222",
+			source: "runtime-role-regression",
+		};
+		let received: unknown;
+		let jobId: string | null = null;
+		try {
+			await publisher.start();
+			await consumer.start();
+			jobId = await publisher.send("ai-generate", payload);
+			expect(jobId).toBeString();
+			await consumer.work(
+				"ai-generate",
+				{ pollingIntervalSeconds: 0.5 },
+				async (jobs) => {
+					for (const job of jobs) {
+						if (job.id === jobId) received = job.data;
+					}
+				},
+			);
+			const deadline = Date.now() + 15_000;
+			let completed = false;
+			while (Date.now() < deadline) {
+				const rows = await database.sql`
+					select state, completed_on from pgboss.job where id = ${jobId}
+				`;
+				if (rows[0]?.state === "completed" && rows[0]?.completed_on) {
+					completed = true;
+					break;
+				}
+				await Bun.sleep(100);
+			}
+			expect(received).toEqual(payload);
+			expect(completed).toBeTrue();
+		} finally {
+			await Promise.all([publisher.stop(), consumer.stop()]);
+		}
+		expect(errors).toEqual([]);
+		expect(await snapshot()).toEqual(before);
 	}, 30_000);
 
 	test("provisions both prod/stg naming schemes and separates manager publisher from worker consumer capabilities", async () => {

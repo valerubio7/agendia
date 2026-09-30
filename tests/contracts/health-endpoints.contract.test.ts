@@ -33,8 +33,11 @@ describe("release health endpoint contracts", () => {
 	});
 
 	test("RED: web routes expose dependency-free live and proxy only coded API readiness", async () => {
-		const live = await readFile("apps/web/app/_health/live/route.ts", "utf8");
-		const ready = await readFile("apps/web/app/_health/ready/route.ts", "utf8");
+		const live = await readFile("apps/web/app/%5Fhealth/live/route.ts", "utf8");
+		const ready = await readFile(
+			"apps/web/app/%5Fhealth/ready/route.ts",
+			"utf8",
+		);
 		expect(live).toContain('code: "live"');
 		expect(ready).toContain("AGENDIA_API_ORIGIN");
 		expect(ready).toContain("/internal/ready");
