@@ -1,0 +1,22 @@
+# Staging runtime release recovery
+
+## Authorization and constraints
+
+The user explicitly authorized source fixes, tests, commits and publication of a new staging-only image on 2026-09-30. Production is excluded. Do not repeat completed initialization: 24 migrations and the UUID marker are verified, queue schema38 is initialized, one platform admin exists, temporary privileges are revoked. Preserve all historical latches and private credentials. No raw logs, secrets, owner-credential sharing or runtime DDL elevation. TDD is OFF; verification remains mandatory. Native review is OFF; independent verification remains required. Publishing source through PR/merge follows ordinary issue-first repository gates.
+
+Existing source/release boundary: commit `baf0fb5b1703b40f6a52fa0cc45943524b720a7f`, image `ghcr.io/valerubio7/agendia@sha256:c7fca0dadf20308b9219e3d1c7b121aecf53160edb3c9e912e055e34a153e3b2`. Tracked staging-prep checkout is clean; preserve unrelated untracked operational scripts/tests. Remote main still equals this boundary. No working Bun binary is currently on PATH or at the historical temporary path; provision and verify the exact package-manager version before declaring test passes.
+
+## Tasks
+
+- [ ] R1 — IN PROGRESS: map the exact minimal source/test surfaces and verification runners; implement independent runtime-readiness work units, each with tests and a Conventional Commit on a feature branch. Fix public web health routing/bind and real Bun healthchecks; runtime queue clients must disable queue lifecycle/migrations rather than gain DDL; marker permissions must survive SET ROLE via a NEW migration, never rewrite applied checksums; repair unsupported tunnel flag. Check immutable packaging/lock-file requirements. Forecast review scope before a large multi-area writer.
+- [ ] R2 — Prepare a bounded staging-only backup/restore helper, independently verify it, take an actual private backup and restore it into a disposable isolated PostgreSQL instance. Verify data/ledger/marker/queue/admin and relevant permissions without exposing values. No existing-database upgrade until actual restore evidence exists.
+- [ ] R3 — Publish the reviewed source/image via repository policy and passing CI/release checks. Verify new source/image/artifact identity; install new external configuration as a governed update, not a first-install replay. The existing ledger prevents the backup-free genesis path. Record work-unit commits and image evidence here.
+- [ ] R4 — Verify runtime health, functional web readiness and protected ingress. Authenticated Access/WhatsApp functionality remain distinct pending checks unless actually observed. Persist required overrides before reboot. Never claim full success from redirects alone.
+
+## Runtime evidence at entry
+
+API live200/ready500; capability roles have zero marker SELECT while direct logins have it, and readiness uses SET LOCAL ROLE. Web health404 on its own hostname, no compiled `_health` routes; loopback checks fail. Manager/worker have no loopback probe response; their runtime PgBoss constructors leave lifecycle defaults enabled and their queue INSERT/UPDATE privileges are zero. Cloudflared exited0 with unsupported --logformat; dry help at tunnel/global/run placement all rejected it. Cloudflared files correctly match UID65532/mode0600. Four apps are running but unhealthy. Current six-file Compose SHA `1e6a77ca3819abed23e1e0d09fbf4ac77bedadd24ff3bde317d3746786008998`; retained tmpfs overrides survive only until reboot, not durable canonical deployment.
+
+## Commit/check evidence
+
+R1a writer implemented `0024_runtime_marker_grants.sql` and its real PostgreSQL regression test (185 added lines). Writer observed 2 focused tests/56 assertions and 18 neighboring integration tests PASS; final typecheck and scoped Biome PASS. Independent high-risk verification PASS: the verifier reran 2 focused tests/56 assertions, 18 neighboring integration tests/86 assertions, typecheck and scoped Biome. Regression executes real PostgreSQL `SET LOCAL ROLE` rather than a RolePool mock; old SQL checksums are preserved. R1a is ready for its authorized work-unit commit, not deployed. Native assessment was unassessable because of undeclared untracked operational artifacts; its separate-verifier plan was followed. Backup, restore, new image and existing-database upgrade remain pending.
