@@ -1,6 +1,13 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { randomUUID } from "node:crypto";
-import { cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import {
+	cpSync,
+	mkdtempSync,
+	readFileSync,
+	readdirSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ReleaseManifest } from "@agendia/release-manifest";
@@ -62,6 +69,50 @@ const evidence: MigrationEvidence = {
 };
 const temporaryDirectories: string[] = [];
 
+function stagingAcceptanceFixture() {
+	const files = readdirSync(migrations)
+		.filter((name) => name.endsWith(".sql"))
+		.sort()
+		.map((filename) => ({
+			filename,
+			sha256: createHash("sha256")
+				.update(readFileSync(join(migrations, filename)))
+				.digest("hex"),
+		}));
+	const identity = {
+		environment: "staging" as const,
+		environmentId: randomUUID(),
+		secretSetId: randomUUID(),
+		releaseDigest: manifest.releaseDigest,
+	};
+	const history = files
+		.slice(0, 24)
+		.map((file) => ({ ...file, releaseDigest: digest("2") }));
+	const now = new Date();
+	const acceptance = {
+		schemaVersion: 1,
+		operation: "staging-existing-state-upgrade",
+		environment: "staging",
+		backupStatus: "unverified",
+		rollback: "not-promised",
+		authorizationActor: "integration operator",
+		riskAcknowledgement:
+			"I accept data loss and unavailable rollback without a verified backup or restore",
+		authorizedAt: now.toISOString(),
+		expiresAt: new Date(now.getTime() + 72 * 60 * 60 * 1000).toISOString(),
+		commit: manifest.commit,
+		releaseDigest: manifest.releaseDigest,
+		image: manifest.images.web,
+		environmentId: identity.environmentId,
+		secretSetId: identity.secretSetId,
+		previousReleaseDigest: digest("2"),
+		previousImage: `ghcr.io/agendia/agendia@${digest("2")}`,
+		migration: files[24],
+		history,
+	};
+	return { files, identity, history, acceptance, now };
+}
+
 function copiedMigrations(mutator: (directory: string) => void) {
 	const directory = mkdtempSync(join(tmpdir(), "agendia-governed-migrations-"));
 	temporaryDirectories.push(directory);
@@ -80,6 +131,212 @@ describe("governed migrations", () => {
 		for (const directory of temporaryDirectories)
 			rmSync(directory, { recursive: true, force: true });
 	});
+
+	test("staging acceptance admits only existing exact history and never bootstraps or repairs", async () => {
+		const clean = await startTestPostgres();
+		const fixture = stagingAcceptanceFixture();
+		const waived: MigrationEvidence = {
+			stagingRiskAcceptance: fixture.acceptance,
+			previousReleaseDigest: digest("2"),
+			host: {
+				maintenanceWindow: true,
+				appsStopped: true,
+				workersStopped: true,
+				stagingStopped: true,
+				automationPaused: true,
+			},
+		};
+		try {
+			for (const file of fixture.files.slice(0, 24))
+				await clean.sql.unsafe(
+					readFileSync(join(migrations, file.filename), "utf8"),
+				);
+			await clean.sql.unsafe(
+				"create table agendia_schema_migrations (filename text primary key, sha256 text not null, applied_at timestamptz not null default now(), release_digest text not null, execution text not null)",
+			);
+			for (const entry of fixture.history)
+				await clean.sql`insert into agendia_schema_migrations (filename, sha256, release_digest, execution) values (${entry.filename}, ${entry.sha256}, ${entry.releaseDigest}, 'migrated')`;
+			await clean.sql`insert into agendia_environment (environment, environment_id, secret_set_id) values ('staging', ${fixture.identity.environmentId}, ${fixture.identity.secretSetId})`;
+			const options = {
+				sql: clean.sql,
+				migrationDirectory: migrations,
+				manifest,
+				evidence: waived,
+				environment: "staging",
+				runningRuntimeConfig: fixture.identity,
+				now: fixture.now,
+			};
+			const beforeHistory = Array.from(
+				await clean.sql`select * from agendia_schema_migrations order by filename`,
+			);
+			const beforeMarker = Array.from(
+				await clean.sql`select * from agendia_environment`,
+			);
+			const beforePermissions = Array.from(
+				await clean.sql`select relacl::text from pg_class where oid = 'public.agendia_environment'::regclass`,
+			);
+			const assertUnchanged = async () => {
+				expect(
+					Array.from(
+						await clean.sql`select * from agendia_schema_migrations order by filename`,
+					),
+				).toEqual(beforeHistory);
+				expect(
+					Array.from(await clean.sql`select * from agendia_environment`),
+				).toEqual(beforeMarker);
+				expect(
+					Array.from(
+						await clean.sql`select relacl::text from pg_class where oid = 'public.agendia_environment'::regclass`,
+					),
+				).toEqual(beforePermissions);
+			};
+			const extra = copiedMigrations((directory) =>
+				writeFileSync(
+					join(directory, "0025_unknown.sql"),
+					"create table forbidden_effect(id int);",
+				),
+			);
+			const changed = copiedMigrations((directory) =>
+				writeFileSync(
+					join(directory, "0001_events.sql"),
+					"-- modified history",
+				),
+			);
+			for (const patch of [
+				{ environment: "production" },
+				{ environment: undefined },
+				{ evidence: { ...waived, stagingRiskAcceptance: undefined } },
+				{ evidence: { ...waived, backup: evidence.backup } },
+				{ genesis: { ...fixture.identity, expected: fixture.identity } },
+				{ migrationDirectory: extra },
+				{ migrationDirectory: changed },
+				{
+					evidence: {
+						...waived,
+						host: { ...waived.host, automationPaused: false },
+					},
+				},
+				...[
+					{ environmentId: randomUUID() },
+					{ commit: "b".repeat(40) },
+					{ image: `ghcr.io/agendia/agendia@${digest("3")}` },
+					{ migration: { ...fixture.files[24], sha256: "a".repeat(64) } },
+					{ expiresAt: fixture.now.toISOString() },
+					{ unknown: true },
+					{ previousReleaseDigest: digest("3") },
+				].map((recordPatch) => ({
+					evidence: {
+						...waived,
+						stagingRiskAcceptance: { ...fixture.acceptance, ...recordPatch },
+					},
+				})),
+			]) {
+				await expect(
+					runGovernedMigrations({ ...options, ...patch }),
+				).rejects.toThrow();
+				await assertUnchanged();
+			}
+			await expect(
+				runGovernedMigrations({
+					...options,
+					evidence: { host: waived.host, previousReleaseDigest: digest("2") },
+				}),
+			).rejects.toThrow("migration.backup_evidence_invalid");
+			await assertUnchanged();
+			await clean.sql`update agendia_environment set environment_id = ${randomUUID()}`;
+			await expect(runGovernedMigrations(options)).rejects.toThrow(
+				"migration.staging_acceptance_marker_invalid",
+			);
+			expect(
+				Array.from(
+					await clean.sql`select * from agendia_schema_migrations order by filename`,
+				),
+			).toEqual(beforeHistory);
+			await clean.sql`update agendia_environment set environment_id = ${fixture.identity.environmentId}`;
+			await clean.sql`update agendia_schema_migrations set sha256 = ${"b".repeat(64)} where filename = '0001_events.sql'`;
+			await expect(runGovernedMigrations(options)).rejects.toThrow(
+				"migration.staging_acceptance_history_invalid",
+			);
+			await clean.sql`update agendia_schema_migrations set sha256 = ${fixture.history[1]!.sha256} where filename = '0001_events.sql'`;
+			await assertUnchanged();
+			// A DDL event trigger distinguishes a skipped bootstrap from CREATE IF NOT EXISTS.
+			await clean.sql.unsafe(
+				"create function forbid_bootstrap() returns event_trigger language plpgsql as $$ begin if tg_tag = 'CREATE TABLE' then raise exception 'unexpected ledger bootstrap'; end if; end $$",
+			);
+			await clean.sql.unsafe(
+				"create event trigger forbid_bootstrap on ddl_command_start execute function forbid_bootstrap()",
+			);
+			expect(await runGovernedMigrations(options)).toMatchObject({
+				applied: ["0024_runtime_marker_grants.sql"],
+				rollback: "not-promised",
+				backupStatus: "unverified",
+			});
+			expect(
+				Array.from(
+					await clean.sql`select * from agendia_schema_migrations where filename <> '0024_runtime_marker_grants.sql' order by filename`,
+				),
+			).toEqual(beforeHistory);
+			expect(
+				Array.from(await clean.sql`select * from agendia_environment`),
+			).toEqual(beforeMarker);
+			await expect(runGovernedMigrations(options)).rejects.toThrow(
+				"migration.staging_acceptance_scope_invalid",
+			);
+			expect(
+				(
+					await clean.sql`select count(*)::int as count from agendia_schema_migrations`
+				)[0]?.count,
+			).toBe(25);
+			const probe = postgres(clean.container.getConnectionUri(), { max: 1 });
+			try {
+				expect(
+					(
+						await probe`select pg_try_advisory_lock(hashtextextended('agendia:migrations', 0)) as acquired`
+					)[0]?.acquired,
+				).toBe(true);
+				await probe`select pg_advisory_unlock(hashtextextended('agendia:migrations', 0))`;
+			} finally {
+				await probe.end();
+			}
+		} finally {
+			await clean.stop();
+		}
+	}, 120_000);
+
+	test("staging acceptance rejects empty genesis without creating ledger or marker", async () => {
+		const clean = await startTestPostgres();
+		const fixture = stagingAcceptanceFixture();
+		try {
+			await expect(
+				runGovernedMigrations({
+					sql: clean.sql,
+					migrationDirectory: migrations,
+					manifest,
+					environment: "staging",
+					runningRuntimeConfig: fixture.identity,
+					now: fixture.now,
+					evidence: {
+						stagingRiskAcceptance: fixture.acceptance,
+						previousReleaseDigest: digest("2"),
+						host: {
+							maintenanceWindow: true,
+							appsStopped: true,
+							workersStopped: true,
+							stagingStopped: true,
+							automationPaused: true,
+						},
+					},
+				}),
+			).rejects.toThrow("migration.staging_acceptance_catalog_invalid");
+			expect(
+				(
+					await clean.sql`select to_regclass('public.agendia_schema_migrations') as ledger, to_regclass('public.agendia_environment') as marker`
+				)[0],
+			).toMatchObject({ ledger: null, marker: null });
+		} finally {
+			await clean.stop();
+		}
+	}, 120_000);
 
 	test("RED: rejects missing backup evidence, incompatible rollback, and changed historical SQL", async () => {
 		const { backup: _backup, ...withoutBackup } = evidence;
