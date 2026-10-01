@@ -1,0 +1,123 @@
+name: agendia
+x-process: &process
+  build:
+    context: .
+    target: runtime
+  image: agendia-runtime:local
+  restart: unless-stopped
+  init: true
+  logging: &logs
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+  depends_on:
+    db:
+      condition: service_healthy
+x-setup: &setup
+  <<: *process
+  restart: "no"
+  profiles: [setup]
+
+services:
+  db:
+    image: postgres:17.9-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: agendia
+      POSTGRES_USER: agendia_migrator
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U agendia_migrator -d agendia"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging: *logs
+
+  migrate:
+    <<: *setup
+    command: [bun, run, scripts/provision-production-db.ts, migrate]
+    environment:
+      DATABASE_URL: postgres://agendia_migrator:${POSTGRES_PASSWORD:?required}@db:5432/agendia
+
+  provision:
+    <<: *setup
+    command: [bun, run, scripts/provision-production-db.ts]
+    environment:
+      DATABASE_URL: postgres://agendia_migrator:${POSTGRES_PASSWORD:?required}@db:5432/agendia
+      API_DB_PASSWORD: ${API_DB_PASSWORD:?required}
+      ADMIN_DB_PASSWORD: ${ADMIN_DB_PASSWORD:?required}
+      WORKER_DB_PASSWORD: ${WORKER_DB_PASSWORD:?required}
+      MANAGER_DB_PASSWORD: ${MANAGER_DB_PASSWORD:?required}
+
+  bootstrap-admin:
+    <<: *setup
+    command: [bun, run, scripts/bootstrap-admin.ts]
+    environment:
+      DATABASE_URL: postgres://agendia_migrator:${POSTGRES_PASSWORD:?required}@db:5432/agendia
+      AGENDIA_ADMIN_EMAIL: ${AGENDIA_ADMIN_EMAIL:?required}
+      AGENDIA_ADMIN_PASSWORD: ${AGENDIA_ADMIN_PASSWORD:?required}
+
+  api:
+    <<: *process
+    environment:
+      API_HOST: 0.0.0.0
+      API_PORT: "3001"
+      APP_ORIGIN: ${APP_ORIGIN:?required}
+      DATABASE_URL: postgres://agendia_api:${API_DB_PASSWORD:?required}@db:5432/agendia
+      ADMIN_DATABASE_URL: postgres://agendia_admin:${ADMIN_DB_PASSWORD:?required}@db:5432/agendia
+      WHATSAPP_LINK_CODE_KEY: ${WHATSAPP_LINK_CODE_KEY:?required}
+    healthcheck:
+      test: [CMD, bun, -e, "const r = await fetch('http://127.0.0.1:3001/auth/session'); if (r.status !== 200 && r.status !== 401) process.exit(1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  worker:
+    <<: *process
+    command: [bun, run, apps/message-worker/src/index.ts]
+    environment:
+      AGENDIA_RUN_MESSAGE_WORKER: "1"
+      WORKER_DATABASE_URL: postgres://agendia_worker:${WORKER_DB_PASSWORD:?required}@db:5432/agendia
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?required}
+
+  manager:
+    <<: *process
+    command: [bun, run, apps/whatsapp-manager/src/index.ts]
+    environment:
+      AGENDIA_RUN_WHATSAPP_MANAGER: "1"
+      MANAGER_DATABASE_URL: postgres://agendia_manager:${MANAGER_DB_PASSWORD:?required}@db:5432/agendia
+      WORKER_DATABASE_URL: postgres://agendia_worker:${WORKER_DB_PASSWORD:?required}@db:5432/agendia
+      WHATSAPP_LINK_CODE_KEY: ${WHATSAPP_LINK_CODE_KEY:?required}
+      BAILEYS_KMS_VERSION: ${BAILEYS_KMS_VERSION:?required}
+      BAILEYS_KMS_KEY: ${BAILEYS_KMS_KEY:?required}
+      WHATSAPP_MANAGER_ID: production-manager
+    depends_on:
+      db:
+        condition: service_healthy
+      worker:
+        condition: service_started
+
+  web:
+    <<: *process
+    build:
+      context: .
+      target: web
+    image: agendia-web:local
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      HOSTNAME: 0.0.0.0
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, bun, -e, "const r = await fetch('http://127.0.0.1:3000/'); if (!r.ok) process.exit(1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  postgres-data:
