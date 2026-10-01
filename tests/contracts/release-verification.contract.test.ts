@@ -279,32 +279,36 @@ describe("CI and immutable release verification", () => {
 			"CVE-2026-54369",
 			"CVE-2026-57432",
 			"CVE-2026-57433",
+			"CVE-2026-75804",
 			"CVE-2026-76642",
 			"CVE-2026-78408",
 			"CVE-2026-78409",
 			"CVE-2026-78410",
+			"CVE-2026-84782",
 			"CVE-2026-86145",
 			"CVE-2026-89157",
 			"CVE-2026-89161",
 			"CVE-2026-9538",
 			"GHSA-rgj7-g3m4-5g8c",
 		];
-		const expiresAt = "2026-09-29T22:32:30Z";
+		const expiresAt = "2026-10-04T02:01:04Z";
 		const report = (id: string, severity: string) => ({
 			Results: [
 				{ Vulnerabilities: [{ VulnerabilityID: id, Severity: severity }] },
 			],
 		});
-		const beforeExpiry = new Date("2026-09-29T22:32:29.999Z");
+		const beforeExpiry = new Date("2026-10-04T02:01:03.999Z");
 
 		expect(registry.schemaVersion).toBe(1);
 		expect(
 			registry.exceptions.map((entry: { id: string }) => entry.id).sort(),
 		).toEqual(ids);
-		expect(new Set(ids).size).toBe(20);
+		expect(new Set(ids).size).toBe(22);
 		for (const exception of registry.exceptions) {
 			expect(exception.owner).toBe("valerubio7");
-			expect(exception.version).toBe(1);
+			expect(exception.version).toBe(
+				["CVE-2026-75804", "CVE-2026-84782"].includes(exception.id) ? 1 : 2,
+			);
 			expect(exception.expiresAt).toBe(expiresAt);
 			expect(exception.reason.trim().length).toBeGreaterThan(0);
 			expect(exception.reason.length).toBeLessThanOrEqual(512);
@@ -322,7 +326,7 @@ describe("CI and immutable release verification", () => {
 			).toEqual({ highExceptions: [exception.id] });
 			for (const expiredAt of [
 				new Date(expiresAt),
-				new Date("2026-09-29T22:32:30.001Z"),
+				new Date("2026-10-04T02:01:04.001Z"),
 			])
 				expect(() =>
 					verifyScanPolicy(report(exception.id, "HIGH"), registry, expiredAt),
