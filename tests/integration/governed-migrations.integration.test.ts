@@ -19,6 +19,7 @@ import {
 import postgres from "postgres";
 import { runMigrate } from "../../scripts/migrate.ts";
 import {
+	type GovernedMigrationOptions,
 	type MigrationEvidence,
 	runGovernedMigrations,
 	schemaFingerprint,
@@ -157,7 +158,7 @@ describe("governed migrations", () => {
 			for (const entry of fixture.history)
 				await clean.sql`insert into agendia_schema_migrations (filename, sha256, release_digest, execution) values (${entry.filename}, ${entry.sha256}, ${entry.releaseDigest}, 'migrated')`;
 			await clean.sql`insert into agendia_environment (environment, environment_id, secret_set_id) values ('staging', ${fixture.identity.environmentId}, ${fixture.identity.secretSetId})`;
-			const options = {
+			const options: GovernedMigrationOptions = {
 				sql: clean.sql,
 				migrationDirectory: migrations,
 				manifest,
@@ -202,11 +203,15 @@ describe("governed migrations", () => {
 					"-- modified history",
 				),
 			);
+			// Omit the optional property: exactOptionalPropertyTypes forbids an
+			// explicitly undefined value, while runtime admission still sees no target.
+			const { environment: _environment, ...withoutEnvironment } = options;
+			await expect(runGovernedMigrations(withoutEnvironment)).rejects.toThrow();
+			await assertUnchanged();
 			for (const patch of [
 				{ environment: "production" },
-				{ environment: undefined },
 				{ evidence: { ...waived, stagingRiskAcceptance: undefined } },
-				{ evidence: { ...waived, backup: evidence.backup } },
+				{ evidence: { ...waived, backup: evidence.backup! } },
 				{ genesis: { ...fixture.identity, expected: fixture.identity } },
 				{ migrationDirectory: extra },
 				{ migrationDirectory: changed },
