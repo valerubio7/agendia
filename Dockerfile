@@ -1,54 +1,18 @@
-# syntax=docker/dockerfile:1
-# Keep these references in deploy/images.lock in sync; both stages are immutable.
-FROM oven/bun@sha256:5ff609364c049b54eb0ff560ec96319729a972078ef2c755d758f0c6ef89c2d6 AS builder
-WORKDIR /build
-COPY package.json bun.lock tsconfig.json tsconfig.base.json biome.jsonc ./
-COPY apps ./apps
-COPY packages ./packages
-COPY scripts ./scripts
+FROM oven/bun:1.4.0 AS base
+WORKDIR /app
+COPY . .
 RUN bun install --frozen-lockfile
-RUN bun build apps/api/src/index.ts --target=bun --outdir /release/api \
- && bun build apps/whatsapp-manager/src/index.ts --target=bun --outdir /release/whatsapp-manager \
- && bun build apps/message-worker/src/index.ts --target=bun --outdir /release/message-worker \
- && bun build scripts/provision-roles.ts --target=bun --outdir /release/provision-roles \
- && bun build scripts/queue-init.ts --target=bun --outdir /release/queue-init \
- && bun build scripts/migrate.ts --target=bun --outdir /release/migrate \
- && bun build scripts/bootstrap-admin.ts --target=bun --outdir /release/bootstrap-admin \
- && bun build scripts/release-entrypoint-config.ts --target=bun --outdir /release/runtime-config
-RUN AGENDIA_API_ORIGIN=http://api:3001 NEXT_TELEMETRY_DISABLED=1 bun run --cwd apps/web build \
- && mkdir -p /release/web \
- && cp -a apps/web/.next/standalone/. /release/web/ \
- && mkdir -p /release/web/apps/web/.next \
- && cp -a apps/web/.next/static /release/web/apps/web/.next/static \
- && if [ -d apps/web/public ]; then cp -a apps/web/public /release/web/apps/web/public; fi
-# P0 proves Bun emits the node-rs native assets alongside release bundles.
-RUN test -n "$(find /release/api -name 'argon2.linux-x64*' -print -quit)"
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
 
-FROM oven/bun@sha256:5ff609364c049b54eb0ff560ec96319729a972078ef2c755d758f0c6ef89c2d6 AS runtime
-ARG OCI_REVISION
-ARG OCI_CREATED
-ARG OCI_SOURCE
-LABEL org.opencontainers.image.revision=$OCI_REVISION \
-      org.opencontainers.image.created=$OCI_CREATED \
-      org.opencontainers.image.source=$OCI_SOURCE
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-      util-linux=2.41.5-0+deb13u1 \
-      mount=2.41.5-0+deb13u1 \
- && rm -rf /var/lib/apt/lists/*
-WORKDIR /opt/agendia
-COPY --from=builder --chown=10001:10001 /release/api ./api
-COPY --from=builder --chown=10001:10001 /release/whatsapp-manager ./whatsapp-manager
-COPY --from=builder --chown=10001:10001 /release/message-worker ./message-worker
-COPY --from=builder --chown=10001:10001 /release/web ./web
-COPY --from=builder --chown=10001:10001 /release/provision-roles ./provision-roles
-COPY --from=builder --chown=10001:10001 /release/queue-init ./queue-init
-COPY --from=builder --chown=10001:10001 /release/migrate ./migrate
-COPY --from=builder --chown=10001:10001 /release/bootstrap-admin ./bootstrap-admin
-COPY --from=builder --chown=10001:10001 /build/packages/db/migrations ./migrations
-COPY --from=builder --chown=10001:10001 /release/runtime-config ./runtime-config
-COPY --chown=10001:10001 deploy/images.lock /build/deploy/images.lock
-COPY --chown=10001:10001 deploy/entrypoint /opt/agendia/bin/agendia
-RUN chmod 0555 /opt/agendia/bin/agendia
-USER 10001:10001
-ENTRYPOINT ["/opt/agendia/bin/agendia"]
+FROM base AS runtime
+USER bun
+CMD ["bun", "run", "scripts/start-api.ts"]
+
+FROM base AS web-build
+ENV AGENDIA_API_ORIGIN=http://api:3001
+RUN bun run --cwd apps/web build
+
+FROM web-build AS web
+USER bun
+WORKDIR /app/apps/web
+CMD ["bun", "--bun", "./node_modules/next/dist/bin/next", "start", "--hostname", "0.0.0.0", "--port", "3000"]
