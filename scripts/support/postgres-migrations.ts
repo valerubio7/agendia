@@ -6,6 +6,11 @@ import { validateReleaseManifest } from "@agendia/release-manifest";
 import type { RuntimeConfig } from "@agendia/runtime-config";
 import type { Sql, TransactionSql } from "postgres";
 import { postgresImage } from "./locked-images.ts";
+import {
+	type MigrationRuntimeIdentity,
+	validateStagingMigrationRiskAcceptance,
+	validateStagingMigrationHistory,
+} from "./staging-migration-risk-acceptance.ts";
 
 const schemaQuery = `
   select kind, identity, definition from (
@@ -119,6 +124,7 @@ export async function verifyPostgresMigrations(
 }
 
 export interface MigrationEvidence {
+	stagingRiskAcceptance?: unknown;
 	backup?: {
 		schemaVersion: 1;
 		operation: "backup";
@@ -168,6 +174,7 @@ export interface GovernedMigrationOptions {
 	environment?: string;
 	releaseDigest?: string;
 	genesis?: GenesisInput;
+	runningRuntimeConfig?: MigrationRuntimeIdentity;
 	now?: Date;
 }
 
@@ -301,6 +308,41 @@ export async function runGovernedMigrations(options: GovernedMigrationOptions) {
 	if (releaseDigest !== manifest.releaseDigest)
 		throw new Error("migration.release_digest_mismatch");
 	const genesis = options.genesis;
+	const hasAcceptance = Object.hasOwn(
+		options.evidence,
+		"stagingRiskAcceptance",
+	);
+	if (
+		hasAcceptance &&
+		(genesis ||
+			Object.hasOwn(options.evidence, "backup") ||
+			Object.hasOwn(options.evidence, "cleanSchemaFingerprint"))
+	)
+		throw new Error("migration.staging_acceptance_ambiguous");
+	const acceptance = hasAcceptance
+		? validateStagingMigrationRiskAcceptance(
+				options.evidence.stagingRiskAcceptance,
+				manifest,
+				options.runningRuntimeConfig,
+				options.environment,
+				options.now ?? new Date(),
+			)
+		: undefined;
+	if (acceptance) {
+		const keys = Object.keys(options.evidence).sort().join(",");
+		const hostKeys = Object.keys(options.evidence.host ?? {})
+			.sort()
+			.join(",");
+		if (
+			keys !== "host,previousReleaseDigest,stagingRiskAcceptance" ||
+			hostKeys !==
+				"appsStopped,automationPaused,maintenanceWindow,stagingStopped,workersStopped" ||
+			Object.values(options.evidence.host).some((flag) => flag !== true) ||
+			options.evidence.previousReleaseDigest !==
+				acceptance.previousReleaseDigest
+		)
+			throw new Error("migration.staging_acceptance_host_invalid");
+	}
 	if (genesis) validateGenesisInput(genesis);
 	const missingGenesisBackup =
 		genesis !== undefined &&
@@ -334,20 +376,41 @@ export async function runGovernedMigrations(options: GovernedMigrationOptions) {
 				(await hasGenesisApplicationRelations(options.sql)))
 		)
 			throw new Error("migration.backup_evidence_invalid");
-		const rollback = missingGenesisBackup
-			? ("not-promised" as const)
-			: validateEvidence(
-					manifest,
-					options.evidence,
-					environment,
-					options.now ?? new Date(),
-				);
-		await options.sql.unsafe(ledgerBootstrap);
+		if (acceptance && (!catalog?.ledger || !catalog.marker))
+			throw new Error("migration.staging_acceptance_catalog_invalid");
+		const rollback =
+			acceptance || missingGenesisBackup
+				? ("not-promised" as const)
+				: validateEvidence(
+						manifest,
+						options.evidence,
+						environment,
+						options.now ?? new Date(),
+					);
+		// Only the strict ordinary/genesis path may create a ledger.
+		if (!acceptance) await options.sql.unsafe(ledgerBootstrap);
 		const ledger = await options.sql.unsafe<
 			{ filename: string; sha256: string; releaseDigest: string }[]
 		>(
-			'select filename, sha256, release_digest as "releaseDigest" from agendia_schema_migrations order by filename',
+			acceptance
+				? 'select filename, sha256, release_digest as "releaseDigest" from public.agendia_schema_migrations order by filename'
+				: 'select filename, sha256, release_digest as "releaseDigest" from agendia_schema_migrations order by filename',
 		);
+		if (acceptance) {
+			validateStagingMigrationHistory(acceptance, files, ledger);
+			const markers = await options.sql.unsafe<
+				{ environment: string; environmentId: string; secretSetId: string }[]
+			>(
+				'select environment, environment_id as "environmentId", secret_set_id as "secretSetId" from public.agendia_environment',
+			);
+			if (
+				markers.length !== 1 ||
+				markers[0]?.environment !== "staging" ||
+				markers[0]?.environmentId !== acceptance.environmentId ||
+				markers[0]?.secretSetId !== acceptance.secretSetId
+			)
+				throw new Error("migration.staging_acceptance_marker_invalid");
+		}
 		const byName = new Map(
 			ledger.map((entry) => [entry.filename, entry.sha256]),
 		);
@@ -386,7 +449,10 @@ export async function runGovernedMigrations(options: GovernedMigrationOptions) {
 		for (const file of pending)
 			await options.sql.begin(async (tx) => {
 				await tx.unsafe(file.sql);
-				await tx`insert into agendia_schema_migrations (filename, sha256, release_digest, execution) values (${file.filename}, ${file.sha256}, ${releaseDigest}, 'migrated')`;
+				if (acceptance)
+					await tx`insert into public.agendia_schema_migrations (filename, sha256, release_digest, execution) values (${file.filename}, ${file.sha256}, ${releaseDigest}, 'migrated')`;
+				else
+					await tx`insert into agendia_schema_migrations (filename, sha256, release_digest, execution) values (${file.filename}, ${file.sha256}, ${releaseDigest}, 'migrated')`;
 			});
 		if (genesis)
 			await options.sql.begin((tx) =>
@@ -397,6 +463,12 @@ export async function runGovernedMigrations(options: GovernedMigrationOptions) {
 			execution: "migrated" as const,
 			rollback,
 			applied: pending.map((file) => file.filename),
+			...(acceptance
+				? {
+						backupStatus: "unverified" as const,
+						riskDisposition: "staging-existing-state-upgrade" as const,
+					}
+				: {}),
 		};
 	} finally {
 		await options.sql.unsafe(
