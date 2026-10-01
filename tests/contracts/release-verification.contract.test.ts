@@ -269,6 +269,7 @@ describe("CI and immutable release verification", () => {
 		const registry = JSON.parse(read("deploy/security/high-exceptions.json"));
 		const ids = [
 			"CVE-2025-69720",
+			"CVE-2026-103111",
 			"CVE-2026-11822",
 			"CVE-2026-11824",
 			"CVE-2026-14456",
@@ -303,7 +304,7 @@ describe("CI and immutable release verification", () => {
 		expect(
 			registry.exceptions.map((entry: { id: string }) => entry.id).sort(),
 		).toEqual(ids);
-		expect(new Set(ids).size).toBe(22);
+		expect(new Set(ids).size).toBe(23);
 		for (const exception of registry.exceptions) {
 			expect(exception.owner).toBe("valerubio7");
 			expect(exception.version).toBe(1);

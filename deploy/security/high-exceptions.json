@@ -9,6 +9,13 @@
 			"version": 1
 		},
 		{
+			"id": "CVE-2026-103111",
+			"owner": "valerubio7",
+			"reason": "Maintainer temporarily accepts PCRE2 before 10.49 out-of-bounds write risk when an attacker controls regex with certain JIT API usage for urgent staging-only publication. This is an operational hold, not scanner-enforced production isolation; production promotion is not authorized. No future findings are automatically accepted.",
+			"expiresAt": "2026-10-04T02:01:04Z",
+			"version": 1
+		},
+		{
 			"id": "CVE-2026-11822",
 			"owner": "valerubio7",
 			"reason": "Maintainer explicitly accepted the current frozen HIGH inventory for urgent staging-only publication. This is an operational hold, not scanner-enforced production isolation; production promotion is not authorized. Temporary 72-hour window; no future findings are automatically accepted.",
