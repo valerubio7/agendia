@@ -306,9 +306,7 @@ describe("CI and immutable release verification", () => {
 		expect(new Set(ids).size).toBe(22);
 		for (const exception of registry.exceptions) {
 			expect(exception.owner).toBe("valerubio7");
-			expect(exception.version).toBe(
-				["CVE-2026-75804", "CVE-2026-84782"].includes(exception.id) ? 1 : 2,
-			);
+			expect(exception.version).toBe(1);
 			expect(exception.expiresAt).toBe(expiresAt);
 			expect(exception.reason.trim().length).toBeGreaterThan(0);
 			expect(exception.reason.length).toBeLessThanOrEqual(512);
