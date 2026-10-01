@@ -151,7 +151,7 @@
 		{
 			"id": "GHSA-rgj7-g3m4-5g8c",
 			"owner": "valerubio7",
-			"reason": "Maintainer explicitly accepted the current frozen HIGH inventory for urgent staging-only publication. This is an operational hold, not scanner-enforced production isolation; production promotion is not authorized. Temporary 72-hour window; no future findings are automatically accepted.",
+			"reason": "Maintainer explicitly accepted the current frozen HIGH inventory for urgent staging-only publication, including potential remote code execution if processing untrusted images. This is an operational hold, not scanner-enforced production isolation; production promotion is not authorized. Temporary 72-hour window; no future findings are automatically accepted.",
 			"expiresAt": "2026-10-04T02:01:04Z",
 			"version": 2
 		}
