@@ -52,6 +52,11 @@ export async function runMigrate({
 	genesis,
 	runGoverned = runGovernedMigrations,
 }: MigrateOptions) {
+	if (
+		Object.hasOwn(evidence, "stagingRiskAcceptance") &&
+		config.environment !== "staging"
+	)
+		throw new Error("migration.staging_acceptance_identity_invalid");
 	await preflight(config);
 	const sql = postgres(config.databaseUrl, { max: 1 });
 	try {
@@ -62,6 +67,7 @@ export async function runMigrate({
 			evidence,
 			environment: config.environment,
 			releaseDigest: config.releaseDigest,
+			runningRuntimeConfig: config,
 			...(genesis ? { genesis } : {}),
 		});
 		await completePreflight?.(config);
@@ -76,13 +82,16 @@ if (import.meta.main) {
 	const isolationManifest = readJson(
 		"AGENDIA_ISOLATION_MANIFEST_FILE",
 	) as IsolationManifest;
+	const evidence = readJson(
+		"AGENDIA_MIGRATION_EVIDENCE_FILE",
+	) as MigrationEvidence;
 	const result = await runMigrate({
 		config,
 		migrationDirectory:
 			process.env.AGENDIA_MIGRATIONS_DIRECTORY ??
 			join(import.meta.dir, "../migrations"),
 		manifest: readJson("AGENDIA_RELEASE_MANIFEST_FILE"),
-		evidence: readJson("AGENDIA_MIGRATION_EVIDENCE_FILE") as MigrationEvidence,
+		evidence,
 		preflight: async (releaseConfig) =>
 			preflightStaticEnvironment({
 				config: releaseConfig,
@@ -91,7 +100,8 @@ if (import.meta.main) {
 		completePreflight: async (releaseConfig) =>
 			preflightReleaseEnvironment(releaseConfig),
 		genesis:
-			config.environment === "staging" || config.environment === "production"
+			!Object.hasOwn(evidence, "stagingRiskAcceptance") &&
+			(config.environment === "staging" || config.environment === "production")
 				? {
 						environment: config.environment,
 						environmentId: config.environmentId,
