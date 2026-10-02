@@ -27,9 +27,9 @@ is not the fast gate.
 ## Merge and cleanup
 
 After review and successful checks, squash-merge the PR and delete its remote
-branch. Automatic remote branch deletion is enabled. Main protection is pending
-setup; required checks should be configured only after real successful hosted
-runs establish their names. This guide does not imply protection is active.
+branch. Automatic remote branch deletion is enabled. Configure main protection
+and required checks only after real successful hosted runs establish their names.
+Review repository settings before assuming protection is active.
 
 Use `git fetch --prune` to remove stale remote-tracking references; it does not
 delete local branches. Review local branches individually before deleting them.
