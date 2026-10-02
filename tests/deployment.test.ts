@@ -38,13 +38,20 @@ elif [[ "$*" == *"ps -q"* ]]; then
 elif [[ "$1" == image ]]; then
   if [[ "$*" == *revision* ]]; then
     if [[ "$MODE" == revision ]]; then echo invalid; else echo "$SHA"; fi
-  else tag="\${*: -1}"; printf '%s@sha256:' "\${tag%:*}"; printf '%064d\\n' 0; fi
+  else
+    tag="\${*: -1}"
+    case "$MODE" in
+      digest) echo 'ghcr.io/owner/repo@sha256:invalid' ;;
+      repository) printf 'ghcr.io/other/repo@sha256:%064d\\n' 0 ;;
+      *) printf '%s@sha256:' "\${tag%:*}"; printf '%064d\\n' 0 ;;
+    esac
+  fi
 elif [[ "$1" == inspect ]]; then
   if [[ "$*" == *State.Health* ]]; then
     if [[ "$MODE" == health ]]; then echo unhealthy; else echo healthy; fi
   elif [[ "$*" == *State.Status* ]]; then
     if [[ "$MODE" == worker && "$*" == *container-worker* ]]; then echo exited; else echo running; fi
-  else echo 'sha256:previous'; fi
+  else echo "sha256:previous-\${*: -1}"; fi
 fi
 `);
   writeFileSync(join(bin, "sleep"), "#!/usr/bin/env bash\nexit 0\n");
@@ -77,11 +84,12 @@ describe("release deployment boundaries", () => {
       expect(position).toBeGreaterThan(previous); previous = position;
     }
     const current = readFileSync(join(f.app, ".release-state"), "utf8").split("\n")[0]!;
-    expect(readFileSync(join(current, "images.env"), "utf8")).toContain("@sha256:");
-    expect(readFileSync(join(current, "previous-images"), "utf8")).toContain("api=sha256:previous");
+    expect(readFileSync(join(current, "images.env"), "utf8")).toBe(`AGENDIA_IMAGE=ghcr.io/owner/repo@sha256:${"0".repeat(64)}\n`);
+    expect(f.logText.split("\n").filter((line) => line.startsWith("pull "))).toEqual([`pull ghcr.io/owner/repo:${sha}`]);
+    expect(readFileSync(join(current, "previous-images"), "utf8")).toContain("api=sha256:previous-container-api");
     expect(readFileSync(join(current, "previous-compose.yml"), "utf8")).toBe(read("compose.production.yml"));
   });
-  for (const mode of ["pull", "revision", "backup", "empty", "config"]) {
+  for (const mode of ["pull", "revision", "digest", "repository", "backup", "empty", "config"]) {
     test(`${mode} failure prevents downtime`, () => {
       const f = run(mode);
       expect(f.result.exitCode).not.toBe(0);
@@ -105,6 +113,34 @@ describe("release deployment boundaries", () => {
       expect(result.stderr.toString()).toContain("no automatic schema rollback");
     });
   }
+  for (const format of ["legacy", "unified"]) {
+    test(`${format} recovery retains version-matched Compose, saved refs and actual distinct image IDs`, () => {
+      const f = fixture();
+      const previous = join(f.app, "releases", "prior");
+      mkdirSync(previous, { recursive: true });
+      const savedCompose = format === "legacy"
+        ? read("compose.production.yml")
+          .replace("target: application", "target: runtime")
+          .replace("${AGENDIA_IMAGE:-agendia:local}", "${AGENDIA_RUNTIME_IMAGE:-agendia-runtime:local}")
+          .replace("    working_dir: /app/apps/web", "    image: ${AGENDIA_WEB_IMAGE:-agendia-web:local}\n    working_dir: /app/apps/web")
+        : read("compose.production.yml");
+      const savedImages = format === "legacy"
+        ? "AGENDIA_RUNTIME_IMAGE=sha256:old-api\nAGENDIA_WEB_IMAGE=sha256:old-web\n"
+        : "AGENDIA_IMAGE=sha256:old-application\n";
+      writeFileSync(join(previous, "compose.production.yml"), savedCompose);
+      writeFileSync(join(previous, "images.env"), savedImages);
+      writeFileSync(join(f.app, ".release-state"), `${previous}\nnone\n`);
+      const result = Bun.spawnSync(f.args, { env: f.env });
+      expect(result.exitCode).toBe(0);
+      const [current, prior] = readFileSync(join(f.app, ".release-state"), "utf8").split("\n");
+      expect(prior).toBe(previous);
+      expect(readFileSync(join(current!, "previous-compose.yml"), "utf8")).toBe(savedCompose);
+      expect(readFileSync(join(previous, "images.env"), "utf8")).toBe(savedImages);
+      expect(readFileSync(join(current!, "previous-images"), "utf8")).toBe(
+        "api=sha256:previous-container-api\nweb=sha256:previous-container-web\nworker=sha256:previous-container-worker\nmanager=sha256:previous-container-manager\n",
+      );
+    });
+  }
   test("host lock rejects concurrent deployment before Docker", async () => {
     const f = fixture();
     const holder = Bun.spawn(["flock", join(f.app, ".deploy.lock"), "bash", "-c", "echo locked; read -r release"], { stdin: "pipe", stdout: "pipe" });
@@ -116,6 +152,27 @@ describe("release deployment boundaries", () => {
     expect(result.stderr.toString()).toContain("host lock");
     expect(existsSync(f.log)).toBe(false);
   });
+});
+
+test("application packaging shares one image with explicit web startup and separate PostgreSQL", () => {
+  const dockerfile = read("Dockerfile");
+  expect(dockerfile).toContain("ENV AGENDIA_API_ORIGIN=http://api:3001\nRUN bun run --cwd apps/web build");
+  expect(dockerfile).toContain('FROM web-build AS application\nUSER bun\nWORKDIR /app\nCMD ["bun", "run", "scripts/start-api.ts"]');
+  expect(dockerfile).toContain("FROM base AS runtime");
+  expect(dockerfile).toContain("FROM application AS web");
+  const compose = read("compose.production.yml");
+  expect(compose.match(/target: application/g)).toHaveLength(1);
+  expect(compose.match(/image: /g)).toHaveLength(2);
+  expect(compose).toContain("image: ${AGENDIA_IMAGE:-agendia:local}");
+  expect(compose).toContain('working_dir: /app/apps/web\n    command: [bun, --bun, ./node_modules/next/dist/bin/next, start, --hostname, 0.0.0.0, --port, "3000"]');
+  expect(compose).toContain("image: postgres:17.9-bookworm");
+  expect(compose).toContain("postgres-data:/var/lib/postgresql/data");
+  const publish = read(".github/workflows/publish.yml");
+  expect(publish).toContain('image="ghcr.io/$namespace:$RELEASE"');
+  expect(publish.match(/docker build /g)).toHaveLength(1);
+  expect(publish.match(/docker push /g)).toHaveLength(1);
+  expect(publish).toContain('docker build --target application --label "org.opencontainers.image.revision=$RELEASE"');
+  expect(publish).not.toContain("for target");
 });
 
 test("publishing gates Docker operations on CD tests from the downloaded release", () => {
@@ -140,5 +197,5 @@ test("workflow trust, source matching and SSH policies remain explicit", () => {
   expect(deploy).not.toContain("uses:");
   expect(publish.match(/uses: .+/g)).toEqual(["uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2"]);
   expect(publish).toContain("bun-version: 1.4.0");
-  expect(read("compose.production.yml")).toContain("${AGENDIA_RUNTIME_IMAGE:-agendia-runtime:local}");
+  expect(read("compose.production.yml")).toContain("${AGENDIA_IMAGE:-agendia:local}");
 });

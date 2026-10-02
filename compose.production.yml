@@ -2,8 +2,8 @@ name: agendia
 x-process: &process
   build:
     context: .
-    target: runtime
-  image: ${AGENDIA_RUNTIME_IMAGE:-agendia-runtime:local}
+    target: application
+  image: ${AGENDIA_IMAGE:-agendia:local}
   restart: unless-stopped
   init: true
   logging: &logs
@@ -102,10 +102,8 @@ services:
 
   web:
     <<: *process
-    build:
-      context: .
-      target: web
-    image: ${AGENDIA_WEB_IMAGE:-agendia-web:local}
+    working_dir: /app/apps/web
+    command: [bun, --bun, ./node_modules/next/dist/bin/next, start, --hostname, 0.0.0.0, --port, "3000"]
     ports:
       - "127.0.0.1:3000:3000"
     environment:
