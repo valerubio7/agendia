@@ -210,7 +210,7 @@ describe("local development supervisor", () => {
     const stack = await runDevStack(validEnv, dependencies);
     expect(events).toEqual([
       "run:docker compose up -d postgres",
-      "run:bun run db:migrate",
+      "run:bun run db:migrate:dev",
       "run:bun run scripts/bootstrap-admin.ts",
       "spawn:api:bun run scripts/start-api.ts",
       "spawn:web:bun run --cwd apps/web dev --hostname 127.0.0.1 --port 3000",
@@ -238,7 +238,7 @@ describe("local development supervisor", () => {
   test("does not reapply non-repeatable migrations to an initialized database", async () => {
     const { dependencies, events } = fakeDependencies(true, true);
     const stack = await runDevStack(validEnv, dependencies);
-    expect(events).not.toContain("run:bun run db:migrate");
+    expect(events).not.toContain("run:bun run db:migrate:dev");
     await stack.stop();
   });
 });

@@ -50,7 +50,7 @@ export async function provisionLogins(sql: postgres.Sql, env: Record<string, str
 }
 
 async function migrate(sql: postgres.Sql) {
-  // The existing db:migrate runner replays non-idempotent SQL. Production records
+  // The existing db:migrate:dev runner replays non-idempotent SQL. Production records
   // checksums and applies only pending files, atomically, without changing that runner.
   await sql.begin(async (tx) => {
     await tx`select pg_advisory_xact_lock(hashtext('agendia:production-setup'))`;
