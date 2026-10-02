@@ -1,6 +1,6 @@
 # Deploy a validated release
 
-Whole CI success on a trusted main push plus passing CD regressions on that exact source gates publication of full-SHA runtime/web images to GHCR. **Deploy production** is manual, approved through the production environment, and updates the existing Compose installation with downtime. No real deployment has been verified yet. Bootstrap the server using [DEPLOYMENT.md](DEPLOYMENT.md) first.
+Whole CI success on a trusted main push plus passing CD regressions on that exact source gates publication of one full-SHA application image (`ghcr.io/<owner>/<repo>:<fullSHA>`, Docker target `application`) to GHCR. API, web, workers and setup services share that image; PostgreSQL remains a separate official image. **Deploy production** is manual, approved through the production environment, and updates the existing Compose installation with downtime. No real deployment has been verified yet. Bootstrap the server using [DEPLOYMENT.md](DEPLOYMENT.md) first.
 
 ## Setup checklist (before enabling deployment)
 
@@ -18,7 +18,7 @@ Whole CI success on a trusted main push plus passing CD regressions on that exac
 
 1. Merge trusted changes to main. Wait for the entire **CI** workflow, then **Publish release**, to succeed for the exact commit. Publishing runs `bun test tests/deployment.test.ts` in the downloaded release's `source` directory before Docker login/build/push, using the same pinned Bun setup/version as CI without dependency installation. No PR artifacts are consumed; native Docker builds use that commit's source archive without persisted Git credentials.
 2. On main, dispatch **Deploy production** with the full lowercase 40-character commit SHA; approve its production environment deployment. It checks main ancestry and successful CI/publish runs for that SHA, then downloads the script and Compose from that release. The first deployable commit must contain these files. Verification checks the latest 100 publisher runs and fails closed for older releases; republish through a trusted CI rerun if needed. Publisher run titles bind the triggering release SHA, since workflow_run's own head SHA can be a newer default-branch tip.
-3. Check the run result and application externally. The script pulls digest-pinned images and validates config before downtime, creates a mode-600 nonempty `pg_dump`, stops app services, migrates/provisions with new images, then starts without builds. Health waits up to 300 seconds plus command latency. Worker/manager checks prove running processes only, not semantic readiness.
+3. Check the run result and application externally. The script validates the application image's full-SHA revision label and repository digest, exports `AGENDIA_IMAGE`, and validates config before downtime, creates a mode-600 nonempty `pg_dump`, stops app services, migrates/provisions with new images, then starts without builds. Health waits up to 300 seconds plus command latency. Worker/manager checks prove running processes only, not semantic readiness.
 
 Workflow executions are queued without cancellation. A nonblocking host-local lock in the existing application directory rejects overlapping SSH/manual deployments using the same installation path. Always use that same canonical path/project. Do not deploy unrelated releases concurrently outside this entrypoint.
 
@@ -28,7 +28,14 @@ Before stopping, errors leave app services untouched. After stopping, migration/
 
 `releases/<sha>.<unique>/` retains the selected Compose, digest `images.env`, actual pre-update image IDs in `previous-images`, and version-matched `previous-compose.yml`. `backups/` retains protected SQL dumps, including failed/empty attempts (only successful nonempty dumps permit downtime). `.release-state` atomically records current and previous successful release directories after health succeeds; failed attempts never replace it. No images/backups are deleted.
 
-For manual **image recovery**, first establish schema compatibility. Use the failed attempt's `previous-compose.yml` and actual `previous-images` runtime/web refs, or the previous successful directory's Compose and `images.env`, with the same `--project-name` and `--env-file <app-dir>/deploy/.env.production`; explicitly export image refs and use `up -d --no-build`, not latest source or a local rebuild. Prior image IDs must still exist locally. Do not re-run old migrations blindly. Never use `down -v` or prune.
+For manual **image recovery**, first establish schema compatibility. Use the failed attempt's `previous-compose.yml` and actual service image IDs in `previous-images`, or the previous successful directory's Compose and `images.env`, with the same `--project-name` and `--env-file <app-dir>/deploy/.env.production`. Keep Compose and image variables version-matched:
+
+| Saved Compose | Explicit exports before `up -d --no-build` |
+| --- | --- |
+| Unified application image | `AGENDIA_IMAGE` from the saved `images.env`, or the captured API image ID after confirming all application services shared it |
+| Older runtime/web images | `AGENDIA_RUNTIME_IMAGE` from the captured API ID and `AGENDIA_WEB_IMAGE` from the captured web ID, or both refs from the old saved `images.env` |
+
+Old API and web IDs are distinct: never substitute one for the other. Verify worker/manager IDs also match the selected runtime/application ref; if they differ, use explicit per-service image overrides matching every captured ID. Prior-format `images.env` records remain retained unchanged. Use the retained Compose, not latest source or a local rebuild; prior image IDs must still exist locally. Image recovery does not roll back schema. Do not automatically downgrade, re-run old migrations blindly, use `down -v` or prune.
 
 For **database recovery**, stop writers and follow a separately tested PostgreSQL restore procedure into the correct database/volume, using the pre-update dump and matching env/encryption keys. Restoring loses writes after the backup snapshot. Image rollback alone cannot undo migrations or role provisioning; take a human recovery decision.
 

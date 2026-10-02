@@ -30,16 +30,14 @@ if [[ -s .release-state ]]; then
   previous_compose="$current/compose.production.yml"
 fi
 cp "$previous_compose" "$work/previous-compose.yml"
-for target in runtime web; do
-  tag="ghcr.io/$namespace-$target:$release"
-  docker pull "$tag"
-  revision=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$tag")
-  [[ "$revision" == "$release" ]] || { echo 'Image revision mismatch' >&2; exit 1; }
-  digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$tag")
-  [[ "$digest" == "ghcr.io/$namespace-$target@sha256:"* && "$digest" =~ @sha256:[0-9a-f]{64}$ ]]
-  if [[ "$target" == runtime ]]; then export AGENDIA_RUNTIME_IMAGE="$digest"; else export AGENDIA_WEB_IMAGE="$digest"; fi
-done
-printf 'AGENDIA_RUNTIME_IMAGE=%s\nAGENDIA_WEB_IMAGE=%s\n' "$AGENDIA_RUNTIME_IMAGE" "$AGENDIA_WEB_IMAGE" > "$work/images.env"
+tag="ghcr.io/$namespace:$release"
+docker pull "$tag"
+revision=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$tag")
+[[ "$revision" == "$release" ]] || { echo 'Image revision mismatch' >&2; exit 1; }
+digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$tag")
+[[ "$digest" == "ghcr.io/$namespace@sha256:"* && "$digest" =~ @sha256:[0-9a-f]{64}$ ]] || { echo 'Image digest mismatch' >&2; exit 1; }
+export AGENDIA_IMAGE="$digest"
+printf 'AGENDIA_IMAGE=%s\n' "$AGENDIA_IMAGE" > "$work/images.env"
 compose config --quiet
 compose pull db api web worker manager migrate provision
 backup="$app_dir/backups/$(basename "$work").sql"
