@@ -1,0 +1,75 @@
+name: Deploy production
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Full 40-character published main commit SHA
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify release and download version-matched deployment files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RELEASE: ${{ inputs.release }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE" =~ ^[0-9a-f]{40}$ ]]
+          relation=$(gh api "repos/$REPOSITORY/compare/$RELEASE...main" --jq .status)
+          [[ "$relation" == identical || "$relation" == ahead ]]
+          for workflow in ci.yml publish.yml; do
+            if [[ "$workflow" == ci.yml ]]; then
+              query="head_sha=$RELEASE&per_page=100"; event=push
+            else
+              # workflow_run's own head_sha is the default branch tip, not the release.
+              query='per_page=100'; event=workflow_run
+            fi
+            gh api "repos/$REPOSITORY/actions/workflows/$workflow/runs?$query" > runs.json
+            jq -e --arg event "$event" --arg repo "$REPOSITORY" --arg sha "$RELEASE" \
+              '.workflow_runs | any(.head_branch == "main" and .event == $event and .conclusion == "success" and .head_repository.full_name == $repo and (if $event == "push" then .head_sha == $sha else .display_title == ("Publish " + $sha) end))' runs.json
+          done
+          for file in deploy/deploy-release.sh compose.production.yml; do
+            gh api -H 'Accept: application/vnd.github.raw+json' "repos/$REPOSITORY/contents/$file?ref=$RELEASE" > "${file##*/}"
+          done
+      - name: Transfer and execute over pinned SSH
+        env:
+          RELEASE: ${{ inputs.release }}
+          REPOSITORY: ${{ github.repository }}
+          SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
+          SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
+          SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
+          APP_DIR: ${{ vars.PRODUCTION_APP_DIR }}
+          PROJECT: ${{ vars.PRODUCTION_COMPOSE_PROJECT }}
+          SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$SSH_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
+          [[ "$SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ "$SSH_PORT" =~ ^[0-9]{1,5}$ && "$SSH_PORT" -ge 1 && "$SSH_PORT" -le 65535 ]]
+          [[ "$APP_DIR" =~ ^/[a-zA-Z0-9_/-]+$ ]]
+          [[ "$PROJECT" =~ ^[a-z0-9][a-z0-9_-]*$ ]]
+          namespace="${REPOSITORY,,}"
+          [[ "$namespace" =~ ^[a-z0-9_.-]+/[a-z0-9_.-]+$ ]]
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          options=(-i ~/.ssh/deploy_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$HOME/.ssh/known_hosts")
+          # Unique incoming directory; selected script takes the host-wide deployment lock.
+          incoming="$APP_DIR/.incoming-$RELEASE-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          ssh "${options[@]}" -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "umask 077; mkdir '$incoming'"
+          scp "${options[@]}" -P "$SSH_PORT" deploy-release.sh compose.production.yml "$SSH_USER@$SSH_HOST:$incoming/"
+          ssh "${options[@]}" -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            "bash '$incoming/deploy-release.sh' '$RELEASE' '$namespace' '$APP_DIR' '$PROJECT'"
