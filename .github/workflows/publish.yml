@@ -38,7 +38,7 @@ jobs:
       - name: Deployment regressions on validated source
         working-directory: source
         run: bun test tests/deployment.test.ts
-      - name: Publish full SHA images
+      - name: Publish full SHA application image
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
@@ -49,8 +49,6 @@ jobs:
           namespace="${REPOSITORY,,}"
           printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
           trap 'docker logout ghcr.io' EXIT
-          for target in runtime web; do
-            image="ghcr.io/$namespace-$target:$RELEASE"
-            docker build --target "$target" --label "org.opencontainers.image.revision=$RELEASE" -t "$image" source
-            docker push "$image"
-          done
+          image="ghcr.io/$namespace:$RELEASE"
+          docker build --target application --label "org.opencontainers.image.revision=$RELEASE" --label "org.opencontainers.image.source=https://github.com/$REPOSITORY" -t "$image" source
+          docker push "$image"

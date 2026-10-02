@@ -2,6 +2,8 @@
 
 Usá Docker Compose para PostgreSQL, la API, la web, el worker de mensajes y el manager de WhatsApp; Nginx instalado en el servidor termina las conexiones HTTPS. Solo la web publica un puerto en la interfaz local del servidor. Esta configuración es independiente del Compose de desarrollo. Ejecutá los siguientes comandos en el servidor, desde la raíz del repositorio, no en tu computadora.
 
+La API, la web, los workers y los servicios de configuración comparten la imagen `agendia:local`, construida con el target `application`; PostgreSQL conserva su imagen oficial y su volumen independiente. Para una versión publicada, `AGENDIA_IMAGE` selecciona la misma imagen para todos los servicios de la aplicación. La web usa un directorio y comando explícitos; los comandos de construcción e inicialización siguientes no cambian.
+
 ## Requisitos previos
 
 Docker y Compose deben estar disponibles. Instalá Nginx, OpenSSL y el plugin de Nginx para Certbot en Ubuntu:

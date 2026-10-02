@@ -12,7 +12,12 @@ FROM base AS web-build
 ENV AGENDIA_API_ORIGIN=http://api:3001
 RUN bun run --cwd apps/web build
 
-FROM web-build AS web
+FROM web-build AS application
+USER bun
+WORKDIR /app
+CMD ["bun", "run", "scripts/start-api.ts"]
+
+FROM application AS web
 USER bun
 WORKDIR /app/apps/web
 CMD ["bun", "--bun", "./node_modules/next/dist/bin/next", "start", "--hostname", "0.0.0.0", "--port", "3000"]
