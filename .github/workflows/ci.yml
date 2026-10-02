@@ -41,3 +41,53 @@ jobs:
         run: bun run scope:check
       - name: Security scan
         run: bun run security:scan
+
+  integration:
+    name: Integration (includes tenant RLS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.0
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Check Docker readiness
+        run: docker info
+      # test:integration contains tenant-rls.integration.test.ts; do not run it twice.
+      - name: Integration tests
+        run: bun run test:integration
+
+  browser:
+    name: Playwright (${{ matrix.suite }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [harness, e2e]
+    env:
+      CI: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.0
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Check Docker readiness
+        run: docker info
+      - name: Install Chromium and system dependencies
+        run: bunx --no-install playwright install --with-deps chromium
+      # Scripts select projects from playwright.config.ts; fixtures own their services.
+      - name: Browser tests
+        run: bun run test:${{ matrix.suite }}

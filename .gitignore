@@ -1,4 +1,5 @@
 # Local Pi runtime state
+/odd/
 .atl/
 .codegraph/
 node_modules/

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { checkV1Scope, scanForSecrets } from "../../scripts/policy-checks.ts";
 
 const read = (path: string) => readFileSync(path, "utf8");
@@ -15,10 +15,18 @@ describe("delivery configuration", () => {
     expect(packageJson.scripts.test).not.toContain(
       "bun run test:tenant-isolation",
     );
+    expect(packageJson.scripts.test).toContain("bun run test:harness");
     expect(packageJson.scripts.test).toContain("bun run test:e2e");
     expect(packageJson.scripts["test:tenant-isolation"]).toBe(
-      "bun test tests/tenant-isolation tests/integration/tenant-rls.integration.test.ts",
+      "bun test tests/integration/tenant-rls.integration.test.ts",
     );
+    expect(packageJson.scripts["test:integration"]).toBe("bun test tests/integration");
+    expect(existsSync("tests/integration/tenant-rls.integration.test.ts")).toBe(true);
+    // Bun's directory runner includes the focused RLS file: aggregate and CI
+    // integration must not invoke the focused alias a second time.
+    const workflow = read(".github/workflows/ci.yml");
+    expect(workflow.match(/run: bun run test:integration\b/g)).toHaveLength(1);
+    expect(workflow).not.toContain("bun run test:tenant-isolation");
   });
 
   test("fails closed for provider secrets and future conversation capabilities", () => {

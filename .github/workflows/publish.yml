@@ -1,0 +1,56 @@
+name: Publish release
+run-name: Publish ${{ github.event.workflow_run.head_sha }}
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+permissions: {}
+concurrency:
+  group: publish-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout exact validated source (no persisted credentials)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RELEASE: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE" =~ ^[0-9a-f]{40}$ ]]
+          gh api "repos/$REPOSITORY/tarball/$RELEASE" > source.tar.gz
+          mkdir source
+          tar -xzf source.tar.gz -C source --strip-components=1
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.0
+      - name: Deployment regressions on validated source
+        working-directory: source
+        run: bun test tests/deployment.test.ts
+      - name: Publish full SHA images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RELEASE: ${{ github.event.workflow_run.head_sha }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          namespace="${REPOSITORY,,}"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          trap 'docker logout ghcr.io' EXIT
+          for target in runtime web; do
+            image="ghcr.io/$namespace-$target:$RELEASE"
+            docker build --target "$target" --label "org.opencontainers.image.revision=$RELEASE" -t "$image" source
+            docker push "$image"
+          done
