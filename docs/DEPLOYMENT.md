@@ -43,7 +43,7 @@ dc ps
 curl -I http://127.0.0.1:3000/
 ```
 
-Frená si falla cualquiera de los comandos de inicialización. Los servicios de configuración están separados mediante perfiles y nunca ejecutan migraciones al reiniciar la aplicación. El comando de migración de producción registra sumas de verificación y aplica únicamente el SQL pendiente, dentro de una transacción. Para la primera instalación, usalo solo con una base nueva: no puede adoptar una base ya inicializada por el ejecutor de migraciones de desarrollo. No ejecutes `bun run db:migrate` contra producción: ese ejecutor vuelve a aplicar las migraciones existentes sin comprobar si ya se ejecutaron.
+Frená si falla cualquiera de los comandos de inicialización. Los servicios de configuración están separados mediante perfiles y nunca ejecutan migraciones al reiniciar la aplicación. El comando de migración de producción registra sumas de verificación y aplica únicamente el SQL pendiente, dentro de una transacción. Para la primera instalación, usalo solo con una base nueva: no puede adoptar una base ya inicializada por el ejecutor de migraciones de desarrollo. No ejecutes `bun run db:migrate:dev` contra producción: ese ejecutor vuelve a aplicar las migraciones existentes sin comprobar si ya se ejecutaron.
 
 Después de inicializar correctamente el administrador, reemplazá `AGENDIA_ADMIN_PASSWORD` por un valor de ejemplo no secreto (Compose sigue requiriendo un valor no vacío); volvé a colocar una contraseña válida solo si necesitás repetir la inicialización. Los contenedores de la aplicación nunca reciben las credenciales del usuario de migraciones ni la contraseña inicial del administrador.
 

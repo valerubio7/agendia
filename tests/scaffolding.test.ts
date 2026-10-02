@@ -18,7 +18,16 @@ const workflow = () =>
 const policyLines = (source: string) =>
   source.split("\n").map((line) => line.trim().replace(/\s+#.*$/, ""));
 
-describe("fast CI policy", () => {
+const jobs = () => {
+  const source = workflow().split("\njobs:\n")[1]!;
+  const boundaries = [...source.matchAll(/^  ([a-z]+):\n/gm)];
+  return Object.fromEntries(boundaries.map((match, index) => [
+    match[1],
+    source.slice(match.index, boundaries[index + 1]?.index ?? source.length),
+  ])) as Record<string, string>;
+};
+
+describe("CI policy", () => {
   test("targets main with read-only access and bounded isolated runs", () => {
     const source = workflow();
     const lines = policyLines(source);
@@ -44,19 +53,27 @@ describe("fast CI policy", () => {
   });
 
   test("pins trusted actions and the declared Bun runtime", () => {
-    const lines = policyLines(workflow());
-    expect(lines.filter((line) => line.startsWith("uses:"))).toEqual([
-      "uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
-      "uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6",
-    ]);
-    expect(lines).toContain("persist-credentials: false");
     const version = String(readJson("package.json").packageManager).replace("bun@", "");
-    expect(lines).toContain(`bun-version: ${version}`);
+    expect(Object.keys(jobs())).toEqual(["validation", "integration", "browser"]);
+    for (const job of Object.values(jobs())) {
+      const lines = policyLines(job);
+      expect(lines.filter((line) => line.startsWith("uses:"))).toEqual([
+        "uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+        "uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6",
+      ]);
+      expect(lines).toContain("persist-credentials: false");
+      expect(lines).toContain(`bun-version: ${version}`);
+      expect(lines).toContain("runs-on: ubuntu-latest");
+      const timeout = job.match(/timeout-minutes:\s*(\d+)/);
+      expect(timeout).not.toBeNull();
+      expect(Number(timeout?.[1])).toBeGreaterThan(0);
+      expect(Number(timeout?.[1])).toBeLessThanOrEqual(30);
+    }
   });
 
-  test("runs only installation and the six independent fast checks", () => {
+  test("retains installation and the six independent fast checks", () => {
     const source = workflow();
-    const lines = policyLines(source);
+    const lines = policyLines(jobs().validation!);
     expect(lines.filter((line) => line.startsWith("run:"))).toEqual([
       "run: bun install --frozen-lockfile",
       "run: bun run typecheck",
@@ -68,6 +85,38 @@ describe("fast CI policy", () => {
     ]);
     expect(lines.filter((line) => line.startsWith("- name:"))).toHaveLength(9);
     expect(source).not.toMatch(/\bsecrets\b|\bdeploy\b|write-all|contents:\s*write/i);
+    expect(source).not.toContain("dev.env");
+  });
+
+  test("runs integration once on Docker without a duplicate tenant suite", () => {
+    const lines = policyLines(jobs().integration!);
+    expect(lines.filter((line) => line.startsWith("run:"))).toEqual([
+      "run: bun install --frozen-lockfile",
+      "run: docker info",
+      "run: bun run test:integration",
+    ]);
+    expect(workflow()).not.toContain("bun run test:tenant-isolation");
+  });
+
+  test("isolates both configured Playwright projects with browser and Docker prerequisites", () => {
+    const lines = policyLines(jobs().browser!);
+    expect(lines).toContain("fail-fast: false");
+    expect(lines).toContain("suite: [harness, e2e]");
+    expect(lines).toContain('CI: "true"');
+    expect(lines.filter((line) => line.startsWith("run:"))).toEqual([
+      "run: bun install --frozen-lockfile",
+      "run: docker info",
+      "run: bunx --no-install playwright install --with-deps chromium",
+      "run: bun run test:${{ matrix.suite }}",
+    ]);
+    const scripts = readJson("package.json").scripts as Record<string, string>;
+    const config = readFileSync(join(root, "playwright.config.ts"), "utf8");
+    for (const [suite, project] of [["harness", "historical-harness"], ["e2e", "system"]]) {
+      expect(scripts[`test:${suite}`]).toBe(`playwright test --project=${project}`);
+      expect(config).toContain(`name: "${project}"`);
+    }
+    expect(config).toContain("workers: 1");
+    expect(config).toContain("timeout: 180_000");
   });
 });
 

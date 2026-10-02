@@ -3,7 +3,7 @@ x-process: &process
   build:
     context: .
     target: runtime
-  image: agendia-runtime:local
+  image: ${AGENDIA_RUNTIME_IMAGE:-agendia-runtime:local}
   restart: unless-stopped
   init: true
   logging: &logs
@@ -105,7 +105,7 @@ services:
     build:
       context: .
       target: web
-    image: agendia-web:local
+    image: ${AGENDIA_WEB_IMAGE:-agendia-web:local}
     ports:
       - "127.0.0.1:3000:3000"
     environment:
