@@ -19,12 +19,8 @@ export type Profile = {
   offerings: string;
 };
 export type Assistant = {
-  personality: string;
-  tone: string;
-  instructions: string;
-  knowledge: string;
-  rules: string;
-  restrictions: string;
+  style: string;
+  businessInstructions: string;
   active: boolean;
   revision: number;
 };
