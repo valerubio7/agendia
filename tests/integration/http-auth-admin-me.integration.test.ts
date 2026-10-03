@@ -363,8 +363,10 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
       "tenant-b@example.test",
       "tenant initial password safe",
     );
-    const legacy = { contact: "OLD_CONTACT", faq: "OLD_FAQ", policies: "OLD_POLICIES", additional_info: "OLD_INFO" };
-    await database.sql`insert into business_profiles(business_id,display_name,contact,faq,policies,additional_info) values(${a.business.id},'Old name',${legacy.contact},${legacy.faq},${legacy.policies},${legacy.additional_info})`;
+    await database.sql`insert into business_profiles(business_id,display_name) values(${a.business.id},'Old name')`;
+    expect(await database.sql`select column_name from information_schema.columns
+      where table_schema='public' and table_name='business_profiles'
+      and column_name in ('contact','faq','policies','additional_info')`).toHaveLength(0);
     const profile = {
       displayName: "Tenant A",
       description: "A",
@@ -396,7 +398,11 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
       expect(saved.statusCode).toBe(200);
       expect(saved.json() as unknown).toEqual({ ...retained, description });
       expect((await request("GET", "/me/business-profile", authA)).json() as unknown).toEqual({ ...retained, description });
-      expect((await database.sql`select contact,faq,policies,additional_info from business_profiles where business_id=${a.business.id}`)[0]).toEqual(legacy);
+      expect((await database.sql`select display_name,description,address,business_hours,offerings
+        from business_profiles where business_id=${a.business.id}`)[0]).toEqual({
+        display_name: retained.displayName, description, address: retained.address,
+        business_hours: retained.businessHours, offerings: retained.offerings,
+      });
     }
     expect(
       (await request("GET", "/me/business-profile", authB)).json() as unknown,
@@ -405,7 +411,10 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
       ...authB, origin: ORIGIN, body: { ...retained, displayName: "Tenant B" },
     });
     expect(fresh.statusCode).toBe(200);
-    expect((await database.sql`select contact,faq,policies,additional_info from business_profiles where business_id=${b.business.id}`)[0]).toEqual({ contact: "", faq: "", policies: "", additional_info: "" });
+    expect((await request("GET", "/me/business-profile", authB)).json() as unknown).toEqual({
+      ...retained, displayName: "Tenant B",
+    });
+    expect((await request("GET", "/me/business-profile", authA)).json() as unknown).toEqual(retained);
     expect(
       (
         await request("PUT", "/me/business-profile", {
