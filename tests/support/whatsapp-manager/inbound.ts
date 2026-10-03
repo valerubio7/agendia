@@ -27,6 +27,7 @@ export interface StoredInboundMessage {
     sequence: number;
     text: string;
     receivedAt: number;
+    direction?: "outbound";
 }
 
 export class InMemoryInboundRepository {
@@ -61,14 +62,14 @@ export class InboundMessageHandler {
                 return { outcome: "duplicate" };
             this.repository.inbox.add(inboxKey);
             const classification = classifyInbound(event);
-            if (classification !== "accepted") {
+            if (classification !== "accepted" && classification !== "accepted_business") {
                 this.repository.technicalEvents.push({
                     businessId: session.businessId,
                     code: classification,
                 });
                 return { outcome: classification };
             }
-            if (session.businessStatus !== "active" || !session.assistantActive)
+            if (classification === "accepted" && (session.businessStatus !== "active" || !session.assistantActive))
                 return { outcome: "automation_inactive" };
             const conversationKey = `${event.sessionPublicId}:${event.remoteJid}`;
             const sequence =
@@ -82,13 +83,14 @@ export class InboundMessageHandler {
                 sequence,
                 text: event.text!,
                 receivedAt: event.receivedAt,
+                ...(classification === "accepted_business" ? { direction: "outbound" as const } : {}),
             });
-            this.repository.aiJobs.push({
+            if (classification === "accepted") this.repository.aiJobs.push({
                 businessId: session.businessId,
                 conversationKey,
                 sequence,
             });
-            return { outcome: "accepted", sequence };
+            return { outcome: classification, sequence };
         });
     }
 }

@@ -21,7 +21,8 @@ export type InboundOutcome =
   | "unknown_session"
   | "duplicate"
   | "ignored_group"
-  | "ignored_from_me"
+  | "generated_echo"
+  | "accepted_business"
   | "ignored_non_text"
   | "automation_inactive"
   | "accepted";
@@ -35,13 +36,11 @@ export function classifyInbound(
 ):
   | Exclude<
       InboundOutcome,
-      "unknown_session" | "duplicate" | "automation_inactive" | "accepted"
-    >
-  | "accepted" {
+      "unknown_session" | "duplicate" | "automation_inactive" | "generated_echo"
+    > {
   if (event.chatType === "group") return "ignored_group";
-  if (event.fromMe) return "ignored_from_me";
   if (event.kind !== "text" || event.text === null) return "ignored_non_text";
-  return "accepted";
+  return event.fromMe ? "accepted_business" : "accepted";
 }
 
 type Pools = ReturnType<typeof createRuntimePools>;
@@ -76,9 +75,10 @@ export class PostgresInboundHandler {
       }),
     );
     if (!stored) return { outcome: "duplicate" };
-    if (outcome !== "accepted") return { outcome };
+    if (stored.generatedEcho) return { outcome: "generated_echo" };
+    if (outcome !== "accepted" && outcome !== "accepted_business") return { outcome };
     if (stored.sequence === undefined)
       throw new Error("accepted message was not persisted");
-    return { outcome: "accepted", sequence: stored.sequence };
+    return { outcome, sequence: stored.sequence };
   }
 }

@@ -149,7 +149,7 @@ describe("PostgreSQL messaging workers", () => {
     expect((await inbound.handle(event())).outcome).toBe("duplicate");
     for (const e of [
       event({ providerMessageId: "group", chatType: "group" }),
-      event({ providerMessageId: "own", fromMe: true }),
+      event({ providerMessageId: "own", fromMe: true, kind: "image", text: null }),
       event({ providerMessageId: "media", kind: "image", text: null }),
       event({ sessionPublicId: SB, providerMessageId: "inactive" }),
     ])
