@@ -1,11 +1,9 @@
-CREATE TABLE platform_ai_instructions (
-  singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
-  additional_instructions text NOT NULL DEFAULT ''
-);
+ALTER TABLE operational_controls
+  ADD COLUMN additional_instructions text NOT NULL DEFAULT '';
 
-INSERT INTO platform_ai_instructions (singleton) VALUES (true);
-
-REVOKE ALL ON platform_ai_instructions FROM PUBLIC, agendia_runtime,
-  agendia_admin_runtime, agendia_worker_runtime, agendia_whatsapp_runtime;
-GRANT SELECT, UPDATE ON platform_ai_instructions TO agendia_admin_runtime;
-GRANT SELECT ON platform_ai_instructions TO agendia_worker_runtime;
+-- Workers retain their existing read-only table grant; WhatsApp reads only operational metadata.
+REVOKE SELECT ON operational_controls FROM agendia_whatsapp_runtime;
+GRANT SELECT (singleton, automation_disabled, incident_reference, updated_at)
+  ON operational_controls TO agendia_whatsapp_runtime;
+GRANT SELECT (singleton, additional_instructions), UPDATE (additional_instructions)
+  ON operational_controls TO agendia_admin_runtime;

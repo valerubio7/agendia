@@ -156,25 +156,15 @@ test("populated upgrade consolidates every assistant text while preserving profi
     }));
     expect([...(await db.sql`select * from conversations order by id`)]).toEqual([...conversations]);
     expect([...(await db.sql`select * from messages order by business_id,sequence`)]).toEqual([...history]);
-    const owner = (await db.sql`select current_user as name`)[0]!.name;
-    const globalGrants = [
-      ...["DELETE", "INSERT", "REFERENCES", "SELECT", "TRIGGER", "TRUNCATE", "UPDATE"].map(privilege_type => ({
-        grantee: owner, table_name: "platform_ai_instructions", privilege_type, is_grantable: "YES",
-      })),
-      ...["SELECT", "UPDATE"].map(privilege_type => ({
-        grantee: "agendia_admin_runtime", table_name: "platform_ai_instructions", privilege_type, is_grantable: "NO",
-      })),
-      { grantee: "agendia_worker_runtime", table_name: "platform_ai_instructions", privilege_type: "SELECT", is_grantable: "NO" },
-    ];
+    const removedGrant = { grantee: "agendia_whatsapp_runtime", table_name: "operational_controls", privilege_type: "SELECT", is_grantable: "NO" };
+    expect(beforeSecurity.grants.filter(row => row.grantee === removedGrant.grantee &&
+      row.table_name === removedGrant.table_name && row.privilege_type === removedGrant.privilege_type)).toEqual([removedGrant]);
     const afterSecurity = await security(db);
-    const ordered = (rows: typeof globalGrants) => rows.sort((a, b) =>
-      `${a.grantee}/${a.table_name}/${a.privilege_type}`.localeCompare(`${b.grantee}/${b.table_name}/${b.privilege_type}`));
-    expect({ ...afterSecurity, grants: ordered([...afterSecurity.grants]) }).toEqual({
-      ...beforeSecurity, grants: ordered([...beforeSecurity.grants, ...globalGrants]),
+    expect({ ...afterSecurity, grants: [...afterSecurity.grants] }).toEqual({
+      ...beforeSecurity,
+      grants: beforeSecurity.grants.filter(row => !(row.grantee === removedGrant.grantee &&
+        row.table_name === removedGrant.table_name && row.privilege_type === removedGrant.privilege_type)),
     });
-    expect(afterSecurity.grants.filter(row => row.table_name === "platform_ai_instructions" && row.grantee.startsWith("agendia_"))).toEqual(
-      globalGrants.filter(row => row.grantee.startsWith("agendia_")),
-    );
   } finally {
     await db.stop();
   }

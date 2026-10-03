@@ -78,13 +78,13 @@ export class PostgresRepositories {
   constructor(private readonly db: Db) {}
   async platformAiInstructions() {
     const [row] = await this.db<{ additional_instructions: string }[]>`
-      select additional_instructions from platform_ai_instructions where singleton`;
+      select additional_instructions from operational_controls where singleton`;
     if (!row) throw new Error("Platform AI instructions singleton missing");
     return { additionalInstructions: row.additional_instructions };
   }
   async updatePlatformAiInstructions(additionalInstructions: string) {
     const [row] = await this.db<{ additional_instructions: string }[]>`
-      update platform_ai_instructions set additional_instructions=${additionalInstructions}
+      update operational_controls set additional_instructions=${additionalInstructions}
       where singleton returning additional_instructions`;
     if (!row) throw new Error("Platform AI instructions singleton missing");
     return { additionalInstructions: row.additional_instructions };
