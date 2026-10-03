@@ -29,7 +29,7 @@ async function security(db: TestPostgres) {
       from pg_class where oid in ('business_profiles'::regclass,'assistant_configs'::regclass,'messages'::regclass)
       order by relname`,
     policies: await db.sql`select * from pg_policies where schemaname='public' order by tablename,policyname`,
-    grants: await db.sql`select grantee,table_name,privilege_type,is_grantable
+    grants: await db.sql<{ grantee: string; table_name: string; privilege_type: string; is_grantable: string }[]>`select grantee,table_name,privilege_type,is_grantable
       from information_schema.table_privileges where table_schema='public'
       order by grantee,table_name,privilege_type`,
   };
@@ -156,7 +156,25 @@ test("populated upgrade consolidates every assistant text while preserving profi
     }));
     expect([...(await db.sql`select * from conversations order by id`)]).toEqual([...conversations]);
     expect([...(await db.sql`select * from messages order by business_id,sequence`)]).toEqual([...history]);
-    expect(await security(db)).toEqual(beforeSecurity);
+    const owner = (await db.sql`select current_user as name`)[0]!.name;
+    const globalGrants = [
+      ...["DELETE", "INSERT", "REFERENCES", "SELECT", "TRIGGER", "TRUNCATE", "UPDATE"].map(privilege_type => ({
+        grantee: owner, table_name: "platform_ai_instructions", privilege_type, is_grantable: "YES",
+      })),
+      ...["SELECT", "UPDATE"].map(privilege_type => ({
+        grantee: "agendia_admin_runtime", table_name: "platform_ai_instructions", privilege_type, is_grantable: "NO",
+      })),
+      { grantee: "agendia_worker_runtime", table_name: "platform_ai_instructions", privilege_type: "SELECT", is_grantable: "NO" },
+    ];
+    const afterSecurity = await security(db);
+    const ordered = (rows: typeof globalGrants) => rows.sort((a, b) =>
+      `${a.grantee}/${a.table_name}/${a.privilege_type}`.localeCompare(`${b.grantee}/${b.table_name}/${b.privilege_type}`));
+    expect({ ...afterSecurity, grants: ordered([...afterSecurity.grants]) }).toEqual({
+      ...beforeSecurity, grants: ordered([...beforeSecurity.grants, ...globalGrants]),
+    });
+    expect(afterSecurity.grants.filter(row => row.table_name === "platform_ai_instructions" && row.grantee.startsWith("agendia_"))).toEqual(
+      globalGrants.filter(row => row.grantee.startsWith("agendia_")),
+    );
   } finally {
     await db.stop();
   }

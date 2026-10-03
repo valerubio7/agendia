@@ -27,6 +27,16 @@ const request: AiGenerateRequest = {
 };
 
 describe("replaceable DeepSeek AI processing", () => {
+  test("appends full raw platform additions only when nonempty", () => {
+    const base = buildDeepSeekRequest(request);
+    for (const additionalInstructions of ["", " \n\t ", "  Atención 😀\n\tfin  "]) {
+      const body = buildDeepSeekRequest({ ...request, additionalInstructions });
+      expect(body.messages[0]?.content).toBe(additionalInstructions === ""
+        ? AI_SYSTEM_INSTRUCTIONS : AI_SYSTEM_INSTRUCTIONS + "\n\n" + additionalInstructions);
+      expect(body.messages[1]).toEqual(base.messages[1]);
+      expect(body.model).toBe(base.model);
+    }
+  });
   test("builds an allowlisted business-first request without tools and calls DeepSeek once", async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const adapter = new DeepSeekAdapter({

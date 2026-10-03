@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, type FormEvent } from "react";
-import type { Business } from "../api-client";
+import type { Business, PlatformAiInstructions } from "../api-client";
 
 type CreateBusinessInput = {
   name: string;
@@ -11,6 +11,8 @@ type CreateBusinessInput = {
 
 type AdminBusinessesScreenProps = {
   businesses: Business[];
+  instructions: PlatformAiInstructions;
+  saveInstructionsAction: (text: string) => Promise<boolean>;
   notice: string;
   error: string;
   createAction: (input: CreateBusinessInput) => Promise<boolean>;
@@ -23,7 +25,7 @@ type AdminBusinessesScreenProps = {
 };
 
 type PendingAction =
-  | { kind: "create" }
+  | { kind: "create" | "instructions" }
   | { kind: "rename" | "password" | "status"; businessId: string };
 
 const timestampFormatter = new Intl.DateTimeFormat("es-AR", {
@@ -66,6 +68,8 @@ const whatsappStatusLabels: Record<Business["whatsappStatus"], string> = {
 
 export function AdminBusinessesScreen({
   businesses,
+  instructions,
+  saveInstructionsAction,
   notice,
   error,
   createAction,
@@ -195,6 +199,24 @@ export function AdminBusinessesScreen({
       <div className="admin-feedback" aria-label="Estado de la operación">
         {notice && <p role="status">{notice}</p>}
       </div>
+
+      <section className="admin-create" aria-labelledby="platform-instructions-title">
+        <h2 id="platform-instructions-title">Instrucciones de IA de la plataforma</h2>
+        <form onSubmit={async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          await runAction({ kind: "instructions" }, () =>
+            saveInstructionsAction(String(form.get("additionalInstructions"))));
+        }} aria-busy={pendingAction?.kind === "instructions"}>
+          <label htmlFor="platform-base-instructions">Instrucciones base</label>
+          <textarea id="platform-base-instructions" value={instructions.baseInstructions} readOnly rows={5} />
+          <p>El texto base se modifica desde el código</p>
+          <label htmlFor="platform-additional-instructions">Instrucciones adicionales</label>
+          <textarea id="platform-additional-instructions" name="additionalInstructions" defaultValue={instructions.additionalInstructions} rows={6} />
+          <button type="submit" disabled={anyPending}>Guardar</button>
+          {failedAction?.kind === "instructions" && <p role="alert">{error}</p>}
+        </form>
+      </section>
 
       <section
         className="admin-create"

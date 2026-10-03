@@ -519,4 +519,33 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
       ).statusCode,
     ).toBe(403);
   });
+
+  test("restricts global instructions to admins and preserves raw additions with strict mutations", async () => {
+    const url = "/admin/ai-instructions", admin = await adminLogin();
+    expect((await request("GET", url)).statusCode).toBe(401);
+    expect((await request("PUT", url, { body: { additionalInstructions: "" } })).statusCode).toBe(401);
+    await createBusiness("global-denied@example.test");
+    const user = await login("global-denied@example.test", "tenant initial password safe");
+    expect((await request("GET", url, user)).statusCode).toBe(404);
+    expect((await request("PUT", url, { ...user, origin: ORIGIN, body: { additionalInstructions: "" } })).statusCode).toBe(404);
+    const initial = await request("GET", url, admin);
+    expect(initial.statusCode).toBe(200);
+    expect(initial.json().additionalInstructions).toBe("");
+    const initialConfig = initial.json<{ baseInstructions: string; additionalInstructions: string }>();
+    const body = { additionalInstructions: "  Atención 😀\n\tfin  " };
+    for (const protection of [
+      { origin: "https://evil.test", csrf: admin.csrf },
+      { origin: ORIGIN, csrf: "wrong" },
+      { csrf: admin.csrf },
+      { origin: ORIGIN },
+    ]) {
+      expect((await request("PUT", url, { cookie: admin.cookie, ...protection, body })).statusCode).toBe(403);
+    }
+    for (const invalid of [{}, { additionalInstructions: null }, { additionalInstructions: 1 }, { ...body, baseInstructions: "changed" }, { ...body, extra: true }]) {
+      expect((await request("PUT", url, { ...admin, origin: ORIGIN, body: invalid })).statusCode).toBe(400);
+    }
+    expect((await request("PUT", url, { ...admin, origin: ORIGIN, body })).json<typeof initialConfig>()).toEqual({ ...initialConfig, ...body });
+    expect((await request("GET", url, await adminLogin())).json<typeof initialConfig>()).toEqual({ ...initialConfig, ...body });
+    expect((await request("PUT", url, { ...admin, origin: ORIGIN, body: { additionalInstructions: "" } })).statusCode).toBe(200);
+  });
 });

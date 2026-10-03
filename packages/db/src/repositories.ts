@@ -76,6 +76,19 @@ export type SafeRuntimeEvent = {
 
 export class PostgresRepositories {
   constructor(private readonly db: Db) {}
+  async platformAiInstructions() {
+    const [row] = await this.db<{ additional_instructions: string }[]>`
+      select additional_instructions from platform_ai_instructions where singleton`;
+    if (!row) throw new Error("Platform AI instructions singleton missing");
+    return { additionalInstructions: row.additional_instructions };
+  }
+  async updatePlatformAiInstructions(additionalInstructions: string) {
+    const [row] = await this.db<{ additional_instructions: string }[]>`
+      update platform_ai_instructions set additional_instructions=${additionalInstructions}
+      where singleton returning additional_instructions`;
+    if (!row) throw new Error("Platform AI instructions singleton missing");
+    return { additionalInstructions: row.additional_instructions };
+  }
   saveBusiness(row: { id: string; name: string }) {
     return this
       .db`insert into businesses (id,name) values (${row.id},${row.name}) on conflict (id) do update set name=excluded.name`;
