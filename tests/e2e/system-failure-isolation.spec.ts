@@ -333,21 +333,25 @@ test("contains hostile access and provider failures while preserving isolated re
     noAiBypass: system.providers.deepSeek.calls.length === callsBeforeFilters,
   });
 
+  const callsBeforeTimeout = system.providers.deepSeek.calls.length;
   system.providers.deepSeek.next = "timeout";
   await system.receive(tenants[0]!.email, {
     providerMessageId: "ai-timeout",
     text: "timeout",
   });
+  await system.releaseReply(tenants[0]!.email, "ai-timeout", 600, callsBeforeTimeout);
   await expect
     .poll(async () =>
       (await system.evidence()).technical.map((row) => row.code),
     )
     .toContain("ai.timeout");
+  const callsBeforeError = system.providers.deepSeek.calls.length;
   system.providers.deepSeek.next = "error";
   await system.receive(tenants[0]!.email, {
     providerMessageId: "ai-error",
     text: "error",
   });
+  await system.releaseReply(tenants[0]!.email, "ai-error", 600, callsBeforeError);
   await expect
     .poll(async () =>
       (await system.evidence()).technical.map((row) => row.code),
@@ -363,10 +367,14 @@ test("contains hostile access and provider failures while preserving isolated re
 
   system.providers.deepSeek.summaryNext = "timeout";
   const outboundBeforeSummary = silent.outbound.length;
-  await system.receiveText(
+  const callsBeforeSummary = system.providers.deepSeek.calls.length;
+  const summaryInput = await system.receiveText(
     tenants[0]!.email,
     "summary-timeout@s.whatsapp.net",
     "largo " + "z".repeat(9_000),
+  );
+  await system.releaseReply(
+    tenants[0]!.email, summaryInput.providerMessageId, 600, callsBeforeSummary,
   );
   await expect
     .poll(async () =>
@@ -397,21 +405,25 @@ test("contains hostile access and provider failures while preserving isolated re
     ),
   });
 
+  const callsBeforeRejected = system.providers.deepSeek.calls.length;
   system.providers.baileys.next = "rejected";
   await system.receive(tenants[0]!.email, {
     providerMessageId: "send-rejected",
     text: "reject",
   });
+  await system.releaseReply(tenants[0]!.email, "send-rejected", 600, callsBeforeRejected);
   await expect
     .poll(async () =>
       (await system.evidence()).outbound.map((row) => row.state),
     )
     .toContain("failed");
+  const callsBeforeCrash = system.providers.deepSeek.calls.length;
   system.providers.baileys.next = "crash";
   await system.receive(tenants[0]!.email, {
     providerMessageId: "send-crash",
     text: "crash",
   });
+  await system.releaseReply(tenants[0]!.email, "send-crash", 600, callsBeforeCrash);
   await expect
     .poll(async () =>
       (await system.evidence()).outbound.map((row) => row.state),
@@ -425,10 +437,14 @@ test("contains hostile access and provider failures while preserving isolated re
     (await json(await api(system, authA, "/me/whatsapp/status"))).status,
   ).toBe("connected");
 
+  const callsBeforeRecovery = system.providers.deepSeek.calls.length;
   await system.recoverWorker(tenants[1]!.email, {
     providerMessageId: "worker-recovery",
     text: "recover",
   });
+  // Restart must retain the initial deadline; only this explicit release makes
+  // the durable outbox eligible for the recovered worker.
+  await system.releaseReply(tenants[1]!.email, "worker-recovery", 600, callsBeforeRecovery);
   await expect
     .poll(
       async () =>

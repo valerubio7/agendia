@@ -70,3 +70,9 @@ applies migrations through 0020, seeds published/unpublished groups, then applie
 0021 and exercises restricted manager/worker roles. Tests advance
 isolated database deadlines rather than waiting ten minutes, and observe real
 PostgreSQL lock contention during generation.
+
+System E2E fixtures also assert the initial/active deadlines and unchanged model
+call counts before explicitly releasing one tenant-scoped pending burst. Release
+advances conversation and unpublished outbox eligibility only; accepted activity,
+history timestamps and production pacing remain unchanged. Consecutive inputs
+share one deadline and produce one response with ordered context.

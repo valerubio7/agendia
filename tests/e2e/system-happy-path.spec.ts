@@ -132,8 +132,13 @@ test("real services complete the deterministic multi-tenant happy path", async (
     ),
   });
   expect(await system.receiveGroup(tenants[0]!.email)).toBe("ignored_group");
-  await expect.poll(() => system.providers.deepSeek.calls.length).toBe(2);
-  await expect.poll(() => system.providers.baileys.acks.length).toBe(2);
+  for (const [index, item] of accepted.entries()) {
+    await system.releaseReply(
+      tenants[index]!.email, item.providerMessageId, 600, index,
+    );
+    await expect.poll(() => system.providers.deepSeek.calls.length).toBe(index + 1);
+    await expect.poll(() => system.providers.baileys.acks.length).toBe(index + 1);
+  }
   expect(system.providers.baileys.acks.map(({ jid }) => jid)).toEqual(
     accepted.map(({ remoteJid }) => remoteJid),
   );
@@ -161,10 +166,14 @@ test("real services complete the deterministic multi-tenant happy path", async (
   expect(system.providers.deepSeek.calls[1]).not.toContain("Clínica Norte");
 
   const beforeSummaryAcks = system.providers.baileys.acks.length;
-  await system.receiveText(
+  const callsBeforeHistory = system.providers.deepSeek.calls.length;
+  const history = await system.receiveText(
     tenants[0]!.email,
     "chat-0@s.whatsapp.net",
     "historial " + "x".repeat(9_000),
+  );
+  await system.releaseReply(
+    tenants[0]!.email, history.providerMessageId, 90, callsBeforeHistory,
   );
   await expect
     .poll(() => system.providers.baileys.acks.length)
@@ -178,11 +187,29 @@ test("real services complete the deterministic multi-tenant happy path", async (
         coveredThrough: 3,
       }),
     ]);
-  await system.receiveText(
+  const callsBeforeGroup = system.providers.deepSeek.calls.length;
+  const repliesBeforeGroup = system.providers.deepSeek.calls.filter(
+    (call) => !call.includes("Resumen estructurado"),
+  ).length;
+  const acksBeforeGroup = system.providers.baileys.acks.length;
+  const first = await system.receiveText(
     tenants[0]!.email,
     "chat-0@s.whatsapp.net",
     "¿qué recordamos?",
   );
+  const firstPacing = await system.replyPacing(tenants[0]!.email, first.providerMessageId);
+  const latest = await system.receiveText(
+    tenants[0]!.email,
+    "chat-0@s.whatsapp.net",
+    "último contexto del grupo",
+  );
+  const latestPacing = await system.replyPacing(tenants[0]!.email, latest.providerMessageId);
+  expect(latestPacing.dueAt).toBe(firstPacing.dueAt);
+  expect(latestPacing.outboxDueAt).toBe(firstPacing.outboxDueAt);
+  await system.releaseReply(
+    tenants[0]!.email, latest.providerMessageId, 90, callsBeforeGroup,
+  );
+  await expect.poll(() => system.providers.baileys.acks.length).toBe(acksBeforeGroup + 1);
   await expect
     .poll(async () =>
       Math.max(...(await system.summaryEvidence()).map((row) => row.version)),
@@ -193,6 +220,14 @@ test("real services complete the deterministic multi-tenant happy path", async (
       (call) => !call.includes("Resumen estructurado"),
     );
   expect(contextCall).toContain("Resumen determinista");
+  expect(contextCall).toContain("¿qué recordamos?");
+  expect(contextCall).toContain("último contexto del grupo");
+  expect(contextCall!.indexOf("¿qué recordamos?")).toBeLessThan(
+    contextCall!.indexOf("último contexto del grupo"),
+  );
+  expect(system.providers.deepSeek.calls.filter(
+    (call) => !call.includes("Resumen estructurado"),
+  )).toHaveLength(repliesBeforeGroup + 1);
   assertSemanticBoundary("summary-update", {
     monotonic: summaries.some(
       (row) => row.version === 2 && row.coveredThrough >= 3,
