@@ -36,8 +36,7 @@
     "@types/react-dom": "19.2.5",
     "testcontainers": "12.1.0",
     "tsx": "4.21.0",
-    "typescript": "5.9.3",
-    "vitest": "4.1.11"
+    "typescript": "5.9.3"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.2",

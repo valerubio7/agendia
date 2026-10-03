@@ -200,6 +200,10 @@ test("contains hostile access and provider failures while preserving isolated re
   expect(
     (await api(system, authB, "/me/assistant", "PUT", assistant(true))).status,
   ).toBe(200);
+  // Only the initial QR-isolation phase opts out of the 750ms auto-open.
+  // Later recovery/reconnect sockets keep the double's default behavior.
+  system.providers.baileys.holdSocket(1);
+  system.providers.baileys.holdSocket(2);
   const freshQr = await Promise.all([link(system, authA), link(system, authB)]);
   expect([...freshQr].sort()).toEqual([
     "deterministic-qr-1",
@@ -213,6 +217,10 @@ test("contains hostile access and provider failures while preserving isolated re
   expect(expiredQrStatus).toBe(404);
   const ownerQr = await json(await api(system, authB, "/me/whatsapp/link"));
   expect(ownerQr).toEqual({ qr: freshQr[1] });
+  await Promise.all([
+    system.providers.baileys.openSocket(1),
+    system.providers.baileys.openSocket(2),
+  ]);
   await expect
     .poll(async () =>
       Promise.all(
