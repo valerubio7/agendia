@@ -21,16 +21,32 @@ function history() {
 }
 
 describe("complete-history conversation context representation", () => {
-  test("combines an exact prefix summary, relevant literal retrieval and recent contiguous window", () => {
+  test("takes the visible latest50 before excluding current group, without refill or clipping", () => {
+    const repository = new InMemoryConversationHistory();
+    repository.append("tenant-a", "chat-a", Array.from({ length: 60 }, (_, index) => ({
+      id: `m${index + 1}`, sequence: index + 1, role: "customer" as const,
+      text: index === 10 ? " \t" + "😀".repeat(9000) + "\n " : `turn-${index + 1}`,
+    })));
+    repository.append("tenant-a", "chat-a", [{ sequence: 61, role: "assistant", text: "ambiguous", delivery: "delivery_unknown" }]);
+    const result = new ConversationContextBuilder(repository).build({
+      businessId: "tenant-a", conversationId: "chat-a",
+      currentGroupIds: ["m59", "m60"],
+    });
+    if (result.status !== "ready") throw new Error("expected ready context");
+    expect(result.context.recent.map(turn => turn.sequence)).toEqual(Array.from({ length: 48 }, (_, index) => index + 11));
+    expect(result.context.recent[0]?.text).toBe(" \t" + "😀".repeat(9000) + "\n ");
+    expect(repository.listRaw("tenant-a", "chat-a")).toHaveLength(61);
+  });
+  test("keeps covered history alongside the unchanged previous summary without retrieval", () => {
     const repository = history();
     const result = new ConversationContextBuilder(repository).build({
-      businessId: "tenant-a", conversationId: "chat-a", query: "envío", maxCharacters: 1_000,
+      businessId: "tenant-a", conversationId: "chat-a",
     });
     expect(result.status).toBe("ready");
     if (result.status !== "ready") throw new Error("expected ready context");
     expect(result.context.summary).toMatchObject({ version: 1, coveredThrough: 3 });
-    expect(result.context.retrieved.map((turn) => turn.sequence)).toEqual([2]);
-    expect(result.context.recent.map((turn) => turn.sequence)).toEqual([4, 5]);
+    expect(result.context).not.toHaveProperty("retrieved");
+    expect(result.context.recent.map((turn) => turn.sequence)).toEqual([1, 2, 3, 4, 5]);
     expect(result.context.representsThrough).toBe(5);
     expect(repository.listRaw("tenant-a", "chat-a")).toHaveLength(5);
   });
@@ -38,26 +54,26 @@ describe("complete-history conversation context representation", () => {
   test("falls back to the recent window while a missing summary is generated", () => {
     const repository = history();
     repository.removeSummary("tenant-a", "chat-a");
-    const result=new ConversationContextBuilder(repository).build({ businessId: "tenant-a", conversationId: "chat-a", query: "envío", maxCharacters: 100 });
+    const result=new ConversationContextBuilder(repository).build({ businessId: "tenant-a", conversationId: "chat-a" });
     expect(result.status).toBe("ready");if(result.status!=="ready")throw new Error("expected fallback context");
-    expect(result.context.summary).toBeNull();expect(result.context.recent.map(turn=>turn.sequence)).toEqual([4,5]);expect(repository.listRaw("tenant-a","chat-a")).toHaveLength(5);
+    expect(result.context.summary).toBeNull();expect(result.context.recent.map(turn=>turn.sequence)).toEqual([1,2,3,4,5]);expect(repository.listRaw("tenant-a","chat-a")).toHaveLength(5);
   });
 
   test("requires tenant and conversation scope and never retrieves another chat", () => {
     const repository = history();
     repository.append("tenant-b", "chat-b", [{ sequence: 1, role: "customer", text: "SECRETO OTRO TENANT" }]);
     const builder = new ConversationContextBuilder(repository);
-    expect(() => builder.build({ businessId: "", conversationId: "chat-a", query: "envío", maxCharacters: 1_000 })).toThrow("tenant and conversation are required");
-    const result = builder.build({ businessId: "tenant-a", conversationId: "chat-a", query: "SECRETO", maxCharacters: 1_000 });
+    expect(() => builder.build({ businessId: "", conversationId: "chat-a" })).toThrow("tenant and conversation are required");
+    const result = builder.build({ businessId: "tenant-a", conversationId: "chat-a" });
     expect(JSON.stringify(result)).not.toContain("SECRETO OTRO TENANT");
   });
 
-  test("uses only confirmed assistant turns and enforces the representation budget", () => {
+  test("uses only confirmed assistant turns without a representation budget", () => {
     const repository = history();
     repository.append("tenant-a", "chat-a", [{ sequence: 6, role: "assistant", text: "No entregado", delivery: "failed" }]);
-    const result = new ConversationContextBuilder(repository).build({ businessId: "tenant-a", conversationId: "chat-a", query: "entregado", maxCharacters: 260 });
+    const result = new ConversationContextBuilder(repository).build({ businessId: "tenant-a", conversationId: "chat-a" });
     expect(result.status).toBe("ready");
     expect(JSON.stringify(result)).not.toContain("No entregado");
-    expect(JSON.stringify(result).length).toBeLessThanOrEqual(420);
+    expect(result.status === "ready" && result.context.recent).toHaveLength(5);
   });
 });
