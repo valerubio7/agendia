@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import postgres, { type Sql, type TransactionSql } from "postgres";
 import type { TenantContext } from "./tenant-context.ts";
+import { replyDeadline } from "./reply-pacing.ts";
 
 export type SealedLinkCode = {
   businessId: string;
@@ -405,8 +406,8 @@ export class PostgresRepositories {
     }
     const conversation = (
       await this.db<
-        { id: string }[]
-      >`insert into conversations(business_id,connection_id,remote_jid) values(${input.businessId},${input.connectionId},${input.remoteJid}) on conflict(business_id,connection_id,remote_jid) do update set remote_jid=excluded.remote_jid returning id`
+        { id: string; reply_due_at: Date | null; last_reply_at: Date | null; last_exchange_at: Date | null; accepted_at: Date }[]
+      >`insert into conversations(business_id,connection_id,remote_jid) values(${input.businessId},${input.connectionId},${input.remoteJid}) on conflict(business_id,connection_id,remote_jid) do update set remote_jid=excluded.remote_jid returning id,reply_due_at,last_reply_at,last_exchange_at,clock_timestamp() accepted_at`
     )[0]!;
     const sequence = Number(
       (
@@ -420,15 +421,15 @@ export class PostgresRepositories {
         { id: string }[]
       >`insert into messages(business_id,conversation_id,connection_id,provider_message_id,sequence,direction,raw_text,received_at) values(${input.businessId},${conversation.id},${input.connectionId},${input.providerId},${sequence},'inbound',${input.text!},${input.receivedAt}) returning id`
     )[0]!;
-    await this.enqueueOutbox(
-      input.businessId,
-      "ai.generate",
-      `ai:${input.providerId}`,
-      { businessId: input.businessId, messageId: message.id },
-    );
+    const due = replyDeadline(conversation.accepted_at, conversation.last_reply_at, conversation.last_exchange_at, conversation.reply_due_at);
+    await this.db`update conversations set latest_inbound_id=${message.id},reply_due_at=${due},last_exchange_at=${conversation.accepted_at} where id=${conversation.id}`;
+    await this.db`update messages set processing_state='superseded' where conversation_id=${conversation.id} and direction='inbound' and id<>${message.id} and processing_state in ('pending','generated')`;
+    await this.db`update outbound_commands set state='failed',failure_code='superseded',updated_at=now() where conversation_id=${conversation.id} and state='generated'`;
+    await this.db`update outbox_events set published_at=now() where topic='ai.generate' and published_at is null and payload->>'messageId' in (select id::text from messages where conversation_id=${conversation.id} and processing_state='superseded')`;
+    await this.db`insert into outbox_events(business_id,topic,stable_key,payload,next_attempt_at) values(${input.businessId},'ai.generate',${`ai:${input.providerId}`},${this.db.json({ businessId: input.businessId, messageId: message.id })},${due}) on conflict do nothing`;
     return { duplicate: false, messageId: message.id, sequence };
   }
-  async loadAiMessage(messageId: string) {
+  async loadAiMessage(messageId: string, requireDue = false) {
     const message = (
       await this.db<
         {
@@ -437,7 +438,7 @@ export class PostgresRepositories {
           connection_id: string;
           raw_text: string;
         }[]
-      >`select m.id,m.conversation_id,m.connection_id,m.raw_text from messages m join businesses b on b.id=m.business_id join assistant_configs a on a.business_id=b.id join whatsapp_connections w on w.id=m.connection_id where m.id=${messageId} and m.direction='inbound' and m.processing_state='pending' and b.status='active' and a.active and w.state='CONNECTED'`
+      >`select m.id,m.conversation_id,m.connection_id,m.raw_text from messages m join conversations c on c.id=m.conversation_id and c.business_id=m.business_id join businesses b on b.id=m.business_id join assistant_configs a on a.business_id=b.id join whatsapp_connections w on w.id=m.connection_id where m.id=${messageId} and m.direction='inbound' and m.processing_state='pending' and c.latest_inbound_id=m.id and (not ${requireDue} or c.reply_due_at<=now()) and b.status='active' and a.active and w.state='CONNECTED'`
     )[0];
     if (!message) return null;
     const profile =
@@ -505,8 +506,11 @@ export class PostgresRepositories {
       .db`insert into technical_events(business_id,component,code,severity) values(${businessId},'message-worker','ai.summary_failed','error')`;
   }
   async failAi(messageId: string, businessId: string, code: string) {
-    await this
-      .db`update messages set processing_state='ai_failed' where id=${messageId}`;
+    await this.db`select c.id from conversations c join messages m on m.conversation_id=c.id where m.id=${messageId} for update of c`;
+    const changed = await this
+      .db`update messages set processing_state='ai_failed' where id=${messageId} and processing_state='pending'`;
+    if (!changed.count) return;
+    await this.db`update conversations set reply_due_at=null where latest_inbound_id=${messageId}`;
     await this
       .db`insert into technical_events(business_id,component,code,severity) values(${businessId},'message-worker',${code},'error')`;
     await this.appendAudit(businessId, {
@@ -516,10 +520,11 @@ export class PostgresRepositories {
     });
   }
   async saveGenerated(messageId: string, businessId: string, text: string) {
+    await this.db`select c.id from conversations c join messages m on m.conversation_id=c.id where m.id=${messageId} for update of c`;
     const source = (
       await this.db<
         { conversation_id: string; connection_id: string }[]
-      >`update messages set processing_state='generated' where id=${messageId} and processing_state='pending' returning conversation_id,connection_id`
+      >`update messages set processing_state='generated' where id=${messageId} and processing_state='pending' and exists(select 1 from conversations c where c.id=messages.conversation_id and c.latest_inbound_id=messages.id and c.reply_due_at<=now()) returning conversation_id,connection_id`
     )[0];
     if (!source) return null;
     return (
@@ -551,6 +556,7 @@ export class PostgresRepositories {
     state: "sent" | "failed" | "delivery_unknown",
     providerId?: string,
   ) {
+    await this.db`select c.id from conversations c join outbound_commands o on o.conversation_id=c.id where o.outbound_id=${id} for update of c`;
     const row = (
       await this.db<
         {
@@ -583,7 +589,7 @@ export class PostgresRepositories {
       const seq = (
         await this.db<
           { sequence: string }[]
-        >`update conversations set next_sequence=next_sequence+1 where id=${row.conversation_id} returning next_sequence-1 sequence`
+        >`update conversations set next_sequence=next_sequence+1,last_reply_at=date_trunc('milliseconds',clock_timestamp()),last_exchange_at=date_trunc('milliseconds',clock_timestamp()) where id=${row.conversation_id} returning next_sequence-1 sequence`
       )[0]!.sequence;
       await this
         .db`insert into messages(business_id,conversation_id,connection_id,provider_message_id,sequence,direction,raw_text,received_at,processing_state) values(${row.business_id},${row.conversation_id},${row.connection_id},${providerId!},${seq},'outbound',${row.text},now(),'sent') on conflict do nothing`;
@@ -734,6 +740,7 @@ export class RolePool {
   }
   async reserveAdvisoryLock(
     key: string,
+    wait = false,
   ): Promise<(() => Promise<void>) | null> {
     const connection = await this.sql.reserve();
     await connection.unsafe(`set role ${this.role}`);
@@ -745,6 +752,12 @@ export class RolePool {
     if (!acquired) {
       await connection.unsafe("reset role");
       connection.release();
+      if (wait) {
+        // Do not hold a pooled connection while waiting: the lock owner must
+        // still be able to acquire a connection to save its generation.
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return this.reserveAdvisoryLock(key, true);
+      }
       return null;
     }
     return async () => {
