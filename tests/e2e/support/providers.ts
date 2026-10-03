@@ -6,6 +6,9 @@ class DeterministicSocket {
   readonly user: { id: string };
   ended = false;
   private resolveReady!: () => void;
+  private qrDelivery?: Promise<void>;
+  private opening?: Promise<void>;
+  private openTimer?: ReturnType<typeof setTimeout>;
   private readonly listeners = new Map<
     string,
     (value: Record<string, unknown>) => unknown
@@ -19,6 +22,7 @@ class DeterministicSocket {
       providerMessageId: string;
     }>,
     private readonly send: () => SendOutcome,
+    private readonly held: boolean,
   ) {
     this.user = { id: `1555000000${index}:1@s.whatsapp.net` };
     this.ready = new Promise((resolve) => {
@@ -30,18 +34,41 @@ class DeterministicSocket {
       name: string,
       listener: (value: Record<string, unknown>) => unknown,
     ) => {
+      if (this.ended) return;
       this.listeners.set(name, listener);
-      if (name !== "connection.update") return;
-      queueMicrotask(async () => {
-        await listener({ qr: `deterministic-qr-${this.index}` });
-        setTimeout(async () => {
-          await listener({ connection: "open" });
-          this.resolveReady();
-        }, 750);
+      if (name !== "connection.update" || this.qrDelivery || this.ended) return;
+      this.qrDelivery = new Promise<void>((resolve, reject) => {
+        queueMicrotask(async () => {
+          try {
+            if (!this.ended) await listener({ qr: `deterministic-qr-${this.index}` });
+            if (!this.ended && !this.held && !this.opening) {
+              this.openTimer = setTimeout(() => this.open(), 750);
+            }
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        });
       });
     },
   };
+  open(): Promise<void> {
+    if (this.ended) return Promise.reject(new Error(`socket ended: ${this.index}`));
+    if (!this.qrDelivery) return Promise.reject(new Error(`socket listener unavailable: ${this.index}`));
+    if (!this.opening) {
+      if (this.openTimer !== undefined) clearTimeout(this.openTimer);
+      this.opening = (async () => {
+        await this.qrDelivery;
+        if (this.ended) throw new Error(`socket ended: ${this.index}`);
+        await this.listeners.get("connection.update")!({ connection: "open" });
+        if (this.ended) throw new Error(`socket ended: ${this.index}`);
+        this.resolveReady();
+      })();
+    }
+    return this.opening;
+  }
   async emit(name: string, value: Record<string, unknown>) {
+    if (this.ended) throw new Error(`socket ended: ${this.index}`);
     return this.listeners.get(name)?.(value);
   }
   async sendMessage(jid: string, content: { text: string }) {
@@ -65,10 +92,12 @@ class DeterministicSocket {
     return { key: { id: providerMessageId } };
   }
   transientClose() {
-    void this.listeners.get("connection.update")?.({ connection: "close" });
+    if (!this.ended) void this.listeners.get("connection.update")?.({ connection: "close" });
   }
   end() {
     this.ended = true;
+    if (this.openTimer !== undefined) clearTimeout(this.openTimer);
+    this.listeners.clear();
   }
 }
 
@@ -81,6 +110,17 @@ export class DeterministicBaileysSystemDouble {
   }> = [];
   readonly sockets: DeterministicSocket[] = [];
   readonly ingressIds: string[] = [];
+  private readonly heldSockets = new Set<number>();
+  holdSocket(index: number) {
+    if (!Number.isInteger(index) || index <= this.sockets.length)
+      throw new Error(`new socket index required: ${index}`);
+    this.heldSockets.add(index);
+  }
+  async openSocket(index: number) {
+    const socket = this.sockets[index - 1];
+    if (!socket) throw new Error(`socket unavailable: ${index}`);
+    await socket.open();
+  }
   active = false;
   next: SendOutcome = "ack";
   sendAttempts = 0;
@@ -96,6 +136,7 @@ export class DeterministicBaileysSystemDouble {
       this.sockets.length + 1,
       this.acks,
       this.take,
+      this.heldSockets.delete(this.sockets.length + 1),
     );
     this.sockets.push(socket);
     return socket;
