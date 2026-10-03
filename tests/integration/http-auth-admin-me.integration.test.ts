@@ -363,16 +363,16 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
       "tenant-b@example.test",
       "tenant initial password safe",
     );
+    await database.sql`insert into business_profiles(business_id,display_name) values(${a.business.id},'Old name')`;
+    expect(await database.sql`select column_name from information_schema.columns
+      where table_schema='public' and table_name='business_profiles'
+      and column_name in ('contact','faq','policies','additional_info')`).toHaveLength(0);
     const profile = {
       displayName: "Tenant A",
       description: "A",
       address: "",
-      contact: "",
       businessHours: "24h",
       offerings: "",
-      faq: "",
-      policies: "",
-      additionalInfo: "",
       business_id: b.business.id,
     };
     expect(
@@ -384,9 +384,37 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
         })
       ).json().displayName,
     ).toBe("Tenant A");
+    const { business_id: _hostileTenant, ...retained } = profile;
+    for (const description of ["A", "Updated", "A"]) {
+      const saved = await request("PUT", "/me/business-profile", {
+        ...authA,
+        origin: ORIGIN,
+        body: {
+          ...profile, description,
+          contact: "Discard contact", faq: "Discard FAQ",
+          policies: "Discard policies", additionalInfo: "Discard info",
+        },
+      });
+      expect(saved.statusCode).toBe(200);
+      expect(saved.json() as unknown).toEqual({ ...retained, description });
+      expect((await request("GET", "/me/business-profile", authA)).json() as unknown).toEqual({ ...retained, description });
+      expect((await database.sql`select display_name,description,address,business_hours,offerings
+        from business_profiles where business_id=${a.business.id}`)[0]).toEqual({
+        display_name: retained.displayName, description, address: retained.address,
+        business_hours: retained.businessHours, offerings: retained.offerings,
+      });
+    }
     expect(
       (await request("GET", "/me/business-profile", authB)).json() as unknown,
     ).toEqual({});
+    const fresh = await request("PUT", "/me/business-profile", {
+      ...authB, origin: ORIGIN, body: { ...retained, displayName: "Tenant B" },
+    });
+    expect(fresh.statusCode).toBe(200);
+    expect((await request("GET", "/me/business-profile", authB)).json() as unknown).toEqual({
+      ...retained, displayName: "Tenant B",
+    });
+    expect((await request("GET", "/me/business-profile", authA)).json() as unknown).toEqual(retained);
     expect(
       (
         await request("PUT", "/me/business-profile", {

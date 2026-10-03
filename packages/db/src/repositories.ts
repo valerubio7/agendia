@@ -213,13 +213,13 @@ export class PostgresRepositories {
     return (
       (
         await this
-          .db`select display_name "displayName",description,address,contact,business_hours "businessHours",offerings,faq,policies,additional_info "additionalInfo" from business_profiles limit 1`
+          .db`select display_name "displayName",description,address,business_hours "businessHours",offerings from business_profiles limit 1`
       )[0] ?? null
     );
   }
   saveFullProfile(businessId: string, p: Record<string, string>) {
     return this
-      .db`insert into business_profiles(business_id,display_name,description,address,contact,business_hours,offerings,faq,policies,additional_info) values(${businessId},${p.displayName!},${p.description!},${p.address!},${p.contact!},${p.businessHours!},${p.offerings!},${p.faq!},${p.policies!},${p.additionalInfo!}) on conflict(business_id) do update set display_name=excluded.display_name,description=excluded.description,address=excluded.address,contact=excluded.contact,business_hours=excluded.business_hours,offerings=excluded.offerings,faq=excluded.faq,policies=excluded.policies,additional_info=excluded.additional_info,updated_at=now()`;
+      .db`insert into business_profiles(business_id,display_name,description,address,business_hours,offerings) values(${businessId},${p.displayName!},${p.description!},${p.address!},${p.businessHours!},${p.offerings!}) on conflict(business_id) do update set display_name=excluded.display_name,description=excluded.description,address=excluded.address,business_hours=excluded.business_hours,offerings=excluded.offerings,updated_at=now()`;
   }
   saveAssistant(businessId: string, active: boolean) {
     return this
@@ -463,7 +463,7 @@ export class PostgresRepositories {
       (
         await this.db<
           Record<string, string>[]
-        >`select display_name,description,address,contact,business_hours,offerings,faq,policies,additional_info from business_profiles limit 1`
+        >`select display_name,description,address,business_hours,offerings from business_profiles limit 1`
       )[0] ?? {};
     const assistant =
       (

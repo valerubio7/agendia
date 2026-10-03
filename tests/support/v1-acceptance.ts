@@ -70,12 +70,8 @@ export async function runDeterministicV1Journey(): Promise<V1AcceptanceResult> {
     displayName: "Negocio de aceptación",
     description: "Servicios de prueba",
     address: "Dirección segura",
-    contact: "Contacto",
     businessHours: "9–18 (informativo)",
     offerings: "Turnos",
-    faq: "Preguntas frecuentes",
-    policies: "Políticas",
-    additionalInfo: "Información autorizada",
   });
   const assistants = new AssistantConfigService(
     new InMemoryAssistantRepository(),

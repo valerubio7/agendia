@@ -69,12 +69,8 @@ const profile = (tenant: (typeof tenants)[number]) => ({
   displayName: tenant.name,
   description: tenant.secret,
   address: "",
-  contact: "",
   businessHours: "cerrado",
   offerings: "servicio",
-  faq: "",
-  policies: "",
-  additionalInfo: "",
 });
 async function json(response: Response | APIResponse) {
   return response.json() as Promise<Record<string, unknown>>;

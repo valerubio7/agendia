@@ -61,6 +61,7 @@ beforeAll(async () => {
   );
   await db.sql`insert into businesses(id,name,status) values(${A},'Tenant A','active'),(${B},'Tenant B','active')`;
   await db.sql`insert into business_profiles(business_id,display_name,offerings,business_hours) values(${A},'A','envíos','cerrado'),(${B},'B','SECRETO-B','cerrado')`;
+  await db.sql`update business_profiles set description='RETAINED_DESCRIPTION',address='RETAINED_ADDRESS' where business_id=${A}`;
   await db.sql`insert into assistant_configs(business_id,active,instructions) values(${A},true,'ayuda'),(${B},false,'no usar')`;
   await db.sql`insert into whatsapp_connections(id,business_id,session_public_id,state,owner_id) values(${CA},${A},${SA},'CONNECTED','manager-1'),(${CB},${B},${SB},'CONNECTED','manager-2')`;
   const workerUrl = await createRoleLogin(
@@ -249,7 +250,11 @@ describe("PostgreSQL messaging workers", () => {
       correlationId: "job-1",
     });
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toContain("envíos");
+    const providerInput = JSON.parse(calls[0]!).messages[1].content as string;
+    for (const retained of ['"display_name":"A"', "envíos", "cerrado", "RETAINED_DESCRIPTION", "RETAINED_ADDRESS"])
+      expect(providerInput).toContain(retained);
+    for (const removed of ["LEGACY_CONTACT", "LEGACY_FAQ", "LEGACY_POLICIES", "LEGACY_INFO", '"contact":', '"faq":', '"policies":', '"additional_info":'])
+      expect(providerInput).not.toContain(removed);
     expect(calls[0]).not.toContain("SECRETO-B");
     expect(
       await db.sql`select outbound_id from outbound_commands`,

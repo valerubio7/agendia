@@ -15,12 +15,8 @@ export type Profile = {
   displayName: string;
   description: string;
   address: string;
-  contact: string;
   businessHours: string;
   offerings: string;
-  faq: string;
-  policies: string;
-  additionalInfo: string;
 };
 export type Assistant = {
   personality: string;
@@ -255,7 +251,13 @@ export class ApiClient {
     });
   profile = () => this.call<Partial<Profile>>("/me/business-profile");
   saveProfile = (body: Profile) =>
-    this.call<Profile>("/me/business-profile", "PUT", body);
+    this.call<Profile>("/me/business-profile", "PUT", {
+      displayName: body.displayName,
+      description: body.description,
+      address: body.address,
+      businessHours: body.businessHours,
+      offerings: body.offerings,
+    });
   assistant = () => this.call<Partial<Assistant>>("/me/assistant");
   saveAssistant = (
     body: Omit<Assistant, "revision"> & { expectedRevision: number },
