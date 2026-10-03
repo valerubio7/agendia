@@ -75,16 +75,28 @@ describe("idempotent text-only WhatsApp ingestion", () => {
     ]);
   });
 
-  test("filters groups, own messages and multimedia before persisting content or scheduling AI", () => {
+  test("persists manual business text without scheduling AI, even when automation is inactive", () => {
+    const h = harness("active", false);
+    expect(h.handler.handle(textEvent({ fromMe: true }))).toEqual({
+      outcome: "accepted_business", sequence: 1,
+    });
+    expect(h.handler.handle(textEvent({ fromMe: true }))).toEqual({ outcome: "duplicate" });
+    expect(h.repository.messages).toEqual([expect.objectContaining({
+      direction: "outbound", text: "Hola", sequence: 1,
+    })]);
+    expect(h.repository.aiJobs).toHaveLength(0);
+  });
+
+  test("filters groups and multimedia before persisting content or scheduling AI", () => {
     const h = harness();
     const events = [
       textEvent({ providerMessageId: "group", chatType: "group" }),
-      textEvent({ providerMessageId: "own", fromMe: true }),
+      textEvent({ providerMessageId: "own-media", fromMe: true, kind: "image", text: null }),
       textEvent({ providerMessageId: "media", kind: "image", text: null }),
     ];
     expect(events.map((event) => h.handler.handle(event).outcome)).toEqual([
       "ignored_group",
-      "ignored_from_me",
+      "ignored_non_text",
       "ignored_non_text",
     ]);
     expect(h.repository.messages).toHaveLength(0);

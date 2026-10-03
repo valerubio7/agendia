@@ -196,6 +196,25 @@ describe("WhatsAppGateway contract", () => {
     ]);
   });
 
+  test("correlates generated echoes before send confirmation using the outbound ID", async () => {
+    const fake = fakeGateway([]);
+    await fake.gateway.connect("connection-a", () => undefined);
+    const send = fake.socket.sendMessage.bind(fake.socket);
+    const calls: unknown[][] = [];
+    Object.assign(fake.socket, {
+      sendMessage: async (...args: [string, { text: string }, { messageId?: string }?]) => {
+        calls.push(args);
+        await send(args[0]);
+        return { key: { id: args[2]?.messageId } };
+      },
+    });
+    expect(await fake.gateway.send({
+      connectionId: "connection-a", outboundId: "out-1",
+      remoteJid: "54911@s.whatsapp.net", text: "respuesta",
+    })).toEqual({ outcome: "ack", providerMessageId: "out-1" });
+    expect(calls).toEqual([["54911@s.whatsapp.net", { text: "respuesta" }, { messageId: "out-1" }]]);
+  });
+
   test("sends only to the exact validated individual JID", async () => {
     const fake = fakeGateway([]);
     fake.socket.expectedRecipient = "54911@s.whatsapp.net";
