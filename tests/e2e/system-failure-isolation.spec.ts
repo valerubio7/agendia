@@ -56,12 +56,8 @@ async function api(
   });
 }
 const assistant = (active: boolean, expectedRevision = 0) => ({
-  personality: "clara",
-  tone: "amable",
-  instructions: "responder",
-  knowledge: "propio",
-  rules: "texto",
-  restrictions: "sin secretos",
+  style: "clara y amable",
+  businessInstructions: "responder con conocimiento propio, solo texto y sin secretos",
   active,
   expectedRevision,
 });

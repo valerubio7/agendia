@@ -1,5 +1,6 @@
 import { expect, type Locator, type Page, type Route } from "@playwright/test";
 import { test } from "./support/fixtures.ts";
+import { ASSISTANT_STYLE_LIMIT, ASSISTANT_BUSINESS_INSTRUCTIONS_LIMIT } from "../../packages/domain/src/assistant-config.ts";
 
 const tenant = {
   name: "Estudio Voz Propia",
@@ -8,21 +9,13 @@ const tenant = {
 };
 
 const values = {
-  personality: "Cálida, resolutiva y atenta a cada consulta.",
-  tone: "Claro, cercano y profesional, siempre en español rioplatense.",
-  instructions: "Respondé con precisión y proponé un próximo paso concreto.",
-  knowledge: "El estudio acompaña a pequeños negocios de todo el país.",
-  rules: "Confirmá disponibilidad antes de prometer una fecha.",
-  restrictions: "No inventes precios, horarios ni servicios no informados.",
+  style: "  \tCálida, resolutiva y atenta a cada consulta.\n\nClaro, cercano y profesional,\n\tsiempre en español rioplatense.\t  ",
+  businessInstructions: " \tRespondé con precisión y proponé un próximo paso concreto.\n\nEl estudio acompaña a pequeños negocios de todo el país.\n\tConfirmá disponibilidad antes de prometer una fecha.\nNo inventes precios, horarios ni servicios no informados.\t  ",
 };
 
 const fields = [
-  ["Personalidad", "personality"],
-  ["Tono", "tone"],
-  ["Instrucciones", "instructions"],
-  ["Conocimiento", "knowledge"],
-  ["Reglas", "rules"],
-  ["Restricciones", "restrictions"],
+  ["Estilo de atención", "style"],
+  ["Indicaciones del negocio", "businessInstructions"],
 ] as const;
 
 async function login(page: Page, url: string, email: string, password: string) {
@@ -115,7 +108,6 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
     const sectionHeadings = [
       "Voz y personalidad",
       "Contexto y dirección",
-      "Reglas y límites",
     ] as const;
     const sections: Locator[] = [];
     for (const heading of sectionHeadings) {
@@ -143,11 +135,11 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
     await expect(active).not.toBeChecked();
     await expect(screen.getByRole("checkbox")).toHaveCount(1);
 
-    await expect(screen.locator("textarea")).toHaveCount(6);
+    await expect(screen.locator("textarea")).toHaveCount(2);
     await expect(form.locator("input, textarea, select, button")).toHaveCount(
-      7,
+      3,
     );
-    await expect(form.locator("textarea")).toHaveCount(6);
+    await expect(form.locator("textarea")).toHaveCount(2);
     await expect(form.locator('input[type="checkbox"]')).toHaveCount(1);
     await expect(
       screen.locator('input:not([type="checkbox"]), select'),
@@ -161,7 +153,7 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
       textareas[name] = field;
       await expect(field).toHaveCount(1);
       await expect(field).toHaveAttribute("name", name);
-      await expect(field).toHaveAttribute("maxlength", "8000");
+      await expect(field).toHaveAttribute("maxlength", String(name === "style" ? ASSISTANT_STYLE_LIMIT : ASSISTANT_BUSINESS_INSTRUCTIONS_LIMIT));
       expect(await field.evaluate((element) => element.tagName)).toBe(
         "TEXTAREA",
       );
@@ -206,6 +198,7 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
         await route.continue();
         return;
       }
+      expect(route.request().postDataJSON()).toMatchObject(values);
       observeSaveRequest();
       await saveRequestReleased;
       await route.continue();
@@ -233,14 +226,11 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
     await tenantPage.reload();
     await expect(tenantPage).toHaveURL(/\/assistant$/);
     await expect(
-      tenantPage.getByLabel("Personalidad", { exact: true }),
-    ).toHaveValue(values.personality);
+      tenantPage.getByLabel("Estilo de atención", { exact: true }),
+    ).toHaveValue(values.style);
     await expect(
-      tenantPage.getByLabel("Instrucciones", { exact: true }),
-    ).toHaveValue(values.instructions);
-    await expect(
-      tenantPage.getByLabel("Restricciones", { exact: true }),
-    ).toHaveValue(values.restrictions);
+      tenantPage.getByLabel("Indicaciones del negocio", { exact: true }),
+    ).toHaveValue(values.businessInstructions);
     await expect(
       tenantPage.getByLabel("Respuestas automáticas activas", {
         exact: true,
@@ -248,7 +238,7 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
     ).toBeChecked();
     await expectNoHorizontalOverflow(tenantPage);
 
-    const stalePersonality =
+    const staleStyle =
       "Este cambio local no debe sobrevivir al conflicto.";
     let conflictPending = true;
     const conflictRoute = async (route: Route) => {
@@ -268,7 +258,7 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
     };
     await tenantPage.route("**/me/assistant", conflictRoute);
 
-    await textareas.personality.fill(stalePersonality);
+    await textareas.style.fill(staleStyle);
     await savePanel
       .getByRole("button", { name: "Guardar y activar", exact: true })
       .click();
@@ -294,13 +284,13 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
     await Promise.all([refreshedConfiguration, reloadConfiguration.click()]);
     await expect(tenantPage).toHaveURL(/\/assistant$/);
     await expect(screen).toBeVisible();
-    await expect(textareas.personality).toHaveValue(values.personality);
+    await expect(textareas.style).toHaveValue(values.style);
     await expect(conflictAlert).toHaveCount(0);
     await expect(reloadConfiguration).toHaveCount(0);
     await expect(screen.getByRole("button")).toHaveCount(1);
 
-    const refreshedPersonality = `${values.personality} Revisión actualizada.`;
-    await textareas.personality.fill(refreshedPersonality);
+    const refreshedStyle = `${values.style} Revisión actualizada.`;
+    await textareas.style.fill(refreshedStyle);
     const refreshedSave = savePanel.getByRole("button", {
       name: "Guardar y activar",
       exact: true,

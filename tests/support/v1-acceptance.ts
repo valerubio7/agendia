@@ -77,12 +77,8 @@ export async function runDeterministicV1Journey(): Promise<V1AcceptanceResult> {
     new InMemoryAssistantRepository(),
   );
   assistants.save(business.id, {
-    personality: "amable",
-    tone: "breve",
-    instructions: "responder con datos del negocio",
-    knowledge: "turnos",
-    rules: "sin secretos",
-    restrictions: "solo texto",
+    style: "amable y breve",
+    businessInstructions: "responder con datos del negocio sobre turnos, sin secretos y solo texto",
     active: true,
     expectedRevision: 0,
   });
@@ -148,8 +144,8 @@ export async function runDeterministicV1Journey(): Promise<V1AcceptanceResult> {
     request: {
       business: { commercialName: "Negocio de aceptación", services: "Turnos" },
       assistant: {
-        personality: "amable",
-        instructions: "responder con datos del negocio",
+        style: "amable",
+        business_instructions: "responder con datos del negocio",
       },
       context: {
         summary: "Sin turnos previos",
