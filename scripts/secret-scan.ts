@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { scanForSecrets } from "./policy-checks.ts";
 
@@ -12,7 +12,17 @@ function collect(path: string, files: Record<string, string>): void {
 }
 
 const files: Record<string, string> = {};
-for (const root of ["apps", "packages", "scripts", "docs", ".github"]) collect(root, files);
+for (const root of ["apps", "packages", "scripts", "docs", ".github"]) {
+  if (root === "docs") {
+    try {
+      lstatSync(root);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+  }
+  collect(root, files);
+}
 const findings = scanForSecrets(files);
 if (findings.length > 0) throw new Error(`Secret scan failed:\n${findings.join("\n")}`);
 console.log(`security:scan passed: ${Object.keys(files).length} source and delivery files contain no provider credentials.`);
