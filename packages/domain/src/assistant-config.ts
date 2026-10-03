@@ -1,6 +1,14 @@
 import { z } from "zod";
-const bounded = z.string().trim().max(8_000);
-export const AssistantConfigInputSchema = z.object({ personality: bounded, tone: bounded, instructions: bounded, knowledge: bounded, rules: bounded, restrictions: bounded, active: z.boolean(), expectedRevision: z.number().int().min(0) });
+// Legacy VARCHAR limits count code points; JS and textarea limits count UTF-16 units.
+// Keep "Label:\ntext" sections and their two-newline separators, without trimming.
+export const ASSISTANT_STYLE_LIMIT = 32_000 + "Personalidad:\n".length + "Tono:\n".length + 2;
+export const ASSISTANT_BUSINESS_INSTRUCTIONS_LIMIT = 64_000 + ["Instrucciones", "Conocimiento", "Reglas", "Restricciones"].reduce((n, label) => n + label.length + 2, 0) + 6;
+export const AssistantConfigInputSchema = z.object({
+  style: z.string().max(ASSISTANT_STYLE_LIMIT),
+  businessInstructions: z.string().max(ASSISTANT_BUSINESS_INSTRUCTIONS_LIMIT),
+  active: z.boolean(),
+  expectedRevision: z.number().int().min(0),
+});
 export type AssistantConfig = Omit<z.infer<typeof AssistantConfigInputSchema>, "expectedRevision"> & { revision: number };
 export class InMemoryAssistantRepository { readonly rows = new Map<string, AssistantConfig>(); }
 export class AssistantConfigService {

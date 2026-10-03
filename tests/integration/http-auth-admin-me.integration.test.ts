@@ -304,12 +304,8 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
           ...tenant,
           origin: ORIGIN,
           body: {
-            personality: "",
-            tone: "",
-            instructions: "",
-            knowledge: "",
-            rules: "",
-            restrictions: "",
+            style: "",
+            businessInstructions: "",
             active: false,
             expectedRevision: 0,
           },
@@ -330,12 +326,8 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
           ...tenant,
           origin: ORIGIN,
           body: {
-            personality: "",
-            tone: "",
-            instructions: "",
-            knowledge: "",
-            rules: "",
-            restrictions: "",
+            style: "",
+            businessInstructions: "",
             active: true,
             expectedRevision: 1,
           },
@@ -433,19 +425,46 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
           ...authA,
           origin: ORIGIN,
           body: {
-            personality: "",
-            tone: "",
-            instructions: "",
-            knowledge: "",
-            rules: "",
-            restrictions: "",
+            style: " \nTenant style ",
+            businessInstructions: "Tenant instructions\n ",
             active: true,
             expectedRevision: 0,
             business_id: b.business.id,
           },
         })
       ).json(),
-    ).toMatchObject({ active: true, revision: 1 });
+    ).toMatchObject({ style: " \nTenant style ", businessInstructions: "Tenant instructions\n ", active: true, revision: 1 });
+    const savedAssistant = (await request("GET", "/me/assistant", authA)).json();
+    const beforeInvalid = await database.sql`select * from assistant_configs where business_id=${a.business.id}`;
+    for (const body of [
+      { personality: "stale", tone: "", instructions: "", knowledge: "", rules: "", restrictions: "", active: false, expectedRevision: 1 },
+      { style: "incomplete", active: false, expectedRevision: 1 },
+    ]) {
+      expect((await request("PUT", "/me/assistant", { ...authA, origin: ORIGIN, body })).statusCode).toBe(400);
+      expect((await request("GET", "/me/assistant", authA)).json()).toEqual(savedAssistant);
+    }
+    expect([...(await database.sql`select * from assistant_configs where business_id=${a.business.id}`)]).toEqual([...beforeInvalid]);
+    expect((await request("PUT", "/me/assistant", { ...authA, origin: ORIGIN, body: { ...savedAssistant, expectedRevision: 0 } })).statusCode).toBe(409);
+    expect((await request("GET", "/me/assistant", authA)).json()).toEqual(savedAssistant);
+    const maxText = "😀".repeat(8_000);
+    const maximumAssistant = {
+      style: `Personalidad:\n${maxText}\n\nTono:\n${maxText}`,
+      businessInstructions: ["Instrucciones", "Conocimiento", "Reglas", "Restricciones"]
+        .map(label => `${label}:\n${maxText}`).join("\n\n"),
+      active: true,
+      expectedRevision: 1,
+    };
+    const maximumSave = await request("PUT", "/me/assistant", {
+      ...authA, origin: ORIGIN, body: maximumAssistant,
+    });
+    expect(maximumSave.statusCode).toBe(200);
+    expect(maximumSave.json() as unknown).toEqual({
+      style: maximumAssistant.style,
+      businessInstructions: maximumAssistant.businessInstructions,
+      active: true,
+      revision: 2,
+    });
+    expect((await request("GET", "/me/assistant", authA)).json()).toEqual(maximumSave.json());
     expect(
       (await request("GET", "/me/assistant", authB)).json() as unknown,
     ).toEqual({});

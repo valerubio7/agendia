@@ -229,7 +229,7 @@ export class PostgresRepositories {
     return (
       (
         await this
-          .db`select personality,tone,instructions,knowledge,rules,restrictions,active,revision from assistant_configs limit 1`
+          .db`select style,business_instructions "businessInstructions",active,revision from assistant_configs limit 1`
       )[0] ?? null
     );
   }
@@ -241,7 +241,7 @@ export class PostgresRepositories {
     return (
       (
         await this
-          .db`insert into assistant_configs(business_id,personality,tone,instructions,knowledge,rules,restrictions,active,revision) values(${businessId},${p.personality as string},${p.tone as string},${p.instructions as string},${p.knowledge as string},${p.rules as string},${p.restrictions as string},${p.active as boolean},1) on conflict(business_id) do update set personality=excluded.personality,tone=excluded.tone,instructions=excluded.instructions,knowledge=excluded.knowledge,rules=excluded.rules,restrictions=excluded.restrictions,active=excluded.active,revision=assistant_configs.revision+1,updated_at=now() where assistant_configs.revision=${expected} returning personality,tone,instructions,knowledge,rules,restrictions,active,revision`
+          .db`insert into assistant_configs(business_id,style,business_instructions,active,revision) values(${businessId},${p.style as string},${p.businessInstructions as string},${p.active as boolean},1) on conflict(business_id) do update set style=excluded.style,business_instructions=excluded.business_instructions,active=excluded.active,revision=assistant_configs.revision+1,updated_at=now() where assistant_configs.revision=${expected} returning style,business_instructions "businessInstructions",active,revision`
       )[0] ?? null
     );
   }
@@ -469,7 +469,7 @@ export class PostgresRepositories {
       (
         await this.db<
           Record<string, string>[]
-        >`select personality,tone,instructions,knowledge,rules,restrictions from assistant_configs limit 1`
+        >`select style,business_instructions from assistant_configs limit 1`
       )[0] ?? {};
     const turns = await this.db<
       {

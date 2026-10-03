@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import type { Assistant } from "../api-client";
+import { ASSISTANT_STYLE_LIMIT, ASSISTANT_BUSINESS_INSTRUCTIONS_LIMIT } from "../../../../packages/domain/src/assistant-config";
 
 type AssistantScreenProps = {
   assistant: Partial<Assistant>;
@@ -19,13 +20,7 @@ type AssistantScreenProps = {
 
 type AssistantFieldProps = {
   label: string;
-  name:
-    | "personality"
-    | "tone"
-    | "instructions"
-    | "knowledge"
-    | "rules"
-    | "restrictions";
+  name: "style" | "businessInstructions";
   hint: string;
   defaultValue: string;
 };
@@ -36,6 +31,7 @@ function AssistantField({
   hint,
   defaultValue,
 }: AssistantFieldProps) {
+  const limit = name === "style" ? ASSISTANT_STYLE_LIMIT : ASSISTANT_BUSINESS_INSTRUCTIONS_LIMIT;
   const fieldId = `assistant-${name}`;
   const hintId = `${fieldId}-hint`;
 
@@ -48,11 +44,11 @@ function AssistantField({
         id={fieldId}
         name={name}
         defaultValue={defaultValue}
-        maxLength={8000}
+        maxLength={limit}
         aria-describedby={hintId}
       />
       <span className="assistant-field__hint" id={hintId}>
-        {hint} · Hasta 8.000 caracteres
+        {hint} · Hasta {limit.toLocaleString("es-AR")} caracteres
       </span>
     </div>
   );
@@ -170,16 +166,10 @@ export function AssistantScreen({
             </header>
             <div className="assistant-section__fields">
               <AssistantField
-                label="Personalidad"
-                name="personality"
-                defaultValue={assistant.personality ?? ""}
-                hint="Describí los rasgos que deben sentirse en la manera de responder"
-              />
-              <AssistantField
-                label="Tono"
-                name="tone"
-                defaultValue={assistant.tone ?? ""}
-                hint="Indicá el estilo de lenguaje y el grado de formalidad"
+                label="Estilo de atención"
+                name="style"
+                defaultValue={assistant.style ?? ""}
+                hint="Describí la personalidad y el tono que deben sentirse en la manera de responder"
               />
             </div>
           </section>
@@ -203,49 +193,10 @@ export function AssistantScreen({
             </header>
             <div className="assistant-section__fields">
               <AssistantField
-                label="Instrucciones"
-                name="instructions"
-                defaultValue={assistant.instructions ?? ""}
-                hint="Explicá cómo querés que aborde y organice las consultas"
-              />
-              <AssistantField
-                label="Conocimiento"
-                name="knowledge"
-                defaultValue={assistant.knowledge ?? ""}
-                hint="Agregá contexto específico que ayude a interpretar lo que preguntan"
-              />
-            </div>
-          </section>
-
-          <section
-            className="assistant-section assistant-section--limits"
-            aria-labelledby="assistant-limits-title"
-          >
-            <header className="assistant-section__header">
-              <span className="assistant-section__boundary" aria-hidden="true">
-                LÍMITE
-              </span>
-              <div>
-                <p>El marco de actuación</p>
-                <h2 id="assistant-limits-title">Reglas y límites</h2>
-                <span>
-                  Dejá por escrito qué pautas seguir y qué cosas nunca debe
-                  hacer o afirmar.
-                </span>
-              </div>
-            </header>
-            <div className="assistant-section__fields">
-              <AssistantField
-                label="Reglas"
-                name="rules"
-                defaultValue={assistant.rules ?? ""}
-                hint="Detallá pautas que debe aplicar de forma consistente"
-              />
-              <AssistantField
-                label="Restricciones"
-                name="restrictions"
-                defaultValue={assistant.restrictions ?? ""}
-                hint="Aclarale qué acciones, temas o afirmaciones debe evitar"
+                label="Indicaciones del negocio"
+                name="businessInstructions"
+                defaultValue={assistant.businessInstructions ?? ""}
+                hint="Agregá instrucciones, conocimiento, reglas y restricciones para sus respuestas"
               />
             </div>
           </section>

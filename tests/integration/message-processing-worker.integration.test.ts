@@ -36,6 +36,14 @@ const CA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   CB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const SA = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
   SB = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb";
+// Each retired varchar(8000) can contain 8000 astral Unicode characters.
+const maximumLegacyText = "😀".repeat(8000);
+const maximumStyle = ["Personalidad", "Tono"]
+  .map((heading) => `${heading}:\n${maximumLegacyText}`)
+  .join("\n\n");
+const maximumBusinessInstructions = ["Instrucciones", "Conocimiento", "Reglas", "Restricciones"]
+  .map((heading) => `${heading}:\n${maximumLegacyText}`)
+  .join("\n\n");
 const event = (
   overrides: Partial<InboundWhatsAppEvent> = {},
 ): InboundWhatsAppEvent => ({
@@ -62,7 +70,7 @@ beforeAll(async () => {
   await db.sql`insert into businesses(id,name,status) values(${A},'Tenant A','active'),(${B},'Tenant B','active')`;
   await db.sql`insert into business_profiles(business_id,display_name,offerings,business_hours) values(${A},'A','envíos','cerrado'),(${B},'B','SECRETO-B','cerrado')`;
   await db.sql`update business_profiles set description='RETAINED_DESCRIPTION',address='RETAINED_ADDRESS' where business_id=${A}`;
-  await db.sql`insert into assistant_configs(business_id,active,instructions) values(${A},true,'ayuda'),(${B},false,'no usar')`;
+  await db.sql`insert into assistant_configs(business_id,active,style,business_instructions) values(${A},true,${maximumStyle},${maximumBusinessInstructions}),(${B},false,'STYLE-B','no usar')`;
   await db.sql`insert into whatsapp_connections(id,business_id,session_public_id,state,owner_id) values(${CA},${A},${SA},'CONNECTED','manager-1'),(${CB},${B},${SB},'CONNECTED','manager-2')`;
   const workerUrl = await createRoleLogin(
     db,
@@ -255,6 +263,16 @@ describe("PostgreSQL messaging workers", () => {
       expect(providerInput).toContain(retained);
     for (const removed of ["LEGACY_CONTACT", "LEGACY_FAQ", "LEGACY_POLICIES", "LEGACY_INFO", '"contact":', '"faq":', '"policies":', '"additional_info":'])
       expect(providerInput).not.toContain(removed);
+    expect(maximumStyle.length).toBe(32022);
+    expect(maximumBusinessInstructions.length).toBe(64058);
+    const providerBusinessData = JSON.parse(providerInput.split("\n")[1]!);
+    expect(providerBusinessData.assistant).toEqual({
+      style: maximumStyle,
+      business_instructions: maximumBusinessInstructions,
+    });
+    for (const key of ["personality", "tone", "instructions", "knowledge", "rules", "restrictions"])
+      expect(providerInput).not.toContain(`"${key}":`);
+    expect(calls[0]).not.toContain("STYLE-B");
     expect(calls[0]).not.toContain("SECRETO-B");
     expect(
       await db.sql`select outbound_id from outbound_commands`,

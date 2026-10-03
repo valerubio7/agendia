@@ -39,12 +39,8 @@ const profileFields = [
   "offerings",
 ] as const;
 const assistantFields = [
-  "personality",
-  "tone",
-  "instructions",
-  "knowledge",
-  "rules",
-  "restrictions",
+  "style",
+  "businessInstructions",
   "active",
 ] as const;
 const WHATSAPP_QR_LIFECYCLE_MS = 5 * 60_000;

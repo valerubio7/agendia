@@ -10,12 +10,8 @@ test("a minimal valid assistant activation persists in the business panel", asyn
 }) => {
   const service = new AssistantConfigService(new InMemoryAssistantRepository());
   service.save("tenant-a", {
-    personality: "",
-    tone: "",
-    instructions: "",
-    knowledge: "",
-    rules: "",
-    restrictions: "",
+    style: "",
+    businessInstructions: "",
     active: true,
     expectedRevision: 0,
   });

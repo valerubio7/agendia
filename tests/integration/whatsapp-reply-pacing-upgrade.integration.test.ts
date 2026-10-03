@@ -64,6 +64,10 @@ beforeAll(async () => {
   await db.sql.begin(async tx => {
     await tx.unsafe(await readFile(join(directory, '0021_whatsapp_reply_pacing.sql'), 'utf8'));
   });
+  // Preserve the historical upgrade above, then align the current runtime schema.
+  for (const name of ['0022_business_profile_cleanup.sql', '0023_assistant_config_consolidation.sql']) {
+    await db.sql.unsafe(await readFile(join(directory, name), 'utf8'));
+  }
   const managerUrl = await createRoleLogin(db, 'upgrade_manager', 'agendia_whatsapp_runtime');
   const workerUrl = await createRoleLogin(db, 'upgrade_worker', 'agendia_worker_runtime');
   pools = createRuntimePools({ api: managerUrl, admin: managerUrl, manager: managerUrl, worker: workerUrl });

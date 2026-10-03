@@ -277,16 +277,13 @@ describe("Next web client against Fastify contracts", () => {
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
     expect((await tenant.profile()).displayName).toBe("Tenant");
     const assistant = await tenant.saveAssistant({
-      personality: "helpful",
-      tone: "warm",
-      instructions: "",
-      knowledge: "",
-      rules: "",
-      restrictions: "",
+      style: " helpful\n warm ",
+      businessInstructions: " business guidance\n ",
       active: true,
       expectedRevision: 0,
     });
-    expect(assistant).toMatchObject({ active: true, revision: 1 });
+    expect(assistant).toEqual({ style: " helpful\n warm ", businessInstructions: " business guidance\n ", active: true, revision: 1 });
+    expect(await tenant.assistant()).toEqual(assistant);
     await expect(
       tenant.saveAssistant({ ...assistant, expectedRevision: 0 }),
     ).rejects.toMatchObject({ code: "CONFLICT" });

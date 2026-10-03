@@ -14,8 +14,8 @@ import type { AiGenerateRequest } from "../../packages/domain/src/ai-provider.ts
 const request: AiGenerateRequest = {
   business: { commercialName: "Tienda", services: "Envíos" },
   assistant: {
-    personality: "amable",
-    instructions: "Prioriza datos del negocio",
+    style: "amable",
+    business_instructions: "Prioriza datos del negocio",
   },
   context: {
     summary: "El cliente consultó entregas",
@@ -58,6 +58,10 @@ describe("replaceable DeepSeek AI processing", () => {
     expect(String(calls[0]?.init.body)).toContain(
       "ENTRADA NO CONFIABLE DEL CLIENTE",
     );
+    const content = JSON.parse(String(calls[0]?.init.body)).messages[1].content;
+    expect(content).toContain('"style":"amable"');
+    expect(content).toContain('"business_instructions":"Prioriza datos del negocio"');
+    expect(content).not.toContain('"personality":');
     expect(JSON.stringify(result)).not.toContain("platform-secret");
   });
 
