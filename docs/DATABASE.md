@@ -32,8 +32,13 @@ only eligible events, so a process restart does not erase a wait.
    connection; it does not acknowledge and discard the latest job.
 3. Saving generated text locks the same conversation row, then checks freshness
    again before creating a source-linked outbound command.
-4. Outbound claim locks that row and rechecks source identity in a fresh SQL
-   statement before changing one command to `sending`. Claim closes the burst.
+4. Outbound claim locks that row and rechecks source identity and deadline in a
+   fresh SQL statement before changing one command to `sending`. Claim closes
+   the burst. Source-less legacy commands are compatible only when no burst is
+   open; otherwise they are marked `failed` / `superseded` before claiming fresh
+   output. New accepted input also supersedes these unknown-source commands.
+   This prevents an old command from consuming a newer group's deadline or
+   becoming eligible again after that group closes.
 
 The atomic outgoing claim is the cutoff: accepted messages can invalidate unsent
 commands but cannot retract a provider send already in flight. Successful sends
@@ -46,11 +51,22 @@ in force; the owner-scoped claim is the existing privileged manager boundary.
 ## Upgrade and verification
 
 The migration backfills activity and latest-source identity from existing history.
-Pending pre-migration groups receive a persisted deadline and a fresh outbox key,
-so an already-published early job cannot consume their only durable wake-up.
-Superseded messages, outbox events and commands remain recorded, not deleted.
+Accepted inbound times come from server-written outbox creation times, not inbound
+provider `received_at`. Confirmed outbound `received_at` was written by the database
+worker. The pending burst opens at its first pending inbound, and its delay uses
+only activity and sent replies preceding that opener in conversation sequence.
+Exactly one hour is active; a greater gap or no preceding sent reply is initial.
+Later pending messages preserve the opener's deadline rather than masking its gap.
+
+Pending pre-migration groups receive that persisted deadline and a fresh outbox
+key, so an already-published early job cannot consume their only durable wake-up.
+Old non-latest events may publish early, but the worker suppresses their provider
+calls. Superseded messages, outbox events and commands remain recorded, not deleted.
 
 Deterministic coverage lives in `tests/unit/reply-pacing.test.ts` and
-`tests/integration/message-processing-worker.integration.test.ts`. Tests advance
+`tests/integration/message-processing-worker.integration.test.ts`. Populated
+upgrade coverage in `tests/integration/whatsapp-reply-pacing-upgrade.integration.test.ts`
+applies migrations through 0020, seeds published/unpublished groups, then applies
+0021 and exercises restricted manager/worker roles. Tests advance
 isolated database deadlines rather than waiting ten minutes, and observe real
 PostgreSQL lock contention during generation.
