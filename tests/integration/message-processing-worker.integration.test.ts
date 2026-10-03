@@ -265,8 +265,8 @@ describe("PostgreSQL messaging workers", () => {
       expect(providerInput).not.toContain(removed);
     expect(maximumStyle.length).toBe(32022);
     expect(maximumBusinessInstructions.length).toBe(64058);
-    const providerBusinessData = JSON.parse(providerInput.split("\n")[1]!);
-    expect(providerBusinessData.assistant).toEqual({
+    const providerAssistantData = JSON.parse(providerInput.split("\n")[1]!);
+    expect(providerAssistantData).toEqual({
       style: maximumStyle,
       business_instructions: maximumBusinessInstructions,
     });
@@ -584,7 +584,8 @@ describe("PostgreSQL messaging workers", () => {
       correlationId: "ai:summary-2",
     });
     expect(aiCalls[1].context.summary).toContain("turnos:1");
-    expect(aiCalls[1].context.recent).toEqual(["segundo descubierto"]);
+    expect(aiCalls[1].context.recent).toEqual([]);
+    expect(aiCalls[1].message).toBe("primero " + "x".repeat(380) + "\nsegundo descubierto");
     expect(await summaries.process(plan2!)).toBe("updated");
     expect(requests[1]).toMatchObject({
       prior: { facts: ["turnos:1"] },
@@ -665,7 +666,7 @@ describe("PostgreSQL messaging workers", () => {
       correlationId: "current-response",
     });
     expect(contexts[0].summary).toContain("estado previo");
-    expect(contexts[0].recent[0]).toContain("tercero");
+    expect(contexts[0].recent).toEqual([]);
     expect(
       await db.sql`select outbound_id from outbound_commands where source_message_id=${row.id}`,
     ).toHaveLength(1);
@@ -691,6 +692,95 @@ describe("PostgreSQL messaging workers", () => {
       [2, 0],
       [3, 1],
     ]);
+  });
+
+  test("sends complete long groups beyond50 and applies suffix-first history without refill", async () => {
+    const inbound = new PostgresInboundHandler(pools);
+    const remoteJid = 'full-group@s.whatsapp.net';
+    const texts = Array.from({ length: 55 }, (_, index) => index === 0 ? ' \t' + '😀'.repeat(9000) + '\n ' : `input-${index}`);
+    for (const [index, text] of texts.entries())
+      await inbound.handle(event({ providerMessageId: `full-${index}`, remoteJid, text }));
+    const row = (await db.sql`select id,conversation_id from messages where provider_message_id='full-54'`)[0]!;
+    const content = { facts: ['previous'], requests: [], commitments: [], preferences: [], openItems: [] };
+    await db.sql`insert into conversation_summaries(business_id,conversation_id,version,covered_through,structured_summary) values(${A},${row.conversation_id},1,54,${db.sql.json(content)}),( ${A},${row.conversation_id},2,55,${db.sql.json({ facts: [] })})`;
+    const payloads: any[] = [];
+    const worker = new PostgresAiJobProcessor(pools, new DeepSeekAdapter({ apiKey: 'test', fetcher: async (_url, init) => {
+      payloads.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }));
+    } }));
+    await makeEligible();
+    await worker.process({ businessId: A, messageId: row.id, correlationId: 'full' });
+    const user = payloads[0].messages[1].content as string;
+    const section = (label: string) => JSON.parse(user.split(`--- ${label} ---\n`)[1]!.split(`\n--- FIN ${label} ---`)[0]!);
+    expect(section('MENSAJE ACTUAL DEL CLIENTE')).toBe(texts.join('\n'));
+    const history = section('HISTORIAL DE CONVERSACIÓN');
+    expect(history.recent).toEqual([]);
+    expect(JSON.parse(history.summary)).toEqual({ version: 1, coveredThrough: 54, ...content });
+    expect(await db.sql`select id from messages where conversation_id=${row.conversation_id}`).toHaveLength(55);
+    await worker.process({ businessId: B, messageId: row.id, correlationId: 'foreign' });
+    expect(payloads).toHaveLength(1);
+    await inbound.handle(event({ providerMessageId: 'full-manual', remoteJid, fromMe: true, text: 'manual closure' }));
+    for (const [index, text] of ['next-one', 'next-two'].entries())
+      await inbound.handle(event({ providerMessageId: `full-next-${index}`, remoteJid, text }));
+    const latest = (await db.sql`select id from messages where provider_message_id='full-next-1'`)[0]!;
+    await makeEligible();
+    await worker.process({ businessId: A, messageId: latest.id, correlationId: 'suffix' });
+    const suffixUser = payloads[1].messages[1].content as string;
+    const suffixSection = (label: string) => JSON.parse(suffixUser.split(`--- ${label} ---\n`)[1]!.split(`\n--- FIN ${label} ---`)[0]!);
+    expect(suffixSection('MENSAJE ACTUAL DEL CLIENTE')).toBe('next-one\nnext-two');
+    expect(suffixSection('HISTORIAL DE CONVERSACIÓN').recent).toEqual([...texts.slice(8), 'manual closure']);
+    expect(JSON.parse(suffixSection('HISTORIAL DE CONVERSACIÓN').summary)).toEqual({ version: 1, coveredThrough: 54, ...content });
+    await db.sql`update outbox_events set published_at=now() where stable_key like 'ai:full-%'`;
+  });
+
+  test("derives closures from failure, manual identity and claimed source, not delayed sent sequence or legacy guesses", async () => {
+    const inbound = new PostgresInboundHandler(pools);
+    const context = tenantContext({ businessId: A, actorId: 'test', role: 'internal_worker', requestId: 'closure' });
+    for (const kind of ['failure', 'provider-failure', 'superseded-failure', 'manual', 'claimed', 'unclaimed', 'legacy', 'legacy-unknown'] as const) {
+      const remoteJid = `closure-${kind}@s.whatsapp.net`;
+      const accept = async (suffix: string, text: string) => {
+        await inbound.handle(event({ remoteJid, providerMessageId: `${kind}-${suffix}`, text }));
+        return (await db.sql`select id,conversation_id from messages where provider_message_id=${`${kind}-${suffix}`}`)[0]!;
+      };
+      const first = await accept('first', 'prior');
+      await makeEligible();
+      if (kind === 'failure') await pools.worker.run(context, r => r.failAi(first.id, A, 'ai.timeout'));
+      if (kind === 'provider-failure') {
+        await new PostgresAiJobProcessor(pools, new DeepSeekAdapter({ apiKey: 'test', fetcher: async () => new Response('hard limit', { status: 400 }) }))
+          .process({ businessId: A, messageId: first.id, correlationId: kind });
+        expect((await db.sql`select processing_state from messages where id=${first.id}`)[0]!.processing_state).toBe('ai_failed');
+        expect(await db.sql`select outbound_id from outbound_commands where conversation_id=${first.conversation_id}`).toHaveLength(0);
+      }
+      if (kind === 'manual') await inbound.handle(event({ remoteJid, providerMessageId: 'manual-closure', text: 'prior', fromMe: true }));
+      let command: any;
+      if (kind === 'claimed' || kind === 'unclaimed') {
+        command = await pools.worker.run(context, r => r.saveGenerated(first.id, A, 'prior'));
+        if (kind === 'claimed') {
+          await db.sql`update outbound_commands set state='failed' where state='generated' and outbound_id<>${command.outbound_id}`;
+          const claimed = await pools.manager.run(context, r => r.claimOwnedOutbound('manager-1'));
+          expect(claimed?.outbound_id).toBe(command.outbound_id);
+        }
+      }
+      if (kind.startsWith('legacy')) {
+        command = (await db.sql`insert into outbound_commands(business_id,conversation_id,connection_id,text,state,send_started_at,provider_message_id) values(${A},${first.conversation_id},${CA},'prior','sent',now(),${kind === 'legacy' ? 'legacy-ack' : null}) returning outbound_id`)[0]!;
+      }
+      const latest = await accept('latest', ' \tcurrent\n ');
+      if (kind === 'superseded-failure') await pools.worker.run(context, r => r.failAi(first.id, A, 'ai.timeout'));
+      if (kind === 'claimed') await pools.manager.run(context, r => r.finishOutbound(command.outbound_id, 'sent', 'delayed-ack'));
+      if (kind.startsWith('legacy')) await db.sql`insert into messages(business_id,conversation_id,connection_id,provider_message_id,sequence,direction,raw_text,received_at,processing_state) values(${A},${first.conversation_id},${CA},${kind === 'legacy' ? 'legacy-ack' : 'unknown-ack'},3,'outbound','prior',now(),'sent')`;
+      await makeEligible();
+      const requests: any[] = [];
+      await new PostgresAiJobProcessor(pools, { generate: async request => {
+        requests.push(request);
+        return { text: 'ok', providerId: 'test', usageTokens: 1 };
+      } }).process({ businessId: A, messageId: latest.id, correlationId: kind });
+      const closed = ['failure', 'provider-failure', 'manual', 'claimed'].includes(kind);
+      expect(requests[0].message).toBe(closed ? ' \tcurrent\n ' : 'prior\n \tcurrent\n ');
+      expect(requests[0].context.recent.filter((text: string) => text === ' \tcurrent\n ')).toEqual([]);
+      expect(requests[0].context).not.toHaveProperty('retrieved');
+      expect(await pools.worker.run(context, r => r.loadAiMessage(first.id, true))).toBeNull();
+      await db.sql`update outbox_events set published_at=now() where payload->>'messageId' in (${first.id},${latest.id})`;
+    }
   });
 
   test("persists strict reset boundaries and retains initial pacing until a sent reply", async () => {
@@ -730,7 +820,8 @@ describe("PostgreSQL messaging workers", () => {
     expect(requests).toHaveLength(0);
     const old = worker.process(second);
     await entered;
-    expect(requests[0].context.recent).toEqual(['uno', 'dos']);
+    expect(requests[0].context.recent).toEqual([]);
+    expect(requests[0].message).toBe('uno\ndos');
     const latest = await accept('race-3', 'tres');
     // Its persisted deadline was already due; ingestion must not slide it.
     const reserve = pools.worker.reserveAdvisoryLock.bind(pools.worker);
@@ -747,7 +838,8 @@ describe("PostgreSQL messaging workers", () => {
     await Promise.all([old, waiting]);
     pools.worker.reserveAdvisoryLock = reserve;
     expect(requests).toHaveLength(2);
-    expect(requests[1].context.recent).toEqual(['uno', 'dos', 'tres']);
+    expect(requests[1].context.recent).toEqual([]);
+    expect(requests[1].message).toBe('uno\ndos\ntres');
     expect(await db.sql`select outbound_id from outbound_commands where source_message_id=${second.messageId}`).toHaveLength(0);
     expect(await db.sql`select outbound_id from outbound_commands where source_message_id=${latest.messageId} and state='generated'`).toHaveLength(1);
     await worker.process({ ...latest, businessId: B });

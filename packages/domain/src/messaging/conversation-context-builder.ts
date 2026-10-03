@@ -1,4 +1,5 @@
 export interface ConversationTurn {
+  id?: string;
   sequence: number;
   role: "customer" | "assistant";
   text: string;
@@ -42,33 +43,15 @@ export class InMemoryConversationHistory {
 interface BuildRequest {
   businessId: string;
   conversationId: string;
-  query: string;
-  maxCharacters: number;
+  currentGroupIds?: string[];
 }
 
 type BuildResult =
   | { status: "blocked"; reason: "summary_required" }
-  | { status: "ready"; context: { summary: ConversationSummary | null; retrieved: ConversationTurn[]; recent: ConversationTurn[]; representsThrough: number } };
+  | { status: "ready"; context: { summary: ConversationSummary | null; recent: ConversationTurn[]; representsThrough: number } };
 
 function visibleTurn(turn: ConversationTurn): boolean {
   return turn.role === "customer" || turn.delivery === "sent";
-}
-
-function queryTerms(query: string): string[] {
-  return query.toLocaleLowerCase("es").match(/[\p{L}\p{N}]+/gu)?.filter((term) => term.length > 2) ?? [];
-}
-
-function takeRecentWithinBudget(turns: ConversationTurn[], maxCharacters: number): ConversationTurn[] {
-  const selected: ConversationTurn[] = [];
-  let used = 0;
-  for (const turn of [...turns].reverse()) {
-    const cost = turn.text.length + 24;
-    if (selected.length > 0 && used + cost > maxCharacters) break;
-    if (cost > maxCharacters) continue;
-    selected.unshift(turn);
-    used += cost;
-  }
-  return selected;
 }
 
 export class ConversationContextBuilder {
@@ -79,19 +62,15 @@ export class ConversationContextBuilder {
     const raw = this.history.listRaw(request.businessId, request.conversationId);
     const eligible = raw.filter(visibleTurn);
     const summary = this.history.summary(request.businessId, request.conversationId);
-    const coveredThrough = summary?.coveredThrough ?? 0;
-    const prefix = eligible.filter((turn) => turn.sequence <= coveredThrough);
-    const terms = queryTerms(request.query);
-    const retrieved = prefix.filter((turn) => terms.some((term) => turn.text.toLocaleLowerCase("es").includes(term))).slice(-4);
-    const fixedCost = (summary ? JSON.stringify(summary).length : 0) + retrieved.reduce((total, turn) => total + turn.text.length + 24, 0);
-    const recent = takeRecentWithinBudget(eligible.filter((turn) => turn.sequence > coveredThrough), Math.max(0, request.maxCharacters - fixedCost));
+    const currentGroup = new Set(request.currentGroupIds ?? []);
+    // Choose the visible suffix first: exclusions must not refill older history.
+    const recent = eligible.slice(-50).filter((turn) => !turn.id || !currentGroup.has(turn.id));
     return {
       status: "ready",
       context: {
         summary: summary ? structuredClone(summary) : null,
-        retrieved,
         recent,
-        representsThrough: Math.max(coveredThrough, ...recent.map((turn) => turn.sequence), 0),
+        representsThrough: Math.max(summary?.coveredThrough ?? 0, ...recent.map((turn) => turn.sequence), 0),
       },
     };
   }

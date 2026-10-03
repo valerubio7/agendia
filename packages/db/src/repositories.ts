@@ -452,11 +452,13 @@ export class PostgresRepositories {
       await this.db<
         {
           id: string;
+          business_id: string;
+          sequence: string;
           conversation_id: string;
           connection_id: string;
           raw_text: string;
         }[]
-      >`select m.id,m.conversation_id,m.connection_id,m.raw_text from messages m join conversations c on c.id=m.conversation_id and c.business_id=m.business_id join businesses b on b.id=m.business_id join assistant_configs a on a.business_id=b.id join whatsapp_connections w on w.id=m.connection_id where m.id=${messageId} and m.direction='inbound' and m.processing_state='pending' and c.latest_inbound_id=m.id and (not ${requireDue} or c.reply_due_at<=now()) and b.status='active' and a.active and w.state='CONNECTED'`
+      >`select m.id,m.business_id,m.sequence,m.conversation_id,m.connection_id,m.raw_text from messages m join conversations c on c.id=m.conversation_id and c.business_id=m.business_id join businesses b on b.id=m.business_id join assistant_configs a on a.business_id=b.id join whatsapp_connections w on w.id=m.connection_id where m.id=${messageId} and m.direction='inbound' and m.processing_state='pending' and c.latest_inbound_id=m.id and (not ${requireDue} or c.reply_due_at<=now()) and b.status='active' and a.active and w.state='CONNECTED'`
     )[0];
     if (!message) return null;
     const profile =
@@ -473,16 +475,37 @@ export class PostgresRepositories {
       )[0] ?? {};
     const turns = await this.db<
       {
+        id: string;
         sequence: string;
         direction: "inbound" | "outbound";
         raw_text: string;
         processing_state: string;
+        closes_group: boolean;
       }[]
-    >`select sequence,direction,raw_text,processing_state from messages where conversation_id=${message.conversation_id} order by sequence`;
+    >`select m.id,m.sequence,m.direction,m.raw_text,m.processing_state,
+      case when m.direction='inbound' then m.processing_state='ai_failed' or exists(
+        select 1 from outbound_commands o where o.business_id=m.business_id
+        and o.connection_id=m.connection_id and o.conversation_id=m.conversation_id
+        and o.source_message_id=m.id and o.send_started_at is not null)
+      else m.processing_state='sent' and not exists(
+        select 1 from outbound_commands o where o.business_id=m.business_id
+        and o.connection_id=m.connection_id and o.conversation_id=m.conversation_id
+        and (o.provider_message_id=m.provider_message_id or o.outbound_id::text=m.provider_message_id
+          or (o.source_message_id is null and o.send_started_at is not null and o.provider_message_id is null)))
+      end closes_group
+      from messages m where m.business_id=${message.business_id}
+      and m.connection_id=${message.connection_id} and m.conversation_id=${message.conversation_id} order by m.sequence`;
+    // Claimed output closes at its inbound source, never its delayed sent row.
+    // Unknown-source legacy output cannot prove a boundary; unknown delivery
+    // identity also prevents guessing that a sent row was a manual reply.
+    const closedThrough = turns.reduce((closed, turn) => turn.closes_group && Number(turn.sequence) < Number(message.sequence)
+      ? Math.max(closed, Number(turn.sequence)) : closed, 0);
+    const currentGroup = turns.filter((turn) => turn.direction === 'inbound'
+      && Number(turn.sequence) > closedThrough && Number(turn.sequence) <= Number(message.sequence));
     const summaries = await this.db<
       { version: number; covered_through: string; structured_summary: any }[]
     >`select version,covered_through,structured_summary from conversation_summaries where conversation_id=${message.conversation_id} and covered_through<=(select coalesce(max(sequence),0) from messages where conversation_id=${message.conversation_id}) order by covered_through desc,version desc`;
-    return { ...message, profile, assistant, turns, summaries };
+    return { ...message, profile, assistant, turns, summaries, currentGroup };
   }
   async loadSummarySource(conversationId: string, coveredThrough: number) {
     const exists = (

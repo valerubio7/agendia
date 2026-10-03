@@ -88,6 +88,7 @@ export class PostgresAiJobProcessor {
         job.businessId,
         data.conversation_id,
         data.turns.map((t) => ({
+          id: t.id,
           sequence: Number(t.sequence),
           role:
             t.direction === "inbound"
@@ -116,8 +117,7 @@ export class PostgresAiJobProcessor {
       const built = new ConversationContextBuilder(history).build({
         businessId: job.businessId,
         conversationId: data.conversation_id,
-        query: data.raw_text,
-        maxCharacters: this.budget,
+        currentGroupIds: data.currentGroup.map((turn) => turn.id),
       });
       if (built.status === "blocked") {
         await this.pools.worker.run(context, (r) =>
@@ -130,10 +130,9 @@ export class PostgresAiJobProcessor {
         assistant: data.assistant,
         context: {
           summary: JSON.stringify(built.context.summary),
-          retrieved: built.context.retrieved.map((t) => t.text),
           recent: built.context.recent.map((t) => t.text),
         },
-        message: data.raw_text,
+        message: data.currentGroup.map((turn) => turn.raw_text).join("\n"),
         maxOutputCharacters: 2_000,
         correlationId: job.correlationId,
       });
