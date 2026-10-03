@@ -70,16 +70,17 @@ export class PostgresAiJobProcessor {
   async process(job: PostgresAiJob): Promise<void> {
     const context = this.context(job.businessId, job.correlationId),
       initial = await this.pools.worker.run(context, (r) =>
-        r.loadAiMessage(job.messageId),
+        r.loadAiMessage(job.messageId, true),
       );
     if (!initial) return;
     const release = await this.pools.worker.reserveAdvisoryLock(
       `ai:${job.businessId}:${initial.conversation_id}`,
+      true,
     );
     if (!release) return;
     try {
       const data = await this.pools.worker.run(context, (r) =>
-        r.loadAiMessage(job.messageId),
+        r.loadAiMessage(job.messageId, true),
       );
       if (!data) return;
       const history = new InMemoryConversationHistory();
