@@ -11,12 +11,8 @@ const values = {
   displayName: "Estudio Perfil Claro",
   description: "Asesoramiento personalizado para pequeños negocios.",
   address: "Avenida Siempreviva 742, Buenos Aires",
-  contact: "hola@perfil-claro.example · +54 11 5555 0142",
   businessHours: "Lunes a viernes de 9:00 a 18:00; sábados con turno.",
   offerings: "Diagnóstico inicial, planificación y acompañamiento mensual.",
-  faq: "¿Trabajan de forma remota? Sí, en todo el país.",
-  policies: "Los turnos se reprograman con 24 horas de anticipación.",
-  additionalInfo: "Atención en español y seguimiento por correo electrónico.",
 };
 
 async function login(page: Page, url: string, email: string, password: string) {
@@ -121,9 +117,8 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
     ).toBeVisible();
 
     const sectionHeadings = [
-      "Identidad y contacto",
+      "Identidad del negocio",
       "Operación diaria",
-      "Conocimiento para responder",
     ] as const;
     const sections: Locator[] = [];
     for (const heading of sectionHeadings) {
@@ -155,41 +150,31 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
     const displayName = form.getByLabel("Nombre comercial", { exact: true });
     const description = form.getByLabel("Descripción", { exact: true });
     const address = form.getByLabel("Dirección", { exact: true });
-    const contact = form.getByLabel("Contacto", { exact: true });
     const businessHours = form.getByLabel("Horarios", { exact: true });
     const offerings = form.getByLabel("Servicios o productos", { exact: true });
-    const faq = form.getByLabel("Preguntas frecuentes", { exact: true });
-    const policies = form.getByLabel("Políticas", { exact: true });
-    const additionalInfo = form.getByLabel("Información adicional", {
-      exact: true,
-    });
+    for (const label of ["Contacto", "Preguntas frecuentes", "Políticas", "Información adicional"])
+      await expect(screen.getByLabel(label, { exact: true })).toHaveCount(0);
+    for (const name of ["contact", "faq", "policies", "additionalInfo"])
+      await expect(form.locator(`[name="${name}"]`)).toHaveCount(0);
     const fields = [
       displayName,
       description,
       address,
-      contact,
       businessHours,
       offerings,
-      faq,
-      policies,
-      additionalInfo,
     ];
 
-        await expect(form.locator("input, textarea, select")).toHaveCount(9);
-        await expect(displayName).toHaveAttribute("required", "");
-        for (const optionalField of fields.slice(1)) {
-          await expect(optionalField).not.toHaveAttribute("required", /.*/);
-        }
-        await expectTextInput(displayName, "160");
-        await expectTextarea(description, "4000");
+    await expect(form.locator("input, textarea, select")).toHaveCount(5);
+    await expect(displayName).toHaveAttribute("required", "");
+    for (const optionalField of fields.slice(1)) {
+      await expect(optionalField).not.toHaveAttribute("required", /.*/);
+    }
+    await expectTextInput(displayName, "160");
+    await expectTextarea(description, "4000");
     await expectTextInput(address, "500");
-    await expectTextInput(contact, "500");
     await expectTextarea(businessHours, "2000");
     await expect(form.locator('[name="businessHours"]')).toHaveCount(1);
     await expectTextarea(offerings, "8000");
-    await expectTextarea(faq, "8000");
-    await expectTextarea(policies, "8000");
-    await expectTextarea(additionalInfo, "8000");
 
     await expectNoHorizontalOverflow(tenantPage);
     await expect(hero).toBeVisible();
@@ -199,12 +184,8 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
     await displayName.fill(values.displayName);
     await description.fill(values.description);
     await address.fill(values.address);
-    await contact.fill(values.contact);
     await businessHours.fill(values.businessHours);
     await offerings.fill(values.offerings);
-    await faq.fill(values.faq);
-    await policies.fill(values.policies);
-    await additionalInfo.fill(values.additionalInfo);
 
     let observeSaveRequest!: () => void;
     const saveRequestObserved = new Promise<void>((resolve) => {
@@ -219,6 +200,7 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
         await route.continue();
         return;
       }
+      expect(route.request().postDataJSON()).toEqual(values);
       observeSaveRequest();
       await saveRequestReleased;
       await route.continue();
@@ -245,9 +227,10 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
     await expect(
       tenantPage.getByLabel("Horarios", { exact: true }),
     ).toHaveValue(values.businessHours);
-    await expect(
-      tenantPage.getByLabel("Información adicional", { exact: true }),
-    ).toHaveValue(values.additionalInfo);
+    await expect(tenantPage.getByLabel("Descripción", { exact: true })).toHaveValue(values.description);
+    await expect(tenantPage.getByLabel("Dirección", { exact: true })).toHaveValue(values.address);
+    for (const name of ["contact", "faq", "policies", "additionalInfo"])
+      await expect(tenantPage.locator(`#business-profile-form [name="${name}"]`)).toHaveCount(0);
     await expectNoHorizontalOverflow(tenantPage);
 
     await tenantPage.setViewportSize({ width: 360, height: 800 });
