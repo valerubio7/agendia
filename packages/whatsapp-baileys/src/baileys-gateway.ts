@@ -296,7 +296,7 @@ export class BaileysGateway {
     try {
       const sent = await socket.sendMessage(command.remoteJid, {
         text: command.text,
-      });
+      }, { messageId: command.outboundId });
       return {
         outcome: "ack" as const,
         providerMessageId: sent.key?.id ?? command.outboundId,

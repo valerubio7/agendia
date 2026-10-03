@@ -399,7 +399,8 @@ export class PostgresRepositories {
     const seen = await this
       .db`insert into inbox_events(business_id,source,stable_key) values(${input.businessId},'baileys',${input.providerId}) on conflict do nothing returning id`;
     if (!seen.length) return null;
-    if (input.classification !== "accepted") {
+    const businessText = input.classification === "accepted_business";
+    if (input.classification !== "accepted" && !businessText) {
       await this
         .db`insert into technical_events(business_id,component,code,severity) values(${input.businessId},'whatsapp-manager',${input.classification},'info')`;
       return { duplicate: false };
@@ -409,6 +410,15 @@ export class PostgresRepositories {
         { id: string; reply_due_at: Date | null; last_reply_at: Date | null; last_exchange_at: Date | null; accepted_at: Date }[]
       >`insert into conversations(business_id,connection_id,remote_jid) values(${input.businessId},${input.connectionId},${input.remoteJid}) on conflict(business_id,connection_id,remote_jid) do update set remote_jid=excluded.remote_jid returning id,reply_due_at,last_reply_at,last_exchange_at,clock_timestamp() accepted_at`
     )[0]!;
+    // The upsert holds the conversation lock, shared with generation save,
+    // outbound claim and confirmation. Recheck echo identity after that lock.
+    // Identity outlives delivery state: even a late echo after a terminal
+    // failure must not masquerade as manual input and cancel fresh work.
+    if (businessText) {
+      const echo = await this.db`select outbound_id from outbound_commands where business_id=${input.businessId} and connection_id=${input.connectionId} and conversation_id=${conversation.id} and (outbound_id::text=${input.providerId} or provider_message_id=${input.providerId})`;
+      const persisted = await this.db`select id from messages where business_id=${input.businessId} and connection_id=${input.connectionId} and provider_message_id=${input.providerId} and direction='outbound'`;
+      if (echo.length || persisted.length) return { duplicate: false, generatedEcho: true };
+    }
     const sequence = Number(
       (
         await this.db<
@@ -416,6 +426,14 @@ export class PostgresRepositories {
         >`update conversations set next_sequence=next_sequence+1 where id=${conversation.id} returning next_sequence-1 sequence`
       )[0]!.sequence,
     );
+    if (businessText) {
+      await this.db`insert into messages(business_id,conversation_id,connection_id,provider_message_id,sequence,direction,raw_text,received_at,processing_state) values(${input.businessId},${conversation.id},${input.connectionId},${input.providerId},${sequence},'outbound',${input.text!},${input.receivedAt},'sent')`;
+      await this.db`update conversations set latest_inbound_id=null,reply_due_at=null,last_reply_at=${conversation.accepted_at},last_exchange_at=${conversation.accepted_at} where id=${conversation.id}`;
+      await this.db`update messages set processing_state='superseded' where conversation_id=${conversation.id} and direction='inbound' and processing_state in ('pending','generated') and not exists(select 1 from outbound_commands o where o.source_message_id=messages.id and o.state in ('sending','sent','delivery_unknown'))`;
+      await this.db`update outbound_commands set state='failed',failure_code='manual_reply',updated_at=now() where conversation_id=${conversation.id} and state='generated'`;
+      await this.db`update outbox_events set published_at=now() where topic='ai.generate' and published_at is null and payload->>'messageId' in (select id::text from messages where conversation_id=${conversation.id} and processing_state='superseded')`;
+      return { duplicate: false, sequence };
+    }
     const message = (
       await this.db<
         { id: string }[]
