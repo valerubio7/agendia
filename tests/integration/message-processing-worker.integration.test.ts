@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PgBoss } from "pg-boss";
-import { createRuntimePools, tenantContext } from "@agendia/db";
+import { createRuntimePools, tenantContext, PostgresRepositories } from "@agendia/db";
 import { DeepSeekAdapter } from "@agendia/ai-deepseek";
 import {
   BaileysAuthStateAdapter,
@@ -83,7 +83,35 @@ afterAll(async () => {
   await db?.stop();
 });
 
+const makeEligible = async () => {
+  await db.sql`update conversations set reply_due_at=now()-interval '1 second' where reply_due_at is not null`;
+  await db.sql`update outbox_events set next_attempt_at=now()-interval '1 second' where published_at is null`;
+};
+
 describe("PostgreSQL messaging workers", () => {
+  test("persists initial pacing and a fixed grouped deadline across dispatcher restart", async () => {
+    const inbound = new PostgresInboundHandler(pools);
+    const first = await inbound.handle(event({ providerMessageId: "pace-1", remoteJid: "pace@s.whatsapp.net", text: "primero" }));
+    const before = (await db.sql`select next_attempt_at,created_at from outbox_events where stable_key='ai:pace-1'`)[0]!;
+    const wait = new Date(before.next_attempt_at).getTime() - new Date(before.created_at).getTime();
+    expect(wait).toBeGreaterThanOrEqual(600_000);
+    expect(wait).toBeLessThan(601_000);
+    await inbound.handle(event({ providerMessageId: "pace-2", remoteJid: "pace@s.whatsapp.net", text: "segundo" }));
+    expect((await inbound.handle(event({ providerMessageId: "pace-2", remoteJid: "pace@s.whatsapp.net" }))).outcome).toBe("duplicate");
+    const after = (await db.sql`select next_attempt_at,payload from outbox_events where stable_key='ai:pace-2'`)[0]!;
+    expect(after.next_attempt_at).toEqual(before.next_attempt_at);
+    let earlyCalls = 0;
+    await new PostgresAiJobProcessor(pools, { generate: async () => {
+      earlyCalls++;
+      return { text: 'early', providerId: 'test', usageTokens: 1 };
+    } }).process({ businessId: A, messageId: after.payload.messageId, correlationId: 'early' });
+    expect(earlyCalls).toBe(0);
+    const dispatcher = new AiOutboxDispatcher(pools, boss, immediateOutboxRecovery);
+    expect(await dispatcher.dispatchBatch()).toBe(0);
+    // Leave this isolated burst terminal so the legacy scenarios remain independent.
+    await db.sql`update outbox_events set published_at=now() where stable_key in ('ai:pace-1','ai:pace-2')`;
+    expect(first.outcome).toBe("accepted");
+  });
   test("routes before tenant access, deduplicates and filters text-only events", async () => {
     const inbound = new PostgresInboundHandler(pools),
       socket = new FakeBaileysSocket([]),
@@ -135,8 +163,8 @@ describe("PostgreSQL messaging workers", () => {
         )
       ).outcome,
     ).toBe("automation_inactive");
-    expect(await db.sql`select raw_text from messages`).toHaveLength(1);
-    expect(await db.sql`select stable_key from inbox_events`).toHaveLength(6);
+    expect(await db.sql`select raw_text from messages where provider_message_id='m1'`).toHaveLength(1);
+    expect(await db.sql`select stable_key from inbox_events where stable_key not like 'pace-%'`).toHaveLength(6);
     expect(
       await db.sql`select id from outbox_events where topic='ai.generate' and published_at is null`,
     ).toHaveLength(1);
@@ -144,6 +172,7 @@ describe("PostgreSQL messaging workers", () => {
   });
 
   test("recovers committed ai outbox without direct queue publication", async () => {
+    await makeEligible();
     expect(
       await readFile(
         join(
@@ -396,6 +425,7 @@ describe("PostgreSQL messaging workers", () => {
         )
       ).outcome,
     ).toBe("duplicate");
+    await makeEligible();
     const lostAck = new AiOutboxDispatcher(
       pools,
       {
@@ -489,6 +519,7 @@ describe("PostgreSQL messaging workers", () => {
       conversationId: first.conversation_id,
       coveredThrough: 1,
     });
+    await makeEligible();
     await ai.process(job);
     expect(aiCalls).toHaveLength(1);
     const requests: any[] = [],
@@ -523,6 +554,7 @@ describe("PostgreSQL messaging workers", () => {
         messageId: second.id,
         correlationId: "ai:summary-2",
       });
+    await makeEligible();
     await ai.process({
       businessId: A,
       messageId: second.id,
@@ -603,6 +635,7 @@ describe("PostgreSQL messaging workers", () => {
         },
         500,
       );
+    await makeEligible();
     await current.process({
       businessId: A,
       messageId: row.id,
@@ -635,5 +668,98 @@ describe("PostgreSQL messaging workers", () => {
       [2, 0],
       [3, 1],
     ]);
+  });
+
+  test("persists strict reset boundaries and retains initial pacing until a sent reply", async () => {
+    const inbound = new PostgresInboundHandler(pools);
+    await inbound.handle(event({ providerMessageId: 'boundary-start', remoteJid: 'boundary@s.whatsapp.net' }));
+    for (const [index, gap, replied, delay] of [[1, 0, false, 600], [2, 0, true, 90], [3, 3600.001, true, 600]] as const) {
+      await db.sql.begin(async tx => {
+        await tx`update conversations set reply_due_at=null,last_reply_at=case when ${replied} then now()-interval '2 hours' else null end,last_exchange_at=now()-${gap}*interval '1 second' where remote_jid='boundary@s.whatsapp.net'`;
+        await new PostgresRepositories(tx).ingestInbound({ businessId: A, connectionId: CA, providerId: `boundary-${index}`, remoteJid: 'boundary@s.whatsapp.net', text: 'medianoche', receivedAt: new Date('2026-01-01T00:00:00Z'), classification: 'accepted' });
+        const row = (await tx`select extract(epoch from reply_due_at-last_exchange_at) seconds from conversations where remote_jid='boundary@s.whatsapp.net'`)[0]!;
+        expect(Math.round(Number(row.seconds)*1000)).toBe(delay*1000);
+      });
+    }
+    await db.sql`update outbox_events set published_at=now() where stable_key like 'ai:boundary-%'`;
+  });
+
+  test("groups ordered context, rejects stale work and preserves the latest job under contention", async () => {
+    const inbound = new PostgresInboundHandler(pools);
+    const accept = async (id: string, text: string) => {
+      await inbound.handle(event({ providerMessageId: id, remoteJid: 'race@s.whatsapp.net', text }));
+      const row = (await db.sql<{ id: string; conversation_id: string }[]>`select id,conversation_id from messages where provider_message_id=${id}`)[0]!;
+      return { businessId: A, messageId: row.id, correlationId: id };
+    };
+    const first = await accept('race-1', 'uno');
+    const second = await accept('race-2', 'dos');
+    await makeEligible();
+    let enter!: () => void, finish!: () => void;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const gate = new Promise<void>(resolve => { finish = resolve; });
+    const requests: any[] = [];
+    const worker = new PostgresAiJobProcessor(pools, { generate: async request => {
+      requests.push(request);
+      if (requests.length === 1) { enter(); await gate; }
+      return { text: 'agrupado', providerId: 'test', usageTokens: 1 };
+    } });
+    await worker.process(first);
+    expect(requests).toHaveLength(0);
+    const old = worker.process(second);
+    await entered;
+    expect(requests[0].context.recent).toEqual(['uno', 'dos']);
+    const latest = await accept('race-3', 'tres');
+    // Its persisted deadline was already due; ingestion must not slide it.
+    const reserve = pools.worker.reserveAdvisoryLock.bind(pools.worker);
+    let contention!: () => void;
+    const contended = new Promise<void>(resolve => { contention = resolve; });
+    pools.worker.reserveAdvisoryLock = async (key, wait) => {
+      const release = await reserve(key);
+      if (!release && wait) { contention(); return reserve(key, true); }
+      return release;
+    };
+    const waiting = worker.process(latest);
+    await contended; // Observe an actual failed PostgreSQL lock attempt, not a timing guess.
+    finish();
+    await Promise.all([old, waiting]);
+    pools.worker.reserveAdvisoryLock = reserve;
+    expect(requests).toHaveLength(2);
+    expect(requests[1].context.recent).toEqual(['uno', 'dos', 'tres']);
+    expect(await db.sql`select outbound_id from outbound_commands where source_message_id=${second.messageId}`).toHaveLength(0);
+    expect(await db.sql`select outbound_id from outbound_commands where source_message_id=${latest.messageId} and state='generated'`).toHaveLength(1);
+    await worker.process({ ...latest, businessId: B });
+    expect(requests).toHaveLength(2);
+
+    const fourth = await accept('race-4', 'cuatro');
+    const sent: string[] = [];
+    const dispatcher = new PostgresOutboundDispatcher(pools, { send: async command => {
+      sent.push(command.text);
+      // The atomic claim already happened: this new inbound cannot retract it.
+      await accept('race-5', 'cinco');
+      return { outcome: 'ack', providerMessageId: 'race-ack' };
+    } }, 'manager-1');
+    // Older unrelated test commands are still generated; make this assertion isolated.
+    await db.sql`update outbound_commands set state='failed' where state='generated' and source_message_id<>${latest.messageId}`;
+    expect(await dispatcher.dispatchNext()).toBe(false);
+    expect(sent).toHaveLength(0);
+    await worker.process(fourth);
+    expect(await dispatcher.dispatchNext()).toBe(true);
+    expect(sent).toEqual(['agrupado']);
+    expect(await dispatcher.dispatchNext()).toBe(false);
+    const conversation = (await db.sql<{ id: string }[]>`select id from conversations where remote_jid='race@s.whatsapp.net'`)[0]!;
+    expect((await db.sql`select state from outbound_commands where source_message_id=${latest.messageId}`)[0]!.state).toBe('failed');
+    // Successful delivery is activity, but an already-open initial burst retains its deadline.
+    await db.sql`update conversations set reply_due_at=null where id=${conversation.id}`;
+    await accept('race-6', 'activo');
+    const active = (await db.sql`select reply_due_at,last_exchange_at from conversations where id=${conversation.id}`)[0]!;
+    expect(new Date(active.reply_due_at).getTime()-new Date(active.last_exchange_at).getTime()).toBe(90_000);
+
+    const published: object[] = [];
+    const restarted = new AiOutboxDispatcher(pools, { send: async (_name, data) => { published.push(data!); return 'test'; } });
+    await db.sql`update outbox_events set published_at=now() where published_at is null and stable_key<>'ai:race-6'`;
+    expect(await restarted.dispatchBatch()).toBe(0);
+    await makeEligible();
+    expect(await restarted.dispatchBatch()).toBe(1);
+    expect(published).toHaveLength(1);
   });
 });

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createServer as createNetServer } from "node:net";
 import { join } from "node:path";
 import { Algorithm, hash } from "@node-rs/argon2";
+import { expect } from "@playwright/test";
 import { startApi } from "../../../apps/api/src/index.ts";
 import { startMessageWorker } from "../../../apps/message-worker/src/index.ts";
 import {
@@ -86,6 +87,17 @@ export interface SystemHarness {
     providerMessageId: string;
     outcome: string;
   }>;
+  replyPacing(email: string, providerMessageId: string): Promise<{
+    dueAt: string;
+    outboxDueAt: string;
+    delayMs: number;
+  }>;
+  releaseReply(
+    email: string,
+    providerMessageId: string,
+    expectedDelaySeconds: 600 | 90,
+    expectedModelCalls: number,
+  ): Promise<void>;
   receiveGroup(email: string): Promise<string>;
   receive(
     email: string,
@@ -316,6 +328,33 @@ export async function startSystem(): Promise<SystemHarness> {
         outcome,
       };
     };
+    // Only inspect the latest pending input in this fixture's isolated database.
+    const pendingReply = async (email: string, providerMessageId: string) => {
+      const rows = await database.sql<{
+        conversation_id: string;
+        business_id: string;
+        outbox_id: string;
+        due_at: Date;
+        outbox_due_at: Date;
+        opened_at: Date;
+      }[]>`select c.id conversation_id,c.business_id,o.id outbox_id,
+        c.reply_due_at due_at,o.next_attempt_at outbox_due_at,
+        (select min(first.created_at) from outbox_events first
+          join messages opener on opener.id::text=first.payload->>'messageId'
+          where first.business_id=c.business_id and first.topic='ai.generate'
+            and opener.conversation_id=c.id
+            and first.next_attempt_at=c.reply_due_at) opened_at
+        from conversations c
+        join auth_identities i on i.business_id=c.business_id
+        join messages m on m.id=c.latest_inbound_id and m.business_id=c.business_id
+        join outbox_events o on o.business_id=c.business_id
+          and o.payload->>'messageId'=m.id::text and o.topic='ai.generate'
+        where i.normalized_email=${email} and m.provider_message_id=${providerMessageId}
+          and m.processing_state='pending' and o.published_at is null
+          and c.reply_due_at>now()`;
+      expect(rows).toHaveLength(1);
+      return rows[0]!;
+    };
     const evidence = async () => ({
       outbound: await database.sql<
         { email: string; state: string }[]
@@ -341,6 +380,41 @@ export async function startSystem(): Promise<SystemHarness> {
       receive: (email, overrides) => receive(email, overrides),
       receiveText: (email, chat, text) =>
         receive(email, { remoteJid: chat, text }),
+      replyPacing: async (email, providerMessageId) => {
+        const row = await pendingReply(email, providerMessageId);
+        return {
+          dueAt: row.due_at.toISOString(),
+          outboxDueAt: row.outbox_due_at.toISOString(),
+          delayMs: row.due_at.getTime() - row.opened_at.getTime(),
+        };
+      },
+      releaseReply: async (
+        email, providerMessageId, expectedDelaySeconds, expectedModelCalls,
+      ) => {
+        const row = await pendingReply(email, providerMessageId);
+        const delayMs = row.due_at.getTime() - row.opened_at.getTime();
+        expect(delayMs).toBeGreaterThanOrEqual(expectedDelaySeconds * 1_000);
+        expect(delayMs).toBeLessThan(expectedDelaySeconds * 1_000 + 1_000);
+        expect(row.outbox_due_at).toEqual(row.due_at);
+        expect(providers.deepSeek.calls).toHaveLength(expectedModelCalls);
+        // Advance eligibility, not activity/history or production delays. Both
+        // writes target only the selected tenant's latest pending burst.
+        await database.sql.begin(async (sql) => {
+          const changed = await sql`update conversations c
+            set reply_due_at=now()-interval '1 second'
+            where c.id=${row.conversation_id} and c.business_id=${row.business_id}
+              and c.reply_due_at=${row.due_at}
+              and exists(select 1 from messages m where m.id=c.latest_inbound_id
+                and m.business_id=c.business_id and m.provider_message_id=${providerMessageId}
+                and m.processing_state='pending') returning c.id`;
+          expect(changed).toHaveLength(1);
+          const released = await sql`update outbox_events
+            set next_attempt_at=now()-interval '1 second'
+            where id=${row.outbox_id} and business_id=${row.business_id}
+              and topic='ai.generate' and published_at is null returning id`;
+          expect(released).toHaveLength(1);
+        });
+      },
       receiveGroup: async (email) =>
         (
           await receive(email, {
