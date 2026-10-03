@@ -149,7 +149,6 @@ export async function runDeterministicV1Journey(): Promise<V1AcceptanceResult> {
       },
       context: {
         summary: "Sin turnos previos",
-        retrieved: [],
         recent: ["¿Tienen turnos?"],
       },
       message: "¿Tienen turnos?",
