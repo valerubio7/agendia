@@ -61,7 +61,6 @@ jobs:
           for manifest in "${manifests[@]}"; do
             jq -e --arg version "$version" '.version == $version' "$manifest"
           done
-          test -s "source/docs/releases/$tag.md"
           # Only a definitive 404 is absence; permissions/network/server errors stop publication.
           if gh api --include "repos/$REPOSITORY/releases/tags/$tag" > release-response; then
             echo 'Release already exists; refusing replacement' >&2; exit 1
@@ -109,4 +108,4 @@ jobs:
           done
           jq -e --arg sha "$RELEASE" '.type == "commit" and .sha == $sha' <<< "$object"
           gh release create "$tag" --repo "$REPOSITORY" --verify-tag --target "$RELEASE" \
-            --title "Agendia $tag" --notes-file "source/docs/releases/$tag.md" --generate-notes --draft=false --prerelease=false --latest=false
+            --title "Agendia $tag" --notes "Agendia $tag: versión estable de la instantánea completa validada de main. Esta publicación no anuncia un despliegue en producción." --generate-notes --draft=false --prerelease=false --latest=false
