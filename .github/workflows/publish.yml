@@ -1,33 +1,49 @@
 name: Publish release
-run-name: Publish ${{ github.event.workflow_run.head_sha }}
+run-name: Publish ${{ github.sha }}
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+  push:
+    tags: ['v*']
 permissions: {}
 concurrency:
-  group: publish-${{ github.event.workflow_run.head_sha }}
+  group: publish-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   publish:
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
+      actions: read
       packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      RELEASE: ${{ github.sha }}
+      REF: ${{ github.ref }}
+      EVENT: ${{ github.event_name }}
+      ACTOR: ${{ github.actor }}
     steps:
-      - name: Checkout exact validated source (no persisted credentials)
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          RELEASE: ${{ github.event.workflow_run.head_sha }}
+      - name: Verify tag, main ancestry and exact successful CI before downloading source
         run: |
           set -euo pipefail
+          [[ "$EVENT" == push && "$REF" =~ ^refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           [[ "$RELEASE" =~ ^[0-9a-f]{40}$ ]]
+          tag="${REF#refs/tags/}"
+          object=$(gh api "repos/$REPOSITORY/git/ref/tags/$tag" | jq -e '.object')
+          # Dereference annotated tags; never execute unchecked tag contents.
+          for attempt in {1..10}; do
+            [[ $(jq -r '.type' <<< "$object") == tag ]] || break
+            target=$(jq -er '.sha | select(test("^[0-9a-f]{40}$"))' <<< "$object")
+            object=$(gh api "repos/$REPOSITORY/git/tags/$target" | jq -e '.object')
+          done
+          jq -e --arg sha "$RELEASE" '.type == "commit" and .sha == $sha' <<< "$object"
+          gh api "repos/$REPOSITORY/compare/$RELEASE...main" | jq -e '.status == "identical" or .status == "ahead"'
+          # Inspect the newest exact-main run: an older success cannot mask a pending/failed rerun.
+          gh api "repos/$REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$RELEASE&branch=main&event=push&per_page=100" | \
+            jq -e --arg sha "$RELEASE" --arg repo "$REPOSITORY" '
+              [.workflow_runs[] | select(.head_sha == $sha and .head_branch == "main" and .event == "push")][0] |
+              .name == "CI" and .path == ".github/workflows/ci.yml" and .head_repository.full_name == $repo and
+              .status == "completed" and .conclusion == "success"'
           gh api "repos/$REPOSITORY/tarball/$RELEASE" > source.tar.gz
           mkdir source
           tar -xzf source.tar.gz -C source --strip-components=1
@@ -35,20 +51,62 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.0
+      - name: Verify matching metadata and absence of published versions
+        run: |
+          set -euo pipefail
+          tag="${REF#refs/tags/}"
+          version="${tag#v}"
+          manifests=(source/package.json source/apps/*/package.json source/packages/*/package.json)
+          [[ ${#manifests[@]} == 11 ]]
+          for manifest in "${manifests[@]}"; do
+            jq -e --arg version "$version" '.version == $version' "$manifest"
+          done
+          test -s "source/docs/releases/$tag.md"
+          # Only a definitive 404 is absence; permissions/network/server errors stop publication.
+          if gh api --include "repos/$REPOSITORY/releases/tags/$tag" > release-response; then
+            echo 'Release already exists; refusing replacement' >&2; exit 1
+          fi
+          grep -Eq '^HTTP/[0-9.]+ 404([[:space:]]|$)' release-response
+          awk '/^\r?$/ {body=1; next} body {print}' release-response | jq -e '.message == "Not Found"'
+          namespace="${REPOSITORY,,}"
+          token=$(curl --fail --silent --show-error --user "$ACTOR:$GH_TOKEN" "https://ghcr.io/token?service=ghcr.io&scope=repository:$namespace:pull" | jq -er '.token | select(type == "string" and length > 0)')
+          for reference in "$RELEASE" "$tag"; do
+            status=$(curl --silent --show-error -o manifest-response -w '%{http_code}' \
+              -H "Authorization: Bearer $token" -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+              "https://ghcr.io/v2/$namespace/manifests/$reference")
+            [[ "$status" == 404 ]]
+            jq -e '.errors | length > 0 and all(.[]; .code == "MANIFEST_UNKNOWN")' manifest-response
+          done
       - name: Deployment regressions on validated source
         working-directory: source
         run: bun test tests/deployment.test.ts
-      - name: Publish full SHA application image
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          RELEASE: ${{ github.event.workflow_run.head_sha }}
-          ACTOR: ${{ github.actor }}
+      - name: Publish SHA and version images, then definitive Release
         run: |
           set -euo pipefail
           namespace="${REPOSITORY,,}"
+          tag="${REF#refs/tags/}"
+          image="ghcr.io/$namespace:$RELEASE"
+          alias="ghcr.io/$namespace:$tag"
           printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
           trap 'docker logout ghcr.io' EXIT
-          image="ghcr.io/$namespace:$RELEASE"
-          docker build --target application --label "org.opencontainers.image.revision=$RELEASE" --label "org.opencontainers.image.source=https://github.com/$REPOSITORY" -t "$image" source
+          docker build --target application --label "org.opencontainers.image.revision=$RELEASE" --label "org.opencontainers.image.source=https://github.com/$REPOSITORY" --label "org.opencontainers.image.version=${tag#v}" -t "$image" source
           docker push "$image"
+          docker tag "$image" "$alias"
+          docker push "$alias"
+          digest=$(docker buildx imagetools inspect "$image" --format '{{.Manifest.Digest}}')
+          alias_digest=$(docker buildx imagetools inspect "$alias" --format '{{.Manifest.Digest}}')
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ && "$digest" == "$alias_digest" ]]
+          docker pull "ghcr.io/$namespace@$digest"
+          revision=$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "ghcr.io/$namespace@$digest")
+          [[ "$revision" == "$RELEASE" ]]
+          # Recheck after the build: --verify-tag only checks existence, not its SHA.
+          # This is not atomic; immutable-tag platform protection is still required.
+          object=$(gh api "repos/$REPOSITORY/git/ref/tags/$tag" | jq -e '.object')
+          for attempt in {1..10}; do
+            [[ $(jq -r '.type' <<< "$object") == tag ]] || break
+            target=$(jq -er '.sha | select(test("^[0-9a-f]{40}$"))' <<< "$object")
+            object=$(gh api "repos/$REPOSITORY/git/tags/$target" | jq -e '.object')
+          done
+          jq -e --arg sha "$RELEASE" '.type == "commit" and .sha == $sha' <<< "$object"
+          gh release create "$tag" --repo "$REPOSITORY" --verify-tag --target "$RELEASE" \
+            --title "Agendia $tag" --notes-file "source/docs/releases/$tag.md" --generate-notes --draft=false --prerelease=false --latest=false

@@ -1,5 +1,13 @@
 name: Deploy production
 on:
+  workflow_call:
+    inputs:
+      release:
+        required: true
+        type: string
+      publisher_run:
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       release:
@@ -9,36 +17,82 @@ on:
 permissions:
   contents: read
   actions: read
+  packages: read
 concurrency:
   group: production-deploy
   cancel-in-progress: false
 jobs:
-  deploy:
+  preflight:
     if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify human protection and release provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RELEASE: ${{ inputs.release }}
+          PUBLISHER_RUN: ${{ inputs.publisher_run }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE" =~ ^[0-9a-f]{40}$ ]]
+          # No environment or SSH secrets: missing/unreadable protection fails closed.
+          gh api "repos/$REPOSITORY/environments/production" | jq -e '
+            .protection_rules | any(.type == "required_reviewers" and
+              (.reviewers | any(.type == "User" and .reviewer.type == "User" and
+                (.reviewer.id | type == "number" and . > 0) and
+                (.reviewer.login | type == "string" and length > 0 and (endswith("[bot]") | not)))))'
+          relation=$(gh api "repos/$REPOSITORY/compare/$RELEASE...main" --jq .status)
+          [[ "$relation" == identical || "$relation" == ahead ]]
+          gh api "repos/$REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$RELEASE&per_page=100" | jq -e --arg repo "$REPOSITORY" --arg sha "$RELEASE" '
+            .workflow_runs | map(select(.name == "CI" and .path == ".github/workflows/ci.yml" and
+              .head_sha == $sha and .head_branch == "main" and .event == "push" and .head_repository.full_name == $repo)) |
+            first | .status == "completed" and .conclusion == "success"'
+          if [[ -n "$PUBLISHER_RUN" ]]; then
+            [[ "$PUBLISHER_RUN" =~ ^[0-9]+$ ]]
+            gh api "repos/$REPOSITORY/actions/runs/$PUBLISHER_RUN" > publisher.json
+          else
+            gh api "repos/$REPOSITORY/actions/workflows/publish.yml/runs?per_page=100" | jq --arg sha "$RELEASE" \
+              '.workflow_runs | map(select(.display_title == ("Publish " + $sha))) | first' > publisher.json
+          fi
+          jq -e --arg repo "$REPOSITORY" --arg sha "$RELEASE" --arg run "$PUBLISHER_RUN" '
+            .name == "Publish release" and .path == ".github/workflows/publish.yml" and
+            .status == "completed" and .conclusion == "success" and .head_repository.full_name == $repo and
+            .display_title == ("Publish " + $sha) and
+            (if $run != "" then (.id | tostring) == $run and .event == "push" and .head_sha == $sha
+             else (.event == "push" and .head_sha == $sha) or (.event == "workflow_run" and .head_branch == "main") end)' publisher.json
+          # Legacy manual proof does not qualify for unattended automatic deployment.
+          if [[ $(jq -r .event publisher.json) == push ]]; then
+            version=$(gh api -H 'Accept: application/vnd.github.raw+json' "repos/$REPOSITORY/contents/package.json?ref=$RELEASE" | jq -er .version)
+            [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+            tag="v$version"
+            gh api "repos/$REPOSITORY/releases/tags/$tag" | jq -e --arg tag "$tag" --arg sha "$RELEASE" '
+              .tag_name == $tag and .target_commitish == $sha and .draft == false and .prerelease == false and
+              (.published_at | type == "string" and length > 0)'
+            gh api "repos/$REPOSITORY/git/ref/tags/$tag" > tag.json
+            if [[ $(jq -r .object.type tag.json) == tag ]]; then
+              object=$(jq -er .object.sha tag.json); [[ "$object" =~ ^[0-9a-f]{40}$ ]]
+              gh api "repos/$REPOSITORY/git/tags/$object" > tag.json
+            fi
+            jq -e --arg sha "$RELEASE" '.object.type == "commit" and .object.sha == $sha' tag.json
+            image="ghcr.io/${REPOSITORY,,}"
+            digest=$(docker buildx imagetools inspect "$image:$RELEASE" --format '{{.Manifest.Digest}}')
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            [[ $(docker buildx imagetools inspect "$image:$tag" --format '{{.Manifest.Digest}}') == "$digest" ]]
+            docker pull "$image@$digest"
+            [[ $(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image@$digest") == "$RELEASE" ]]
+          fi
+  deploy:
+    needs: preflight
     environment: production
     runs-on: ubuntu-latest
     steps:
-      - name: Verify release and download version-matched deployment files
+      - name: Download version-matched deployment files after approval
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           RELEASE: ${{ inputs.release }}
         run: |
           set -euo pipefail
-          [[ "$RELEASE" =~ ^[0-9a-f]{40}$ ]]
-          relation=$(gh api "repos/$REPOSITORY/compare/$RELEASE...main" --jq .status)
-          [[ "$relation" == identical || "$relation" == ahead ]]
-          for workflow in ci.yml publish.yml; do
-            if [[ "$workflow" == ci.yml ]]; then
-              query="head_sha=$RELEASE&per_page=100"; event=push
-            else
-              # workflow_run's own head_sha is the default branch tip, not the release.
-              query='per_page=100'; event=workflow_run
-            fi
-            gh api "repos/$REPOSITORY/actions/workflows/$workflow/runs?$query" > runs.json
-            jq -e --arg event "$event" --arg repo "$REPOSITORY" --arg sha "$RELEASE" \
-              '.workflow_runs | any(.head_branch == "main" and .event == $event and .conclusion == "success" and .head_repository.full_name == $repo and (if $event == "push" then .head_sha == $sha else .display_title == ("Publish " + $sha) end))' runs.json
-          done
           for file in deploy/deploy-release.sh compose.production.yml; do
             gh api -H 'Accept: application/vnd.github.raw+json' "repos/$REPOSITORY/contents/$file?ref=$RELEASE" > "${file##*/}"
           done

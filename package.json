@@ -1,6 +1,6 @@
 {
   "name": "agendia",
-  "version": "0.1.0",
+  "version": "0.7.0",
   "private": true,
   "packageManager": "bun@1.4.0",
   "workspaces": [
@@ -11,7 +11,7 @@
     "dev": "bun --env-file=\"$HOME/.config/agendia/dev.env\" run scripts/dev-stack.ts",
     "bootstrap:admin": "bun --env-file=\"$HOME/.config/agendia/dev.env\" run scripts/bootstrap-admin.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:scaffolding": "bun test tests/scaffolding.test.ts",
+    "test:scaffolding": "bun test tests/scaffolding.test.ts tests/release.test.ts",
     "test:unit": "bun test tests/unit packages apps scripts",
     "test:integration": "bun test tests/integration",
     "test:contracts": "bun test tests/contracts",
