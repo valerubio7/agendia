@@ -154,6 +154,53 @@ describe("release deployment boundaries", () => {
   });
 });
 
+// Execute workflow preflight without ever resolving production secrets or running SSH.
+function preflight(mode: string) {
+  const dir = mkdtempSync(join(tmpdir(), "agendia-preflight-"));
+  const bin = join(dir, "bin"); mkdirSync(bin);
+  const workflow = read(".github/workflows/deploy.yml");
+  const script = workflow.match(/        run: \|\n((?:          .*\n|\n)+)/)![1]!.replace(/^          /gm, "");
+  writeFileSync(join(bin, "gh"), `#!/usr/bin/env bash
+set -eu
+printf '%s\\n' "$*" >> "$LOG"
+if [[ "$*" == *environments/production* ]]; then
+  case "$MODE" in
+    forbidden|missing) echo "HTTP $MODE" >&2; exit 1 ;;
+    unknown) echo 'null' ;;
+    nohuman) echo '{"protection_rules":[{"type":"required_reviewers","reviewers":[]}]}' ;;
+    malformed) echo '{}' ;;
+    bot) echo '{"protection_rules":[{"type":"required_reviewers","reviewers":[{"type":"User","reviewer":{"id":1,"type":"Bot","login":"robot[bot]"}}]}]}' ;;
+    none) echo '{"protection_rules":[]}' ;;
+    *) echo '{"protection_rules":[{"type":"required_reviewers","reviewers":[{"type":"User","reviewer":{"id":1,"type":"User","login":"human"}}]}]}' ;;
+  esac
+elif [[ "$*" == *compare/* ]]; then echo ahead
+elif [[ "$*" == *publish.yml* ]]; then
+  echo '{"workflow_runs":[{"name":"Publish release","path":".github/workflows/publish.yml","display_title":"Publish ${sha}","event":"workflow_run","head_branch":"main","head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","status":"completed","conclusion":"success","head_repository":{"full_name":"owner/repo"}}]}'
+elif [[ "$*" == *actions/workflows/* ]]; then
+  echo '{"workflow_runs":[{"name":"CI","path":".github/workflows/ci.yml","event":"push","head_branch":"main","head_sha":"${sha}","status":"completed","conclusion":"success","head_repository":{"full_name":"owner/repo"}}]}'
+else exit 9
+fi
+`);
+  chmodSync(join(bin, "gh"), 0o700);
+  const log = join(dir, "calls"); writeFileSync(log, "");
+  const result = Bun.spawnSync(["bash", "-c", script], { cwd: dir,
+    env: { PATH: `${bin}:${process.env.PATH}`, LOG: log, MODE: mode, RELEASE: sha, REPOSITORY: "owner/repo", PUBLISHER_RUN: "" } });
+  return { result, log: readFileSync(log, "utf8") };
+}
+for (const mode of ["missing", "forbidden", "unknown", "malformed", "none", "nohuman", "bot"]) {
+  test(`production preflight rejects ${mode} before source or credential access`, () => {
+    const result = preflight(mode);
+    expect(result.result.exitCode).not.toBe(0);
+    expect(result.log).toContain("environments/production");
+    expect(result.log).not.toContain("compare/");
+    expect(result.log).not.toContain("contents/");
+  });
+}
+
+test("legacy manual source proof remains eligible only after human protection", () => {
+  expect(preflight("success").result.exitCode).toBe(0);
+});
+
 test("application packaging shares one image with explicit web startup and separate PostgreSQL", () => {
   const dockerfile = read("Dockerfile");
   expect(dockerfile).toContain("ENV AGENDIA_API_ORIGIN=http://api:3001\nRUN bun run --cwd apps/web build");
@@ -170,7 +217,7 @@ test("application packaging shares one image with explicit web startup and separ
   const publish = read(".github/workflows/publish.yml");
   expect(publish).toContain('image="ghcr.io/$namespace:$RELEASE"');
   expect(publish.match(/docker build /g)).toHaveLength(1);
-  expect(publish.match(/docker push /g)).toHaveLength(1);
+  expect(publish.match(/docker push /g)).toHaveLength(2);
   expect(publish).toContain('docker build --target application --label "org.opencontainers.image.revision=$RELEASE"');
   expect(publish).not.toContain("for target");
 });
@@ -190,9 +237,10 @@ test("publishing gates Docker operations on CD tests from the downloaded release
 
 test("workflow trust, source matching and SSH policies remain explicit", () => {
   const publish = read(".github/workflows/publish.yml");
-  for (const guard of ["workflows: [CI]", "run-name: Publish ${{ github.event.workflow_run.head_sha }}", "types: [completed]", "conclusion == 'success'", "event == 'push'", "head_branch == 'main'", "head_repository.full_name == github.repository", "packages: write", "tarball/$RELEASE"]) expect(publish).toContain(guard);
+  for (const guard of ["tags: ['v*']", "run-name: Publish ${{ github.sha }}", "github.event_name == 'push'", '.conclusion == "success"', '.event == "push"', '.head_branch == "main"', '.head_repository.full_name == $repo', "actions: read", "packages: write", "tarball/$RELEASE"]) expect(publish).toContain(guard);
+  expect(publish).not.toContain("workflow_run:");
   const deploy = read(".github/workflows/deploy.yml");
-  for (const guard of ["workflow_dispatch:", "github.ref == 'refs/heads/main'", "environment: production", "cancel-in-progress: false", "compare/$RELEASE...main", "ci.yml publish.yml", ".display_title == (\"Publish \" + $sha)", "?ref=$RELEASE", "StrictHostKeyChecking=yes", "BatchMode=yes"]) expect(deploy).toContain(guard);
+  for (const guard of ["workflow_dispatch:", "github.ref == 'refs/heads/main'", "environment: production", "cancel-in-progress: false", "compare/$RELEASE...main", "actions/workflows/ci.yml", ".display_title == (\"Publish \" + $sha)", "?ref=$RELEASE", "StrictHostKeyChecking=yes", "BatchMode=yes"]) expect(deploy).toContain(guard);
   expect(deploy).not.toContain("pull_request:");
   expect(deploy).not.toContain("uses:");
   expect(publish.match(/uses: .+/g)).toEqual(["uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2"]);

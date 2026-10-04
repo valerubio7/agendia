@@ -1,6 +1,6 @@
 {
   "name": "@agendia/whatsapp-manager",
-  "version": "0.1.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "scripts": { "start": "AGENDIA_RUN_WHATSAPP_MANAGER=1 node --import tsx src/index.ts" },
