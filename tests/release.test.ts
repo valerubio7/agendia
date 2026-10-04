@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -75,7 +75,10 @@ if (tool === "gh" && process.env.PREFLIGHT) {
       process.exit(1);
     }
   } else if (command.includes("tarball/")) console.log("mock archive");
-  else if (command.startsWith("release create")) process.exit(0);
+  else if (command.startsWith("release create")) {
+    writeFileSync("release-args", JSON.stringify(args));
+    process.exit(0);
+  }
   else throw new Error("Unexpected gh: " + command);
 } else if (tool === "curl") {
   if (mode === "network") process.exit(7);
@@ -91,8 +94,10 @@ if (tool === "gh" && process.env.PREFLIGHT) {
     const conflict = (mode === "version" && path === "apps/api") || (mode === "root-version" && path === "");
     writeFileSync("source/" + path + "/package.json", JSON.stringify({ version: conflict ? "0.1.0" : "0.7.0" }));
   }
-  mkdirSync("source/docs/releases", { recursive: true });
-  writeFileSync("source/docs/releases/v0.7.0.md", mode === "notes-missing" ? "" : "Notas pendientes de publicación.");
+  if (mode !== "notes-missing") {
+    mkdirSync("source/docs/releases", { recursive: true });
+    writeFileSync("source/docs/releases/v0.7.0.md", "Notas pendientes de publicación.");
+  }
 } else if (tool === "docker") {
   if (args[0] === "build") writeFileSync("build-complete", "built validated SHA");
   if (mode === "image-failure" && args[0] === "push") process.exit(1);
@@ -115,7 +120,10 @@ function run(mode = "", event = "push", ref = "refs/tags/v0.7.0", preflight = fa
     env: { PATH: `${bin}:${process.env.PATH}`, HOME: cwd, MODE: mode, RELEASE: sha,
       REPOSITORY: "valerubio7/agendia", PREFLIGHT: preflight ? "1" : "", PUBLISHER_RUN: publisherRun, ACTOR: "fake", GH_TOKEN: "fake", EVENT: event, REF: ref },
   });
-  return { code: result.exitCode, log: readFileSync(join(cwd, "operations"), "utf8"), error: result.stderr.toString() };
+  return { code: result.exitCode, log: readFileSync(join(cwd, "operations"), "utf8"), error: result.stderr.toString(),
+    notesExist: existsSync(join(cwd, "source/docs/releases/v0.7.0.md")),
+    releaseArgs: existsSync(join(cwd, "release-args")) ? JSON.parse(readFileSync(join(cwd, "release-args"), "utf8")) as string[] : [],
+  };
 }
 
 test("publisher accepts lightweight and annotated stable tags after exact main CI", () => {
@@ -151,6 +159,23 @@ test("publisher accepts lightweight and annotated stable tags after exact main C
   }
 });
 
+test("publisher creates stable Release without archived notes", () => {
+  const result = run("notes-missing");
+  expect(result.code).toBe(0);
+  expect(result.notesExist).toBe(false);
+  expect(result.releaseArgs[result.releaseArgs.indexOf("--notes") + 1]).toBe(
+    "Agendia v0.7.0: versión estable de la instantánea completa validada de main. Esta publicación no anuncia un despliegue en producción.",
+  );
+  expect(result.releaseArgs).toContain("--notes");
+  expect(result.releaseArgs).toContain("--generate-notes");
+  expect(result.releaseArgs).not.toContain("--notes-file");
+  const imageVerified = result.log.indexOf("docker inspect");
+  const finalTagRead = result.log.lastIndexOf("gh api repos/valerubio7/agendia/git/ref/tags/");
+  expect(imageVerified).toBeGreaterThan(-1);
+  expect(finalTagRead).toBeGreaterThan(imageVerified);
+  expect(result.log.indexOf("gh release create")).toBeGreaterThan(finalTagRead);
+});
+
 for (const [event, ref] of [["push", "refs/heads/main"], ["pull_request", "refs/tags/v0.7.0"], ["push", "refs/tags/v0.7.0-beta"], ["push", "refs/tags/v00.7.0"]]) {
   test(`non-release event rejected: ${event} ${ref}`, () => {
     const result = run("", event, ref);
@@ -159,7 +184,7 @@ for (const [event, ref] of [["push", "refs/heads/main"], ["pull_request", "refs/
   });
 }
 
-const rejections = ["tag-missing", "tag-mismatch", "annotated-mismatch", "ancestry", "ci-sha", "ci-pr", "ci-fork", "ci-pending", "ci-failure", "ci-unknown", "ci-empty", "ci-rerun", "release-exists", "draft", "prerelease", "api-403", "api-500", "api-network", "api-unknown", "network", "image-exists", "alias-exists", "registry-403", "registry-500", "registry-unknown", "version", "root-version", "notes-missing", "image-failure", "digest", "revision"];
+const rejections = ["tag-missing", "tag-mismatch", "annotated-mismatch", "ancestry", "ci-sha", "ci-pr", "ci-fork", "ci-pending", "ci-failure", "ci-unknown", "ci-empty", "ci-rerun", "release-exists", "draft", "prerelease", "api-403", "api-500", "api-network", "api-unknown", "network", "image-exists", "alias-exists", "registry-403", "registry-500", "registry-unknown", "version", "root-version", "image-failure", "digest", "revision"];
 for (const mode of rejections) {
   test(`publisher fails closed: ${mode}`, () => {
     const result = run(mode);
