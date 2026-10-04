@@ -9,8 +9,9 @@ import {
   sessionCookie,
   validateMutationRequest,
 } from "@agendia/auth";
-import { makeSafeError } from "@agendia/contracts";
+import { makeSafeError, PlatformAiInstructionsInputSchema } from "@agendia/contracts";
 import {
+  AI_SYSTEM_INSTRUCTIONS,
   AssistantConfigInputSchema,
   BusinessProfileSchema,
 } from "@agendia/domain";
@@ -301,6 +302,24 @@ export function buildApi(input: AuthService | ApiOptions) {
     }
     return auth;
   };
+  app.get("/admin/ai-instructions", async (request, reply) => {
+    if (!(await requireAdmin(request, reply))) return;
+    return {
+      baseInstructions: AI_SYSTEM_INSTRUCTIONS,
+      ...await pools.admin.run(undefined, (repo) => repo.platformAiInstructions()),
+    };
+  });
+  app.put("/admin/ai-instructions", async (request, reply) => {
+    if (!(await requireAdmin(request, reply, true))) return;
+    const body = PlatformAiInstructionsInputSchema.safeParse(request.body);
+    if (!body.success)
+      return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid instructions");
+    return {
+      baseInstructions: AI_SYSTEM_INSTRUCTIONS,
+      ...await pools.admin.run(undefined, (repo) =>
+        repo.updatePlatformAiInstructions(body.data.additionalInstructions)),
+    };
+  });
   app.get("/admin/businesses", async (request, reply) =>
     (await requireAdmin(request, reply))
       ? pools.admin.run(undefined, (repo) => repo.listBusinesses())

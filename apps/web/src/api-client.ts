@@ -1,3 +1,6 @@
+import type { PlatformAiInstructions } from "@agendia/contracts";
+export type { PlatformAiInstructions } from "@agendia/contracts";
+
 export type Session = {
   role: "platform_admin" | "business_user";
   businessId: string | null;
@@ -225,6 +228,9 @@ export class ApiClient {
     await this.call("/auth/logout", "POST");
     this.setCsrf("");
   }
+  platformAiInstructions = () => this.call<PlatformAiInstructions>("/admin/ai-instructions");
+  savePlatformAiInstructions = (additionalInstructions: string) =>
+    this.call<PlatformAiInstructions>("/admin/ai-instructions", "PUT", { additionalInstructions });
   businesses = () => this.call<Business[]>("/admin/businesses");
   createBusiness = (body: {
     name: string;

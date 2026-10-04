@@ -5,6 +5,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 
 const tenantA = "11111111-1111-4111-8111-111111111111";
 const tenantB = "22222222-2222-4222-8222-222222222222";
+const additionalInstructions = " \n\tAtención 😀 — conservar espacios  \n";
 
 export interface RestoreDrillReport {
   tenantMessageCounts: Record<string, number>;
@@ -13,6 +14,8 @@ export interface RestoreDrillReport {
   pendingJobs: number;
   restoredAuthRecords: number;
   authCiphertextsMatchBackup: boolean;
+  nonemptyInstructionsMatchBackup: boolean;
+  operationalMetadataMatchesBackup: boolean;
   historicalKekVersions: string[];
   plaintextCredentialFound: boolean;
 }
@@ -29,6 +32,7 @@ async function seed(sql: Sql): Promise<void> {
   const connectionB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
   const conversationA = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
   const conversationB = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  await sql`update operational_controls set additional_instructions=${additionalInstructions} where singleton`;
   await sql`insert into businesses (id, name) values (${tenantA}, 'A'), (${tenantB}, 'B')`;
   await sql`insert into tenant_records (business_id, value) values (${tenantA}, 'tenant-a-record'), (${tenantB}, 'tenant-b-record')`;
   await sql`insert into whatsapp_connections (id, business_id, state, wrapped_dek, wrapped_dek_nonce, wrapped_dek_tag, kek_version) values
@@ -101,6 +105,11 @@ export async function runRestoreDrill(): Promise<RestoreDrillReport> {
     await migrate(sourceSql);
     await seed(sourceSql);
     const sourceAuth = await encryptedAuthSnapshot(sourceSql);
+    const sourceControls = await sourceSql`select singleton,automation_disabled,incident_reference,updated_at from operational_controls`;
+    const sourceInstructions = await sourceSql`select additional_instructions from operational_controls where singleton`;
+    if (sourceInstructions.length !== 1 || sourceInstructions[0]?.additional_instructions !== additionalInstructions) {
+      throw new Error("Nonempty instruction backup fixture did not persist exactly");
+    }
     const dump = await dumpData(source);
 
     target = await new PostgreSqlContainer("postgres:16-alpine").start();
@@ -117,6 +126,8 @@ export async function runRestoreDrill(): Promise<RestoreDrillReport> {
     const pendingJobs = await targetSql<{ count: string }[]>`select count(*)::text from outbox_events where topic = 'ai.generate' and published_at is null`;
     const kekVersions = await targetSql<{ kek_version: string }[]>`select distinct kek_version from whatsapp_connections where kek_version is not null order by kek_version`;
     const targetAuth = await encryptedAuthSnapshot(targetSql);
+    const targetControls = await targetSql`select singleton,automation_disabled,incident_reference,updated_at from operational_controls`;
+    const targetInstructions = await targetSql`select additional_instructions from operational_controls where singleton`;
 
     return {
       tenantMessageCounts: Object.fromEntries(counts.map((row) => [row.business_id, Number(row.count)])),
@@ -125,6 +136,9 @@ export async function runRestoreDrill(): Promise<RestoreDrillReport> {
       pendingJobs: Number(pendingJobs[0]?.count ?? 0),
       restoredAuthRecords: targetAuth.length,
       authCiphertextsMatchBackup: JSON.stringify(targetAuth) === JSON.stringify(sourceAuth),
+      nonemptyInstructionsMatchBackup: targetInstructions.length === 1 &&
+        targetInstructions[0]?.additional_instructions === sourceInstructions[0]?.additional_instructions,
+      operationalMetadataMatchesBackup: JSON.stringify(targetControls) === JSON.stringify(sourceControls),
       historicalKekVersions: kekVersions.map((row) => row.kek_version),
       plaintextCredentialFound: dump.includes("plain-baileys-secret"),
     };

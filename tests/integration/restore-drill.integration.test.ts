@@ -12,6 +12,8 @@ test("restores an isolated PostgreSQL backup with tenant counts, RLS, jobs and e
   expect(report.pendingJobs).toBe(1);
   expect(report.restoredAuthRecords).toBe(2);
   expect(report.authCiphertextsMatchBackup).toBe(true);
+  expect(report.nonemptyInstructionsMatchBackup).toBe(true);
+  expect(report.operationalMetadataMatchesBackup).toBe(true);
   expect(report.historicalKekVersions).toEqual(["kek-v1", "kek-v2"]);
   expect(report.plaintextCredentialFound).toBe(false);
 }, 120_000);
