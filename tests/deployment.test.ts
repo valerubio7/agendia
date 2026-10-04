@@ -170,7 +170,7 @@ test("application packaging shares one image with explicit web startup and separ
   const publish = read(".github/workflows/publish.yml");
   expect(publish).toContain('image="ghcr.io/$namespace:$RELEASE"');
   expect(publish.match(/docker build /g)).toHaveLength(1);
-  expect(publish.match(/docker push /g)).toHaveLength(1);
+  expect(publish.match(/docker push /g)).toHaveLength(2);
   expect(publish).toContain('docker build --target application --label "org.opencontainers.image.revision=$RELEASE"');
   expect(publish).not.toContain("for target");
 });
@@ -190,7 +190,8 @@ test("publishing gates Docker operations on CD tests from the downloaded release
 
 test("workflow trust, source matching and SSH policies remain explicit", () => {
   const publish = read(".github/workflows/publish.yml");
-  for (const guard of ["workflows: [CI]", "run-name: Publish ${{ github.event.workflow_run.head_sha }}", "types: [completed]", "conclusion == 'success'", "event == 'push'", "head_branch == 'main'", "head_repository.full_name == github.repository", "packages: write", "tarball/$RELEASE"]) expect(publish).toContain(guard);
+  for (const guard of ["tags: ['v*']", "run-name: Publish ${{ github.sha }}", "github.event_name == 'push'", '.conclusion == "success"', '.event == "push"', '.head_branch == "main"', '.head_repository.full_name == $repo', "actions: read", "packages: write", "tarball/$RELEASE"]) expect(publish).toContain(guard);
+  expect(publish).not.toContain("workflow_run:");
   const deploy = read(".github/workflows/deploy.yml");
   for (const guard of ["workflow_dispatch:", "github.ref == 'refs/heads/main'", "environment: production", "cancel-in-progress: false", "compare/$RELEASE...main", "ci.yml publish.yml", ".display_title == (\"Publish \" + $sha)", "?ref=$RELEASE", "StrictHostKeyChecking=yes", "BatchMode=yes"]) expect(deploy).toContain(guard);
   expect(deploy).not.toContain("pull_request:");
