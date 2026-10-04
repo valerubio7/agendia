@@ -197,7 +197,7 @@ export function LivePanel({ mode }: { mode: Mode }) {
     try {
       loaded =
         mode === "admin"
-          ? await api.businesses()
+          ? { businesses: await api.businesses(), instructions: await api.platformAiInstructions() }
           : mode === "profile"
             ? await api.profile()
             : mode === "assistant"
@@ -329,14 +329,14 @@ export function LivePanel({ mode }: { mode: Mode }) {
   };
   const runAdminMutation = async (
     work: () => Promise<unknown>,
-    success: "Negocio creado" | "Negocio actualizado",
+    success: "Negocio creado" | "Negocio actualizado" | "Instrucciones guardadas",
   ) => {
     setError("");
     setNotice("");
     try {
       await work();
       const businesses = await api.businesses();
-      setData(businesses);
+      setData({ businesses, instructions: await api.platformAiInstructions() });
       setNotice(success);
       return true;
     } catch (cause) {
@@ -529,7 +529,10 @@ export function LivePanel({ mode }: { mode: Mode }) {
     );
 
   if (mode === "admin") {
-    const businesses = data as Business[];
+    const { businesses, instructions } = data as {
+      businesses: Business[];
+      instructions: Awaited<ReturnType<typeof api.platformAiInstructions>>;
+    };
     return (
       <AuthenticatedShell
         variant="admin"
@@ -539,6 +542,10 @@ export function LivePanel({ mode }: { mode: Mode }) {
       >
         <AdminBusinessesScreen
           businesses={businesses}
+          instructions={instructions}
+          saveInstructionsAction={(text) => runAdminMutation(
+            () => api.savePlatformAiInstructions(text), "Instrucciones guardadas",
+          )}
           notice={notice}
           error={error}
           createAction={(input) =>

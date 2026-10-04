@@ -125,7 +125,11 @@ export class PostgresAiJobProcessor {
         );
         return;
       }
+      const { additionalInstructions } = await this.pools.worker.run(
+        undefined, (r) => r.platformAiInstructions(),
+      );
       const result = await this.provider.generate({
+        additionalInstructions,
         business: data.profile,
         assistant: data.assistant,
         context: {

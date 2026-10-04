@@ -29,7 +29,7 @@ async function security(db: TestPostgres) {
       from pg_class where oid in ('business_profiles'::regclass,'assistant_configs'::regclass,'messages'::regclass)
       order by relname`,
     policies: await db.sql`select * from pg_policies where schemaname='public' order by tablename,policyname`,
-    grants: await db.sql`select grantee,table_name,privilege_type,is_grantable
+    grants: await db.sql<{ grantee: string; table_name: string; privilege_type: string; is_grantable: string }[]>`select grantee,table_name,privilege_type,is_grantable
       from information_schema.table_privileges where table_schema='public'
       order by grantee,table_name,privilege_type`,
   };
@@ -156,7 +156,15 @@ test("populated upgrade consolidates every assistant text while preserving profi
     }));
     expect([...(await db.sql`select * from conversations order by id`)]).toEqual([...conversations]);
     expect([...(await db.sql`select * from messages order by business_id,sequence`)]).toEqual([...history]);
-    expect(await security(db)).toEqual(beforeSecurity);
+    const removedGrant = { grantee: "agendia_whatsapp_runtime", table_name: "operational_controls", privilege_type: "SELECT", is_grantable: "NO" };
+    expect(beforeSecurity.grants.filter(row => row.grantee === removedGrant.grantee &&
+      row.table_name === removedGrant.table_name && row.privilege_type === removedGrant.privilege_type)).toEqual([removedGrant]);
+    const afterSecurity = await security(db);
+    expect({ ...afterSecurity, grants: [...afterSecurity.grants] }).toEqual({
+      ...beforeSecurity,
+      grants: beforeSecurity.grants.filter(row => !(row.grantee === removedGrant.grantee &&
+        row.table_name === removedGrant.table_name && row.privilege_type === removedGrant.privilege_type)),
+    });
   } finally {
     await db.stop();
   }

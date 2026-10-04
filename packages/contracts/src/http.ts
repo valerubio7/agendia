@@ -5,6 +5,7 @@ export const PRODUCT_HTTP_ROUTES = Object.freeze([
   "/auth/logout",
   "/auth/session",
   "/admin/businesses",
+  "/admin/ai-instructions",
   "/admin/businesses/:id/user",
   "/admin/businesses/:id/status",
   "/me/business-profile",
@@ -13,6 +14,14 @@ export const PRODUCT_HTTP_ROUTES = Object.freeze([
   "/me/whatsapp/link",
   "/me/whatsapp/status",
 ] as const);
+
+export const PlatformAiInstructionsInputSchema = z.object({
+  additionalInstructions: z.string(),
+}).strict();
+export type PlatformAiInstructions = {
+  baseInstructions: string;
+  additionalInstructions: string;
+};
 
 export const ErrorCodeSchema = z.enum([
   "VALIDATION_FAILED",

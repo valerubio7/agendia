@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { PgBoss } from "pg-boss";
 import { createRuntimePools, tenantContext, PostgresRepositories } from "@agendia/db";
 import { DeepSeekAdapter } from "@agendia/ai-deepseek";
+import { AI_SYSTEM_INSTRUCTIONS } from "@agendia/domain";
 import {
   BaileysAuthStateAdapter,
   BaileysAuthStore,
@@ -703,6 +704,8 @@ describe("PostgreSQL messaging workers", () => {
     const row = (await db.sql`select id,conversation_id from messages where provider_message_id='full-54'`)[0]!;
     const content = { facts: ['previous'], requests: [], commitments: [], preferences: [], openItems: [] };
     await db.sql`insert into conversation_summaries(business_id,conversation_id,version,covered_through,structured_summary) values(${A},${row.conversation_id},1,54,${db.sql.json(content)}),( ${A},${row.conversation_id},2,55,${db.sql.json({ facts: [] })})`;
+    const additionalInstructions = ' \n\tGlobal Atención 😀  ';
+    await pools.admin.run(undefined, r => r.updatePlatformAiInstructions(additionalInstructions));
     const payloads: any[] = [];
     const worker = new PostgresAiJobProcessor(pools, new DeepSeekAdapter({ apiKey: 'test', fetcher: async (_url, init) => {
       payloads.push(JSON.parse(String(init?.body)));
@@ -710,6 +713,9 @@ describe("PostgreSQL messaging workers", () => {
     } }));
     await makeEligible();
     await worker.process({ businessId: A, messageId: row.id, correlationId: 'full' });
+    expect(payloads[0].model).toBe('deepseek-chat');
+    expect(payloads[0].messages.map((message: any) => message.role)).toEqual(['system', 'user']);
+    expect(payloads[0].messages[0].content).toBe(AI_SYSTEM_INSTRUCTIONS + '\n\n' + additionalInstructions);
     const user = payloads[0].messages[1].content as string;
     const section = (label: string) => JSON.parse(user.split(`--- ${label} ---\n`)[1]!.split(`\n--- FIN ${label} ---`)[0]!);
     expect(section('MENSAJE ACTUAL DEL CLIENTE')).toBe(texts.join('\n'));
@@ -730,6 +736,8 @@ describe("PostgreSQL messaging workers", () => {
     expect(suffixSection('MENSAJE ACTUAL DEL CLIENTE')).toBe('next-one\nnext-two');
     expect(suffixSection('HISTORIAL DE CONVERSACIÓN').recent).toEqual([...texts.slice(8), 'manual closure']);
     expect(JSON.parse(suffixSection('HISTORIAL DE CONVERSACIÓN').summary)).toEqual({ version: 1, coveredThrough: 54, ...content });
+    expect(payloads[1].messages[0].content).toBe(AI_SYSTEM_INSTRUCTIONS + '\n\n' + additionalInstructions);
+    await pools.admin.run(undefined, r => r.updatePlatformAiInstructions(''));
     await db.sql`update outbox_events set published_at=now() where stable_key like 'ai:full-%'`;
   });
 
