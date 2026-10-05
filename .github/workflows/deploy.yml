@@ -23,6 +23,10 @@ concurrency:
   cancel-in-progress: false
 jobs:
   preflight:
+    permissions:
+      contents: read
+      actions: read
+      packages: read
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
@@ -84,6 +88,11 @@ jobs:
   deploy:
     needs: preflight
     environment: production
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+      id-token: write
     runs-on: ubuntu-latest
     steps:
       - name: Download version-matched deployment files after approval
@@ -96,6 +105,29 @@ jobs:
           for file in deploy/deploy-release.sh compose.production.yml; do
             gh api -H 'Accept: application/vnd.github.raw+json' "repos/$REPOSITORY/contents/$file?ref=$RELEASE" > "${file##*/}"
           done
+      - name: Validate private connection identifiers
+        env:
+          TS_CLIENT_ID: ${{ vars.PRODUCTION_TAILSCALE_CLIENT_ID }}
+          TS_AUDIENCE: ${{ vars.PRODUCTION_TAILSCALE_AUDIENCE }}
+          SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
+        run: |
+          set -euo pipefail
+          [[ -n "$TS_CLIENT_ID" && -n "$TS_AUDIENCE" ]]
+          [[ "$SSH_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
+      # Before live use, human Tailnet trust must bind the OIDC subject
+      # repo:valerubio7/agendia:environment:production with auth_keys write and
+      # only tag:agendia-ci / least-privilege target access. No static secret.
+      # Official action uses ephemeral nodes and logs out in its post step.
+      - name: Connect private deployment network
+        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4
+        with:
+          oauth-client-id: ${{ vars.PRODUCTION_TAILSCALE_CLIENT_ID }}
+          audience: ${{ vars.PRODUCTION_TAILSCALE_AUDIENCE }}
+          tags: tag:agendia-ci
+          version: '1.102.4'
+          args: --accept-dns=false --accept-routes=false --ssh=false
+          ping: ${{ vars.PRODUCTION_SSH_HOST }}
+          log-mode: quiet
       - name: Transfer and execute over pinned SSH
         env:
           RELEASE: ${{ inputs.release }}
