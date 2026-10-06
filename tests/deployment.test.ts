@@ -89,6 +89,26 @@ describe("release deployment boundaries", () => {
     expect(readFileSync(join(current, "previous-images"), "utf8")).toContain("api=sha256:previous-container-api");
     expect(readFileSync(join(current, "previous-compose.yml"), "utf8")).toBe(read("compose.production.yml"));
   });
+  test("matched invocation waiver skips backup but completes deployment", () => {
+    for (const mode of ["backup", "empty"]) {
+      const f = fixture(mode);
+      const result = Bun.spawnSync([...f.args, `--skip-backup-for-release=${sha}`], { env: f.env });
+      expect(result.exitCode).toBe(0);
+      const log = readFileSync(f.log, "utf8");
+      expect(log).not.toContain("pg_dump");
+      for (const operation of ["stop web", "run --rm --no-deps migrate", "run --rm --no-deps provision", "State.Health"]) expect(log).toContain(operation);
+      expect(existsSync(join(f.app, ".release-state"))).toBe(true);
+      expect(new Bun.Glob("*.sql").scanSync(join(f.app, "backups")).next().done).toBe(true);
+    }
+  });
+  test("invalid, mismatched and excess waiver arguments fail before operations", () => {
+    for (const extra of [["--skip-backup"], [`--skip-backup-for-release=${"b".repeat(40)}`], [`--skip-backup-for-release=${sha}`, "extra"]]) {
+      const f = fixture();
+      expect(Bun.spawnSync([...f.args, ...extra], { env: f.env }).exitCode).not.toBe(0);
+      expect(existsSync(f.log)).toBe(false);
+      expect(existsSync(join(f.app, ".deploy.lock"))).toBe(false);
+    }
+  });
   for (const mode of ["pull", "revision", "digest", "repository", "backup", "empty", "config"]) {
     test(`${mode} failure prevents downtime`, () => {
       const f = run(mode);
@@ -155,7 +175,7 @@ describe("release deployment boundaries", () => {
 });
 
 // Execute workflow preflight without ever resolving production secrets or running SSH.
-function preflight(mode: string) {
+function preflight(mode: string, overrides: Record<string, string> = {}) {
   const dir = mkdtempSync(join(tmpdir(), "agendia-preflight-"));
   const bin = join(dir, "bin"); mkdirSync(bin);
   const workflow = read(".github/workflows/deploy.yml");
@@ -173,6 +193,12 @@ if [[ "$*" == *environments/production* ]]; then
     none) echo '{"protection_rules":[]}' ;;
     *) echo '{"protection_rules":[{"type":"required_reviewers","reviewers":[{"type":"User","reviewer":{"id":1,"type":"User","login":"human"}}]}]}' ;;
   esac
+elif [[ "$*" == *contents/package.json* ]]; then
+  if [[ "$MODE" == version ]]; then echo '{"version":"0.7.1"}'; else echo '{"version":"0.7.0"}'; fi
+elif [[ "$*" == *releases/tags/* ]]; then
+  echo '{"tag_name":"v0.7.0","target_commitish":"${sha}","draft":false,"prerelease":false,"published_at":"2026-01-01"}'
+elif [[ "$*" == *git/ref/tags/* ]]; then
+  echo '{"object":{"type":"commit","sha":"${sha}"}}'
 elif [[ "$*" == *compare/* ]]; then echo ahead
 elif [[ "$*" == *publish.yml* ]]; then
   echo '{"workflow_runs":[{"name":"Publish release","path":".github/workflows/publish.yml","display_title":"Publish ${sha}","event":"workflow_run","head_branch":"main","head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","status":"completed","conclusion":"success","head_repository":{"full_name":"owner/repo"}}]}'
@@ -181,11 +207,16 @@ elif [[ "$*" == *actions/workflows/* ]]; then
 else exit 9
 fi
 `);
+  writeFileSync(join(bin, "docker"), `#!/bin/bash
+if [[ "$*" == *revision* ]]; then echo '${sha}'; elif [[ "$1" != pull ]]; then printf 'sha256:%064d\\n' 0; fi
+`);
+  chmodSync(join(bin, "docker"), 0o700);
   chmodSync(join(bin, "gh"), 0o700);
   const log = join(dir, "calls"); writeFileSync(log, "");
   const result = Bun.spawnSync(["bash", "-c", script], { cwd: dir,
-    env: { PATH: `${bin}:${process.env.PATH}`, LOG: log, MODE: mode, RELEASE: sha, REPOSITORY: "owner/repo", PUBLISHER_RUN: "" } });
-  return { result, log: readFileSync(log, "utf8") };
+    env: { PATH: `${bin}:${process.env.PATH}`, LOG: log, MODE: mode, RELEASE: sha, REPOSITORY: "owner/repo", PUBLISHER_RUN: "", SKIP_BACKUP: "false", EVENT_NAME: "workflow_dispatch", CONNECTION_ONLY: "false", GITHUB_OUTPUT: join(dir, "outputs"), ...overrides } });
+  const output = join(dir, "outputs");
+  return { result, log: readFileSync(log, "utf8"), output: existsSync(output) ? readFileSync(output, "utf8") : "" };
 }
 for (const mode of ["missing", "forbidden", "unknown", "malformed", "none", "nohuman", "bot"]) {
   test(`production preflight rejects ${mode} before source or credential access`, () => {
@@ -196,6 +227,26 @@ for (const mode of ["missing", "forbidden", "unknown", "malformed", "none", "noh
     expect(result.log).not.toContain("contents/");
   });
 }
+
+test("backup waiver requires manual normal 0.7.0 release and defaults false", () => {
+  const workflow = workflowYaml(".github/workflows/deploy.yml");
+  expect(workflow.on?.workflow_dispatch?.inputs?.skip_backup).toMatchObject({ type: "boolean", default: false, required: false });
+  for (const overrides of [{ EVENT_NAME: "workflow_call" }, { CONNECTION_ONLY: "true" }, { SKIP_BACKUP: "invalid" }]) {
+    const f = preflight("success", { SKIP_BACKUP: "true", ...overrides });
+    expect(f.result.exitCode).not.toBe(0);
+    expect(f.log).toBe("");
+  }
+  const wrongVersion = preflight("version", { SKIP_BACKUP: "true" });
+  expect(wrongVersion.result.exitCode).not.toBe(0);
+  expect(wrongVersion.output).toBe("");
+  const approved = preflight("success", { SKIP_BACKUP: "true" });
+  expect(approved.result.exitCode).toBe(0);
+  expect(approved.output).toBe(`backup_flag=--skip-backup-for-release=${sha}\n`);
+  expect(preflight("success").output).toBe("");
+  const ssh = workflow.jobs.deploy!.steps.find((step) => step.name === "Transfer and execute over pinned SSH")!;
+  expect(ssh.env?.BACKUP_FLAG).toBe("${{ needs.preflight.outputs.backup_flag }}");
+  expect(ssh.run).toContain('"--skip-backup-for-release=$RELEASE"');
+});
 
 test("legacy manual source proof remains eligible only after human protection", () => {
   expect(preflight("success").result.exitCode).toBe(0);
@@ -594,23 +645,24 @@ test("connection-only dispatch is isolated from release and reusable deployment"
   expect(diagnosticPreflight.permissions).toEqual({ contents: "read" });
   expect(diagnosticPreflight.environment).toBeUndefined();
   expect(JSON.stringify(diagnosticPreflight)).not.toMatch(/secrets\.|id-token|PRODUCTION_TAILSCALE|PRODUCTION_SSH|SSH_KEY/i);
-  expect(diagnosticPreflight.steps[0]!.env).toEqual({ GH_TOKEN: "${{ github.token }}", REPOSITORY: "${{ github.repository }}" });
+  expect(diagnosticPreflight.steps[0]!.env).toEqual({ GH_TOKEN: "${{ github.token }}", REPOSITORY: "${{ github.repository }}", SKIP_BACKUP: "${{ inputs.skip_backup }}" });
   expect(diagnosticPreflight.steps[0]!.run).toContain('.protection_rules | any(.type == "required_reviewers"');
   expect(diagnosticPreflight.steps[0]!.run).not.toContain("compare/");
   expect(diagnosticPreflight.steps[0]!.run).not.toContain("contents/");
   expect(diagnosticPreflight.steps[0]!.run).not.toMatch(/publisher|RELEASE|PUBLISHER_RUN/i);
   const protectionScript = diagnosticPreflight.steps[0]!.run!;
-  for (const mode of ["protected", "missing"]) {
+  for (const mode of ["protected", "missing", "waiver"]) {
     const dir = mkdtempSync(join(tmpdir(), "agendia-protection-"));
     const bin = join(dir, "bin"); mkdirSync(bin); const log = join(dir, "calls");
     writeFileSync(join(bin, "gh"), `#!/bin/bash\nprintf '%s\\n' "$*" >> "$MOCK_LOG"\n[[ "$*" == "api repos/fixture/repo/environments/production" ]] || exit 9\nif [[ "$MODE" == protected ]]; then echo '{"protection_rules":[{"type":"required_reviewers","reviewers":[{"type":"User","reviewer":{"id":1,"type":"User","login":"owner"}}]}]}'; else echo '{"protection_rules":[]}'; fi\n`);
     chmodSync(join(bin, "gh"), 0o700);
     const result = Bun.spawnSync(["/bin/bash", "--noprofile", "--norc", "-c", protectionScript], {
       cwd: dir, env: { PATH: `${bin}:/usr/bin:/bin`, MOCK_LOG: log, MODE: mode,
-        GH_TOKEN: "fixture-token", REPOSITORY: "fixture/repo" },
+        GH_TOKEN: "fixture-token", REPOSITORY: "fixture/repo", SKIP_BACKUP: mode === "waiver" ? "true" : "false" },
     });
     expect(result.exitCode === 0).toBe(mode === "protected");
-    expect(readFileSync(log, "utf8").trim()).toBe("api repos/fixture/repo/environments/production");
+    if (mode === "waiver") expect(existsSync(log)).toBe(false);
+    else expect(readFileSync(log, "utf8").trim()).toBe("api repos/fixture/repo/environments/production");
     expect(result.stdout.toString()).not.toContain("fixture-token");
   }
   const diagnostic = deploy.jobs.connection_check!;
