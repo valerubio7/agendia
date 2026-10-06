@@ -250,6 +250,188 @@ type Workflow = {
 };
 const workflowYaml = (path: string) => Bun.YAML.parse(read(path)) as Workflow;
 
+// In-memory filesystem, process and HTTP boundaries: never launch/download a real CLI.
+async function connectionFixture(mode = "success") {
+  const absent = () => Object.assign(Error("absent"), { code: "ENOENT" });
+  const { connect, cleanup, PIN } = await import("../.github/actions/tailscale-connection/main.mjs");
+  const directory = "/runner/agendia-ts-fixture";
+  const binary = `${directory}/tailscale_1.102.4_amd64/tailscaled`;
+  const files = new Map<string, string>();
+  const calls: string[][] = [];
+  const logs: string[] = [];
+  let alive = false;
+  const env = { RUNNER_TEMP: "/runner", RUNNER_ENVIRONMENT: "github-hosted", GITHUB_STATE: "/state",
+    ACTIONS_ID_TOKEN_REQUEST_URL: "https://fixture.actions.githubusercontent.com/token?existing=1",
+    ACTIONS_ID_TOKEN_REQUEST_TOKEN: "fixture-bearer", "INPUT_CLIENT-ID": "fixture-client", INPUT_AUDIENCE: "fixture/audience?x=1" };
+  const io = {
+    async mkdtemp() { files.set(directory, "directory"); return directory; },
+    async realpath(path: string) { return path; },
+    async chmod(path: string, permission: number) { calls.push(["chmod", path, String(permission)]); },
+    async writeFile(path: string, data: string | Uint8Array, options?: unknown) {
+      if (path.endsWith("/token")) expect(logs[0]).toBe("::add-mask::fixture-jwt");
+      files.set(path, String(data)); calls.push(["write", path, JSON.stringify(options)]);
+    },
+    async appendFile(path: string, data: string) { files.set(path, (files.get(path) ?? "") + data); },
+    async readFile(path: string) { if (!files.has(path)) throw absent(); return files.get(path)!; },
+    async lstat(path: string) {
+      if (!files.has(path)) throw absent();
+      return { uid: 1000, mode: 0o700, isDirectory: () => path === directory,
+        isFile: () => path !== directory && !path.endsWith(".sock"),
+        isSymbolicLink: () => mode === "symlink" && path === binary,
+        isSocket: () => path.endsWith(".sock") };
+    },
+    async unlink(path: string) { files.delete(path); },
+    async rm(path: string) { calls.push(["remove", path]); for (const key of files.keys()) if (key.startsWith(path)) files.delete(key); },
+  };
+  const run = async (command: string, args: string[]) => {
+    calls.push([command, ...args]);
+    if (args[0] === "-tzf") return mode === "archive" ? "../foreign\n" : "tailscale_1.102.4_amd64/\ntailscale_1.102.4_amd64/tailscale\ntailscale_1.102.4_amd64/tailscaled\n";
+    if (args[0] === "-xzf") {
+      files.set(binary, "binary"); files.set(binary.replace(/d$/, ""), "binary"); return "";
+    }
+    if (args.includes("version")) return mode === "version" ? "1.0.0" : "1.102.4\nfixture-build";
+    if (args.includes("up") && mode === "up") throw Error("fixture-jwt private failure");
+    if (args.includes("logout") && mode === "logout") throw Error("fixture-jwt private failure");
+    if (args.includes("kill")) {
+      if (mode === "stop") throw Error("private failure");
+      if (mode !== "stubborn" || args.includes("-KILL")) alive = false;
+    }
+    return "";
+  };
+  const request = async (url: string | URL, options?: RequestInit) => {
+    calls.push(["fetch", String(url), JSON.stringify(options?.headers), String(options?.redirect)]);
+    if (String(url).includes("/token")) {
+      expect(options?.redirect).toBe("error");
+      return new Response(JSON.stringify({ value: mode === "missingtoken" ? null : "fixture-jwt" }), { status: mode === "oidc" ? 403 : 200 });
+    }
+    return new Response("fixture-archive", { status: mode === "download" ? 503 : 200 });
+  };
+  const deps = { io, run, fetch: request, env, uid: 1000, platform: "linux", arch: "x64",
+    digest: mode === "checksum" ? undefined : () => PIN.sha256,
+    log: (message: string) => logs.push(message), pause: async () => {},
+    proc: async () => alive ? `${mode === "foreign" || (mode === "reused" && calls.some((call) => call.includes("logout"))) ? "/foreign/tailscaled" : binary}\0--socket=${directory}/tailscaled.sock\0--state=mem:\0` : "",
+    launch: async (args: string[], log: string) => {
+      calls.push(["launch", ...args, log]);
+      if (mode === "startup") throw Error("fixture-jwt launch failure");
+      alive = mode !== "stale"; files.set(`${directory}/daemon.pid`, mode === "badpid" ? "1" : "42");
+      if (mode !== "readiness") files.set(`${directory}/tailscaled.sock`, "socket");
+    },
+  };
+  return { connect, cleanup, deps, files, calls, logs, directory };
+}
+
+test("local connection action declares unconditional Node24 post cleanup", async () => {
+  const { PIN } = await import("../.github/actions/tailscale-connection/main.mjs");
+  expect(PIN).toEqual({ version: "1.102.4", url: "https://pkgs.tailscale.com/stable/tailscale_1.102.4_amd64.tgz",
+    sha256: "50748df1045e60b5b695f19f4c56b0da36c019948b440fb456b6584a50f0d8b9" });
+  const action = Bun.YAML.parse(read(".github/actions/tailscale-connection/action.yml")) as { runs: Record<string, string>; inputs: Record<string, unknown> };
+  expect(action.runs).toEqual({ using: "node24", main: "main.mjs", post: "post.mjs", "post-if": "always()" });
+  expect(Object.keys(action.inputs)).toEqual(["client-id", "audience"]);
+});
+
+test("native connection uses one strict up, audience OIDC, private token file and owned post", async () => {
+  const f = await connectionFixture();
+  await f.connect(f.deps);
+  const up = f.calls.filter((call) => call.includes("up"));
+  expect(up).toHaveLength(1);
+  const launch = f.calls.find((call) => call[0] === "launch")!;
+  expect(launch.slice(1, 5)).toEqual(["-n", "bash", "-c", 'set -e; echo $$ > "$1"; shift; exec "$@"']);
+  expect(launch).toContain("--state=mem:");
+  expect(launch).toContain(`--socket=${f.directory}/tailscaled.sock`);
+  expect(f.calls.some((call) => call[0] === "chmod" && call[1] === f.directory && call[2] === "448")).toBe(true);
+  expect(f.calls.findIndex((call) => call[0] === "launch")).toBeLessThan(f.calls.findIndex((call) => call.includes("up")));
+  for (const flag of ["--accept-dns=false", "--accept-routes=false", "--ssh=false", "--advertise-tags=tag:agendia-ci",
+    "--client-id=fixture-client?preauthorized=true&ephemeral=true", `--id-token=file:${f.directory}/token`]) expect(up[0]!.filter((arg) => arg === flag)).toHaveLength(1);
+  expect(up[0]?.slice(0, 4)).toEqual(["sudo", "-n", `${f.directory}/tailscale_1.102.4_amd64/tailscale`, `--socket=${f.directory}/tailscaled.sock`]);
+  expect(JSON.stringify(f.calls.filter((call) => !["write", "fetch"].includes(call[0]!)))).not.toContain("fixture-jwt");
+  expect(f.logs).toEqual(["::add-mask::fixture-jwt", "TS_CONNECTED"]);
+  expect(f.files.has(`${f.directory}/token`)).toBe(false);
+  expect(f.calls.find((call) => call[0] === "write" && call[1]?.endsWith("/token"))?.[2]).toContain("384");
+  const oidc = f.calls.find((call) => call[0] === "fetch" && call[1]?.includes("/token"))!;
+  expect(new URL(oidc[1]!).searchParams.get("audience")).toBe("fixture/audience?x=1");
+  await f.cleanup(f.directory, f.deps);
+  expect(f.calls.some((call) => call.includes("logout"))).toBe(true);
+  expect(f.calls.some((call) => call.includes("kill") && call.includes("42"))).toBe(true);
+  expect(f.files.has(f.directory)).toBe(false);
+  await f.cleanup(f.directory, f.deps); // Always-post after setup cleanup is idempotent.
+});
+
+for (const mode of ["download", "checksum", "archive", "version", "symlink", "oidc", "missingtoken", "startup", "readiness", "stale", "badpid", "up"]) {
+  test(`native connection fails closed and cleans setup on ${mode}`, async () => {
+    const f = await connectionFixture(mode);
+    await expect(f.connect(f.deps)).rejects.toThrow(/^TS_/);
+    expect(f.files.has(f.directory)).toBe(["startup", "badpid"].includes(mode));
+    if (mode === "checksum") expect(f.calls.filter((call) => call[0] !== "fetch" && call[0] !== "write" && call[0] !== "chmod" && call[0] !== "remove")).toEqual([]);
+    if (mode !== "up") expect(f.calls.some((call) => call.includes("up"))).toBe(false);
+    expect(f.calls.some((call) => call.includes("logout"))).toBe(mode === "up");
+    expect(f.logs.filter((line) => !line.startsWith("::add-mask::")).join(" ")).not.toMatch(/fixture-jwt|private/);
+  });
+}
+
+test("post surfaces logout failure but still stops owned daemon and removes files", async () => {
+  const f = await connectionFixture("logout"); await f.connect(f.deps);
+  await expect(f.cleanup(f.directory, f.deps)).rejects.toThrow("TS_CLEANUP");
+  expect(f.calls.some((call) => call.includes("kill"))).toBe(true);
+  expect(f.files.has(f.directory)).toBe(false);
+});
+
+test("cleanup escalates only an owned stubborn PID and rejects reuse or redirected socket", async () => {
+  for (const mode of ["stubborn", "reused", "socket", "binary"]) {
+    const f = await connectionFixture(mode); await f.connect(f.deps);
+    if (mode === "binary") f.files.delete(`${f.directory}/tailscale_1.102.4_amd64/tailscaled`);
+    if (mode === "socket") {
+      const stat = f.deps.io.lstat;
+      f.deps.io.lstat = async (path) => ({ ...await stat(path), isSymbolicLink: () => path.endsWith(".sock") });
+    }
+    if (mode === "stubborn") {
+      await f.cleanup(f.directory, f.deps);
+      expect(f.calls.filter((call) => call.includes("kill")).map((call) => call[3])).toEqual(["-TERM", "-KILL"]);
+    } else {
+      await expect(f.cleanup(f.directory, f.deps)).rejects.toThrow("TS_CLEANUP");
+      expect(f.calls.some((call) => call.includes("kill"))).toBe(mode === "socket");
+      if (mode === "socket") expect(f.calls.some((call) => call.includes("logout"))).toBe(false);
+    }
+    expect(f.files.has(f.directory)).toBe(["reused", "binary"].includes(mode));
+  }
+});
+
+test("absent identity still stops owned daemon; stop failure is not full success", async () => {
+  for (const mode of ["success", "stop"]) {
+    const f = await connectionFixture(mode); await f.connect(f.deps);
+    f.files.delete(`${f.directory}/identity`);
+    if (mode === "stop") {
+      for (const attempt of [1, 2]) {
+        await expect(f.cleanup(f.directory, f.deps)).rejects.toThrow("TS_CLEANUP");
+        expect(f.files.has(f.directory) && f.files.has(`${f.directory}/daemon.pid`)).toBe(true);
+        expect(f.calls.filter((call) => call.includes("kill")).length).toBe(attempt);
+      }
+      f.deps.proc = async () => ""; // Subsequently verified absent, not silently orphaned.
+    }
+    await f.cleanup(f.directory, f.deps);
+    expect(f.calls.some((call) => call.includes("logout"))).toBe(false);
+    expect(f.calls.some((call) => call.includes("kill"))).toBe(true);
+    expect(f.files.has(f.directory)).toBe(false);
+  }
+});
+
+test("platform and unsafe client validation reject before download or launch", async () => {
+  const f = await connectionFixture();
+  for (const changes of [{ platform: "darwin" }, { arch: "arm64" }, { env: { ...f.deps.env, RUNNER_ENVIRONMENT: "self-hosted" } },
+    { env: { ...f.deps.env, "INPUT_CLIENT-ID": "client?unsafe=true" } }]) {
+    await expect(f.connect({ ...f.deps, ...changes })).rejects.toThrow("TS_SETUP");
+    expect(f.calls).toEqual([]);
+  }
+});
+
+test("foreign PID and foreign directory never receive logout, kill or removal", async () => {
+  const f = await connectionFixture("foreign");
+  await expect(f.connect(f.deps)).rejects.toThrow(/^TS_/);
+  expect(f.calls.some((call) => call.includes("logout") || call.includes("kill"))).toBe(false);
+  await expect(f.cleanup("/foreign", f.deps)).rejects.toThrow("TS_CLEANUP");
+  expect(f.calls.some((call) => call[0] === "remove" && call[1] === "/foreign")).toBe(false);
+  await f.cleanup(undefined, f.deps);
+});
+
 test("OIDC permission is isolated to protected deploy and propagated by the reusable caller", () => {
   const deploy = workflowYaml(".github/workflows/deploy.yml");
   const caller = workflowYaml(".github/workflows/auto-deploy.yml");

@@ -1,0 +1,14 @@
+name: Private Tailscale connection
+description: Official CLI workload identity with owned ephemeral cleanup
+inputs:
+  client-id:
+    description: Production workload identity client identifier
+    required: true
+  audience:
+    description: Production workload identity audience
+    required: true
+runs:
+  using: node24
+  main: main.mjs
+  post: post.mjs
+  post-if: always()
