@@ -118,7 +118,8 @@ function run(mode = "", event = "push", ref = "refs/tags/v0.7.0", preflight = fa
   const result = Bun.spawnSync(["bash", "-c", preflight ? readFileSync(join(root, ".github/workflows/deploy.yml"), "utf8").match(/        run: \|\n((?:          .*\n|\n)+)/)![1]!.replace(/^          /gm, "") : scripts.join("\n")], {
     cwd,
     env: { PATH: `${bin}:${process.env.PATH}`, HOME: cwd, MODE: mode, RELEASE: sha,
-      REPOSITORY: "valerubio7/agendia", PREFLIGHT: preflight ? "1" : "", PUBLISHER_RUN: publisherRun, ACTOR: "fake", GH_TOKEN: "fake", EVENT: event, REF: ref },
+      REPOSITORY: "valerubio7/agendia", PREFLIGHT: preflight ? "1" : "", PUBLISHER_RUN: publisherRun, ACTOR: "fake", GH_TOKEN: "fake", EVENT: event, REF: ref,
+      SKIP_BACKUP: "false", EVENT_NAME: event, CONNECTION_ONLY: "false" },
   });
   return { code: result.exitCode, log: readFileSync(join(cwd, "operations"), "utf8"), error: result.stderr.toString(),
     notesExist: existsSync(join(cwd, "source/docs/releases/v0.7.0.md")),
@@ -206,7 +207,7 @@ for (const mode of ["final-drift", "annotated-final-drift", "final-missing", "fi
 }
 
 test("automatic preflight selects upstream SHA and verifies stable release before protected job", () => {
-  const result = run("", "push", "", true);
+  const result = run("", "workflow_call", "", true);
   expect(result.code).toBe(0);
   expect(result.log).toContain("actions/runs/123");
   expect(result.log).toContain(`contents/package.json?ref=${sha}`);
@@ -221,12 +222,22 @@ test("automatic preflight selects upstream SHA and verifies stable release befor
   for (const guard of ["workflows: [Publish release]", "types: [completed]", "conclusion == 'success'", "event == 'push'", "head_repository.full_name == github.repository", "uses: ./.github/workflows/deploy.yml"]) expect(auto).toContain(guard);
 });
 test("manual new publisher uses source SHA without relying on tag head_branch", () => {
-  expect(run("", "push", "", true, "").code).toBe(0);
-  expect(run("pub-fork", "push", "", true, "").code).not.toBe(0);
+  const result = run("", "workflow_dispatch", "", true, "");
+  expect(result.code).toBe(0);
+  expect(result.log).toContain("actions/workflows/publish.yml/runs");
+  expect(result.log).toContain(`contents/package.json?ref=${sha}`);
+  expect(result.log).toContain("git/ref/tags/v0.7.0");
+  expect(result.log).toContain(`docker pull ghcr.io/valerubio7/agendia@sha256:${"a".repeat(64)}`);
+  const rejected = run("pub-fork", "workflow_dispatch", "", true, "");
+  expect(rejected.error).not.toContain("unbound variable");
+  expect(rejected.log).toContain("actions/workflows/publish.yml/runs");
+  expect(rejected.code).not.toBe(0);
 });
 for (const mode of ["pub-failed", "pub-pending", "pub-pr", "pub-title", "pub-fork", "pub-sha", "pub-legacy", "ci-failure", "draft", "prerelease", "unpublished", "version", "tag-mismatch", "digest", "revision"]) {
   test(`automatic preflight fails closed: ${mode}`, () => {
-    const result = run(mode, "push", "", true);
+    const result = run(mode, "workflow_call", "", true);
+    expect(result.error).not.toContain("unbound variable");
+    expect(result.log).toContain("gh api repos/valerubio7/agendia/");
     expect(result.code).not.toBe(0);
     expect(result.log).not.toMatch(/ssh |release create/);
   });
