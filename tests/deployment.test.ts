@@ -57,7 +57,7 @@ fi
   writeFileSync(join(bin, "sleep"), "#!/usr/bin/env bash\nexit 0\n");
   chmodSync(join(bin, "docker"), 0o700); chmodSync(join(bin, "sleep"), 0o700);
   const log = join(dir, "docker.log");
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, LOG: log, MODE: mode, SHA: sha };
+  const env = { PATH: `${bin}:${process.env.PATH}`, LOG: log, MODE: mode, SHA: sha };
   const args = ["bash", join(incoming, "deploy-release.sh"), sha, "owner/repo", app, "agendia"];
   return { app, log, env, args };
 }
@@ -235,6 +235,208 @@ test("publishing gates Docker operations on CD tests from the downloaded release
   expect(publish).not.toContain("continue-on-error:");
 });
 
+type Workflow = {
+  permissions: Record<string, string>;
+  on?: Record<string, { inputs?: Record<string, { description?: string; required?: boolean; default?: boolean; type?: string }> }>;
+  jobs: Record<string, {
+    permissions?: Record<string, string>;
+    needs?: string;
+    if?: string;
+    environment?: string;
+    "runs-on"?: string;
+    uses?: string;
+    steps: { name: string; uses?: string; with?: Record<string, string>; env?: Record<string, string>; run?: string; if?: string; "continue-on-error"?: boolean }[];
+  }>;
+};
+const workflowYaml = (path: string) => Bun.YAML.parse(read(path)) as Workflow;
+
+test("OIDC permission is isolated to protected deploy and propagated by the reusable caller", () => {
+  const deploy = workflowYaml(".github/workflows/deploy.yml");
+  const caller = workflowYaml(".github/workflows/auto-deploy.yml");
+  for (const workflow of [deploy, caller]) {
+    expect(workflow.permissions).toEqual({ contents: "read", actions: "read", packages: "read" });
+  }
+  const preflight = deploy.jobs.preflight!;
+  expect(preflight.permissions).toEqual({ contents: "read", actions: "read", packages: "read" });
+  expect(preflight.environment).toBeUndefined();
+  expect(JSON.stringify(preflight)).not.toMatch(/tailscale|PRODUCTION_|secrets\.|id-token/i);
+  for (const step of preflight.steps) {
+    expect(step.uses).toBeUndefined();
+    expect(step.run).not.toMatch(/^\s*(ssh|scp|tailscale)\s/m);
+  }
+  const permissions = { contents: "read", actions: "read", packages: "read", "id-token": "write" };
+  expect(deploy.jobs.deploy!.permissions).toEqual(permissions);
+  expect(caller.jobs.release!.permissions).toEqual(permissions);
+  expect(caller.jobs.release!.uses).toBe("./.github/workflows/deploy.yml");
+  expect(deploy.jobs.deploy!.needs).toBe("preflight");
+  expect(deploy.jobs.deploy!.environment).toBe("production");
+});
+
+test("protected deployment validates identity then joins ephemeral Tailnet before pinned SSH", () => {
+  const steps = workflowYaml(".github/workflows/deploy.yml").jobs.deploy!.steps;
+  const check = steps.findIndex((step) => step.name === "Validate private connection identifiers");
+  const network = steps.findIndex((step) => step.uses?.startsWith("tailscale/github-action@"));
+  const ssh = steps.findIndex((step) => step.name === "Transfer and execute over pinned SSH");
+  expect(check).toBeGreaterThanOrEqual(0);
+  expect(network).toBeGreaterThan(check);
+  expect(ssh).toBeGreaterThan(network);
+  expect(steps[network]!.uses).toBe("tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd");
+  expect(steps[network]!.with).toEqual({
+    "oauth-client-id": "${{ vars.PRODUCTION_TAILSCALE_CLIENT_ID }}",
+    audience: "${{ vars.PRODUCTION_TAILSCALE_AUDIENCE }}",
+    tags: "tag:agendia-ci", version: "1.102.4",
+    args: "--accept-dns=false --accept-routes=false --ssh=false",
+    ping: "${{ vars.PRODUCTION_SSH_HOST }}", "log-mode": "quiet",
+  });
+  for (const step of steps.slice(0, ssh)) expect(JSON.stringify(step)).not.toContain("secrets.");
+  for (const step of steps) {
+    expect(step.if).toBeUndefined();
+    expect(step["continue-on-error"]).toBeUndefined();
+  }
+  expect(JSON.stringify(steps)).not.toMatch(/authkey|oauth-secret|tailscale ssh|StrictHostKeyChecking=no/);
+  expect(steps[ssh]!.run).toContain("StrictHostKeyChecking=yes");
+});
+
+test("missing federation identifiers or invalid target fail closed without external commands", () => {
+  const check = workflowYaml(".github/workflows/deploy.yml").jobs.deploy!.steps
+    .find((step) => step.name === "Validate private connection identifiers");
+  expect(check).toBeDefined();
+  expect(check!.env).toEqual({
+    TS_CLIENT_ID: "${{ vars.PRODUCTION_TAILSCALE_CLIENT_ID }}",
+    TS_AUDIENCE: "${{ vars.PRODUCTION_TAILSCALE_AUDIENCE }}",
+    SSH_HOST: "${{ vars.PRODUCTION_SSH_HOST }}",
+  });
+  const valid = { TS_CLIENT_ID: "fixture-client", TS_AUDIENCE: "fixture-audience", SSH_HOST: "fixture-host" };
+  const cases = [valid, { ...valid, TS_CLIENT_ID: "" }, { ...valid, TS_AUDIENCE: "" },
+    { ...valid, SSH_HOST: "" }, { ...valid, SSH_HOST: "host; echo unsafe" }];
+  for (const [index, env] of cases.entries()) {
+    // Empty PATH and explicit environment prohibit real provider/SSH commands and inherited credentials.
+    const result = Bun.spawnSync(["/bin/bash", "--noprofile", "--norc", "-c", check!.run!], { env: { PATH: "", ...env } });
+    expect(result.exitCode === 0).toBe(index === 0);
+  }
+});
+
+test("connection-only dispatch is isolated from release and reusable deployment", () => {
+  const deploy = workflowYaml(".github/workflows/deploy.yml");
+  const dispatch = deploy.on as { workflow_dispatch?: { inputs?: Record<string, { description?: string; required?: boolean; default?: boolean; type?: string }> }; workflow_call?: { inputs?: Record<string, { required?: boolean }> } };
+  expect(dispatch.workflow_dispatch?.inputs?.connection_only).toEqual({
+    description: "Verify the protected private connection without deploying",
+    required: false, type: "boolean", default: false,
+  });
+  expect(dispatch.workflow_dispatch?.inputs?.release?.required).toBe(false);
+  expect(dispatch.workflow_call?.inputs?.release?.required).toBe(true);
+  const diagnosticPreflight = deploy.jobs.connection_preflight!;
+  expect(diagnosticPreflight.if).toContain("github.event_name == 'workflow_dispatch'");
+  expect(diagnosticPreflight.if).toContain("inputs.connection_only == true");
+  expect(diagnosticPreflight.if).toContain("github.repository == 'valerubio7/agendia'");
+  expect(diagnosticPreflight.if).toContain("refs/heads/main");
+  expect(diagnosticPreflight.if).toContain("refs/heads/ci/tailscale-private-deploy");
+  expect(diagnosticPreflight.permissions).toEqual({ contents: "read" });
+  expect(diagnosticPreflight.environment).toBeUndefined();
+  expect(JSON.stringify(diagnosticPreflight)).not.toMatch(/secrets\.|id-token|PRODUCTION_TAILSCALE|PRODUCTION_SSH|SSH_KEY/i);
+  expect(diagnosticPreflight.steps[0]!.env).toEqual({ GH_TOKEN: "${{ github.token }}", REPOSITORY: "${{ github.repository }}" });
+  expect(diagnosticPreflight.steps[0]!.run).toContain('.protection_rules | any(.type == "required_reviewers"');
+  expect(diagnosticPreflight.steps[0]!.run).not.toContain("compare/");
+  expect(diagnosticPreflight.steps[0]!.run).not.toContain("contents/");
+  expect(diagnosticPreflight.steps[0]!.run).not.toMatch(/publisher|RELEASE|PUBLISHER_RUN/i);
+  const protectionScript = diagnosticPreflight.steps[0]!.run!;
+  for (const mode of ["protected", "missing"]) {
+    const dir = mkdtempSync(join(tmpdir(), "agendia-protection-"));
+    const bin = join(dir, "bin"); mkdirSync(bin); const log = join(dir, "calls");
+    writeFileSync(join(bin, "gh"), `#!/bin/bash\nprintf '%s\\n' "$*" >> "$MOCK_LOG"\n[[ "$*" == "api repos/fixture/repo/environments/production" ]] || exit 9\nif [[ "$MODE" == protected ]]; then echo '{"protection_rules":[{"type":"required_reviewers","reviewers":[{"type":"User","reviewer":{"id":1,"type":"User","login":"owner"}}]}]}'; else echo '{"protection_rules":[]}'; fi\n`);
+    chmodSync(join(bin, "gh"), 0o700);
+    const result = Bun.spawnSync(["/bin/bash", "--noprofile", "--norc", "-c", protectionScript], {
+      cwd: dir, env: { PATH: `${bin}:/usr/bin:/bin`, MOCK_LOG: log, MODE: mode,
+        GH_TOKEN: "fixture-token", REPOSITORY: "fixture/repo" },
+    });
+    expect(result.exitCode === 0).toBe(mode === "protected");
+    expect(readFileSync(log, "utf8").trim()).toBe("api repos/fixture/repo/environments/production");
+    expect(result.stdout.toString()).not.toContain("fixture-token");
+  }
+  const diagnostic = deploy.jobs.connection_check!;
+  expect(diagnostic.needs).toBe("connection_preflight");
+  expect(diagnostic.if).toContain("github.event_name == 'workflow_dispatch'");
+  expect(diagnostic.if).toContain("inputs.connection_only == true");
+  expect(diagnostic.if).toContain("github.repository == 'valerubio7/agendia'");
+  expect(diagnostic.if).toContain("refs/heads/main");
+  expect(diagnostic.if).toContain("refs/heads/ci/tailscale-private-deploy");
+  expect(diagnostic.environment).toBe("production");
+  expect(diagnostic["runs-on"]).toBe("ubuntu-latest");
+  expect(diagnostic.permissions).toEqual({ contents: "read", "id-token": "write" });
+  expect(deploy.permissions).not.toHaveProperty("id-token");
+  expect(deploy.jobs.preflight!.if).toContain("!inputs.connection_only");
+  expect(deploy.jobs.deploy!.needs).toBe("preflight");
+  expect(diagnostic.steps.map((step) => step.name)).toEqual([
+    "Mask pinned connection host", "Validate private connection credentials", "Connect private deployment network", "Verify read-only SSH identity",
+  ]);
+  const [mask, validate, network, ssh] = diagnostic.steps;
+  expect(mask!.env).toEqual({ KNOWN_HOSTS: "${{ secrets['PRODUCTION_KNOWN_HOSTS'] }}" });
+  expect(mask!.run).not.toContain("${{ vars.");
+  expect(network!.uses).toBe("tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd");
+  expect(network!.with).toEqual({
+    "oauth-client-id": "${{ vars.PRODUCTION_TAILSCALE_CLIENT_ID }}", audience: "${{ vars.PRODUCTION_TAILSCALE_AUDIENCE }}",
+    tags: "tag:agendia-ci", version: "1.102.4", args: "--accept-dns=false --accept-routes=false --ssh=false",
+    ping: "${{ vars.PRODUCTION_SSH_HOST }}", "log-mode": "quiet",
+  });
+  expect(validate!.env).toMatchObject({
+    TS_CLIENT_ID: "${{ vars.PRODUCTION_TAILSCALE_CLIENT_ID }}", TS_AUDIENCE: "${{ vars.PRODUCTION_TAILSCALE_AUDIENCE }}",
+    SSH_HOST: "${{ vars.PRODUCTION_SSH_HOST }}", SSH_USER: "${{ vars.PRODUCTION_SSH_USER }}",
+    SSH_PORT: "${{ vars.PRODUCTION_SSH_PORT }}", SSH_KEY: "${{ secrets['PRODUCTION_SSH_KEY'] }}",
+    KNOWN_HOSTS: "${{ secrets['PRODUCTION_KNOWN_HOSTS'] }}",
+  });
+  expect(ssh!.run).toContain("ssh -F /dev/null");
+  expect(ssh!.run).toContain('"id -un"');
+  expect(ssh!.run).toContain("StrictHostKeyChecking=yes");
+  expect(ssh!.run).toContain('trap cleanup EXIT');
+  expect(ssh!.run!.match(/\bssh\b/g)).toHaveLength(1);
+  expect(JSON.stringify(diagnostic)).not.toMatch(/scp|deploy-release|compose\.production|APP_DIR|PROJECT|docker|service |migration/i);
+  expect(JSON.stringify(diagnostic)).not.toMatch(/hostkeyscan|StrictHostKeyChecking=no|ssh-agent/i);
+  expect(ssh!.run).not.toMatch(/echo.*(SSH_KEY|KNOWN_HOSTS)/i);
+});
+
+test("connection-only SSH script uses isolated fixtures and cleans its private key on success and failure", () => {
+  const diagnostic = workflowYaml(".github/workflows/deploy.yml").jobs.connection_check!;
+  const script = diagnostic.steps.find((step) => step.name === "Verify read-only SSH identity")!.run!;
+  for (const mode of ["success", "failure", "mismatch"]) {
+    const dir = mkdtempSync(join(tmpdir(), "agendia-connection-"));
+    const bin = join(dir, "bin"); mkdirSync(bin); const log = join(dir, "log"); const temp = join(dir, "temp"); mkdirSync(temp);
+    writeFileSync(join(bin, "ssh"), `#!/bin/bash\nprintf '%s\\n' "$*" >> "$MOCK_LOG"\n[[ "$*" == *'id -un' ]] || exit 9\n[[ "$MODE" != failure ]] || { echo 'fixture.example private error' >&2; exit 8; }\necho sysadmin\n`);
+    chmodSync(join(bin, "ssh"), 0o700);
+    const result = Bun.spawnSync(["/bin/bash", "--noprofile", "--norc", "-c", script], {
+      cwd: dir, env: { PATH: `${bin}:/usr/bin:/bin`, TMPDIR: temp, MOCK_LOG: log, MODE: mode,
+        TS_CLIENT_ID: "fixture-client", TS_AUDIENCE: "fixture-audience", SSH_HOST: "fixture-host",
+        SSH_USER: mode === "mismatch" ? "fixtureaccount" : "sysadmin", SSH_PORT: "22", SSH_KEY: "fixture-private-key", KNOWN_HOSTS: "fixture known host", },
+    });
+    if (mode === "success") expect(result.stderr.toString()).toBe("");
+    expect(result.exitCode).toBe(mode === "success" ? 0 : mode === "failure" ? 8 : 1);
+    expect(result.stderr.toString()).toBe(mode === "failure" ? "SSH connection failed.\n" : "");
+    expect(readFileSync(log, "utf8").trim().split("\n")).toHaveLength(1);
+    expect(readFileSync(log, "utf8")).toContain("id -un");
+    expect(result.stdout.toString()).not.toContain("sysadmin");
+    expect(result.stdout.toString()).not.toContain("fixture-private-key");
+    expect([...new Bun.Glob("**/*").scanSync({ cwd: temp })]).toEqual([]);
+  }
+});
+
+test("pinned host masking fails closed before any host-variable logging", () => {
+  const mask = workflowYaml(".github/workflows/deploy.yml").jobs.connection_check!.steps[0]!;
+  expect(mask.name).toBe("Mask pinned connection host");
+  for (const [pin, valid] of [
+    ["# fixture comment\nfixture.example ssh-ed25519 Zml4dHVyZQ==", true],
+    ["|1|hashed|fixture ssh-ed25519 Zml4dHVyZQ==", false],
+    ["fixture.example ssh-rsa Zml4dHVyZQ==", false],
+    ["fixture.example ssh-ed25519", false],
+    ["", false],
+  ] as const) {
+    const result = Bun.spawnSync(["/bin/bash", "--noprofile", "--norc", "-c", mask.run!], {
+      env: { PATH: "", KNOWN_HOSTS: pin },
+    });
+    expect(result.exitCode === 0).toBe(valid);
+    expect(result.stdout.toString()).toBe(valid ? "::add-mask::fixture.example\n" : "");
+    expect(result.stderr.toString()).toBe("");
+  }
+});
+
 test("workflow trust, source matching and SSH policies remain explicit", () => {
   const publish = read(".github/workflows/publish.yml");
   for (const guard of ["tags: ['v*']", "run-name: Publish ${{ github.sha }}", "github.event_name == 'push'", '.conclusion == "success"', '.event == "push"', '.head_branch == "main"', '.head_repository.full_name == $repo', "actions: read", "packages: write", "tarball/$RELEASE"]) expect(publish).toContain(guard);
@@ -242,7 +444,10 @@ test("workflow trust, source matching and SSH policies remain explicit", () => {
   const deploy = read(".github/workflows/deploy.yml");
   for (const guard of ["workflow_dispatch:", "github.ref == 'refs/heads/main'", "environment: production", "cancel-in-progress: false", "compare/$RELEASE...main", "actions/workflows/ci.yml", ".display_title == (\"Publish \" + $sha)", "?ref=$RELEASE", "StrictHostKeyChecking=yes", "BatchMode=yes"]) expect(deploy).toContain(guard);
   expect(deploy).not.toContain("pull_request:");
-  expect(deploy).not.toContain("uses:");
+  expect(deploy.match(/uses: .+/g)).toEqual([
+    "uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4",
+    "uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4",
+  ]);
   expect(publish.match(/uses: .+/g)).toEqual(["uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2"]);
   expect(publish).toContain("bun-version: 1.4.0");
   expect(read("compose.production.yml")).toContain("${AGENDIA_IMAGE:-agendia:local}");
