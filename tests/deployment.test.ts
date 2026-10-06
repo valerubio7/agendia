@@ -320,6 +320,86 @@ async function connectionFixture(mode = "success") {
   return { connect, cleanup, deps, files, calls, logs, directory };
 }
 
+for (const [mode, stage, code] of [
+  ["platform", "PLATFORM", "TS_PLATFORM"], ["input", "INPUT", "TS_INPUT"], ["temp", "TEMP_STATE", "TS_UNKNOWN"],
+  ["download", "DOWNLOAD", "TS_HTTP"], ["checksum", "CHECKSUM", "TS_CHECKSUM"], ["archive", "ARCHIVE", "TS_ARCHIVE"],
+  ["extract", "EXTRACTION", "TS_UNKNOWN"], ["version", "VERSION", "TS_VERSION"], ["symlink", "VERSION", "TS_BINARY"],
+  ["oidc", "OIDC", "TS_HTTP"], ["credentials", "CREDENTIAL_FILES", "TS_UNKNOWN"],
+  ["missingtoken", "OIDC", "TS_OIDC"], ["startup", "DAEMON_LAUNCH", "TS_UNKNOWN"], ["readiness", "DAEMON_READY", "TS_READY"],
+  ["up", "UP", "TS_UNKNOWN"], ["tokenremove", "TOKEN_REMOVAL", "TS_UNKNOWN"],
+] as const) {
+  test(`safe connection diagnostics identify ${mode} without private exception text`, async () => {
+    const f = await connectionFixture(mode);
+    const privateError = Error("fixture-jwt private.host /private/key https://private.invalid/ command stderr");
+    if (mode === "platform") f.deps.platform = "darwin";
+    if (mode === "input") f.deps.env["INPUT_CLIENT-ID"] = "";
+    if (mode === "temp") f.deps.io.appendFile = async () => { throw privateError; };
+    if (mode === "tokenremove") f.deps.io.unlink = async () => { throw privateError; };
+    if (mode === "credentials") {
+      const write = f.deps.io.writeFile;
+      f.deps.io.writeFile = async (path, data, options) => { if (path.endsWith("/token")) throw privateError; return write(path, data, options); };
+    }
+    if (mode === "extract") {
+      const run = f.deps.run;
+      f.deps.run = async (command, args) => { if (args[0] === "-xzf") throw privateError; return run(command, args); };
+    }
+    await expect(f.connect(f.deps)).rejects.toThrow(mode === "startup" ? "TS_SETUP_CLEANUP" : "TS_SETUP");
+    expect(f.logs.filter((line) => !line.startsWith("::add-mask::"))).toEqual([
+      `TS_STAGE_${stage}_FAILED`, code, mode === "startup" ? "TS_SETUP_CLEANUP_FAILED" : "TS_SETUP_CLEANUP_RETURNED",
+    ]);
+  });
+}
+
+test("safe connection diagnostics reject arbitrary strings, suffixes, getters and proxy exceptions", async () => {
+  const secret = "fixture-jwt private.host /private/key https://private.invalid/ argv stderr";
+  let getterCalls = 0;
+  const known = Error("TS_HTTP"); known.stack = secret;
+  for (const [error, code] of [
+    [known, "TS_HTTP"], [Error(`TS_HTTP ${secret}`), "TS_UNKNOWN"], [Error(secret), "TS_UNKNOWN"],
+    [secret, "TS_UNKNOWN"], [null, "TS_UNKNOWN"], [{ message: "TS_HTTP" }, "TS_UNKNOWN"],
+    [Object.defineProperty(Error("TS_HTTP"), "message", { get() { getterCalls++; throw Error(secret); } }), "TS_UNKNOWN"],
+    [new Proxy(Error("TS_HTTP"), { getOwnPropertyDescriptor() { throw Error(secret); } }), "TS_UNKNOWN"],
+  ] as const) {
+    const f = await connectionFixture();
+    f.deps.io.appendFile = async () => { throw error; };
+    await expect(f.connect(f.deps)).rejects.toThrow("TS_SETUP");
+    expect(f.logs).toEqual(["TS_STAGE_TEMP_STATE_FAILED", code, "TS_SETUP_CLEANUP_RETURNED"]);
+    expect(f.logs.join(" ")).not.toContain(secret);
+  }
+  expect(getterCalls).toBe(0);
+});
+
+test("safe connection diagnostics preserve primary stage when setup cleanup also fails", async () => {
+  const f = await connectionFixture("up");
+  f.deps.io.rm = async () => { throw Error("TS_CLEANUP fixture-jwt private.host /private/key"); };
+  await expect(f.connect(f.deps)).rejects.toThrow("TS_SETUP_CLEANUP");
+  expect(f.logs).toEqual(["::add-mask::fixture-jwt", "TS_STAGE_UP_FAILED", "TS_UNKNOWN", "TS_SETUP_CLEANUP_FAILED"]);
+});
+
+test("official eight-member GNU archive listing accepts only the verified paths", async () => {
+  const folder = "tailscale_1.102.4_amd64";
+  // Checksum-verified GNU tar -tzf metadata; extraction/CLI execution remain mocked.
+  const members = ["", "tailscaled", "tailscale", "systemd/", "systemd/tailscaled.service",
+    "systemd/tailscaled.defaults", "systemd/tailscale-online.target", "systemd/tailscale-wait-online.service"]
+    .map((entry) => `${folder}/${entry}`);
+  for (const extra of [undefined, `${folder}/systemd/unknown.service`, `${folder}/systemd/../private`,
+    `/${folder}/tailscale`, `${folder}-other/tailscale`]) {
+    const f = await connectionFixture();
+    const run = f.deps.run;
+    const deps = { ...f.deps, run: async (command: string, args: string[]) => args[0] === "-tzf"
+      ? [...members, ...(extra ? [extra] : [])].join("\n") + "\n" : run(command, args) };
+    if (extra) {
+      await expect(f.connect(deps)).rejects.toThrow("TS_SETUP");
+      expect(f.logs).toEqual(["TS_STAGE_ARCHIVE_FAILED", "TS_ARCHIVE", "TS_SETUP_CLEANUP_RETURNED"]);
+      expect(f.calls.some((call) => call.includes("up"))).toBe(false);
+    } else {
+      await f.connect(deps);
+      expect(f.logs).toEqual(["::add-mask::fixture-jwt", "TS_CONNECTED"]);
+      await f.cleanup(f.directory, deps);
+    }
+  }
+});
+
 test("local connection action declares unconditional Node24 post cleanup", async () => {
   const { PIN } = await import("../.github/actions/tailscale-connection/main.mjs");
   expect(PIN).toEqual({ version: "1.102.4", url: "https://pkgs.tailscale.com/stable/tailscale_1.102.4_amd64.tgz",
@@ -457,20 +537,18 @@ test("OIDC permission is isolated to protected deploy and propagated by the reus
 test("protected deployment validates identity then joins ephemeral Tailnet before pinned SSH", () => {
   const steps = workflowYaml(".github/workflows/deploy.yml").jobs.deploy!.steps;
   const check = steps.findIndex((step) => step.name === "Validate private connection identifiers");
-  const network = steps.findIndex((step) => step.uses?.startsWith("tailscale/github-action@"));
+  const network = steps.findIndex((step) => step.uses === "./.github/actions/tailscale-connection");
   const ssh = steps.findIndex((step) => step.name === "Transfer and execute over pinned SSH");
   expect(check).toBeGreaterThanOrEqual(0);
   expect(network).toBeGreaterThan(check);
   expect(ssh).toBeGreaterThan(network);
-  expect(steps[network]!.uses).toBe("tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd");
+  expect(steps[network]!.uses).toBe("./.github/actions/tailscale-connection");
   expect(steps[network]!.with).toEqual({
-    "oauth-client-id": "${{ vars.PRODUCTION_TAILSCALE_CLIENT_ID }}",
+    "client-id": "${{ vars.PRODUCTION_TAILSCALE_CLIENT_ID }}",
     audience: "${{ vars.PRODUCTION_TAILSCALE_AUDIENCE }}",
-    tags: "tag:agendia-ci", version: "1.102.4",
-    args: "--accept-dns=false --accept-routes=false --ssh=false",
-    ping: "${{ vars.PRODUCTION_SSH_HOST }}", "log-mode": "quiet",
   });
-  for (const step of steps.slice(0, ssh)) expect(JSON.stringify(step)).not.toContain("secrets.");
+  expect(steps[0]).toEqual(workflowYaml(".github/workflows/deploy.yml").jobs.connection_check!.steps[0]);
+  for (const step of steps.slice(1, ssh)) expect(JSON.stringify(step)).not.toContain("secrets.");
   for (const step of steps) {
     expect(step.if).toBeUndefined();
     expect(step["continue-on-error"]).toBeUndefined();
@@ -549,16 +627,14 @@ test("connection-only dispatch is isolated from release and reusable deployment"
   expect(deploy.jobs.preflight!.if).toContain("!inputs.connection_only");
   expect(deploy.jobs.deploy!.needs).toBe("preflight");
   expect(diagnostic.steps.map((step) => step.name)).toEqual([
-    "Mask pinned connection host", "Validate private connection credentials", "Connect private deployment network", "Verify read-only SSH identity",
+    "Mask pinned connection host", "Download version-matched connection action after approval", "Validate private connection credentials", "Connect private deployment network", "Verify read-only SSH identity",
   ]);
-  const [mask, validate, network, ssh] = diagnostic.steps;
+  const [mask, , validate, network, ssh] = diagnostic.steps;
   expect(mask!.env).toEqual({ KNOWN_HOSTS: "${{ secrets['PRODUCTION_KNOWN_HOSTS'] }}" });
   expect(mask!.run).not.toContain("${{ vars.");
-  expect(network!.uses).toBe("tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd");
+  expect(network!.uses).toBe("./.github/actions/tailscale-connection");
   expect(network!.with).toEqual({
-    "oauth-client-id": "${{ vars.PRODUCTION_TAILSCALE_CLIENT_ID }}", audience: "${{ vars.PRODUCTION_TAILSCALE_AUDIENCE }}",
-    tags: "tag:agendia-ci", version: "1.102.4", args: "--accept-dns=false --accept-routes=false --ssh=false",
-    ping: "${{ vars.PRODUCTION_SSH_HOST }}", "log-mode": "quiet",
+    "client-id": "${{ vars.PRODUCTION_TAILSCALE_CLIENT_ID }}", audience: "${{ vars.PRODUCTION_TAILSCALE_AUDIENCE }}",
   });
   expect(validate!.env).toMatchObject({
     TS_CLIENT_ID: "${{ vars.PRODUCTION_TAILSCALE_CLIENT_ID }}", TS_AUDIENCE: "${{ vars.PRODUCTION_TAILSCALE_AUDIENCE }}",
@@ -619,6 +695,61 @@ test("pinned host masking fails closed before any host-variable logging", () => 
   }
 });
 
+test("protected local action materialization binds each job to its exact immutable source", () => {
+  const workflow = workflowYaml(".github/workflows/deploy.yml");
+  const helper = ".github/actions/tailscale-connection";
+  for (const jobName of ["deploy", "connection_check"]) {
+    const job = workflow.jobs[jobName]!;
+    const diagnostic = jobName === "connection_check";
+    const download = job.steps.findIndex((step) => step.name === (diagnostic
+      ? "Download version-matched connection action after approval" : "Download version-matched deployment files after approval"));
+    const network = job.steps.findIndex((step) => step.uses === `./${helper}`);
+    expect(job.environment).toBe("production");
+    expect(job.steps[0]!.name).toBe("Mask pinned connection host");
+    expect(download).toBeGreaterThan(0); expect(network).toBeGreaterThan(download);
+    const step = job.steps[download]!;
+    expect(step.env).toEqual({ GH_TOKEN: "${{ github.token }}", REPOSITORY: "${{ github.repository }}",
+      [diagnostic ? "SOURCE_SHA" : "RELEASE"]: diagnostic ? "${{ github.sha }}" : "${{ inputs.release }}" });
+    expect(step.run).not.toMatch(/checkout|tailscale up|ref=(main|HEAD)|releases\/|secrets\.|\$\{\{/);
+    expect(step.if).toBeUndefined(); expect(step["continue-on-error"]).toBeUndefined();
+    const expected = [...(diagnostic ? [] : ["deploy/deploy-release.sh", "compose.production.yml"]),
+      ...["action.yml", "main.mjs", "post.mjs"].map((file) => `${helper}/${file}`)];
+    for (const mode of ["success", "failure", "invalid-sha"]) {
+      const dir = mkdtempSync(join(tmpdir(), "agendia-source-"));
+      const bin = join(dir, "bin"); mkdirSync(bin); const log = join(dir, "calls");
+      writeFileSync(log, "");
+      writeFileSync(join(bin, "gh"), `#!/bin/bash
+set -eu
+[[ "$1" == api && "$2" == -H && "$3" == 'Accept: application/vnd.github.raw+json' ]] || exit 9
+request="$4"
+printf '%s\\n' "$request" >> "$MOCK_LOG"
+[[ "$request" == "repos/fixture/repo/contents/"*"?ref=$EXPECTED_SHA" ]] || exit 9
+file="\${request#repos/fixture/repo/contents/}"; file="\${file%\\?ref=*}"
+[[ "$MODE" != failure || "$file" != */main.mjs ]] || exit 8
+printf 'fixture:%s\\n' "$file"
+`);
+      chmodSync(join(bin, "gh"), 0o700);
+      const env = { PATH: `${bin}:/usr/bin:/bin`, GH_TOKEN: "fixture-token", REPOSITORY: "fixture/repo",
+        RELEASE: diagnostic ? "b".repeat(40) : mode === "invalid-sha" ? "main" : sha,
+        SOURCE_SHA: diagnostic ? mode === "invalid-sha" ? "main" : sha : "b".repeat(40), EXPECTED_SHA: sha, MOCK_LOG: log, MODE: mode };
+      expect(Bun.spawnSync(["/bin/bash", "-n", "-c", step.run!], { env }).exitCode).toBe(0);
+      const result = Bun.spawnSync(["/bin/bash", "--noprofile", "--norc", "-c", step.run!], { cwd: dir, env });
+      expect(result.exitCode).toBe(mode === "success" ? 0 : mode === "failure" ? 8 : 1);
+      const requests = readFileSync(log, "utf8").trim().split("\n").filter(Boolean);
+      expect(requests).toEqual((mode === "invalid-sha" ? [] : mode === "failure" ? expected.slice(0, -1) : expected)
+        .map((file) => `repos/fixture/repo/contents/${file}?ref=${sha}`));
+      if (mode === "success") for (const file of expected) {
+        const output = file.startsWith(helper) ? file : file.split("/").at(-1)!;
+        expect(readFileSync(join(dir, output), "utf8")).toBe(`fixture:${file}\n`);
+      }
+      else expect(existsSync(join(dir, helper, "post.mjs"))).toBe(false);
+      expect(result.stdout.toString() + result.stderr.toString()).not.toContain("fixture-token");
+    }
+  }
+  const condition = "github.event_name == 'workflow_dispatch' && inputs.connection_only == true && github.repository == 'valerubio7/agendia' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci/tailscale-private-deploy' || github.ref == 'refs/heads/ci/tailscale-cli-integration')";
+  for (const name of ["connection_preflight", "connection_check"]) expect(workflow.jobs[name]!.if).toBe(condition);
+});
+
 test("workflow trust, source matching and SSH policies remain explicit", () => {
   const publish = read(".github/workflows/publish.yml");
   for (const guard of ["tags: ['v*']", "run-name: Publish ${{ github.sha }}", "github.event_name == 'push'", '.conclusion == "success"', '.event == "push"', '.head_branch == "main"', '.head_repository.full_name == $repo', "actions: read", "packages: write", "tarball/$RELEASE"]) expect(publish).toContain(guard);
@@ -627,8 +758,8 @@ test("workflow trust, source matching and SSH policies remain explicit", () => {
   for (const guard of ["workflow_dispatch:", "github.ref == 'refs/heads/main'", "environment: production", "cancel-in-progress: false", "compare/$RELEASE...main", "actions/workflows/ci.yml", ".display_title == (\"Publish \" + $sha)", "?ref=$RELEASE", "StrictHostKeyChecking=yes", "BatchMode=yes"]) expect(deploy).toContain(guard);
   expect(deploy).not.toContain("pull_request:");
   expect(deploy.match(/uses: .+/g)).toEqual([
-    "uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4",
-    "uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4",
+    "uses: ./.github/actions/tailscale-connection",
+    "uses: ./.github/actions/tailscale-connection",
   ]);
   expect(publish.match(/uses: .+/g)).toEqual(["uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2"]);
   expect(publish).toContain("bun-version: 1.4.0");

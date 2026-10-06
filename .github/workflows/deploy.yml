@@ -91,7 +91,7 @@ jobs:
             [[ $(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image@$digest") == "$RELEASE" ]]
           fi
   connection_preflight:
-    if: github.event_name == 'workflow_dispatch' && inputs.connection_only == true && github.repository == 'valerubio7/agendia' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci/tailscale-private-deploy')
+    if: github.event_name == 'workflow_dispatch' && inputs.connection_only == true && github.repository == 'valerubio7/agendia' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci/tailscale-private-deploy' || github.ref == 'refs/heads/ci/tailscale-cli-integration')
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -109,7 +109,7 @@ jobs:
                 (.reviewer.login | type == "string" and length > 0 and (endswith("[bot]") | not)))))'
   connection_check:
     needs: connection_preflight
-    if: github.event_name == 'workflow_dispatch' && inputs.connection_only == true && github.repository == 'valerubio7/agendia' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci/tailscale-private-deploy')
+    if: github.event_name == 'workflow_dispatch' && inputs.connection_only == true && github.repository == 'valerubio7/agendia' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci/tailscale-private-deploy' || github.ref == 'refs/heads/ci/tailscale-cli-integration')
     environment: production
     permissions:
       contents: read
@@ -129,6 +129,19 @@ jobs:
           [[ "$host" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ && "$key_type" == ssh-ed25519 ]]
           [[ "$key" =~ ^[A-Za-z0-9+/]+={0,2}$ && -z "$extra" ]]
           printf '::add-mask::%s\n' "$host"
+      - name: Download version-matched connection action after approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          action_dir=.github/actions/tailscale-connection
+          mkdir -p "$action_dir"
+          for file in action.yml main.mjs post.mjs; do
+            gh api -H 'Accept: application/vnd.github.raw+json' "repos/$REPOSITORY/contents/$action_dir/$file?ref=$SOURCE_SHA" > "$action_dir/$file"
+          done
       - name: Validate private connection credentials
         env:
           TS_CLIENT_ID: ${{ vars.PRODUCTION_TAILSCALE_CLIENT_ID }}
@@ -146,15 +159,10 @@ jobs:
           [[ "$SSH_PORT" =~ ^[0-9]{1,5}$ && "$SSH_PORT" -ge 1 && "$SSH_PORT" -le 65535 ]]
           [[ -n "$SSH_KEY" && -n "$KNOWN_HOSTS" ]]
       - name: Connect private deployment network
-        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4
+        uses: ./.github/actions/tailscale-connection
         with:
-          oauth-client-id: ${{ vars.PRODUCTION_TAILSCALE_CLIENT_ID }}
+          client-id: ${{ vars.PRODUCTION_TAILSCALE_CLIENT_ID }}
           audience: ${{ vars.PRODUCTION_TAILSCALE_AUDIENCE }}
-          tags: tag:agendia-ci
-          version: '1.102.4'
-          args: --accept-dns=false --accept-routes=false --ssh=false
-          ping: ${{ vars.PRODUCTION_SSH_HOST }}
-          log-mode: quiet
       - name: Verify read-only SSH identity
         env:
           SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
@@ -196,6 +204,19 @@ jobs:
       id-token: write
     runs-on: ubuntu-latest
     steps:
+      - name: Mask pinned connection host
+        env:
+          KNOWN_HOSTS: ${{ secrets['PRODUCTION_KNOWN_HOSTS'] }}
+        run: |
+          set -euo pipefail
+          host= key_type= key= extra=
+          while read -r host key_type key extra; do
+            [[ -z "$host" || "$host" == \#* ]] || break
+          done <<< "$KNOWN_HOSTS"
+          # Only a plain single-host Ed25519 pin is accepted; unknown formats fail closed.
+          [[ "$host" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ && "$key_type" == ssh-ed25519 ]]
+          [[ "$key" =~ ^[A-Za-z0-9+/]+={0,2}$ && -z "$extra" ]]
+          printf '::add-mask::%s\n' "$host"
       - name: Download version-matched deployment files after approval
         env:
           GH_TOKEN: ${{ github.token }}
@@ -203,8 +224,14 @@ jobs:
           RELEASE: ${{ inputs.release }}
         run: |
           set -euo pipefail
+          [[ "$RELEASE" =~ ^[0-9a-f]{40}$ ]]
           for file in deploy/deploy-release.sh compose.production.yml; do
             gh api -H 'Accept: application/vnd.github.raw+json' "repos/$REPOSITORY/contents/$file?ref=$RELEASE" > "${file##*/}"
+          done
+          action_dir=.github/actions/tailscale-connection
+          mkdir -p "$action_dir"
+          for file in action.yml main.mjs post.mjs; do
+            gh api -H 'Accept: application/vnd.github.raw+json' "repos/$REPOSITORY/contents/$action_dir/$file?ref=$RELEASE" > "$action_dir/$file"
           done
       - name: Validate private connection identifiers
         env:
@@ -218,17 +245,12 @@ jobs:
       # Before live use, human Tailnet trust must bind the OIDC subject
       # repo:valerubio7@129685751/agendia@1346725840:environment:production with auth_keys write and
       # only tag:agendia-ci / least-privilege target access. No static secret.
-      # Official action uses ephemeral nodes and logs out in its post step.
+      # Repository action requests an ephemeral node and attempts owned cleanup in post.
       - name: Connect private deployment network
-        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4
+        uses: ./.github/actions/tailscale-connection
         with:
-          oauth-client-id: ${{ vars.PRODUCTION_TAILSCALE_CLIENT_ID }}
+          client-id: ${{ vars.PRODUCTION_TAILSCALE_CLIENT_ID }}
           audience: ${{ vars.PRODUCTION_TAILSCALE_AUDIENCE }}
-          tags: tag:agendia-ci
-          version: '1.102.4'
-          args: --accept-dns=false --accept-routes=false --ssh=false
-          ping: ${{ vars.PRODUCTION_SSH_HOST }}
-          log-mode: quiet
       - name: Transfer and execute over pinned SSH
         env:
           RELEASE: ${{ inputs.release }}

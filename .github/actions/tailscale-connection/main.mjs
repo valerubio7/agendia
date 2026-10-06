@@ -33,6 +33,17 @@ const dependencies = overrides => ({ ...defaults, ...overrides, digest: override
 const paths = directory => ({ cli: join(directory, layout, 'tailscale'), daemon: join(directory, layout, 'tailscaled'),
   socket: join(directory, 'tailscaled.sock'), pid: join(directory, 'daemon.pid'), token: join(directory, 'token') });
 const privateWrite = (d, path, data) => d.io.writeFile(path, data, { mode: 0o600, flag: 'wx' });
+const diagnosticCodes = new Set(['TS_PLATFORM', 'TS_INPUT', 'TS_OWNERSHIP', 'TS_BINARY', 'TS_PID',
+  'TS_HTTP', 'TS_CHECKSUM', 'TS_ARCHIVE', 'TS_VERSION', 'TS_OIDC', 'TS_READY', 'TS_SOCKET', 'TS_STOP', 'TS_CLEANUP']);
+function diagnosticCode(error) {
+  try {
+    if (!(error instanceof Error)) return 'TS_UNKNOWN';
+    // Inspect only an own data property: never invoke a message getter or stringify an exception.
+    const message = Object.getOwnPropertyDescriptor(error, 'message')?.value;
+    if (typeof message === 'string' && diagnosticCodes.has(message)) return message;
+  } catch { /* Null, proxy traps and other uninspectable exceptions use the same static fallback. */ }
+  return 'TS_UNKNOWN';
+}
 
 async function ownedDirectory(directory, d) {
   const root = await d.io.realpath(d.env.RUNNER_TEMP);
@@ -121,27 +132,37 @@ export async function cleanup(directory, overrides) {
 
 export async function connect(overrides) {
   const d = dependencies(overrides); let directory;
+  let stage = 'TS_STAGE_PLATFORM';
   try {
     if (d.platform !== 'linux' || d.arch !== 'x64' || d.env.RUNNER_ENVIRONMENT !== 'github-hosted') throw Error('TS_PLATFORM');
+    stage = 'TS_STAGE_INPUT';
     const client = d.env['INPUT_CLIENT-ID']; const audience = d.env.INPUT_AUDIENCE;
     if (!client || !audience || /[?&\s\x00-\x1f]/.test(client)) throw Error('TS_INPUT');
+    stage = 'TS_STAGE_TEMP_STATE';
     const root = await d.io.realpath(d.env.RUNNER_TEMP);
     directory = await d.io.mkdtemp(join(root, 'agendia-ts-'));
     await d.io.chmod(directory, 0o700);
     await ownedDirectory(directory, d);
     await d.io.appendFile(d.env.GITHUB_STATE, `directory=${directory}\n`);
     const p = paths(directory); const archive = join(directory, 'cli.tgz');
+    stage = 'TS_STAGE_DOWNLOAD';
     const bytes = await body(PIN.url, {}, 64 * 1024 * 1024, d);
+    stage = 'TS_STAGE_CHECKSUM';
     if (d.digest(bytes) !== PIN.sha256) throw Error('TS_CHECKSUM');
+    stage = 'TS_STAGE_ARCHIVE';
     await privateWrite(d, archive, bytes);
     const listing = (await d.run('tar', ['-tzf', archive])).trim().split('\n');
     const allowed = new Set([`${layout}/`, `${layout}/tailscale`, `${layout}/tailscaled`, `${layout}/systemd/`,
-      `${layout}/systemd/tailscaled.defaults`, `${layout}/systemd/tailscaled.service`]);
+      `${layout}/systemd/tailscaled.defaults`, `${layout}/systemd/tailscaled.service`,
+      `${layout}/systemd/tailscale-online.target`, `${layout}/systemd/tailscale-wait-online.service`]);
     if (!listing.every(entry => allowed.has(entry)) || !listing.includes(`${layout}/tailscale`) ||
         !listing.includes(`${layout}/tailscaled`)) throw Error('TS_ARCHIVE');
+    stage = 'TS_STAGE_EXTRACTION';
     await d.run('tar', ['-xzf', archive, '-C', directory, '--no-same-owner', '--no-same-permissions']);
+    stage = 'TS_STAGE_VERSION';
     for (const bin of [p.cli, p.daemon]) { await regular(bin, d); await d.io.chmod(bin, 0o700); }
     if ((await d.run(p.cli, ['version'])).split(/\s/)[0] !== PIN.version) throw Error('TS_VERSION');
+    stage = 'TS_STAGE_OIDC';
     const request = new URL(d.env.ACTIONS_ID_TOKEN_REQUEST_URL);
     if (request.protocol !== 'https:' || !request.hostname.endsWith('.actions.githubusercontent.com') ||
         request.username || request.password || !d.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) throw Error('TS_OIDC');
@@ -149,11 +170,14 @@ export async function connect(overrides) {
     const token = JSON.parse((await body(request, { headers: { Authorization: `Bearer ${d.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}` } }, 65536, d)).toString()).value;
     if (typeof token !== 'string' || !token || /[\r\n]/.test(token)) throw Error('TS_OIDC');
     d.log(`::add-mask::${token.replaceAll('%', '%25')}`);
+    stage = 'TS_STAGE_CREDENTIAL_FILES';
     await privateWrite(d, p.token, token);
     await privateWrite(d, p.pid, '');
     await privateWrite(d, join(directory, 'daemon.log'), '');
+    stage = 'TS_STAGE_DAEMON_LAUNCH';
     await d.launch(['-n', 'bash', '-c', 'set -e; echo $$ > "$1"; shift; exec "$@"', '_', p.pid,
       p.daemon, `--socket=${p.socket}`, '--state=mem:'], join(directory, 'daemon.log'));
+    stage = 'TS_STAGE_DAEMON_READY';
     let ready = false;
     for (let attempt = 0; attempt < 50; attempt++) {
       try {
@@ -162,14 +186,23 @@ export async function connect(overrides) {
       await d.pause();
     }
     if (!ready) throw Error('TS_READY');
+    stage = 'TS_STAGE_UP';
     await privateWrite(d, join(directory, 'identity'), 'attempted');
     await d.run('sudo', ['-n', p.cli, `--socket=${p.socket}`, 'up', '--timeout=30s', '--accept-dns=false', '--accept-routes=false',
       '--ssh=false', '--advertise-tags=tag:agendia-ci', `--hostname=agendia-ci-${randomUUID()}`,
       `--client-id=${client}?preauthorized=true&ephemeral=true`, `--id-token=file:${p.token}`]);
+    stage = 'TS_STAGE_TOKEN_REMOVAL';
     await d.io.unlink(p.token);
     d.log('TS_CONNECTED');
-  } catch {
-    try { await cleanup(directory, d); } catch { throw Error('TS_SETUP_CLEANUP'); }
+  } catch (error) {
+    d.log(`${stage}_FAILED`);
+    d.log(diagnosticCode(error));
+    try { await cleanup(directory, d); }
+    catch {
+      d.log('TS_SETUP_CLEANUP_FAILED');
+      throw Error('TS_SETUP_CLEANUP');
+    }
+    d.log('TS_SETUP_CLEANUP_RETURNED');
     throw Error('TS_SETUP');
   }
 }
