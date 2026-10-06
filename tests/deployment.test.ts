@@ -376,6 +376,30 @@ test("safe connection diagnostics preserve primary stage when setup cleanup also
   expect(f.logs).toEqual(["::add-mask::fixture-jwt", "TS_STAGE_UP_FAILED", "TS_UNKNOWN", "TS_SETUP_CLEANUP_FAILED"]);
 });
 
+test("official eight-member GNU archive listing accepts only the verified paths", async () => {
+  const folder = "tailscale_1.102.4_amd64";
+  // Checksum-verified GNU tar -tzf metadata; extraction/CLI execution remain mocked.
+  const members = ["", "tailscaled", "tailscale", "systemd/", "systemd/tailscaled.service",
+    "systemd/tailscaled.defaults", "systemd/tailscale-online.target", "systemd/tailscale-wait-online.service"]
+    .map((entry) => `${folder}/${entry}`);
+  for (const extra of [undefined, `${folder}/systemd/unknown.service`, `${folder}/systemd/../private`,
+    `/${folder}/tailscale`, `${folder}-other/tailscale`]) {
+    const f = await connectionFixture();
+    const run = f.deps.run;
+    const deps = { ...f.deps, run: async (command: string, args: string[]) => args[0] === "-tzf"
+      ? [...members, ...(extra ? [extra] : [])].join("\n") + "\n" : run(command, args) };
+    if (extra) {
+      await expect(f.connect(deps)).rejects.toThrow("TS_SETUP");
+      expect(f.logs).toEqual(["TS_STAGE_ARCHIVE_FAILED", "TS_ARCHIVE", "TS_SETUP_CLEANUP_RETURNED"]);
+      expect(f.calls.some((call) => call.includes("up"))).toBe(false);
+    } else {
+      await f.connect(deps);
+      expect(f.logs).toEqual(["::add-mask::fixture-jwt", "TS_CONNECTED"]);
+      await f.cleanup(f.directory, deps);
+    }
+  }
+});
+
 test("local connection action declares unconditional Node24 post cleanup", async () => {
   const { PIN } = await import("../.github/actions/tailscale-connection/main.mjs");
   expect(PIN).toEqual({ version: "1.102.4", url: "https://pkgs.tailscale.com/stable/tailscale_1.102.4_amd64.tgz",

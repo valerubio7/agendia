@@ -153,7 +153,8 @@ export async function connect(overrides) {
     await privateWrite(d, archive, bytes);
     const listing = (await d.run('tar', ['-tzf', archive])).trim().split('\n');
     const allowed = new Set([`${layout}/`, `${layout}/tailscale`, `${layout}/tailscaled`, `${layout}/systemd/`,
-      `${layout}/systemd/tailscaled.defaults`, `${layout}/systemd/tailscaled.service`]);
+      `${layout}/systemd/tailscaled.defaults`, `${layout}/systemd/tailscaled.service`,
+      `${layout}/systemd/tailscale-online.target`, `${layout}/systemd/tailscale-wait-online.service`]);
     if (!listing.every(entry => allowed.has(entry)) || !listing.includes(`${layout}/tailscale`) ||
         !listing.includes(`${layout}/tailscaled`)) throw Error('TS_ARCHIVE');
     stage = 'TS_STAGE_EXTRACTION';
