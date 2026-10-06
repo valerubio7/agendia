@@ -320,6 +320,62 @@ async function connectionFixture(mode = "success") {
   return { connect, cleanup, deps, files, calls, logs, directory };
 }
 
+for (const [mode, stage, code] of [
+  ["platform", "PLATFORM", "TS_PLATFORM"], ["input", "INPUT", "TS_INPUT"], ["temp", "TEMP_STATE", "TS_UNKNOWN"],
+  ["download", "DOWNLOAD", "TS_HTTP"], ["checksum", "CHECKSUM", "TS_CHECKSUM"], ["archive", "ARCHIVE", "TS_ARCHIVE"],
+  ["extract", "EXTRACTION", "TS_UNKNOWN"], ["version", "VERSION", "TS_VERSION"], ["symlink", "VERSION", "TS_BINARY"],
+  ["oidc", "OIDC", "TS_HTTP"], ["credentials", "CREDENTIAL_FILES", "TS_UNKNOWN"],
+  ["missingtoken", "OIDC", "TS_OIDC"], ["startup", "DAEMON_LAUNCH", "TS_UNKNOWN"], ["readiness", "DAEMON_READY", "TS_READY"],
+  ["up", "UP", "TS_UNKNOWN"], ["tokenremove", "TOKEN_REMOVAL", "TS_UNKNOWN"],
+] as const) {
+  test(`safe connection diagnostics identify ${mode} without private exception text`, async () => {
+    const f = await connectionFixture(mode);
+    const privateError = Error("fixture-jwt private.host /private/key https://private.invalid/ command stderr");
+    if (mode === "platform") f.deps.platform = "darwin";
+    if (mode === "input") f.deps.env["INPUT_CLIENT-ID"] = "";
+    if (mode === "temp") f.deps.io.appendFile = async () => { throw privateError; };
+    if (mode === "tokenremove") f.deps.io.unlink = async () => { throw privateError; };
+    if (mode === "credentials") {
+      const write = f.deps.io.writeFile;
+      f.deps.io.writeFile = async (path, data, options) => { if (path.endsWith("/token")) throw privateError; return write(path, data, options); };
+    }
+    if (mode === "extract") {
+      const run = f.deps.run;
+      f.deps.run = async (command, args) => { if (args[0] === "-xzf") throw privateError; return run(command, args); };
+    }
+    await expect(f.connect(f.deps)).rejects.toThrow(mode === "startup" ? "TS_SETUP_CLEANUP" : "TS_SETUP");
+    expect(f.logs.filter((line) => !line.startsWith("::add-mask::"))).toEqual([
+      `TS_STAGE_${stage}_FAILED`, code, mode === "startup" ? "TS_SETUP_CLEANUP_FAILED" : "TS_SETUP_CLEANUP_RETURNED",
+    ]);
+  });
+}
+
+test("safe connection diagnostics reject arbitrary strings, suffixes, getters and proxy exceptions", async () => {
+  const secret = "fixture-jwt private.host /private/key https://private.invalid/ argv stderr";
+  let getterCalls = 0;
+  const known = Error("TS_HTTP"); known.stack = secret;
+  for (const [error, code] of [
+    [known, "TS_HTTP"], [Error(`TS_HTTP ${secret}`), "TS_UNKNOWN"], [Error(secret), "TS_UNKNOWN"],
+    [secret, "TS_UNKNOWN"], [null, "TS_UNKNOWN"], [{ message: "TS_HTTP" }, "TS_UNKNOWN"],
+    [Object.defineProperty(Error("TS_HTTP"), "message", { get() { getterCalls++; throw Error(secret); } }), "TS_UNKNOWN"],
+    [new Proxy(Error("TS_HTTP"), { getOwnPropertyDescriptor() { throw Error(secret); } }), "TS_UNKNOWN"],
+  ] as const) {
+    const f = await connectionFixture();
+    f.deps.io.appendFile = async () => { throw error; };
+    await expect(f.connect(f.deps)).rejects.toThrow("TS_SETUP");
+    expect(f.logs).toEqual(["TS_STAGE_TEMP_STATE_FAILED", code, "TS_SETUP_CLEANUP_RETURNED"]);
+    expect(f.logs.join(" ")).not.toContain(secret);
+  }
+  expect(getterCalls).toBe(0);
+});
+
+test("safe connection diagnostics preserve primary stage when setup cleanup also fails", async () => {
+  const f = await connectionFixture("up");
+  f.deps.io.rm = async () => { throw Error("TS_CLEANUP fixture-jwt private.host /private/key"); };
+  await expect(f.connect(f.deps)).rejects.toThrow("TS_SETUP_CLEANUP");
+  expect(f.logs).toEqual(["::add-mask::fixture-jwt", "TS_STAGE_UP_FAILED", "TS_UNKNOWN", "TS_SETUP_CLEANUP_FAILED"]);
+});
+
 test("local connection action declares unconditional Node24 post cleanup", async () => {
   const { PIN } = await import("../.github/actions/tailscale-connection/main.mjs");
   expect(PIN).toEqual({ version: "1.102.4", url: "https://pkgs.tailscale.com/stable/tailscale_1.102.4_amd64.tgz",
