@@ -12,8 +12,13 @@ on:
     inputs:
       release:
         description: Full 40-character published main commit SHA
-        required: true
+        required: false
         type: string
+      connection_only:
+        description: Verify the protected private connection without deploying
+        required: false
+        type: boolean
+        default: false
 permissions:
   contents: read
   actions: read
@@ -27,7 +32,7 @@ jobs:
       contents: read
       actions: read
       packages: read
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && !inputs.connection_only
     runs-on: ubuntu-latest
     steps:
       - name: Verify human protection and release provenance
@@ -85,6 +90,102 @@ jobs:
             docker pull "$image@$digest"
             [[ $(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image@$digest") == "$RELEASE" ]]
           fi
+  connection_preflight:
+    if: github.event_name == 'workflow_dispatch' && inputs.connection_only == true && github.repository == 'valerubio7/agendia' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci/tailscale-private-deploy')
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify human production protection
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPOSITORY/environments/production" | jq -e '
+            .protection_rules | any(.type == "required_reviewers" and
+              (.reviewers | any(.type == "User" and .reviewer.type == "User" and
+                (.reviewer.id | type == "number" and . > 0) and
+                (.reviewer.login | type == "string" and length > 0 and (endswith("[bot]") | not)))))'
+  connection_check:
+    needs: connection_preflight
+    if: github.event_name == 'workflow_dispatch' && inputs.connection_only == true && github.repository == 'valerubio7/agendia' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci/tailscale-private-deploy')
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mask pinned connection host
+        env:
+          KNOWN_HOSTS: ${{ secrets['PRODUCTION_KNOWN_HOSTS'] }}
+        run: |
+          set -euo pipefail
+          host= key_type= key= extra=
+          while read -r host key_type key extra; do
+            [[ -z "$host" || "$host" == \#* ]] || break
+          done <<< "$KNOWN_HOSTS"
+          # Only a plain single-host Ed25519 pin is accepted; unknown formats fail closed.
+          [[ "$host" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ && "$key_type" == ssh-ed25519 ]]
+          [[ "$key" =~ ^[A-Za-z0-9+/]+={0,2}$ && -z "$extra" ]]
+          printf '::add-mask::%s\n' "$host"
+      - name: Validate private connection credentials
+        env:
+          TS_CLIENT_ID: ${{ vars.PRODUCTION_TAILSCALE_CLIENT_ID }}
+          TS_AUDIENCE: ${{ vars.PRODUCTION_TAILSCALE_AUDIENCE }}
+          SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
+          SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
+          SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
+          SSH_KEY: ${{ secrets['PRODUCTION_SSH_KEY'] }}
+          KNOWN_HOSTS: ${{ secrets['PRODUCTION_KNOWN_HOSTS'] }}
+        run: |
+          set -euo pipefail
+          [[ -n "$TS_CLIENT_ID" && -n "$TS_AUDIENCE" ]]
+          [[ "$SSH_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
+          [[ "$SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ "$SSH_PORT" =~ ^[0-9]{1,5}$ && "$SSH_PORT" -ge 1 && "$SSH_PORT" -le 65535 ]]
+          [[ -n "$SSH_KEY" && -n "$KNOWN_HOSTS" ]]
+      - name: Connect private deployment network
+        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4
+        with:
+          oauth-client-id: ${{ vars.PRODUCTION_TAILSCALE_CLIENT_ID }}
+          audience: ${{ vars.PRODUCTION_TAILSCALE_AUDIENCE }}
+          tags: tag:agendia-ci
+          version: '1.102.4'
+          args: --accept-dns=false --accept-routes=false --ssh=false
+          ping: ${{ vars.PRODUCTION_SSH_HOST }}
+          log-mode: quiet
+      - name: Verify read-only SSH identity
+        env:
+          SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
+          SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
+          SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
+          SSH_KEY: ${{ secrets['PRODUCTION_SSH_KEY'] }}
+          KNOWN_HOSTS: ${{ secrets['PRODUCTION_KNOWN_HOSTS'] }}
+        run: |
+          set -euo pipefail
+          [[ "$SSH_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
+          [[ "$SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ "$SSH_PORT" =~ ^[0-9]{1,5}$ && "$SSH_PORT" -ge 1 && "$SSH_PORT" -le 65535 ]]
+          [[ -n "$SSH_KEY" && -n "$KNOWN_HOSTS" ]]
+          umask 077
+          work=$(mktemp -d "${TMPDIR:-/tmp}/agendia-connection.XXXXXXXX")
+          cleanup() { rm -rf -- "$work"; }
+          trap cleanup EXIT
+          printf '%s\n' "$SSH_KEY" > "$work/key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$work/known_hosts"
+          chmod 600 "$work/key" "$work/known_hosts"
+          if identity=$(ssh -F /dev/null -i "$work/key" -o IdentityAgent=none -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$work/known_hosts" -o GlobalKnownHostsFile=/dev/null \
+            -o UpdateHostKeys=no -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o GSSAPIAuthentication=no \
+            -o ConnectTimeout=10 -o ConnectionAttempts=1 -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "id -un" 2> "$work/error"); then
+            [[ "$identity" == "$SSH_USER" ]]
+          else
+            status=$?
+            echo "SSH connection failed." >&2
+            exit "$status"
+          fi
+          echo "Connection verified."
   deploy:
     needs: preflight
     environment: production
