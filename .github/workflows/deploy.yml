@@ -8,12 +8,21 @@ on:
       publisher_run:
         required: true
         type: string
+      skip_backup:
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       release:
         description: Full 40-character published main commit SHA
         required: false
         type: string
+      skip_backup:
+        description: Waive backup for this manual 0.7.0 deployment only
+        required: false
+        type: boolean
+        default: false
       connection_only:
         description: Verify the protected private connection without deploying
         required: false
@@ -28,6 +37,8 @@ concurrency:
   cancel-in-progress: false
 jobs:
   preflight:
+    outputs:
+      backup_flag: ${{ steps.provenance.outputs.backup_flag }}
     permissions:
       contents: read
       actions: read
@@ -36,14 +47,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Verify human protection and release provenance
+        id: provenance
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           RELEASE: ${{ inputs.release }}
           PUBLISHER_RUN: ${{ inputs.publisher_run }}
+          SKIP_BACKUP: ${{ inputs.skip_backup }}
+          EVENT_NAME: ${{ github.event_name }}
+          CONNECTION_ONLY: ${{ inputs.connection_only }}
         run: |
           set -euo pipefail
           [[ "$RELEASE" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SKIP_BACKUP" == false || "$SKIP_BACKUP" == true ]]
+          if [[ "$SKIP_BACKUP" == true ]]; then
+            [[ "$EVENT_NAME" == workflow_dispatch && "$CONNECTION_ONLY" == false ]]
+          fi
           # No environment or SSH secrets: missing/unreadable protection fails closed.
           gh api "repos/$REPOSITORY/environments/production" | jq -e '
             .protection_rules | any(.type == "required_reviewers" and
@@ -70,9 +89,10 @@ jobs:
             (if $run != "" then (.id | tostring) == $run and .event == "push" and .head_sha == $sha
              else (.event == "push" and .head_sha == $sha) or (.event == "workflow_run" and .head_branch == "main") end)' publisher.json
           # Legacy manual proof does not qualify for unattended automatic deployment.
-          if [[ $(jq -r .event publisher.json) == push ]]; then
+          if [[ $(jq -r .event publisher.json) == push || "$SKIP_BACKUP" == true ]]; then
             version=$(gh api -H 'Accept: application/vnd.github.raw+json' "repos/$REPOSITORY/contents/package.json?ref=$RELEASE" | jq -er .version)
             [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+            if [[ "$SKIP_BACKUP" == true ]]; then [[ "$version" == 0.7.0 ]]; fi
             tag="v$version"
             gh api "repos/$REPOSITORY/releases/tags/$tag" | jq -e --arg tag "$tag" --arg sha "$RELEASE" '
               .tag_name == $tag and .target_commitish == $sha and .draft == false and .prerelease == false and
@@ -90,6 +110,9 @@ jobs:
             docker pull "$image@$digest"
             [[ $(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image@$digest") == "$RELEASE" ]]
           fi
+          if [[ "$SKIP_BACKUP" == true ]]; then
+            printf 'backup_flag=--skip-backup-for-release=%s\n' "$RELEASE" >> "$GITHUB_OUTPUT"
+          fi
   connection_preflight:
     if: github.event_name == 'workflow_dispatch' && inputs.connection_only == true && github.repository == 'valerubio7/agendia' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci/tailscale-private-deploy' || github.ref == 'refs/heads/ci/tailscale-cli-integration')
     permissions:
@@ -100,8 +123,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
+          SKIP_BACKUP: ${{ inputs.skip_backup }}
         run: |
           set -euo pipefail
+          [[ "$SKIP_BACKUP" == false ]]
           gh api "repos/$REPOSITORY/environments/production" | jq -e '
             .protection_rules | any(.type == "required_reviewers" and
               (.reviewers | any(.type == "User" and .reviewer.type == "User" and
@@ -254,6 +279,7 @@ jobs:
       - name: Transfer and execute over pinned SSH
         env:
           RELEASE: ${{ inputs.release }}
+          BACKUP_FLAG: ${{ needs.preflight.outputs.backup_flag }}
           REPOSITORY: ${{ github.repository }}
           SSH_HOST: ${{ vars.PRODUCTION_SSH_HOST }}
           SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
@@ -269,6 +295,12 @@ jobs:
           [[ "$SSH_PORT" =~ ^[0-9]{1,5}$ && "$SSH_PORT" -ge 1 && "$SSH_PORT" -le 65535 ]]
           [[ "$APP_DIR" =~ ^/[a-zA-Z0-9_/-]+$ ]]
           [[ "$PROJECT" =~ ^[a-z0-9][a-z0-9_-]*$ ]]
+          [[ "$RELEASE" =~ ^[0-9a-f]{40}$ ]]
+          waiver_arg=
+          if [[ -n "$BACKUP_FLAG" ]]; then
+            [[ "$BACKUP_FLAG" == "--skip-backup-for-release=$RELEASE" ]]
+            waiver_arg=" '$BACKUP_FLAG'"
+          fi
           namespace="${REPOSITORY,,}"
           [[ "$namespace" =~ ^[a-z0-9_.-]+/[a-z0-9_.-]+$ ]]
           umask 077
@@ -281,4 +313,4 @@ jobs:
           ssh "${options[@]}" -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "umask 077; mkdir '$incoming'"
           scp "${options[@]}" -P "$SSH_PORT" deploy-release.sh compose.production.yml "$SSH_USER@$SSH_HOST:$incoming/"
           ssh "${options[@]}" -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
-            "bash '$incoming/deploy-release.sh' '$RELEASE' '$namespace' '$APP_DIR' '$PROJECT'"
+            "bash '$incoming/deploy-release.sh' '$RELEASE' '$namespace' '$APP_DIR' '$PROJECT'$waiver_arg"

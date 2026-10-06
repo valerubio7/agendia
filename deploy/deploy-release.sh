@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 umask 077
-[[ $# == 4 ]] || { echo 'Usage: deploy-release.sh SHA namespace app-dir compose-project' >&2; exit 1; }
+[[ $# == 4 || $# == 5 ]] || { echo 'Usage: deploy-release.sh SHA namespace app-dir compose-project [--skip-backup-for-release=SHA]' >&2; exit 1; }
 release=$1 namespace=$2 app_dir=$3 project=$4
 [[ "$release" =~ ^[0-9a-f]{40}$ && "$namespace" =~ ^[a-z0-9_.-]+/[a-z0-9_.-]+$ ]]
 [[ "$app_dir" =~ ^/[a-zA-Z0-9_/-]+$ && "$project" =~ ^[a-z0-9][a-z0-9_-]*$ ]]
+skip_backup=false
+if [[ $# == 5 ]]; then
+  [[ "$5" == "--skip-backup-for-release=$release" ]] || { echo 'Invalid backup waiver argument' >&2; exit 1; }
+  skip_backup=true
+fi
 env_file="$app_dir/deploy/.env.production"
 [[ -d "$app_dir" && -s "$env_file" && -s "$app_dir/compose.production.yml" ]]
 source_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -40,10 +45,13 @@ export AGENDIA_IMAGE="$digest"
 printf 'AGENDIA_IMAGE=%s\n' "$AGENDIA_IMAGE" > "$work/images.env"
 compose config --quiet
 compose pull db api web worker manager migrate provision
-backup="$app_dir/backups/$(basename "$work").sql"
-# pg_dump failure or empty output never reaches the downtime boundary.
-old_compose exec -T db pg_dump -U agendia_migrator -d agendia > "$backup"
-[[ -s "$backup" ]] || { echo 'Empty database backup; refusing downtime' >&2; exit 1; }
+backup='none (explicit invocation waiver)'
+if ! $skip_backup; then
+  backup="$app_dir/backups/$(basename "$work").sql"
+  # pg_dump failure or empty output never reaches the downtime boundary.
+  old_compose exec -T db pg_dump -U agendia_migrator -d agendia > "$backup"
+  [[ -s "$backup" ]] || { echo 'Empty database backup; refusing downtime' >&2; exit 1; }
+fi
 trap 'echo "Deployment failed after stopping apps. Leave services stopped or inspect their state; no automatic schema rollback. Recovery files: $work; backup: $backup" >&2' ERR
 compose stop web api worker manager
 compose run --rm --no-deps migrate
