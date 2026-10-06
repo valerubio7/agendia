@@ -115,7 +115,7 @@ jobs:
           [[ -n "$TS_CLIENT_ID" && -n "$TS_AUDIENCE" ]]
           [[ "$SSH_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
       # Before live use, human Tailnet trust must bind the OIDC subject
-      # repo:valerubio7/agendia:environment:production with auth_keys write and
+      # repo:valerubio7@129685751/agendia@1346725840:environment:production with auth_keys write and
       # only tag:agendia-ci / least-privilege target access. No static secret.
       # Official action uses ephemeral nodes and logs out in its post step.
       - name: Connect private deployment network
