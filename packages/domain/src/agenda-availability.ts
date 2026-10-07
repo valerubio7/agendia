@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { calendarMs, parseCalendarDateMs as parseDate, parseInstantMs as parseInstant } from "./calendar-values.ts";
 
 const DAY_MINUTES = 1440;
 const WEEK_MINUTES = 7 * DAY_MINUTES;
@@ -76,44 +77,6 @@ export interface AvailabilityInput {
   readonly closedIntervals?: readonly InstantInterval[];
   /** Caller filters to Confirmed bookings for the selected resource, with only authorized self-exclusions. */
   readonly busyIntervals?: readonly InstantInterval[];
-}
-
-function calendarMs(year: number, month: number, day: number): number | undefined {
-  if (month < 1 || month > 12 || day < 1 || day > 31) return undefined;
-  const date = new Date(0);
-  date.setUTCFullYear(year, month - 1, day);
-  date.setUTCHours(0, 0, 0, 0);
-  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return undefined;
-  return date.getTime();
-}
-
-function parseDate(value: string): number | undefined {
-  if (typeof value !== "string") return undefined;
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  return match && Number(match[1]) >= 1 ? calendarMs(Number(match[1]), Number(match[2]), Number(match[3])) : undefined;
-}
-
-// Explicit ISO offsets only. Validate before Date parsing so invalid days and sub-ms precision cannot normalize away.
-function parseInstant(value: string): number | undefined {
-  if (typeof value !== "string") return undefined;
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/.exec(value);
-  if (!match || Number(match[1]) < 1) return undefined;
-  const date = calendarMs(Number(match[1]), Number(match[2]), Number(match[3]));
-  const hour = Number(match[4]);
-  const minute = Number(match[5]);
-  const second = Number(match[6]);
-  const fraction = match[7] ?? "";
-  if (date === undefined || hour > 23 || minute > 59 || second > 59 || /[1-9]/.test(fraction.slice(3))) return undefined;
-  const zone = match[8]!;
-  let offset = 0;
-  if (zone !== "Z") {
-    const hours = Number(zone.slice(1, 3));
-    const minutes = Number(zone.slice(4, 6));
-    if (hours > 23 || minutes > 59) return undefined;
-    offset = (hours * 60 + minutes) * (zone[0] === "+" ? 1 : -1);
-  }
-  return date + ((hour * 60 + minute - offset) * 60 + second) * 1000
-    + Number(fraction.slice(0, 3).padEnd(3, "0"));
 }
 
 const argentina = new Intl.DateTimeFormat("en-US", {
