@@ -14,6 +14,7 @@ import {
   AI_SYSTEM_INSTRUCTIONS,
   AssistantConfigInputSchema,
   BusinessProfileSchema,
+  ServiceInputSchema,
 } from "@agendia/domain";
 import {
   openLinkCode,
@@ -80,7 +81,8 @@ export function buildApi(input: AuthService | ApiOptions) {
       | "UNAUTHENTICATED"
       | "FORBIDDEN"
       | "NOT_FOUND"
-      | "CONFLICT",
+      | "CONFLICT"
+      | "INTERNAL_ERROR",
     message: string,
   ) => reply.code(status).send(makeSafeError(code, message, request.id));
   const originOk = (request: FastifyRequest) =>
@@ -456,6 +458,75 @@ export function buildApi(input: AuthService | ApiOptions) {
     }
     return auth;
   };
+  const serviceNotFound = Symbol("service not found");
+  const serviceFailure = (error: unknown, request: FastifyRequest, reply: FastifyReply) => {
+    if (error === serviceNotFound)
+      return fail(reply, request, 404, "NOT_FOUND", "Service not found");
+    const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+    if (code === "23505")
+      return fail(reply, request, 409, "CONFLICT", "Service name already exists");
+    // A valid domain duration may exceed PostgreSQL's integer representation.
+    if (code === "22003")
+      return fail(reply, request, 400, "VALIDATION_FAILED", "Service value cannot be stored");
+    return fail(reply, request, 500, "INTERNAL_ERROR", "Service operation failed");
+  };
+  app.get("/me/services", async (request, reply) => {
+    const auth = await requireTenant(request, reply);
+    if (!auth) return;
+    try {
+      return await pools.api.run(context(auth, request), repo => repo.listServices());
+    } catch (error) {
+      return serviceFailure(error, request, reply);
+    }
+  });
+  app.post("/me/services", async (request, reply) => {
+    const auth = await requireTenant(request, reply, true);
+    if (!auth) return;
+    const parsed = ServiceInputSchema.safeParse(request.body);
+    if (!parsed.success)
+      return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid service fields");
+    try {
+      const saved = await tenantWrite(auth, request, "service.created", repo =>
+        repo.createService(auth.business_id!, parsed.data));
+      return reply.code(201).send(saved);
+    } catch (error) {
+      return serviceFailure(error, request, reply);
+    }
+  });
+  app.put("/me/services/:id", async (request, reply) => {
+    const auth = await requireTenant(request, reply, true);
+    if (!auth) return;
+    const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+    const parsed = ServiceInputSchema.safeParse(request.body);
+    if (!params.success || !parsed.success)
+      return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid service fields");
+    try {
+      return await tenantWrite(auth, request, "service.updated", async repo => {
+        const saved = await repo.updateService(params.data.id, parsed.data);
+        if (!saved) throw serviceNotFound;
+        return saved;
+      });
+    } catch (error) {
+      return serviceFailure(error, request, reply);
+    }
+  });
+  app.put("/me/services/:id/status", async (request, reply) => {
+    const auth = await requireTenant(request, reply, true);
+    if (!auth) return;
+    const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+    const parsed = z.object({ status: z.enum(["active", "suspended"]) }).safeParse(request.body);
+    if (!params.success || !parsed.success)
+      return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid service status");
+    try {
+      return await tenantWrite(auth, request, "service.status_changed", async repo => {
+        const saved = await repo.setServiceStatus(params.data.id, parsed.data.status);
+        if (!saved) throw serviceNotFound;
+        return saved;
+      });
+    } catch (error) {
+      return serviceFailure(error, request, reply);
+    }
+  });
   app.get("/me/business-profile", async (request, reply) => {
     const auth = await requireTenant(request, reply);
     return auth

@@ -49,6 +49,21 @@ export function openLinkCode(key: Buffer, value: SealedLinkCode) {
   ]).toString("utf8");
 }
 
+export type ServiceCatalogInput = {
+  name: string;
+  description?: string | undefined;
+  durationMinutes: number;
+  priceArs: number;
+};
+export type CatalogService = {
+  id: string;
+  name: string;
+  description: string | null;
+  durationMinutes: number;
+  priceArs: number;
+  status: "active" | "suspended";
+};
+
 type Db = Sql | TransactionSql;
 type DbJson = Parameters<Sql["json"]>[0];
 function asDbJson(value: unknown): DbJson {
@@ -76,6 +91,31 @@ export type SafeRuntimeEvent = {
 
 export class PostgresRepositories {
   constructor(private readonly db: Db) {}
+  listServices() {
+    return this.db<CatalogService[]>`
+      select id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status
+      from services order by normalized_name,id`;
+  }
+  async createService(businessId: string, input: ServiceCatalogInput) {
+    const [row] = await this.db<CatalogService[]>`
+      insert into services(business_id,name,description,duration_minutes,price_ars)
+      values(${businessId},${input.name},${input.description ?? null},${input.durationMinutes},${input.priceArs})
+      returning id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status`;
+    return row!;
+  }
+  async updateService(id: string, input: ServiceCatalogInput) {
+    const [row] = await this.db<CatalogService[]>`
+      update services set name=${input.name},description=${input.description ?? null},
+      duration_minutes=${input.durationMinutes},price_ars=${input.priceArs} where id=${id}
+      returning id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status`;
+    return row ?? null;
+  }
+  async setServiceStatus(id: string, status: CatalogService["status"]) {
+    const [row] = await this.db<CatalogService[]>`
+      update services set status=${status} where id=${id}
+      returning id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status`;
+    return row ?? null;
+  }
   async platformAiInstructions() {
     const [row] = await this.db<{ additional_instructions: string }[]>`
       select additional_instructions from operational_controls where singleton`;

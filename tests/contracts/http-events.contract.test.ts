@@ -44,6 +44,15 @@ describe("safe HTTP and event contracts", () => {
     ).toBe(false);
   });
 
+  test("allowlists service catalog and lifecycle paths in derived OpenAPI", () => {
+    const document = toOpenApiDocument();
+    for (const route of ["/me/services", "/me/services/:id", "/me/services/:id/status"]) {
+      expect(PRODUCT_HTTP_ROUTES as readonly string[]).toContain(route);
+      expect(document.paths).toHaveProperty(route);
+    }
+    expect(PRODUCT_HTTP_ROUTES.some(route => /services.*delete/.test(route))).toBe(false);
+  });
+
   test("allowlists audit metadata and preserves tenant scope", () => {
     const event = buildAuditEvent({
       businessId: "11111111-1111-4111-8111-111111111111",
