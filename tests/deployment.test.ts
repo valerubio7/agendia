@@ -201,7 +201,15 @@ elif [[ "$*" == *git/ref/tags/* ]]; then
   echo '{"object":{"type":"commit","sha":"${sha}"}}'
 elif [[ "$*" == *compare/* ]]; then echo ahead
 elif [[ "$*" == *publish.yml* ]]; then
-  echo '{"workflow_runs":[{"name":"Publish release","path":".github/workflows/publish.yml","display_title":"Publish ${sha}","event":"workflow_run","head_branch":"main","head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","status":"completed","conclusion":"success","head_repository":{"full_name":"owner/repo"}}]}'
+  identity='"workflow_id":373224966,'
+  publisher_path='.github/workflows/publish.yml'
+  case "$MODE" in
+    pub-id) identity='"workflow_id":373224967,' ;;
+    pub-id-missing) identity='' ;;
+    pub-id-string) identity='"workflow_id":"373224966",' ;;
+    pub-path) publisher_path='.github/workflows/other.yml' ;;
+  esac
+  echo '{"workflow_runs":[{'"$identity"'"name":"Publish ${sha}","path":"'"$publisher_path"'","display_title":"Publish ${sha}","event":"workflow_run","head_branch":"main","head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","status":"completed","conclusion":"success","head_repository":{"full_name":"owner/repo"}}]}'
 elif [[ "$*" == *actions/workflows/* ]]; then
   echo '{"workflow_runs":[{"name":"CI","path":".github/workflows/ci.yml","event":"push","head_branch":"main","head_sha":"${sha}","status":"completed","conclusion":"success","head_repository":{"full_name":"owner/repo"}}]}'
 else exit 9
@@ -251,6 +259,16 @@ test("backup waiver requires manual normal 0.7.1 release and defaults false", ()
 test("legacy manual source proof remains eligible only after human protection", () => {
   expect(preflight("success").result.exitCode).toBe(0);
 });
+
+for (const mode of ["pub-id", "pub-id-missing", "pub-id-string", "pub-path"]) {
+  test(`legacy manual preflight rejects publisher identity: ${mode}`, () => {
+    const f = preflight(mode, { SKIP_BACKUP: "true" });
+    expect(f.log).toContain("actions/workflows/publish.yml/runs");
+    expect(f.result.exitCode).not.toBe(0);
+    expect(f.log).not.toContain("contents/package.json");
+    expect(f.output).toBe("");
+  });
+}
 
 test("application packaging shares one image with explicit web startup and separate PostgreSQL", () => {
   const dockerfile = read("Dockerfile");
@@ -807,7 +825,8 @@ test("workflow trust, source matching and SSH policies remain explicit", () => {
   for (const guard of ["tags: ['v*']", "run-name: Publish ${{ github.sha }}", "github.event_name == 'push'", '.conclusion == "success"', '.event == "push"', '.head_branch == "main"', '.head_repository.full_name == $repo', "actions: read", "packages: write", "tarball/$RELEASE"]) expect(publish).toContain(guard);
   expect(publish).not.toContain("workflow_run:");
   const deploy = read(".github/workflows/deploy.yml");
-  for (const guard of ["workflow_dispatch:", "github.ref == 'refs/heads/main'", "environment: production", "cancel-in-progress: false", "compare/$RELEASE...main", "actions/workflows/ci.yml", ".display_title == (\"Publish \" + $sha)", "?ref=$RELEASE", "StrictHostKeyChecking=yes", "BatchMode=yes"]) expect(deploy).toContain(guard);
+  expect(deploy).not.toContain('.name == "Publish release"');
+  for (const guard of [".workflow_id == 373224966", '.path == ".github/workflows/publish.yml"', "workflow_dispatch:", "github.ref == 'refs/heads/main'",  "environment: production", "cancel-in-progress: false", "compare/$RELEASE...main", "actions/workflows/ci.yml", ".display_title == (\"Publish \" + $sha)", "?ref=$RELEASE", "StrictHostKeyChecking=yes", "BatchMode=yes"]) expect(deploy).toContain(guard);
   expect(deploy).not.toContain("pull_request:");
   expect(deploy.match(/uses: .+/g)).toEqual([
     "uses: ./.github/actions/tailscale-connection",
