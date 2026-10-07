@@ -4,7 +4,7 @@
   "workspaces": {
     "": {
       "name": "agendia",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "dependencies": {
         "@fastify/cookie": "11.1.2",
         "@node-rs/argon2": "2.1.0",
@@ -28,7 +28,7 @@
     },
     "apps/api": {
       "name": "@agendia/api",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "dependencies": {
         "@agendia/auth": "workspace:*",
         "@agendia/contracts": "workspace:*",
@@ -38,7 +38,7 @@
     },
     "apps/message-worker": {
       "name": "@agendia/message-worker",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "dependencies": {
         "@agendia/ai-deepseek": "workspace:*",
         "@agendia/db": "workspace:*",
@@ -48,7 +48,7 @@
     },
     "apps/web": {
       "name": "@agendia/web",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "dependencies": {
         "@agendia/contracts": "workspace:*",
         "next": "16.3.3",
@@ -62,7 +62,7 @@
     },
     "apps/whatsapp-manager": {
       "name": "@agendia/whatsapp-manager",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "dependencies": {
         "@agendia/db": "workspace:*",
         "@agendia/domain": "workspace:*",
@@ -72,30 +72,30 @@
     },
     "packages/ai-deepseek": {
       "name": "@agendia/ai-deepseek",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "dependencies": {
         "@agendia/domain": "workspace:*",
       },
     },
     "packages/auth": {
       "name": "@agendia/auth",
-      "version": "0.7.0",
+      "version": "0.7.1",
     },
     "packages/contracts": {
       "name": "@agendia/contracts",
-      "version": "0.7.0",
+      "version": "0.7.1",
     },
     "packages/db": {
       "name": "@agendia/db",
-      "version": "0.7.0",
+      "version": "0.7.1",
     },
     "packages/domain": {
       "name": "@agendia/domain",
-      "version": "0.7.0",
+      "version": "0.7.1",
     },
     "packages/whatsapp-baileys": {
       "name": "@agendia/whatsapp-baileys",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "dependencies": {
         "@agendia/db": "workspace:*",
         "@whiskeysockets/baileys": "7.0.0-rc14",

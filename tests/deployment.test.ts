@@ -194,9 +194,9 @@ if [[ "$*" == *environments/production* ]]; then
     *) echo '{"protection_rules":[{"type":"required_reviewers","reviewers":[{"type":"User","reviewer":{"id":1,"type":"User","login":"human"}}]}]}' ;;
   esac
 elif [[ "$*" == *contents/package.json* ]]; then
-  if [[ "$MODE" == version ]]; then echo '{"version":"0.7.1"}'; else echo '{"version":"0.7.0"}'; fi
+  if [[ "$MODE" == version ]]; then echo '{"version":"0.7.0"}'; else echo '{"version":"0.7.1"}'; fi
 elif [[ "$*" == *releases/tags/* ]]; then
-  echo '{"tag_name":"v0.7.0","target_commitish":"${sha}","draft":false,"prerelease":false,"published_at":"2026-01-01"}'
+  echo '{"tag_name":"v0.7.1","target_commitish":"${sha}","draft":false,"prerelease":false,"published_at":"2026-01-01"}'
 elif [[ "$*" == *git/ref/tags/* ]]; then
   echo '{"object":{"type":"commit","sha":"${sha}"}}'
 elif [[ "$*" == *compare/* ]]; then echo ahead
@@ -228,7 +228,7 @@ for (const mode of ["missing", "forbidden", "unknown", "malformed", "none", "noh
   });
 }
 
-test("backup waiver requires manual normal 0.7.0 release and defaults false", () => {
+test("backup waiver requires manual normal 0.7.1 release and defaults false", () => {
   const workflow = workflowYaml(".github/workflows/deploy.yml");
   expect(workflow.on?.workflow_dispatch?.inputs?.skip_backup).toMatchObject({ type: "boolean", default: false, required: false });
   for (const overrides of [{ EVENT_NAME: "workflow_call" }, { CONNECTION_ONLY: "true" }, { SKIP_BACKUP: "invalid" }]) {

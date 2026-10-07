@@ -246,8 +246,8 @@ for (const mode of ["pub-failed", "pub-pending", "pub-pr", "pub-title", "pub-for
 test("all eleven manifests and lock workspace versions agree", () => {
   const lock = readFileSync(join(root, "bun.lock"), "utf8");
   const workspaceSection = lock.split('  "packages": {')[0]!;
-  expect(workspaceSection.match(/"version": "0.7.0"/g)).toHaveLength(11);
+  expect(workspaceSection.match(/"version": "0.7.1"/g)).toHaveLength(11);
   for (const path of paths) {
-    expect(JSON.parse(readFileSync(join(root, path, "package.json"), "utf8")).version).toBe("0.7.0");
+    expect(JSON.parse(readFileSync(join(root, path, "package.json"), "utf8")).version).toBe("0.7.1");
   }
 });
