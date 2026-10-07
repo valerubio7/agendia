@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { type Sql } from "postgres";
+import { randomUUID, createHash } from "node:crypto";
+import { PostgresRepositories } from "../../packages/db/src/repositories.ts";
+import { normalizeResourceName } from "@agendia/domain";
 import {
   tenantContext,
   withTenantTransaction,
@@ -30,6 +33,133 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await database?.stop();
+});
+
+const resourceContext = (businessId = tenantA) => tenantContext({ businessId, actorId: "resource-test", role: "business_user", requestId: randomUUID() });
+const resourceWork = <T>(work: (repo: PostgresRepositories) => Promise<T>, businessId = tenantA) =>
+  withTenantTransaction(admin, resourceContext(businessId), tx => work(new PostgresRepositories(tx)));
+const resourceInput = { name: "Resource", serviceIds: [] as string[], weeklySchedule: {} };
+
+test("resource storage has composite ownership, forced RLS and least privileges", async () => {
+  const serviceA = randomUUID(), serviceB = randomUUID(), resourceA = randomUUID(), resourceB = randomUUID();
+  await admin`insert into services(id,business_id,name,duration_minutes,price_ars) values
+    (${serviceA},${tenantA},'Owned service',15,0),(${serviceB},${tenantB},'Foreign service',15,0)`;
+  await admin`insert into resources(id,business_id,name,weekly_schedule) values
+    (${resourceA},${tenantA},'SQL A','{}'),(${resourceB},${tenantB},'SQL B','{}')`;
+  for (const [resource, service] of [[resourceA, serviceB], [resourceB, serviceA]])
+    await expect(admin`insert into resource_services(business_id,resource_id,service_id) values(${tenantA},${resource!},${service!})`.execute()).rejects.toMatchObject({ code: "23503" });
+  await admin`insert into resource_services values(${tenantA},${resourceA},${serviceA}),(${tenantB},${resourceB},${serviceB})`;
+  for (const table of ["resources", "resource_services"]) {
+    const [flags] = await admin`select relrowsecurity enabled,relforcerowsecurity forced,
+      has_table_privilege('agendia_runtime',oid,'DELETE') deletion,
+      has_table_privilege('agendia_runtime',oid,'UPDATE') updating,
+      has_table_privilege('agendia_runtime',oid,'SELECT,INSERT') catalog from pg_class where oid=${table}::regclass`;
+    expect(flags).toEqual({ enabled: true, forced: true, catalog: true,
+      deletion: table === "resource_services", updating: table === "resources" });
+    expect(await admin.begin(async tx => { await tx.unsafe("set local role agendia_runtime"); return tx.unsafe(`select * from ${table}`); })).toHaveLength(0);
+    for (const role of ["agendia_admin_runtime", "agendia_whatsapp_runtime", "agendia_worker_runtime"])
+      await expect(admin.begin(async tx => { await tx.unsafe(`set local role ${role}`); return tx.unsafe(`select * from ${table}`); })).rejects.toThrow(/permission denied/i);
+    const own = await withTenantTransaction(admin, resourceContext(), tx => tx.unsafe<{ business_id: string }[]>(`select business_id::text from ${table}`));
+    assertNonEmptyTenantRows(own, tenantA);
+    const crossWrite = withTenantTransaction(admin, resourceContext(), tx => table === "resources"
+      ? tx`insert into resources(business_id,name,weekly_schedule) values(${tenantB},'Forbidden','{}')`
+      : tx`insert into resource_services values(${tenantB},${resourceB},${serviceB})`);
+    await expect(crossWrite).rejects.toMatchObject({ code: "42501" });
+  }
+  expect(await withTenantTransaction(admin, resourceContext(), tx => tx`delete from resource_services where resource_id=${resourceB} returning *`)).toHaveLength(0);
+  expect(await withTenantTransaction(admin, resourceContext(), tx => tx`delete from resource_services where resource_id=${resourceA} returning *`)).toHaveLength(1);
+  await expect(withTenantTransaction(admin, resourceContext(), tx => tx`delete from resources`)).rejects.toMatchObject({ code: "42501" });
+  for (const [name, status, hours] of [[" ","active","{}"],["Bad","deleted","{}"],["Bad","active","{\"7\":[]}"]])
+    await expect(admin`insert into resources(business_id,name,status,weekly_schedule) values(${tenantA},${name!},${status!},${hours!}::jsonb)`.execute()).rejects.toMatchObject({ code: "23514" });
+});
+
+test("resource repository preserves identity, canonical owned assignments and transaction rollback", async () => {
+  const service = randomUUID(), second = randomUUID(), foreign = randomUUID();
+  await admin`insert into services(id,business_id,name,duration_minutes,price_ars,status) values
+    (${service},${tenantA},'Suspended assignable',15,0,'suspended'),
+    (${second},${tenantA},'Second owned',15,0,'active'),(${foreign},${tenantB},'Not owned',15,0,'active')`;
+  const created = await resourceWork(repo => repo.createResource(tenantA, {
+    ...resourceInput, serviceIds: [second, service.toUpperCase(), service],
+  }));
+  expect(created).toMatchObject({ name: "Resource", description: null, status: "active",
+    serviceIds: [service,second].sort(), weeklySchedule: {} });
+  expect(await resourceWork(repo => repo.getResource(tenantA,created.id))).toEqual(created);
+  expect(await resourceWork(repo => repo.getResource(tenantB,created.id),tenantB)).toBeNull();
+  expect(await resourceWork(repo => repo.updateResource(tenantB,created.id,resourceInput),tenantB)).toBeNull();
+  expect(await resourceWork(repo => repo.setResourceStatus(tenantB,created.id,"active"),tenantB)).toBeNull();
+  for (const status of ["suspended", "active"] as const)
+    expect(await resourceWork(repo => repo.setResourceStatus(tenantA,created.id,status))).toMatchObject({ id: created.id, status });
+  for (const id of [foreign,randomUUID()])
+    await expect(resourceWork(repo => repo.updateResource(tenantA,created.id,{ ...resourceInput, serviceIds: [id] }))).rejects.toMatchObject({ code: "UNKNOWN_SERVICE" });
+  await expect(resourceWork(async repo => {
+    await repo.updateResource(tenantA,created.id,{ ...resourceInput, name: "Rolled back",serviceIds: [] });
+    throw new Error("effect failure");
+  })).rejects.toThrow("effect failure");
+  // A failure during assignment insertion must undo both the row update and set deletion.
+  await admin.unsafe(`create function reject_resource_assignment() returns trigger language plpgsql as $$
+    begin if NEW.service_id='${second}'::uuid then raise exception 'assignment failure'; end if; return NEW; end $$`);
+  await admin.unsafe(`create trigger reject_resource_assignment before insert on resource_services
+    for each row execute function reject_resource_assignment()`);
+  await expect(resourceWork(repo => repo.updateResource(tenantA,created.id,{
+    ...resourceInput, name: "Assignment rollback",serviceIds: [second],
+  }))).rejects.toThrow("assignment failure");
+  await admin.unsafe(`create or replace function reject_resource_assignment() returns trigger language plpgsql as $$ begin return NEW; end $$`);
+  expect(await resourceWork(repo => repo.getResource(tenantA,created.id))).toEqual(created);
+  const updated = await resourceWork(repo => repo.updateResource(tenantA,created.id,{ ...resourceInput, name: "Edited", description: "Description" }));
+  expect(updated).toMatchObject({ id: created.id, serviceIds: [], description: "Description" });
+  expect(updated).not.toBeNull();
+  expect(await resourceWork(repo => repo.listResources(tenantA))).toContainEqual(updated!);
+  await expect(new PostgresRepositories(admin).createResource(tenantA,resourceInput)).rejects.toThrow(/transaction/i);
+});
+
+test("resource names use uncapped Unicode case/outer trim hashing, not accent or inner-space folding", async () => {
+  const longName = Array.from({ length: 100 },(_,i) => createHash("sha256").update(String(i)).digest("hex")).join("") + "é";
+  for (const name of ["ÉCOLE", "A  B", longName]) {
+    const saved = await resourceWork(repo => repo.createResource(tenantA,{ ...resourceInput, name: "\t" + name + "\ufeff" }));
+    expect(saved.name).toBe(name);
+    const [row] = await admin`select normalized_name,encode(service_name_sha256(normalized_name),'hex') digest from resources where id=${saved.id}`;
+    expect(row).toEqual({ normalized_name: normalizeResourceName(name), digest: createHash("sha256").update(normalizeResourceName(name)).digest("hex") });
+    await expect(resourceWork(repo => repo.createResource(tenantA,{ ...resourceInput, name: name.toLowerCase() }))).rejects.toMatchObject({ code: "23505" });
+    expect(await resourceWork(repo => repo.createResource(tenantB,{ ...resourceInput, name }),tenantB)).toMatchObject({ name });
+  }
+  for (const name of ["ECOLE", "A B"])
+    expect(await resourceWork(repo => repo.createResource(tenantA,{ ...resourceInput, name }))).toMatchObject({ name });
+  const direct = randomUUID();
+  await admin`insert into resources(id,business_id,name,weekly_schedule) values(${direct},${tenantA},${"\tDIRECT\ufeff"},'{}')`;
+  expect((await admin`select normalized_name from resources where id=${direct}`)[0]?.normalized_name).toBe("direct");
+  await expect(resourceWork(repo => repo.updateResource(tenantA,direct,{ ...resourceInput,name: "école" }))).rejects.toMatchObject({ code: "23505" });
+  expect((await resourceWork(repo => repo.getResource(tenantA,direct)))?.name).toBe("\tDIRECT\ufeff");
+});
+
+test("repository hours guards hold the early shared lock and preserve both directions including suspended hours", async () => {
+  const businessId = randomUUID();
+  await admin`insert into businesses(id,name) values(${businessId},'Hours')`;
+  const work = <T>(fn: (repo: PostgresRepositories) => Promise<T>) => resourceWork(fn,businessId);
+  const hours = { 6: [{ startMinute: 1387,endMinute: 60 }], 0: [{ startMinute: 60,endMinute: 121 }] };
+  expect(await work(repo => repo.getBusinessCalendar(businessId))).toEqual({ weeklySchedule: null });
+  await expect(work(repo => repo.createResource(businessId,{ ...resourceInput, weeklySchedule: hours }))).rejects.toMatchObject({ code: "HOURS_CONFLICT" });
+  expect(await work(repo => repo.listResources(businessId))).toHaveLength(0);
+  const off = await work(repo => repo.createResource(businessId,resourceInput));
+  await work(repo => repo.saveBusinessCalendar(businessId,hours));
+  // Verify a lock is held by the first write, not just by eventual audit work.
+  await admin.unsafe(`create function resource_lock_check() returns trigger language plpgsql as $$
+    declare key bigint := hashtextextended('business-calendar:' || NEW.business_id::text,0);
+    begin if not exists(select 1 from pg_locks where locktype='advisory' and pid=pg_backend_pid()
+      and classid=((key >> 32) & 4294967295)::oid and objid=(key & 4294967295)::oid and objsubid=1 and granted)
+      then raise exception 'missing early lock'; end if; return NEW; end $$`);
+  await admin.unsafe(`create trigger resource_lock_check before insert or update on resources for each row execute function resource_lock_check()`);
+  const union = { 6: [{ startMinute: 1387,endMinute: 121 }] };
+  const configured = await work(repo => repo.updateResource(businessId,off.id,{ ...resourceInput,weeklySchedule: union }));
+  expect(configured?.weeklySchedule).toEqual(union);
+  await work(repo => repo.setResourceStatus(businessId,off.id,"suspended"));
+  await expect(work(repo => repo.saveBusinessCalendar(businessId,{}))).rejects.toMatchObject({ code: "HOURS_CONFLICT" });
+  const paused = { ...hours, 0: [{ startMinute: 61,endMinute: 121 }] };
+  await expect(work(repo => repo.saveBusinessCalendar(businessId,paused))).rejects.toMatchObject({ code: "HOURS_CONFLICT" });
+  await expect(work(repo => repo.updateResource(businessId,off.id,{ ...resourceInput,weeklySchedule: { 1: [{startMinute: 0,endMinute: 1}] } }))).rejects.toMatchObject({ code: "HOURS_CONFLICT" });
+  expect(await work(repo => repo.getResource(businessId,off.id))).toMatchObject({ status: "suspended",weeklySchedule: union });
+  expect(await work(repo => repo.getBusinessCalendar(businessId))).toEqual({ weeklySchedule: hours });
+  await work(repo => repo.updateResource(businessId,off.id,resourceInput));
+  expect(await work(repo => repo.saveBusinessCalendar(businessId,{}))).toEqual({ weeklySchedule: {} });
 });
 
 describe("forced tenant RLS", () => {

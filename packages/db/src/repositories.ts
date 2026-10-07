@@ -3,6 +3,7 @@ import postgres, { type Sql, type TransactionSql } from "postgres";
 import type { TenantContext } from "./tenant-context.ts";
 import { replyDeadline } from "./reply-pacing.ts";
 import { BusinessClosureInputSchema, parseInstantMs, WeeklyScheduleSchema,
+  ResourceInputSchema, isResourceScheduleWithinBusiness, type ResourceInput,
   type BusinessClosure, type BusinessClosureInput, type WeeklySchedule } from "@agendia/domain";
 
 type ClosureRow = { id: string; kind: string; date: string | null; start: string | null; end: string | null };
@@ -19,12 +20,19 @@ function closureValues(input: BusinessClosureInput) {
 }
 
 export type BusinessCalendar = { weeklySchedule: WeeklySchedule };
+export type CatalogResource = Omit<ResourceInput, "description"> & {
+  id: string; description: string | null; status: "active" | "suspended";
+};
+/** B2 maps these domain conflicts to safe HTTP errors; no persistence details escape. */
+export class ResourceCatalogError extends Error {
+  constructor(readonly code: "UNKNOWN_SERVICE" | "HOURS_CONFLICT") { super(code); }
+}
 
 /** Acquire inside the tenant UoW BEFORE reads/guards/mutations (also when no row exists).
  * C/T05/T09 must use this same namespace. Hash collisions only serialize businesses;
  * tenant identity remains enforced by context and RLS, never by the hash.
  */
-export async function acquireBusinessCalendarLock(tx: TransactionSql, context: TenantContext) {
+export async function acquireBusinessCalendarLock(tx: TransactionSql, context: Pick<TenantContext, "businessId">) {
   if ("begin" in tx) throw new Error("Calendar lock requires a transaction");
   const businessId = context.businessId.toLowerCase();
   const [scope] = await tx`select current_setting('app.tenant_id',true) tenant`;
@@ -130,7 +138,7 @@ export type SafeRuntimeEvent = {
 
 export class PostgresRepositories {
   constructor(private readonly db: Db) {}
-  acquireBusinessCalendarLock(context: TenantContext) {
+  acquireBusinessCalendarLock(context: Pick<TenantContext, "businessId">) {
     if ("begin" in this.db) throw new Error("Calendar lock requires a transaction");
     return acquireBusinessCalendarLock(this.db as TransactionSql, context);
   }
@@ -139,9 +147,14 @@ export class PostgresRepositories {
       select weekly_schedule "weeklySchedule" from business_calendars where business_id=${businessId}`;
     return { weeklySchedule: row ? WeeklyScheduleSchema.parse(row.weeklySchedule) : null };
   }
-  /** Caller must acquireBusinessCalendarLock(context) before any guards or mutation in the same UoW. */
+  /** Transaction required; uses the same early lock as public calendar/closure callers. */
   async saveBusinessCalendar(businessId: string, weeklySchedule: WeeklySchedule): Promise<BusinessCalendar> {
+    await this.acquireBusinessCalendarLock({ businessId });
     const valid = WeeklyScheduleSchema.parse(weeklySchedule);
+    const resources = await this.listResources(businessId);
+    if (resources.some(resource => !isResourceScheduleWithinBusiness(resource.weeklySchedule, valid)))
+      throw new ResourceCatalogError("HOURS_CONFLICT");
+    // Confirmed-booking guards integrate in T09; configured suspended hours count here.
     const [row] = await this.db<BusinessCalendar[]>`
       insert into business_calendars(business_id,weekly_schedule) values(${businessId},${this.db.json(asDbJson(valid))})
       on conflict(business_id) do update set weekly_schedule=excluded.weekly_schedule
@@ -173,6 +186,59 @@ export class PostgresRepositories {
   async deleteBusinessClosure(businessId: string, id: string): Promise<boolean> {
     const rows = await this.db`delete from business_calendar_closures where business_id=${businessId} and id=${id} returning id`;
     return rows.length > 0;
+  }
+  listResources(businessId: string) {
+    return this.db<CatalogResource[]>`select r.id,r.name,r.description,r.status,r.weekly_schedule "weeklySchedule",
+      array(select service_id::text from resource_services rs
+        where rs.business_id=r.business_id and rs.resource_id=r.id order by service_id) "serviceIds"
+      from resources r where r.business_id=${businessId} order by r.normalized_name,r.id`;
+  }
+  async getResource(businessId: string, id: string) {
+    const [row] = await this.db<CatalogResource[]>`select r.id,r.name,r.description,r.status,r.weekly_schedule "weeklySchedule",
+      array(select service_id::text from resource_services rs
+        where rs.business_id=r.business_id and rs.resource_id=r.id order by service_id) "serviceIds"
+      from resources r where r.business_id=${businessId} and r.id=${id}`;
+    return row ?? null;
+  }
+  private async validateResource(businessId: string, input: ResourceInput) {
+    const valid = ResourceInputSchema.parse(input);
+    const calendar = await this.getBusinessCalendar(businessId);
+    if (!isResourceScheduleWithinBusiness(valid.weeklySchedule, calendar.weeklySchedule ?? {}))
+      throw new ResourceCatalogError("HOURS_CONFLICT");
+    if (valid.serviceIds.length) {
+      const services = await this.db`select id from services where business_id=${businessId} and id in ${this.db(valid.serviceIds)}`;
+      if (services.length !== valid.serviceIds.length) throw new ResourceCatalogError("UNKNOWN_SERVICE");
+    }
+    return valid;
+  }
+  private async replaceResourceServices(businessId: string, id: string, serviceIds: string[]) {
+    await this.db`delete from resource_services where business_id=${businessId} and resource_id=${id}`;
+    if (serviceIds.length) await this.db`insert into resource_services ${this.db(serviceIds.map(serviceId => ({
+      business_id: businessId, resource_id: id, service_id: serviceId,
+    })))}`;
+  }
+  /** All mutations require a tenant transaction; assignments and caller audit/outbox share its rollback. */
+  async createResource(businessId: string, input: ResourceInput): Promise<CatalogResource> {
+    await this.acquireBusinessCalendarLock({ businessId });
+    const valid = await this.validateResource(businessId, input);
+    const [row] = await this.db<{ id: string }[]>`insert into resources(business_id,name,description,weekly_schedule)
+      values(${businessId},${valid.name},${valid.description ?? null},${this.db.json(asDbJson(valid.weeklySchedule))}) returning id`;
+    await this.replaceResourceServices(businessId, row!.id, valid.serviceIds);
+    return (await this.getResource(businessId, row!.id))!;
+  }
+  async updateResource(businessId: string, id: string, input: ResourceInput): Promise<CatalogResource | null> {
+    await this.acquireBusinessCalendarLock({ businessId });
+    if (!await this.getResource(businessId, id)) return null;
+    const valid = await this.validateResource(businessId, input);
+    await this.db`update resources set name=${valid.name},description=${valid.description ?? null},
+      weekly_schedule=${this.db.json(asDbJson(valid.weeklySchedule))} where business_id=${businessId} and id=${id}`;
+    await this.replaceResourceServices(businessId, id, valid.serviceIds);
+    return this.getResource(businessId, id);
+  }
+  async setResourceStatus(businessId: string, id: string, status: CatalogResource["status"]): Promise<CatalogResource | null> {
+    await this.acquireBusinessCalendarLock({ businessId });
+    await this.db`update resources set status=${status} where business_id=${businessId} and id=${id}`;
+    return this.getResource(businessId, id);
   }
   listClients(q = "") {
     const pattern = literalSearch(q);
