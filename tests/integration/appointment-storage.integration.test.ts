@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import postgres, { type Sql } from "postgres";
-import { parseInstantMs } from "@agendia/domain";
+import { parseInstantMs, type WeeklySchedule } from "@agendia/domain";
+import { PostgresRepositories, RolePool, TenantUnitOfWork, tenantContext } from "@agendia/db";
 import { applyPostgresMigrations, createRoleLogin, startTestPostgres, type TestPostgres } from "../support/index.ts";
 
 let database: TestPostgres;
@@ -208,4 +209,228 @@ test("native GiST exclusion blocks concurrent raw SQL and releases final-state o
   await database.sql`update appointments set state='no_show' where id=${winnerRow.id}`;
   await insert(row(a, { ...winnerRow, id: randomUUID() }));
   await code(insert(row(a, { ...winnerRow, id: randomUUID() })), "23P01");
+});
+
+// Typed caller facts in these tests are not production sender/authorization proof.
+const now = "2026-06-01T09:00:00-03:00";
+const full: WeeklySchedule = Object.fromEntries(Array.from({ length: 7 }, (_, day) => [day, [{ startMinute: 0, endMinute: 1440 }]]));
+const clientInput = { firstName: " New ", lastName: " Client ", phone: "11 3456 7890" };
+const context = (owner: Owner) => tenantContext({ businessId: owner.business, actorId: "storage-caller", role: "business_user", requestId: randomUUID() });
+const command = (owner: Owner, extra: Record<string, unknown> = {}) => ({ serviceId: owner.service, resourceId: owner.resource,
+  startRaw: "2026-06-01T10:00:00-03:00", clientId: owner.client, ...extra });
+const effects = async (owner: Owner) => {
+  const [counts] = await database.sql`select
+    (select count(*)::int from clients where business_id=${owner.business}) clients,
+    (select count(*)::int from appointments where business_id=${owner.business}) appointments,
+    (select count(*)::int from audit_events where business_id=${owner.business}) audit,
+    (select count(*)::int from outbox_events where business_id=${owner.business}) outbox`;
+  return counts!;
+};
+const readyOwner = async () => {
+  const owner = await fixture();
+  await database.sql`insert into business_calendars values(${owner.business},${database.sql.json(full)})`;
+  await database.sql`update resources set weekly_schedule=${database.sql.json(full)} where business_id=${owner.business}`;
+  for (const resource of [owner.resource, owner.alternate])
+    await database.sql`insert into resource_services values(${owner.business},${resource},${owner.service})`;
+  return owner;
+};
+const book = (owner: Owner, input: unknown = command(owner), trusted = { origin: "manual" as "manual" | "ai", now }) => {
+  const key = randomUUID();
+  return new TenantUnitOfWork(new RolePool(runtime, "agendia_runtime")).execute(context(owner), {
+    audit: { eventType: "appointment.created", outcome: "success", eventHash: createHash("sha256").update(key).digest("hex") },
+    outbox: { topic: "appointment.created", stableKey: key, payload: { businessId: owner.business } },
+  }, repo => repo.createAppointment(owner.business, input, trusted));
+};
+const rejected = async (owner: Owner, input: unknown, expected: string, trusted?: { origin: "manual" | "ai"; now: string }) => {
+  const before = await effects(owner);
+  await code(book(owner, input, trusted), expected);
+  expect(await effects(owner)).toEqual(before);
+};
+
+test("repository books server terms and exact epochs; read DTO joins current client names", async () => {
+  const owner = await readyOwner();
+  const saved = await book(owner, command(owner, { notes: "notes", priceArs: 999, durationMinutes: 30, state: "done" }));
+  expect(saved).toMatchObject({ state: "confirmed", origin: "manual", startsAt: "2026-06-01T10:00:00-03:00",
+    startMs: start, endMs: start + 15 * minutes, notes: "notes", customerResourcePreference: null,
+    client: { id: owner.client, firstName: "Current", lastName: "Name", phone: "+5491123456789" },
+    terms: { serviceId: owner.service, resourceId: owner.resource, serviceName: "Current service", resourceName: owner.resource, durationMinutes: 15, priceArs: 12.34567 } });
+  expect(() => JSON.stringify(saved)).not.toThrow();
+  await database.sql`update clients set first_name='Latest' where id=${owner.client}`;
+  await database.sql`update services set price_ars=900,duration_minutes=30 where id=${owner.service}`;
+  await database.sql`update resources set name='Latest resource' where id=${owner.resource}`;
+  const loaded = await new RolePool(runtime, "agendia_runtime").run(context(owner), repo => repo.getAppointment(owner.business, saved.id));
+  expect(loaded!.terms).toEqual(saved.terms);
+  expect(loaded!.client.firstName).toBe("Latest");
+  const foreign = await readyOwner();
+  expect(await new RolePool(runtime, "agendia_runtime").run(context(foreign), repo => repo.getAppointment(foreign.business, saved.id))).toBeNull();
+  expect(await effects(owner)).toEqual({ clients: 1, appointments: 1, audit: 1, outbox: 1 });
+  const offset = "2026-06-01T13:15:00.000000+00:00";
+  const rawSaved = await book(owner, command(owner, { startRaw: offset, notes: "漢é".repeat(5000) }));
+  expect(rawSaved.startsAt).toBe(offset);
+  expect(rawSaved.startMs).toBe(parseInstantMs(offset)!);
+  expect(rawSaved.endMs).toBe(parseInstantMs(offset)! + 30 * minutes);
+  expect(rawSaved.notes).toHaveLength(10000);
+});
+
+test("new clients use the shared codec; existing AI client is reused without edits", async () => {
+  const owner = await readyOwner();
+  for (const [index, phone, canonical] of [[0, clientInput.phone, "+5491134567890"], [1, "+541134567890", "+541134567890"], [2, "+442079460018", "+442079460018"]] as const) {
+    const saved = await book(owner, { ...command(owner), clientId: undefined, newClient: { ...clientInput, phone }, startRaw: `2026-06-01T10:${index * 15 === 0 ? "00" : index * 15}:00-03:00`, notes: null }, { origin: "ai", now });
+    expect(saved.client).toMatchObject({ firstName: "New", lastName: "Client", phone: canonical });
+    expect(saved.origin).toBe("ai");
+  }
+  const reused = await book(owner, command(owner, { startRaw: "2026-06-01T11:00:00-03:00" }), { origin: "ai", now });
+  expect(reused.client).toEqual({ id: owner.client, firstName: "Current", lastName: "Name", phone: "+5491123456789" });
+});
+
+test("invalid command/clock/origin and foreign or missing IDs have no effects", async () => {
+  const owner = await readyOwner(), foreign = await readyOwner();
+  for (const extra of [{ serviceId: "bad" }, { resourceId: "bad" }, { clientId: "bad" }, { startRaw: "2026-06-01T10:00:00" },
+    { startRaw: "2026-06-01T10:00:00.0001-03:00" }, { notes: 4 }, { clientId: undefined },
+    { newClient: clientInput }, { clientId: undefined, newClient: { ...clientInput, phone: "bad" } }])
+    await rejected(owner, command(owner, extra), "INVALID_INPUT");
+  await rejected(owner, command(owner), "INVALID_INPUT", { origin: "web" as "manual", now });
+  await rejected(owner, command(owner), "INVALID_INPUT", { origin: "ai", now: "bad" });
+  for (const extra of [{ serviceId: foreign.service }, { resourceId: foreign.resource }, { clientId: foreign.client },
+    { serviceId: randomUUID() }, { resourceId: randomUUID() }, { clientId: randomUUID() }])
+    await rejected(owner, command(owner, extra), "UNKNOWN_OWNED_ID");
+  await rejected(owner, { ...command(owner), clientId: undefined, newClient: { ...clientInput, phone: "+5491123456789" } }, "CLIENT_CONFLICT");
+});
+
+test("server eligibility and whole-interval IANA availability guard new-client writes", async () => {
+  const owner = await readyOwner();
+  const input = { ...command(owner), clientId: undefined, newClient: clientInput };
+  await database.sql`update services set status='suspended' where id=${owner.service}`;
+  await rejected(owner, input, "INELIGIBLE_CATALOG");
+  await database.sql`update services set status='active' where id=${owner.service}`;
+  await database.sql`update resources set status='suspended' where id=${owner.resource}`;
+  await rejected(owner, input, "INELIGIBLE_CATALOG");
+  await database.sql`update resources set status='active' where id=${owner.resource}`;
+  await database.sql`delete from resource_services where resource_id=${owner.resource}`;
+  await rejected(owner, input, "INELIGIBLE_CATALOG");
+  await database.sql`insert into resource_services values(${owner.business},${owner.resource},${owner.service})`;
+  await database.sql`delete from business_calendars where business_id=${owner.business}`;
+  await rejected(owner, input, "UNAVAILABLE");
+  await database.sql`insert into business_calendars values(${owner.business},'{}')`;
+  await rejected(owner, input, "UNAVAILABLE");
+  await database.sql`update business_calendars set weekly_schedule='{"1":[{"startMinute":600,"endMinute":610},{"startMinute":611,"endMinute":630}]}' where business_id=${owner.business}`;
+  await rejected(owner, input, "UNAVAILABLE");
+  await database.sql`update business_calendars set weekly_schedule=${database.sql.json(full)} where business_id=${owner.business}`;
+  for (const hours of [{}, { 1: [{ startMinute: 600, endMinute: 610 }, { startMinute: 611, endMinute: 630 }] }]) {
+    await database.sql`update resources set weekly_schedule=${database.sql.json(hours)} where id=${owner.resource}`;
+    await rejected(owner, input, "UNAVAILABLE");
+  }
+  await database.sql`update resources set weekly_schedule=${database.sql.json(full)} where id=${owner.resource}`;
+  await rejected(owner, { ...input, startRaw: "2026-06-01T10:01:00-03:00" }, "UNAVAILABLE");
+  await rejected(owner, input, "UNAVAILABLE", { origin: "manual", now: "2026-06-01T09:00:00.001-03:00" });
+  for (const closure of [{ kind: "date", date: "2026-06-01" }, { kind: "interval", start: "2026-06-01T10:14:00-03:00", end: "2026-06-01T10:16:00-03:00" }] as const) {
+    const id = randomUUID();
+    await database.sql`insert into business_calendar_closures(id,business_id,kind,closed_date,start_raw,end_raw,start_ms,end_ms)
+      values(${id},${owner.business},${closure.kind},${"date" in closure ? closure.date : null},${"start" in closure ? closure.start : null},${"end" in closure ? closure.end : null},${"start" in closure ? parseInstantMs(closure.start)! : null},${"end" in closure ? parseInstantMs(closure.end)! : null})`;
+    await rejected(owner, input, "UNAVAILABLE");
+    await database.sql`delete from business_calendar_closures where id=${id}`;
+  }
+  await database.sql`update resources set weekly_schedule='{"1":[{"startMinute":600,"endMinute":605},{"startMinute":605,"endMinute":615}]}' where id=${owner.resource}`;
+  expect((await book(owner, input)).state).toBe("confirmed");
+});
+
+test("overnight week wrap and distant future have no invented horizon", async () => {
+  const owner = await readyOwner();
+  await database.sql`update resources set weekly_schedule='{"6":[{"startMinute":1380,"endMinute":60}]}' where id=${owner.resource}`;
+  expect((await book(owner, command(owner, { startRaw: "2026-06-07T00:00:00-03:00" }))).state).toBe("confirmed");
+  await database.sql`update resources set weekly_schedule=${database.sql.json(full)} where id=${owner.resource}`;
+  expect((await book(owner, command(owner, { startRaw: "9999-12-30T10:00:00-03:00" }))).startMs).toBe(parseInstantMs("9999-12-30T10:00:00-03:00")!);
+  await rejected(owner, command(owner, { startRaw: "9999-12-31T23:59:59-23:59" }), "UNAVAILABLE");
+});
+
+test("actual UoW rolls back a new client on appointment, audit and outbox insert failures", async () => {
+  const owner = await readyOwner();
+  for (const table of ["appointments", "audit_events", "outbox_events"]) {
+    await database.sql.unsafe(`create function appointment_test_failure() returns trigger language plpgsql as $$ begin raise exception 'fixture failure'; end $$`);
+    await database.sql.unsafe(`create trigger appointment_test_failure before insert on ${table} for each row execute function appointment_test_failure()`);
+    try {
+      await rejected(owner, { ...command(owner), clientId: undefined, newClient: clientInput }, "P0001");
+    } finally {
+      await database.sql.unsafe(`drop trigger appointment_test_failure on ${table}`);
+      await database.sql`drop function appointment_test_failure()`;
+    }
+  }
+});
+
+test("concurrent repository bookings serialize capacity without orphan clients", async () => {
+  const owner = await readyOwner();
+  const result = await Promise.allSettled(["11 4567 8901", "11 5678 9012"].map(phone => book(owner, { ...command(owner), clientId: undefined, newClient: { ...clientInput, phone } })));
+  expect(result.filter(item => item.status === "fulfilled")).toHaveLength(1);
+  expect(result.find(item => item.status === "rejected")).toMatchObject({ reason: { code: "BUSY" } });
+  expect(await effects(owner)).toEqual({ clients: 2, appointments: 1, audit: 1, outbox: 1 });
+  const adjacent = await Promise.all(["10:15", "10:30"].map(time => book(owner, command(owner, { startRaw: `2026-06-01T${time}:00-03:00` }))));
+  expect(adjacent).toHaveLength(2);
+  expect(await Promise.all([owner.resource, owner.alternate].map(resourceId => book(owner, command(owner, { resourceId, startRaw: "2026-06-01T11:00:00-03:00" }))))).toHaveLength(2);
+  for (const state of ["done", "cancelled", "no_show"]) await insert(row(owner, { state, start_ms: start + 120 * minutes, end_ms: start + 135 * minutes }));
+  await insert(row(owner, { state: "confirmed", resource_id: owner.alternate, start_ms: start + 120 * minutes, end_ms: start + 135 * minutes }));
+  // Historical astronomical-year-zero epochs must never be converted into external ISO instants.
+  await insert(row(owner, { state: "confirmed", start_ms: -62135683140000, end_ms: -62135683140000 + 15 * minutes }));
+  expect((await book(owner, command(owner, { startRaw: "2026-06-01T12:00:00-03:00" }))).state).toBe("confirmed");
+});
+
+test("creation rejects raw pools/mismatched tenants and acquires lock before any lookup", async () => {
+  const owner = await readyOwner(), foreign = await readyOwner();
+  await expect(new PostgresRepositories(runtime).createAppointment(owner.business, command(owner), { origin: "manual", now })).rejects.toThrow("requires a transaction");
+  await expect(new RolePool(runtime, "agendia_runtime").run(context(owner), repo => repo.createAppointment(foreign.business, command(foreign), { origin: "manual", now }))).rejects.toThrow("matching tenant");
+  await new RolePool(runtime, "agendia_runtime").run(context(owner), async repo => {
+    const original = repo.acquireBusinessCalendarLock.bind(repo);
+    let locked = false;
+    repo.acquireBusinessCalendarLock = async scope => { await original(scope); locked = true; };
+    for (const method of ["getResource", "getBusinessCalendar", "listBusinessClosures", "getClientById"] as const) {
+      const lookup = repo[method].bind(repo) as (...args: string[]) => Promise<unknown>;
+      Object.assign(repo, { [method]: (...args: string[]) => { expect(locked).toBe(true); return lookup(...args); } });
+    }
+    expect((await repo.createAppointment(owner.business.toUpperCase(), command(owner), { origin: "manual", now })).state).toBe("confirmed");
+  });
+});
+
+test("held shared business lock blocks creation before catalog/client/calendar reads", async () => {
+  const owner = await readyOwner();
+  let release!: () => void, held!: () => void;
+  const ready = new Promise<void>(resolve => { held = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const holder = database.sql.begin(async tx => {
+    await tx`select pg_advisory_xact_lock(hashtextextended(${"business-calendar:" + owner.business},0))`;
+    held();
+    await gate;
+  });
+  await ready;
+  let lookedUp = false;
+  const pending = new RolePool(runtime, "agendia_runtime").run(context(owner), async repo => {
+    const lookup = repo.getResource.bind(repo);
+    repo.getResource = (...args) => { lookedUp = true; return lookup(...args); };
+    return repo.createAppointment(owner.business, command(owner), { origin: "manual", now });
+  });
+  try {
+    let waiting = false;
+    for (let attempt = 0; attempt < 100 && !waiting; attempt++) {
+      const [activity] = await database.sql`select exists(select 1 from pg_stat_activity
+        where usename='appointment_test' and wait_event='advisory') waiting`;
+      waiting = activity!.waiting;
+      if (!waiting) await Bun.sleep(10);
+    }
+    expect(waiting).toBe(true);
+    expect(lookedUp).toBe(false);
+  } finally { release(); await holder; }
+  expect((await pending).state).toBe("confirmed");
+  expect(lookedUp).toBe(true);
+});
+
+test("native exclusion fallback rolls back new client if a raw writer bypasses the business lock", async () => {
+  const owner = await readyOwner();
+  await code(new RolePool(runtime, "agendia_runtime").run(context(owner), async repo => {
+    const create = repo.createClient.bind(repo);
+    repo.createClient = async (...args) => {
+      // This privileged SQL fixture races after the repository precheck, without advisory locking.
+      await insert(row(owner, { state: "confirmed" }));
+      return create(...args);
+    };
+    return repo.createAppointment(owner.business, { ...command(owner), clientId: undefined, newClient: clientInput }, { origin: "manual", now });
+  }), "BUSY");
+  expect(await effects(owner)).toEqual({ clients: 1, appointments: 1, audit: 0, outbox: 0 });
 });

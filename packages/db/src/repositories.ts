@@ -2,6 +2,10 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import postgres, { type Sql, type TransactionSql } from "postgres";
 import type { TenantContext } from "./tenant-context.ts";
 import { replyDeadline } from "./reply-pacing.ts";
+import { z } from "zod";
+import { ClientInputSchema, InstantSchema, AppointmentOriginSchema, captureAppointmentTerms,
+  isNewStartAllowed, isResourceEligibleForService, type AppointmentTermsSnapshot,
+  type AppointmentState, type AppointmentOrigin, type ClientInput } from "@agendia/domain";
 import { BusinessClosureInputSchema, parseInstantMs, WeeklyScheduleSchema,
   ResourceInputSchema, isResourceScheduleWithinBusiness, type ResourceInput,
   type BusinessClosure, type BusinessClosureInput, type WeeklySchedule } from "@agendia/domain";
@@ -108,6 +112,42 @@ export type ClientRegistryInput = {
 };
 export type RegistryClient = ClientRegistryInput & { id: string };
 
+const appointmentId = z.uuid().transform(id => id.toLowerCase());
+const appointmentCommand = z.object({
+  serviceId: appointmentId, resourceId: appointmentId, startRaw: InstantSchema,
+  notes: z.string().nullable().optional(), clientId: appointmentId.optional(),
+  newClient: ClientInputSchema.optional(),
+}).refine(input => (input.clientId !== undefined) !== (input.newClient !== undefined));
+export type CreateAppointmentInput = {
+  serviceId: string; resourceId: string; startRaw: string; notes?: string | null;
+} & ({ clientId: string; newClient?: never } | { clientId?: never; newClient: ClientInput });
+/** Established by the authenticated caller, not fields of a booking body. */
+export type AppointmentCreationContext = { origin: AppointmentOrigin; now: string };
+export type StoredAppointment = {
+  id: string; client: RegistryClient; startsAt: string; startMs: number; endMs: number;
+  terms: AppointmentTermsSnapshot; state: AppointmentState; origin: AppointmentOrigin;
+  notes: string | null; customerResourcePreference: string | null;
+};
+type AppointmentRow = {
+  id: string; clientId: string; firstName: string; lastName: string; phone: string;
+  startsAt: string; startMs: string | number; endMs: string | number;
+  serviceId: string; serviceName: string; resourceId: string; resourceName: string;
+  durationMinutes: number; priceArs: number; state: AppointmentState; origin: AppointmentOrigin;
+  notes: string | null; customerResourcePreference: string | null;
+};
+const appointmentDto = (row: AppointmentRow): StoredAppointment => ({
+  id: row.id, client: { id: row.clientId, firstName: row.firstName, lastName: row.lastName, phone: row.phone },
+  startsAt: row.startsAt, startMs: Number(row.startMs), endMs: Number(row.endMs),
+  terms: { serviceId: row.serviceId, serviceName: row.serviceName, resourceId: row.resourceId,
+    resourceName: row.resourceName, durationMinutes: row.durationMinutes, priceArs: row.priceArs },
+  state: row.state, origin: row.origin, notes: row.notes, customerResourcePreference: row.customerResourcePreference,
+});
+export class AppointmentError extends Error {
+  constructor(readonly code: "INVALID_INPUT" | "UNKNOWN_OWNED_ID" | "INELIGIBLE_CATALOG" | "UNAVAILABLE" | "BUSY" | "CLIENT_CONFLICT") {
+    super(code);
+  }
+}
+
 // LIKE metacharacters are data, never a caller-controlled search pattern.
 const literalSearch = (value: string) => `%${value.replace(/[\\%_]/g, "\\$&")}%`;
 
@@ -141,6 +181,67 @@ export class PostgresRepositories {
   acquireBusinessCalendarLock(context: Pick<TenantContext, "businessId">) {
     if ("begin" in this.db) throw new Error("Calendar lock requires a transaction");
     return acquireBusinessCalendarLock(this.db as TransactionSql, context);
+  }
+  /** Read-only owned projection: current client identity, frozen catalog terms. */
+  async getAppointment(businessId: string, id: string): Promise<StoredAppointment | null> {
+    const [row] = await this.db<AppointmentRow[]>`select ap.id,ap.client_id "clientId",
+      c.first_name "firstName",c.last_name "lastName",c.phone,
+      ap.start_raw "startsAt",ap.start_ms "startMs",ap.end_ms "endMs",
+      ap.service_id "serviceId",ap.service_label "serviceName",ap.resource_id "resourceId",ap.resource_label "resourceName",
+      ap.duration_minutes "durationMinutes",ap.price_ars::float8 "priceArs",ap.state,ap.origin,ap.notes,
+      ap.customer_resource_preference_id "customerResourcePreference"
+      from appointments ap join clients c on (c.business_id,c.id)=(ap.business_id,ap.client_id)
+      where ap.business_id=${businessId} and ap.id=${id}`;
+    return row ? appointmentDto(row) : null;
+  }
+  /** Caller UoW owns client + appointment + audit/outbox rollback; no messaging effects here.
+   * Shared business lock precedes every lookup. SQL GiST remains the raw-writer backstop.
+   * Customer-expression preference is deferred to C; creation defaults to null.
+   */
+  async createAppointment(businessId: string, input: unknown, trusted: AppointmentCreationContext): Promise<StoredAppointment> {
+    await this.acquireBusinessCalendarLock({ businessId });
+    businessId = businessId.toLowerCase();
+    const parsed = appointmentCommand.safeParse(input);
+    const facts = z.object({ origin: AppointmentOriginSchema, now: InstantSchema }).safeParse(trusted);
+    if (!parsed.success || !facts.success) throw new AppointmentError("INVALID_INPUT");
+    const value = parsed.data;
+    const [service] = await this.db<CatalogService[]>`select id,name,description,duration_minutes "durationMinutes",
+      price_ars::float8 "priceArs",status from services where business_id=${businessId} and id=${value.serviceId}`;
+    const resource = await this.getResource(businessId, value.resourceId);
+    const client = value.clientId ? await this.getClientById(value.clientId) : null;
+    if (!service || !resource || (value.clientId && !client)) throw new AppointmentError("UNKNOWN_OWNED_ID");
+    if (!isResourceEligibleForService(resource, service))
+      throw new AppointmentError("INELIGIBLE_CATALOG");
+    const terms = captureAppointmentTerms(service, resource);
+    const startMs = parseInstantMs(value.startRaw)!;
+    const endMs = startMs + terms.durationMinutes * 60000;
+    const calendar = await this.getBusinessCalendar(businessId);
+    const closures = await this.listBusinessClosures(businessId);
+    if (!Number.isSafeInteger(endMs) || endMs <= startMs || endMs > 253402387139999
+      || !isNewStartAllowed({ start: value.startRaw, durationMinutes: terms.durationMinutes,
+        businessHours: calendar.weeklySchedule ?? {}, resourceHours: resource.weeklySchedule,
+        closedDates: closures.flatMap(closure => closure.kind === "date" ? [closure.date] : []),
+        closedIntervals: closures.flatMap(closure => closure.kind === "interval" ? [{ start: closure.start, end: closure.end }] : []),
+      }, facts.data.now)) throw new AppointmentError("UNAVAILABLE");
+    // Compare exact epochs directly; irrelevant historical UTC year-zero busy rows
+    // cannot be round-tripped through an external positive-year Instant string.
+    const busy = await this.db`select id from appointments where business_id=${businessId}
+      and resource_id=${resource.id} and state='confirmed' and start_ms<${endMs} and end_ms>${startMs} limit 1`;
+    if (busy.length) throw new AppointmentError("BUSY");
+    try {
+      const selectedClient = client ?? await this.createClient(businessId, value.newClient!);
+      const [saved] = await this.db<{ id: string }[]>`insert into appointments
+        (business_id,client_id,service_id,resource_id,service_label,resource_label,price_ars,duration_minutes,
+         start_raw,start_ms,end_ms,state,origin,notes)
+        values(${businessId},${selectedClient.id},${terms.serviceId},${terms.resourceId},${terms.serviceName},${terms.resourceName},
+          ${terms.priceArs},${terms.durationMinutes},${value.startRaw},${startMs},${endMs},'confirmed',${facts.data.origin},${value.notes ?? null}) returning id`;
+      return (await this.getAppointment(businessId, saved!.id))!;
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      if (code === "23P01") throw new AppointmentError("BUSY");
+      if (code === "23505") throw new AppointmentError("CLIENT_CONFLICT");
+      throw error;
+    }
   }
   async getBusinessCalendar(businessId: string): Promise<{ weeklySchedule: WeeklySchedule | null }> {
     const [row] = await this.db<{ weeklySchedule: WeeklySchedule }[]>`
