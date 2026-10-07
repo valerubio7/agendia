@@ -2,6 +2,21 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import postgres, { type Sql, type TransactionSql } from "postgres";
 import type { TenantContext } from "./tenant-context.ts";
 import { replyDeadline } from "./reply-pacing.ts";
+import { WeeklyScheduleSchema, type WeeklySchedule } from "@agendia/domain";
+
+export type BusinessCalendar = { weeklySchedule: WeeklySchedule };
+
+/** Acquire inside the tenant UoW BEFORE reads/guards/mutations (also when no row exists).
+ * C/T05/T09 must use this same namespace. Hash collisions only serialize businesses;
+ * tenant identity remains enforced by context and RLS, never by the hash.
+ */
+export async function acquireBusinessCalendarLock(tx: TransactionSql, context: TenantContext) {
+  if ("begin" in tx) throw new Error("Calendar lock requires a transaction");
+  const businessId = context.businessId.toLowerCase();
+  const [scope] = await tx`select current_setting('app.tenant_id',true) tenant`;
+  if (scope?.tenant?.toLowerCase() !== businessId) throw new Error("Calendar lock requires matching tenant context");
+  await tx`select pg_advisory_xact_lock(hashtextextended(${"business-calendar:" + businessId},0))`;
+}
 
 export type SealedLinkCode = {
   businessId: string;
@@ -101,6 +116,24 @@ export type SafeRuntimeEvent = {
 
 export class PostgresRepositories {
   constructor(private readonly db: Db) {}
+  acquireBusinessCalendarLock(context: TenantContext) {
+    if ("begin" in this.db) throw new Error("Calendar lock requires a transaction");
+    return acquireBusinessCalendarLock(this.db as TransactionSql, context);
+  }
+  async getBusinessCalendar(businessId: string): Promise<{ weeklySchedule: WeeklySchedule | null }> {
+    const [row] = await this.db<{ weeklySchedule: WeeklySchedule }[]>`
+      select weekly_schedule "weeklySchedule" from business_calendars where business_id=${businessId}`;
+    return { weeklySchedule: row ? WeeklyScheduleSchema.parse(row.weeklySchedule) : null };
+  }
+  /** Caller must acquireBusinessCalendarLock(context) before any guards or mutation in the same UoW. */
+  async saveBusinessCalendar(businessId: string, weeklySchedule: WeeklySchedule): Promise<BusinessCalendar> {
+    const valid = WeeklyScheduleSchema.parse(weeklySchedule);
+    const [row] = await this.db<BusinessCalendar[]>`
+      insert into business_calendars(business_id,weekly_schedule) values(${businessId},${this.db.json(asDbJson(valid))})
+      on conflict(business_id) do update set weekly_schedule=excluded.weekly_schedule
+      returning weekly_schedule "weeklySchedule"`;
+    return row!;
+  }
   listClients(q = "") {
     const pattern = literalSearch(q);
     return this.db<RegistryClient[]>`

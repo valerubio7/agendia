@@ -103,6 +103,39 @@ describe("forced tenant RLS", () => {
     }), tx => tx`delete from clients`)).rejects.toThrow(/permission denied/i);
   });
 
+  test("weekly calendar enforces shape, forced RLS and SELECT/INSERT/UPDATE only", async () => {
+    await admin`insert into business_calendars(business_id,weekly_schedule) values(${tenantA},'{}'),(${tenantB},'{"1":[]}')`;
+    const context = tenantContext({ businessId: tenantA, actorId: "user-a", role: "business_user", requestId: "calendar-rls" });
+    const rows = await withTenantTransaction(admin, context, tx => tx<{ business_id: string }[]>`select business_id::text from business_calendars`);
+    assertNonEmptyTenantRows(rows, tenantA);
+    expect(rows).toHaveLength(1);
+    expect(await admin.begin(async tx => {
+      await tx.unsafe("set local role agendia_runtime");
+      return tx`select * from business_calendars`;
+    })).toHaveLength(0);
+    await expect(withTenantTransaction(admin, context, tx => tx`update business_calendars set weekly_schedule='{}' where business_id=${tenantB}`)).resolves.toHaveLength(0);
+    await expect(withTenantTransaction(admin, context, tx => tx`insert into business_calendars(business_id,weekly_schedule) values(${tenantB},'{}')`)).rejects.toThrow(/row-level security|policy/i);
+    await expect(withTenantTransaction(admin, context, tx => tx`delete from business_calendars`)).rejects.toThrow(/permission denied/i);
+    const [permissions] = await admin`select relrowsecurity enabled, relforcerowsecurity forced,
+      has_table_privilege('agendia_runtime','business_calendars','SELECT,INSERT,UPDATE') writes,
+      has_table_privilege('agendia_runtime','business_calendars','DELETE') deletion
+      from pg_class where oid='business_calendars'::regclass`;
+    expect(permissions).toEqual({ enabled: true, forced: true, writes: true, deletion: false });
+    for (const role of ["agendia_admin_runtime", "agendia_whatsapp_runtime", "agendia_worker_runtime"]) {
+      await expect(admin.begin(async tx => {
+        await tx.unsafe(`set local role ${role}`);
+        return tx`select * from business_calendars`;
+      })).rejects.toThrow(/permission denied/i);
+    }
+    for (const invalid of [null, [], { 7: [] }, { 0: null }, { 1: [{}] },
+      ...[{ startMinute: 0, endMinute: 0 }, { startMinute: -1, endMinute: 60 },
+        { startMinute: 1440, endMinute: 60 }, { startMinute: 0, endMinute: 1441 },
+        { startMinute: 0.5, endMinute: 60 }, { startMinute: 0, endMinute: "60" }].map(span => ({ 1: [span] }))]) {
+      await expect(admin`update business_calendars set weekly_schedule=${admin.json(invalid)} where business_id=${tenantA}`.execute()).rejects.toMatchObject({ code: invalid === null ? "23502" : "23514" });
+    }
+    await expect(admin`update business_calendars set weekly_schedule='null'::jsonb where business_id=${tenantA}`.execute()).rejects.toMatchObject({ code: "23514" });
+  });
+
   test("deduplicates a provider event into one message and one durable effect", async () => {
     const connectionId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const conversationId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";

@@ -64,6 +64,12 @@ describe("safe HTTP and event contracts", () => {
     ]);
   });
 
+  test("allowlists the weekly business calendar without placeholder closure routes", () => {
+    expect(PRODUCT_HTTP_ROUTES as readonly string[]).toContain("/me/business-calendar");
+    expect(toOpenApiDocument().paths).toHaveProperty("/me/business-calendar");
+    expect(PRODUCT_HTTP_ROUTES.filter(route => route.includes("calendar"))).toEqual(["/me/business-calendar"]);
+  });
+
   test("allowlists audit metadata and preserves tenant scope", () => {
     const event = buildAuditEvent({
       businessId: "11111111-1111-4111-8111-111111111111",

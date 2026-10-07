@@ -1,4 +1,9 @@
 import { z } from "zod";
+import type { WeeklySchedule } from "@agendia/domain";
+
+/** Null means unconfigured; an empty map is explicitly all off. */
+export type BusinessCalendarDto = { weeklySchedule: WeeklySchedule | null };
+export type BusinessCalendarInput = { weeklySchedule: WeeklySchedule };
 
 export const PRODUCT_HTTP_ROUTES = Object.freeze([
   "/auth/login",
@@ -13,6 +18,7 @@ export const PRODUCT_HTTP_ROUTES = Object.freeze([
   "/me/services",
   "/me/services/:id",
   "/me/services/:id/status",
+  "/me/business-calendar",
   "/me/business-profile",
   "/me/assistant",
   "/me/whatsapp",

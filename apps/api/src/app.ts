@@ -16,6 +16,7 @@ import {
   BusinessProfileSchema,
   ServiceInputSchema,
   ClientInputSchema,
+  WeeklyScheduleSchema,
 } from "@agendia/domain";
 import {
   openLinkCode,
@@ -459,6 +460,32 @@ export function buildApi(input: AuthService | ApiOptions) {
     }
     return auth;
   };
+  const calendarBody = z.object({ weeklySchedule: WeeklyScheduleSchema });
+  app.get("/me/business-calendar", async (request, reply) => {
+    const auth = await requireTenant(request, reply);
+    if (!auth) return;
+    try {
+      return await pools.api.run(context(auth, request), repo => repo.getBusinessCalendar(auth.business_id!));
+    } catch {
+      return fail(reply, request, 500, "INTERNAL_ERROR", "Calendar operation failed");
+    }
+  });
+  app.put("/me/business-calendar", async (request, reply) => {
+    const auth = await requireTenant(request, reply, true);
+    if (!auth) return;
+    const parsed = calendarBody.safeParse(request.body);
+    if (!parsed.success)
+      return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid weekly schedule");
+    try {
+      return await tenantWrite(auth, request, "business_calendar.updated", async repo => {
+        await repo.acquireBusinessCalendarLock(context(auth, request));
+        // Resource-hours and confirmed-booking guards join this locked UoW in T05/T09.
+        return repo.saveBusinessCalendar(auth.business_id!, parsed.data.weeklySchedule);
+      });
+    } catch {
+      return fail(reply, request, 500, "INTERNAL_ERROR", "Calendar operation failed");
+    }
+  });
   const clientNotFound = Symbol("client not found");
   const clientFailure = (error: unknown, request: FastifyRequest, reply: FastifyReply) => {
     if (error === clientNotFound)
