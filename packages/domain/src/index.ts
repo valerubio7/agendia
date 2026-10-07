@@ -1,6 +1,7 @@
 export * from "./administration.ts";
 export * from "./business-profile.ts";
 export * from "./service-catalog.ts";
+export * from "./appointment-lifecycle.ts";
 export * from "./resource-catalog.ts";
 export * from "./agenda-availability.ts";
 export * from "./business-calendar.ts";
