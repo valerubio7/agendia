@@ -83,7 +83,7 @@ jobs:
               '.workflow_runs | map(select(.display_title == ("Publish " + $sha))) | first' > publisher.json
           fi
           jq -e --arg repo "$REPOSITORY" --arg sha "$RELEASE" --arg run "$PUBLISHER_RUN" '
-            .name == "Publish release" and .path == ".github/workflows/publish.yml" and
+            .workflow_id == 373224966 and .path == ".github/workflows/publish.yml" and
             .status == "completed" and .conclusion == "success" and .head_repository.full_name == $repo and
             .display_title == ("Publish " + $sha) and
             (if $run != "" then (.id | tostring) == $run and .event == "push" and .head_sha == $sha

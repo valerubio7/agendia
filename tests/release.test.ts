@@ -23,7 +23,9 @@ appendFileSync("operations", tool + " " + command + "\\n");
 function emit(value) { console.log(JSON.stringify(value)); }
 if (tool === "gh" && process.env.PREFLIGHT) {
   const run = {
-    id: 123, name: "Publish release", path: ".github/workflows/publish.yml",
+    id: 123, name: "Publish " + sha,
+    workflow_id: mode === "pub-id" ? 373224967 : mode === "pub-id-missing" ? undefined : mode === "pub-id-string" ? "373224966" : 373224966,
+    path: mode === "pub-path" ? ".github/workflows/other.yml" : ".github/workflows/publish.yml",
     status: mode === "pub-pending" ? "in_progress" : "completed",
     conclusion: mode === "pub-failed" ? "failure" : "success",
     event: mode === "pub-legacy" ? "workflow_run" : mode === "pub-pr" ? "pull_request" : "push",
@@ -221,6 +223,16 @@ test("automatic preflight selects upstream SHA and verifies stable release befor
   expect(auto).not.toContain("secrets: inherit");
   for (const guard of ["workflows: [Publish release]", "types: [completed]", "conclusion == 'success'", "event == 'push'", "head_repository.full_name == github.repository", "uses: ./.github/workflows/deploy.yml"]) expect(auto).toContain(guard);
 });
+for (const mode of ["pub-id", "pub-id-missing", "pub-id-string", "pub-path"]) {
+  test(`manual preflight rejects publisher identity: ${mode}`, () => {
+    const result = run(mode, "workflow_dispatch", "", true, "");
+    expect(result.log).toContain("actions/workflows/publish.yml/runs");
+    expect(result.code).not.toBe(0);
+    expect(result.log).not.toContain("contents/package.json");
+    expect(result.log).not.toMatch(/docker |ssh |release create/);
+  });
+}
+
 test("manual new publisher uses source SHA without relying on tag head_branch", () => {
   const result = run("", "workflow_dispatch", "", true, "");
   expect(result.code).toBe(0);
@@ -233,7 +245,7 @@ test("manual new publisher uses source SHA without relying on tag head_branch", 
   expect(rejected.log).toContain("actions/workflows/publish.yml/runs");
   expect(rejected.code).not.toBe(0);
 });
-for (const mode of ["pub-failed", "pub-pending", "pub-pr", "pub-title", "pub-fork", "pub-sha", "pub-legacy", "ci-failure", "draft", "prerelease", "unpublished", "version", "tag-mismatch", "digest", "revision"]) {
+for (const mode of ["pub-id", "pub-id-missing", "pub-id-string", "pub-path", "pub-failed", "pub-pending", "pub-pr", "pub-title", "pub-fork", "pub-sha", "pub-legacy", "ci-failure", "draft", "prerelease", "unpublished", "version", "tag-mismatch", "digest", "revision"]) {
   test(`automatic preflight fails closed: ${mode}`, () => {
     const result = run(mode, "workflow_call", "", true);
     expect(result.error).not.toContain("unbound variable");
