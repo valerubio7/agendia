@@ -64,6 +64,16 @@ export type CatalogService = {
   status: "active" | "suspended";
 };
 
+export type ClientRegistryInput = {
+  firstName: string;
+  lastName: string;
+  phone: string;
+};
+export type RegistryClient = ClientRegistryInput & { id: string };
+
+// LIKE metacharacters are data, never a caller-controlled search pattern.
+const literalSearch = (value: string) => `%${value.replace(/[\\%_]/g, "\\$&")}%`;
+
 type Db = Sql | TransactionSql;
 type DbJson = Parameters<Sql["json"]>[0];
 function asDbJson(value: unknown): DbJson {
@@ -91,6 +101,40 @@ export type SafeRuntimeEvent = {
 
 export class PostgresRepositories {
   constructor(private readonly db: Db) {}
+  listClients(q = "") {
+    const pattern = literalSearch(q);
+    return this.db<RegistryClient[]>`
+      select id,first_name "firstName",last_name "lastName",phone from clients
+      where first_name collate service_name_case ilike ${pattern}
+         or last_name collate service_name_case ilike ${pattern}
+         or phone ilike ${pattern}
+      order by lower(first_name collate service_name_case) collate "C",
+        lower(last_name collate service_name_case) collate "C",phone,id`;
+  }
+  async getClientById(id: string) {
+    const [row] = await this.db<RegistryClient[]>`
+      select id,first_name "firstName",last_name "lastName",phone from clients where id=${id}`;
+    return row ?? null;
+  }
+  // Exact stored identity only: no manual-country/type inference or aliases.
+  async findClientByCanonicalPhone(phone: string) {
+    const [row] = await this.db<RegistryClient[]>`
+      select id,first_name "firstName",last_name "lastName",phone from clients where phone=${phone}`;
+    return row ?? null;
+  }
+  async createClient(businessId: string, input: ClientRegistryInput) {
+    const [row] = await this.db<RegistryClient[]>`
+      insert into clients(business_id,first_name,last_name,phone)
+      values(${businessId},${input.firstName},${input.lastName},${input.phone})
+      returning id,first_name "firstName",last_name "lastName",phone`;
+    return row!;
+  }
+  async updateClient(id: string, input: ClientRegistryInput) {
+    const [row] = await this.db<RegistryClient[]>`
+      update clients set first_name=${input.firstName},last_name=${input.lastName},phone=${input.phone}
+      where id=${id} returning id,first_name "firstName",last_name "lastName",phone`;
+    return row ?? null;
+  }
   listServices() {
     return this.db<CatalogService[]>`
       select id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status

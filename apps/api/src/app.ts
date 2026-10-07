@@ -15,6 +15,7 @@ import {
   AssistantConfigInputSchema,
   BusinessProfileSchema,
   ServiceInputSchema,
+  ClientInputSchema,
 } from "@agendia/domain";
 import {
   openLinkCode,
@@ -458,6 +459,62 @@ export function buildApi(input: AuthService | ApiOptions) {
     }
     return auth;
   };
+  const clientNotFound = Symbol("client not found");
+  const clientFailure = (error: unknown, request: FastifyRequest, reply: FastifyReply) => {
+    if (error === clientNotFound)
+      return fail(reply, request, 404, "NOT_FOUND", "Client not found");
+    const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+    const constraint = error && typeof error === "object" && "constraint_name" in error ? error.constraint_name : undefined;
+    if (code === "23505" && constraint === "clients_business_phone_key")
+      return fail(reply, request, 409, "CONFLICT", "Client phone already exists");
+    // PostgreSQL TEXT cannot represent NUL (or invalid Unicode encodings).
+    if (code === "22021" || code === "22P05" || code === "23514")
+      return fail(reply, request, 400, "VALIDATION_FAILED", "Client value cannot be stored");
+    return fail(reply, request, 500, "INTERNAL_ERROR", "Client operation failed");
+  };
+  app.get("/me/clients", async (request, reply) => {
+    const auth = await requireTenant(request, reply);
+    if (!auth) return;
+    const parsed = z.object({ q: z.string().optional() }).safeParse(request.query);
+    if (!parsed.success)
+      return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid client search");
+    try {
+      return await pools.api.run(context(auth, request), repo => repo.listClients(parsed.data.q));
+    } catch (error) {
+      return clientFailure(error, request, reply);
+    }
+  });
+  app.post("/me/clients", async (request, reply) => {
+    const auth = await requireTenant(request, reply, true);
+    if (!auth) return;
+    const parsed = ClientInputSchema.safeParse(request.body);
+    if (!parsed.success)
+      return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid client fields");
+    try {
+      const saved = await tenantWrite(auth, request, "client.created", repo =>
+        repo.createClient(auth.business_id!, parsed.data));
+      return reply.code(201).send(saved);
+    } catch (error) {
+      return clientFailure(error, request, reply);
+    }
+  });
+  app.put("/me/clients/:id", async (request, reply) => {
+    const auth = await requireTenant(request, reply, true);
+    if (!auth) return;
+    const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+    const parsed = ClientInputSchema.safeParse(request.body);
+    if (!params.success || !parsed.success)
+      return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid client fields");
+    try {
+      return await tenantWrite(auth, request, "client.updated", async repo => {
+        const saved = await repo.updateClient(params.data.id, parsed.data);
+        if (!saved) throw clientNotFound;
+        return saved;
+      });
+    } catch (error) {
+      return clientFailure(error, request, reply);
+    }
+  });
   const serviceNotFound = Symbol("service not found");
   const serviceFailure = (error: unknown, request: FastifyRequest, reply: FastifyReply) => {
     if (error === serviceNotFound)

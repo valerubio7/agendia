@@ -8,6 +8,8 @@ export const PRODUCT_HTTP_ROUTES = Object.freeze([
   "/admin/ai-instructions",
   "/admin/businesses/:id/user",
   "/admin/businesses/:id/status",
+  "/me/clients",
+  "/me/clients/:id",
   "/me/services",
   "/me/services/:id",
   "/me/services/:id/status",

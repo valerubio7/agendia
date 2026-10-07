@@ -79,6 +79,30 @@ describe("forced tenant RLS", () => {
     await expect(access).rejects.toThrow(/permission denied/i);
   });
 
+  test("client registry is forced tenant-scoped with no delete or admin content access", async () => {
+    await admin`insert into clients(business_id,first_name,last_name,phone) values
+      (${tenantA},'A','Client','+5491123456789'), (${tenantB},'B','Client','+5491123456789')`;
+    const rows = await withTenantTransaction(admin, tenantContext({
+      businessId: tenantA, actorId: "user-a", role: "business_user", requestId: "clients-rls",
+    }), tx => tx<{ business_id: string }[]>`select business_id::text from clients`);
+    assertNonEmptyTenantRows(rows, tenantA);
+    expect(rows).toHaveLength(1);
+    const missing = await admin.begin(async tx => {
+      await tx.unsafe("set local role agendia_runtime");
+      return tx`select id from clients`;
+    });
+    expect(missing).toHaveLength(0);
+    for (const role of ["agendia_admin_runtime", "agendia_whatsapp_runtime", "agendia_worker_runtime"]) {
+      await expect(admin.begin(async tx => {
+        await tx.unsafe(`set local role ${role}`);
+        return tx`select id from clients`;
+      })).rejects.toThrow(/permission denied/i);
+    }
+    await expect(withTenantTransaction(admin, tenantContext({
+      businessId: tenantA, actorId: "user-a", role: "business_user", requestId: "clients-delete",
+    }), tx => tx`delete from clients`)).rejects.toThrow(/permission denied/i);
+  });
+
   test("deduplicates a provider event into one message and one durable effect", async () => {
     const connectionId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const conversationId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";

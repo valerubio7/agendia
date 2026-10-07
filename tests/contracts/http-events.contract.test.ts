@@ -53,6 +53,17 @@ describe("safe HTTP and event contracts", () => {
     expect(PRODUCT_HTTP_ROUTES.some(route => /services.*delete/.test(route))).toBe(false);
   });
 
+  test("allowlists only client registry paths, not delete/archive/notes", () => {
+    const document = toOpenApiDocument();
+    for (const route of ["/me/clients", "/me/clients/:id"]) {
+      expect(PRODUCT_HTTP_ROUTES as readonly string[]).toContain(route);
+      expect(document.paths).toHaveProperty(route);
+    }
+    expect(PRODUCT_HTTP_ROUTES.filter(route => route.includes("clients"))).toEqual([
+      "/me/clients", "/me/clients/:id",
+    ]);
+  });
+
   test("allowlists audit metadata and preserves tenant scope", () => {
     const event = buildAuditEvent({
       businessId: "11111111-1111-4111-8111-111111111111",
