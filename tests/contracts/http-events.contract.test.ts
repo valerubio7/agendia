@@ -53,6 +53,12 @@ describe("safe HTTP and event contracts", () => {
     expect(PRODUCT_HTTP_ROUTES.some(route => /services.*delete/.test(route))).toBe(false);
   });
 
+  test("allowlists resource catalog and status paths without deletion or booking operations", () => {
+    const routes = ["/me/resources", "/me/resources/:id", "/me/resources/:id/status"];
+    expect(PRODUCT_HTTP_ROUTES.filter(route => route.includes("resources")) as readonly string[]).toEqual(routes);
+    for (const route of routes) expect(toOpenApiDocument().paths).toHaveProperty(route);
+  });
+
   test("allowlists only client registry paths, not delete/archive/notes", () => {
     const document = toOpenApiDocument();
     for (const route of ["/me/clients", "/me/clients/:id"]) {

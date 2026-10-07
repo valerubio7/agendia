@@ -1,5 +1,9 @@
 import { z } from "zod";
-import type { BusinessClosure, BusinessClosureInput, WeeklySchedule } from "@agendia/domain";
+import type { BusinessClosure, BusinessClosureInput, WeeklySchedule, ResourceInput } from "@agendia/domain";
+export type ResourceRequest = ResourceInput;
+export type ResourceDto = Omit<ResourceInput, "description"> & {
+  id: string; description: string | null; status: "active" | "suspended";
+};
 export type BusinessClosureDto = BusinessClosure;
 export type BusinessClosureRequest = BusinessClosureInput;
 
@@ -20,6 +24,9 @@ export const PRODUCT_HTTP_ROUTES = Object.freeze([
   "/me/services",
   "/me/services/:id",
   "/me/services/:id/status",
+  "/me/resources",
+  "/me/resources/:id",
+  "/me/resources/:id/status",
   "/me/business-calendar",
   "/me/business-calendar/closures",
   "/me/business-calendar/closures/:id",

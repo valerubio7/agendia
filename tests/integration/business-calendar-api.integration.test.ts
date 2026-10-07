@@ -125,6 +125,20 @@ test("outbox failure rolls back calendar and audit without messages or reply job
   await database.sql.unsafe(`create or replace function reject_calendar_effect() returns trigger language plpgsql as $$ begin return NEW; end $$`);
 });
 
+test("weekly HTTP conflicts reject suspended configured resource hours without truncation", async () => {
+  const id = randomUUID(), resourceHours = { 2: [{ startMinute: 487,endMinute: 600 }] };
+  await database.sql`insert into resources(id,business_id,name,status,weekly_schedule)
+    values(${id},${a.businessId},'Reciprocal guard','suspended',${database.sql.json(resourceHours)})`;
+  const before = await effects();
+  const rejected = await request("PUT",a,{ weeklySchedule: {} });
+  expect(rejected.statusCode).toBe(409);
+  expect(rejected.json()).toMatchObject({ code: "CONFLICT" });
+  expect((await request("GET",a)).json<unknown>()).toEqual({ weeklySchedule });
+  expect((await database.sql`select weekly_schedule from resources where id=${id}`)[0]?.weekly_schedule).toEqual(resourceHours);
+  expect(await effects()).toEqual(before);
+  await database.sql`update resources set weekly_schedule='{}' where id=${id}`;
+});
+
 const closures = url + "/closures";
 const closureRequest = (method: "GET" | "POST" | "PUT" | "DELETE", auth?: Auth, body?: object, id = "", origin = ORIGIN, csrf = auth?.csrf) =>
   app.inject({ method, url: closures + (id ? "/" + id : ""), ...(body ? { payload: body } : {}), headers: {

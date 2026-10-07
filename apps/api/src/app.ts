@@ -15,6 +15,7 @@ import {
   AssistantConfigInputSchema,
   BusinessProfileSchema,
   ServiceInputSchema,
+  ResourceInputSchema,
   ClientInputSchema,
   WeeklyScheduleSchema,
   BusinessClosureInputSchema,
@@ -23,6 +24,7 @@ import {
   openLinkCode,
   tenantContext,
   TenantUnitOfWork,
+  ResourceCatalogError,
   type createRuntimePools,
 } from "@agendia/db";
 
@@ -515,6 +517,70 @@ export function buildApi(input: AuthService | ApiOptions) {
       return reply.code(204).send();
     } catch (error) { return closureFailure(error, request, reply); }
   });
+  const resourceMissing = Symbol("resource not found");
+  const resourceFailure = (error: unknown, request: FastifyRequest, reply: FastifyReply) => {
+    if (error === resourceMissing)
+      return fail(reply, request, 404, "NOT_FOUND", "Resource not found");
+    if (error instanceof ResourceCatalogError)
+      return error.code === "UNKNOWN_SERVICE"
+        ? fail(reply, request, 400, "VALIDATION_FAILED", "Services must belong to this business")
+        : fail(reply, request, 409, "CONFLICT", "Resource hours must fit business hours");
+    const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+    if (code === "23505") return fail(reply, request, 409, "CONFLICT", "Resource name already exists");
+    if (["22021", "22P05", "22P02", "22007", "22008", "23514"].includes(String(code)))
+      return fail(reply, request, 400, "VALIDATION_FAILED", "Resource value cannot be stored");
+    return fail(reply, request, 500, "INTERNAL_ERROR", "Resource operation failed");
+  };
+  app.get("/me/resources", async (request, reply) => {
+    const auth = await requireTenant(request, reply);
+    if (!auth) return;
+    try {
+      return await pools.api.run(context(auth, request), repo => repo.listResources(auth.business_id!));
+    } catch (error) { return resourceFailure(error, request, reply); }
+  });
+  app.post("/me/resources", async (request, reply) => {
+    const auth = await requireTenant(request, reply, true);
+    if (!auth) return;
+    const parsed = ResourceInputSchema.safeParse(request.body);
+    if (!parsed.success) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid resource fields");
+    try {
+      const saved = await tenantWrite(auth, request, "resource.created", async repo => {
+        await repo.acquireBusinessCalendarLock(context(auth, request));
+        return repo.createResource(auth.business_id!, parsed.data);
+      });
+      return reply.code(201).send(saved);
+    } catch (error) { return resourceFailure(error, request, reply); }
+  });
+  app.put("/me/resources/:id", async (request, reply) => {
+    const auth = await requireTenant(request, reply, true);
+    if (!auth) return;
+    const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+    const parsed = ResourceInputSchema.safeParse(request.body);
+    if (!params.success || !parsed.success) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid resource fields");
+    try {
+      return await tenantWrite(auth, request, "resource.updated", async repo => {
+        await repo.acquireBusinessCalendarLock(context(auth, request));
+        const saved = await repo.updateResource(auth.business_id!, params.data.id, parsed.data);
+        if (!saved) throw resourceMissing;
+        return saved;
+      });
+    } catch (error) { return resourceFailure(error, request, reply); }
+  });
+  app.put("/me/resources/:id/status", async (request, reply) => {
+    const auth = await requireTenant(request, reply, true);
+    if (!auth) return;
+    const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+    const parsed = z.object({ status: z.enum(["active", "suspended"]) }).safeParse(request.body);
+    if (!params.success || !parsed.success) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid resource status");
+    try {
+      return await tenantWrite(auth, request, "resource.status_changed", async repo => {
+        await repo.acquireBusinessCalendarLock(context(auth, request));
+        const saved = await repo.setResourceStatus(auth.business_id!, params.data.id, parsed.data.status);
+        if (!saved) throw resourceMissing;
+        return saved;
+      });
+    } catch (error) { return resourceFailure(error, request, reply); }
+  });
   const calendarBody = z.object({ weeklySchedule: WeeklyScheduleSchema });
   app.get("/me/business-calendar", async (request, reply) => {
     const auth = await requireTenant(request, reply);
@@ -534,10 +600,11 @@ export function buildApi(input: AuthService | ApiOptions) {
     try {
       return await tenantWrite(auth, request, "business_calendar.updated", async repo => {
         await repo.acquireBusinessCalendarLock(context(auth, request));
-        // Resource-hours and confirmed-booking guards join this locked UoW in T05/T09.
+        // Repository guards all configured resource hours; booking guards integrate in T09.
         return repo.saveBusinessCalendar(auth.business_id!, parsed.data.weeklySchedule);
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof ResourceCatalogError) return resourceFailure(error, request, reply);
       return fail(reply, request, 500, "INTERNAL_ERROR", "Calendar operation failed");
     }
   });
