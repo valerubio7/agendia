@@ -64,10 +64,12 @@ describe("safe HTTP and event contracts", () => {
     ]);
   });
 
-  test("allowlists the weekly business calendar without placeholder closure routes", () => {
+  test("allowlists the weekly calendar and global closure collection/entity routes", () => {
     expect(PRODUCT_HTTP_ROUTES as readonly string[]).toContain("/me/business-calendar");
     expect(toOpenApiDocument().paths).toHaveProperty("/me/business-calendar");
-    expect(PRODUCT_HTTP_ROUTES.filter(route => route.includes("calendar"))).toEqual(["/me/business-calendar"]);
+    const routes = ["/me/business-calendar", "/me/business-calendar/closures", "/me/business-calendar/closures/:id"] as const;
+    expect(PRODUCT_HTTP_ROUTES.filter(route => route.includes("calendar"))).toEqual([...routes]);
+    for (const route of routes) expect(toOpenApiDocument().paths).toHaveProperty(route);
   });
 
   test("allowlists audit metadata and preserves tenant scope", () => {

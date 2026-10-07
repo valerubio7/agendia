@@ -125,6 +125,113 @@ test("outbox failure rolls back calendar and audit without messages or reply job
   await database.sql.unsafe(`create or replace function reject_calendar_effect() returns trigger language plpgsql as $$ begin return NEW; end $$`);
 });
 
+const closures = url + "/closures";
+const closureRequest = (method: "GET" | "POST" | "PUT" | "DELETE", auth?: Auth, body?: object, id = "", origin = ORIGIN, csrf = auth?.csrf) =>
+  app.inject({ method, url: closures + (id ? "/" + id : ""), ...(body ? { payload: body } : {}), headers: {
+    origin, ...(auth ? { cookie: auth.cookie } : {}), ...(csrf ? { "x-csrf-token": csrf } : {}),
+  } });
+const closureEffects = async () => (await database.sql`select
+  (select count(*)::int from business_calendar_closures) closures,
+  (select count(*)::int from audit_events where event_type like 'business_closure.%') audit,
+  (select count(*)::int from outbox_events where topic like 'business_closure.%') outbox,
+  (select count(*)::int from messages) messages,
+  (select count(*)::int from outbox_events where topic like 'ai.%' or topic like 'whatsapp.%') replies`)[0]!;
+
+test("global closure CRUD preserves IDs/raw epochs and deletes only the requested overlapping record", async () => {
+  expect((await closureRequest("GET", a)).json<unknown>()).toEqual([]);
+  // A statement trigger checks the lock before even an empty UPDATE/DELETE lookup.
+  await database.sql.unsafe(`create function require_closure_lock() returns trigger language plpgsql as $$
+    declare key bigint := hashtextextended('business-calendar:' || current_setting('app.tenant_id'),0);
+    begin if not exists(select 1 from pg_locks where locktype='advisory' and pid=pg_backend_pid()
+      and classid=((key >> 32) & 4294967295)::oid and objid=(key & 4294967295)::oid and objsubid=1 and granted)
+      then raise exception 'closure write without early lock'; end if; return null; end $$`);
+  await database.sql.unsafe(`create trigger require_closure_lock before insert or update or delete on business_calendar_closures for each statement execute function require_closure_lock()`);
+  const date = { kind: "date", date: "2028-01-03" };
+  const first = await closureRequest("POST", a, date);
+  expect(first.statusCode).toBe(201);
+  const saved = first.json();
+  expect(saved).toEqual({ ...date, id: expect.any(String) });
+  const duplicate = (await closureRequest("POST", a, date)).json();
+  const interval = { kind: "interval", start: "0001-01-01T00:00:00.001000+23:59", end: "0001-01-01T00:00:00.002000+23:59" };
+  const updated = await closureRequest("PUT", a, interval, saved.id);
+  expect(updated.statusCode).toBe(200);
+  expect(updated.json<unknown>()).toEqual({ ...interval, id: saved.id });
+  const [stored] = await database.sql`select start_raw, end_raw, start_ms::text, end_ms::text from business_calendar_closures where id=${saved.id}`;
+  expect(stored).toEqual({ start_raw: interval.start, end_raw: interval.end, start_ms: "-62135683139999", end_ms: "-62135683139998" });
+  const sameEpoch = { kind: "interval", start: "2028-01-01T10:00:00.001000+03:00", end: "2028-01-01T07:00:00.002Z" };
+  expect((await closureRequest("PUT", a, sameEpoch, saved.id)).json<unknown>()).toEqual({ ...sameEpoch, id: saved.id });
+  const [epochs] = await database.sql`select start_ms::text,end_ms::text from business_calendar_closures where id=${saved.id}`;
+  expect(epochs).toEqual({ start_ms: String(Date.parse(sameEpoch.start)), end_ms: String(Date.parse(sameEpoch.end)) });
+  const adjacent = { kind: "interval", start: sameEpoch.end, end: "2028-01-01T07:00:00.003Z" };
+  const adjacentSaved = await closureRequest("POST", a, adjacent);
+  expect(adjacentSaved.statusCode).toBe(201);
+  expect((await closureRequest("DELETE", a, undefined, adjacentSaved.json().id)).statusCode).toBe(204);
+  expect((await closureRequest("PUT", a, date, saved.id)).json<unknown>()).toEqual({ ...date, id: saved.id });
+  const before = await closureEffects();
+  for (const body of [{}, { kind: "date", date: "2027-02-29" }, { ...date, resourceId: "unknown" },
+    { ...date, businessId: b.businessId }, { ...sameEpoch, start: sameEpoch.end }, { ...sameEpoch, start: "2028-01-01T07:00:00.0001Z" }])
+    for (const method of ["POST", "PUT"] as const)
+      expect((await closureRequest(method, a, body, method === "PUT" ? saved.id : "")).statusCode).toBe(400);
+  for (const method of ["POST", "PUT"] as const) {
+    const path = closures + (method === "PUT" ? "/" + saved.id : "");
+    expect((await closureRequest(method, a, undefined, method === "PUT" ? saved.id : "")).statusCode).toBe(400);
+    for (const payload of ["{", "null"])
+      expect((await app.inject({ method, url: path, payload, headers: {
+        cookie: a.cookie, origin: ORIGIN, "x-csrf-token": a.csrf, "content-type": "application/json",
+      } })).statusCode).toBe(400);
+  }
+  for (const method of ["PUT", "DELETE"] as const) {
+    expect((await closureRequest(method, a, date, "bad-uuid")).statusCode).toBe(400);
+    expect((await closureRequest(method, a, date, randomUUID())).statusCode).toBe(404);
+    expect((await closureRequest(method, b, date, saved.id)).statusCode).toBe(404);
+  }
+  expect((await closureRequest("GET", b)).json<unknown>()).toEqual([]);
+  expect(await closureEffects()).toEqual(before);
+  expect((await closureRequest("DELETE", a, undefined, saved.id)).statusCode).toBe(204);
+  expect((await closureRequest("GET", a)).json<unknown>()).toEqual([duplicate]);
+  expect((await request("GET", a)).json<unknown>()).toEqual({ weeklySchedule });
+  expect((await closureEffects()).messages).toBe(0);
+  expect((await closureEffects()).replies).toBe(0);
+  expect((await database.sql`select distinct actor_id from audit_events where event_type like 'business_closure.%'`).map(row => row.actor_id)).toEqual([a.actorId]);
+});
+
+test("closure permissions and effect failures roll back create/update/delete and audit", async () => {
+  const owned = (await closureRequest("GET", a)).json()[0];
+  const before = await closureEffects();
+  for (const method of ["GET", "POST", "PUT", "DELETE"] as const) {
+    const id = method === "PUT" || method === "DELETE" ? owned.id : "";
+    expect((await closureRequest(method, undefined, undefined, id)).statusCode).toBe(401);
+    expect((await closureRequest(method, admin, undefined, id)).statusCode).toBe(403);
+    if (method !== "GET") {
+      expect((await closureRequest(method, a, owned, id, "https://evil.test")).statusCode).toBe(403);
+      for (const csrf of ["", "wrong"])
+        expect((await closureRequest(method, a, owned, id, ORIGIN, csrf)).statusCode).toBe(403);
+    }
+  }
+  await database.sql.unsafe(`create or replace function reject_calendar_effect() returns trigger language plpgsql as $$ begin if NEW.topic like 'business_closure.%' then raise exception 'forced closure effect failure'; end if; return NEW; end $$`);
+  for (const method of ["POST", "PUT", "DELETE"] as const) {
+    const res = await closureRequest(method, a, { kind: "date", date: "2028-01-04" }, method === "POST" ? "" : owned.id);
+    expect(res.statusCode).toBe(500);
+    expect(res.body).not.toMatch(/forced closure|postgres|sql/i);
+    expect(await closureEffects()).toEqual(before);
+    expect((await closureRequest("GET", a)).json<unknown>()).toEqual([owned]);
+  }
+  await database.sql.unsafe(`create or replace function reject_calendar_effect() returns trigger language plpgsql as $$ begin return NEW; end $$`);
+});
+
+test("audit failure also rolls back closure mutations before outbox emission", async () => {
+  const owned = (await closureRequest("GET", a)).json()[0];
+  const before = await closureEffects();
+  await database.sql.unsafe(`create function reject_closure_audit() returns trigger language plpgsql as $$ begin if NEW.event_type like 'business_closure.%' then raise exception 'forced audit failure'; end if; return NEW; end $$`);
+  await database.sql.unsafe(`create trigger reject_closure_audit before insert on audit_events for each row execute function reject_closure_audit()`);
+  for (const method of ["POST", "PUT", "DELETE"] as const) {
+    expect((await closureRequest(method, a, { kind: "date", date: "2028-01-04" }, method === "POST" ? "" : owned.id)).statusCode).toBe(500);
+    expect(await closureEffects()).toEqual(before);
+    expect((await closureRequest("GET", a)).json<unknown>()).toEqual([owned]);
+  }
+  await database.sql.unsafe(`create or replace function reject_closure_audit() returns trigger language plpgsql as $$ begin return NEW; end $$`);
+});
+
 test("transaction lock precedes mutation even without a calendar row and releases on commit/rollback", async () => {
   await expect(pools.api.run(ctx(a), repo => repo.acquireBusinessCalendarLock(ctx(b)))).rejects.toThrow(/matching tenant context/);
   const fresh = tenantContext({ ...ctx(a), businessId: randomUUID() });

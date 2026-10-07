@@ -17,6 +17,7 @@ import {
   ServiceInputSchema,
   ClientInputSchema,
   WeeklyScheduleSchema,
+  BusinessClosureInputSchema,
 } from "@agendia/domain";
 import {
   openLinkCode,
@@ -460,6 +461,60 @@ export function buildApi(input: AuthService | ApiOptions) {
     }
     return auth;
   };
+  const closureMissing = new Error("Closure not found");
+  const closureFailure = (error: unknown, request: FastifyRequest, reply: FastifyReply) =>
+    error === closureMissing
+      ? fail(reply, request, 404, "NOT_FOUND", "Closure not found")
+      : fail(reply, request, 500, "INTERNAL_ERROR", "Calendar operation failed");
+  app.get("/me/business-calendar/closures", async (request, reply) => {
+    const auth = await requireTenant(request, reply);
+    if (!auth) return;
+    try {
+      return await pools.api.run(context(auth, request), repo => repo.listBusinessClosures(auth.business_id!));
+    } catch (error) { return closureFailure(error, request, reply); }
+  });
+  app.post("/me/business-calendar/closures", async (request, reply) => {
+    const auth = await requireTenant(request, reply, true);
+    if (!auth) return;
+    const parsed = BusinessClosureInputSchema.safeParse(request.body);
+    if (!parsed.success) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid closure fields");
+    try {
+      const saved = await tenantWrite(auth, request, "business_closure.created", async repo => {
+        await repo.acquireBusinessCalendarLock(context(auth, request));
+        // Confirmed-booking guards integrate here in T09 before full calendar acceptance.
+        return repo.createBusinessClosure(auth.business_id!, parsed.data);
+      });
+      return reply.code(201).send(saved);
+    } catch (error) { return closureFailure(error, request, reply); }
+  });
+  app.put("/me/business-calendar/closures/:id", async (request, reply) => {
+    const auth = await requireTenant(request, reply, true);
+    if (!auth) return;
+    const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+    const parsed = BusinessClosureInputSchema.safeParse(request.body);
+    if (!params.success || !parsed.success) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid closure fields");
+    try {
+      return await tenantWrite(auth, request, "business_closure.updated", async repo => {
+        await repo.acquireBusinessCalendarLock(context(auth, request));
+        const saved = await repo.updateBusinessClosure(auth.business_id!, params.data.id, parsed.data);
+        if (!saved) throw closureMissing;
+        return saved;
+      });
+    } catch (error) { return closureFailure(error, request, reply); }
+  });
+  app.delete("/me/business-calendar/closures/:id", async (request, reply) => {
+    const auth = await requireTenant(request, reply, true);
+    if (!auth) return;
+    const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid closure ID");
+    try {
+      await tenantWrite(auth, request, "business_closure.deleted", async repo => {
+        await repo.acquireBusinessCalendarLock(context(auth, request));
+        if (!await repo.deleteBusinessClosure(auth.business_id!, params.data.id)) throw closureMissing;
+      });
+      return reply.code(204).send();
+    } catch (error) { return closureFailure(error, request, reply); }
+  });
   const calendarBody = z.object({ weeklySchedule: WeeklyScheduleSchema });
   app.get("/me/business-calendar", async (request, reply) => {
     const auth = await requireTenant(request, reply);

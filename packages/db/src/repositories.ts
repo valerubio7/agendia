@@ -2,7 +2,21 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import postgres, { type Sql, type TransactionSql } from "postgres";
 import type { TenantContext } from "./tenant-context.ts";
 import { replyDeadline } from "./reply-pacing.ts";
-import { WeeklyScheduleSchema, type WeeklySchedule } from "@agendia/domain";
+import { BusinessClosureInputSchema, parseInstantMs, WeeklyScheduleSchema,
+  type BusinessClosure, type BusinessClosureInput, type WeeklySchedule } from "@agendia/domain";
+
+type ClosureRow = { id: string; kind: string; date: string | null; start: string | null; end: string | null };
+const closureDto = (row: ClosureRow): BusinessClosure => ({ id: row.id,
+  ...BusinessClosureInputSchema.parse(row.kind === "date"
+    ? { kind: row.kind, date: row.date } : { kind: row.kind, start: row.start, end: row.end }),
+});
+function closureValues(input: BusinessClosureInput) {
+  const valid = BusinessClosureInputSchema.parse(input);
+  return valid.kind === "date"
+    ? { kind: valid.kind, date: valid.date, start: null, end: null, startMs: null, endMs: null }
+    : { kind: valid.kind, date: null, start: valid.start, end: valid.end,
+      startMs: parseInstantMs(valid.start)!, endMs: parseInstantMs(valid.end)! };
+}
 
 export type BusinessCalendar = { weeklySchedule: WeeklySchedule };
 
@@ -133,6 +147,32 @@ export class PostgresRepositories {
       on conflict(business_id) do update set weekly_schedule=excluded.weekly_schedule
       returning weekly_schedule "weeklySchedule"`;
     return row!;
+  }
+  async listBusinessClosures(businessId: string): Promise<BusinessClosure[]> {
+    const rows = await this.db<ClosureRow[]>`select id,kind,closed_date::text date,start_raw start,end_raw "end"
+      from business_calendar_closures where business_id=${businessId} order by id`;
+    return rows.map(closureDto);
+  }
+  /** All closure mutations require the shared early calendar lock in the caller's UoW. */
+  async createBusinessClosure(businessId: string, input: BusinessClosureInput): Promise<BusinessClosure> {
+    const v = closureValues(input);
+    const [row] = await this.db<ClosureRow[]>`insert into business_calendar_closures
+      (business_id,kind,closed_date,start_raw,end_raw,start_ms,end_ms)
+      values(${businessId},${v.kind},${v.date},${v.start},${v.end},${v.startMs},${v.endMs})
+      returning id,kind,closed_date::text date,start_raw start,end_raw "end"`;
+    return closureDto(row!);
+  }
+  async updateBusinessClosure(businessId: string, id: string, input: BusinessClosureInput): Promise<BusinessClosure | null> {
+    const v = closureValues(input);
+    const [row] = await this.db<ClosureRow[]>`update business_calendar_closures set kind=${v.kind},closed_date=${v.date},
+      start_raw=${v.start},end_raw=${v.end},start_ms=${v.startMs},end_ms=${v.endMs}
+      where business_id=${businessId} and id=${id}
+      returning id,kind,closed_date::text date,start_raw start,end_raw "end"`;
+    return row ? closureDto(row) : null;
+  }
+  async deleteBusinessClosure(businessId: string, id: string): Promise<boolean> {
+    const rows = await this.db`delete from business_calendar_closures where business_id=${businessId} and id=${id} returning id`;
+    return rows.length > 0;
   }
   listClients(q = "") {
     const pattern = literalSearch(q);

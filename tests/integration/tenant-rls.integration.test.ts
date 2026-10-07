@@ -136,6 +136,37 @@ describe("forced tenant RLS", () => {
     await expect(admin`update business_calendars set weekly_schedule='null'::jsonb where business_id=${tenantA}`.execute()).rejects.toMatchObject({ code: "23514" });
   });
 
+  test("global closures force RLS, constrain shape/range and permit owned DELETE only", async () => {
+    await admin`insert into business_calendar_closures(business_id,kind,closed_date) values(${tenantA},'date','2028-01-03'),(${tenantB},'date','2028-01-03')`;
+    const context = tenantContext({ businessId: tenantA, actorId: "user-a", role: "business_user", requestId: "closures-rls" });
+    const rows = await withTenantTransaction(admin, context, tx => tx<{ business_id: string }[]>`select business_id::text from business_calendar_closures`);
+    assertNonEmptyTenantRows(rows, tenantA);
+    expect(rows).toHaveLength(1);
+    expect(await admin.begin(async tx => {
+      await tx.unsafe("set local role agendia_runtime");
+      return tx`select * from business_calendar_closures`;
+    })).toHaveLength(0);
+    const [permissions] = await admin`select relrowsecurity enabled,relforcerowsecurity forced,
+      has_table_privilege('agendia_runtime','business_calendar_closures','SELECT,INSERT,UPDATE,DELETE') crud
+      from pg_class where oid='business_calendar_closures'::regclass`;
+    expect(permissions).toEqual({ enabled: true, forced: true, crud: true });
+    await expect(withTenantTransaction(admin, context, tx => tx`insert into business_calendar_closures(business_id,kind,closed_date) values(${tenantB},'date','2028-01-04')`)).rejects.toThrow(/row-level security|policy/i);
+    for (const role of ["agendia_admin_runtime", "agendia_whatsapp_runtime", "agendia_worker_runtime"])
+      await expect(admin.begin(async tx => {
+        await tx.unsafe(`set local role ${role}`);
+        return tx`select * from business_calendar_closures`;
+      })).rejects.toThrow(/permission denied/i);
+    for (const mutation of ["kind='other'", "closed_date=null", "closed_date='10000-01-01'", "start_raw='extra'",
+      "kind='interval',closed_date=null,start_raw='s',end_raw='e',start_ms=1,end_ms=1",
+      "kind='interval',closed_date=null,start_raw='s',end_raw='e',start_ms=2,end_ms=1",
+      "kind='interval',closed_date=null,start_raw='s',end_raw='e',start_ms=0,end_ms=253402387140000"])
+      await expect(admin.unsafe(`update business_calendar_closures set ${mutation} where business_id='${tenantA}'`).execute()).rejects.toMatchObject({ code: "23514" });
+    expect(await withTenantTransaction(admin, context, tx => tx`update business_calendar_closures set closed_date='2028-01-04' where business_id=${tenantB} returning id`)).toHaveLength(0);
+    expect(await withTenantTransaction(admin, context, tx => tx`delete from business_calendar_closures where business_id=${tenantB} returning id`)).toHaveLength(0);
+    expect(await withTenantTransaction(admin, context, tx => tx`delete from business_calendar_closures returning id`)).toHaveLength(1);
+    expect((await admin`select * from business_calendar_closures`)).toHaveLength(1);
+  });
+
   test("deduplicates a provider event into one message and one durable effect", async () => {
     const connectionId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const conversationId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
