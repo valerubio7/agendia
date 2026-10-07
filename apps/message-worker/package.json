@@ -1,6 +1,6 @@
 {
   "name": "@agendia/message-worker",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "private": true,
   "type": "module",
   "scripts": { "start": "AGENDIA_RUN_MESSAGE_WORKER=1 node --import tsx src/index.ts" },

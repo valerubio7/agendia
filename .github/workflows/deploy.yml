@@ -19,7 +19,7 @@ on:
         required: false
         type: string
       skip_backup:
-        description: Waive backup for this manual 0.7.0 deployment only
+        description: Waive backup for this manual 0.7.1 deployment only
         required: false
         type: boolean
         default: false
@@ -92,7 +92,7 @@ jobs:
           if [[ $(jq -r .event publisher.json) == push || "$SKIP_BACKUP" == true ]]; then
             version=$(gh api -H 'Accept: application/vnd.github.raw+json' "repos/$REPOSITORY/contents/package.json?ref=$RELEASE" | jq -er .version)
             [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
-            if [[ "$SKIP_BACKUP" == true ]]; then [[ "$version" == 0.7.0 ]]; fi
+            if [[ "$SKIP_BACKUP" == true ]]; then [[ "$version" == 0.7.1 ]]; fi
             tag="v$version"
             gh api "repos/$REPOSITORY/releases/tags/$tag" | jq -e --arg tag "$tag" --arg sha "$RELEASE" '
               .tag_name == $tag and .target_commitish == $sha and .draft == false and .prerelease == false and
