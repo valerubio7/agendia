@@ -6,6 +6,8 @@ export type ResourceDto = Omit<ResourceInput, "description"> & {
 };
 export type BusinessClosureDto = BusinessClosure;
 export type BusinessClosureRequest = BusinessClosureInput;
+export const CatalogDeletionAckSchema = z.object({ id: z.string().uuid() }).strict();
+export type CatalogDeletionAck = z.infer<typeof CatalogDeletionAckSchema>;
 
 /** Null means unconfigured; an empty map is explicitly all off. */
 export type BusinessCalendarDto = { weeklySchedule: WeeklySchedule | null };
@@ -93,9 +95,24 @@ export function toOpenApiDocument() {
   return {
     openapi: "3.1.0" as const,
     info: { title: "agendIA API", version: "1.0.0" },
-    paths: Object.fromEntries(PRODUCT_HTTP_ROUTES.map((route) => [route, {}])),
+    paths: Object.fromEntries(PRODUCT_HTTP_ROUTES.map((route) => [route,
+      route === "/me/services/:id" || route === "/me/resources/:id" ? {
+        delete: {
+          summary: "Retire owned catalog item (business session, Origin and CSRF required)",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+          responses: Object.fromEntries([200, 400, 401, 403, 404, 409, 500].map(status => [String(status), {
+            description: status === 200 ? "Retired catalog identity" : "Safe operation error",
+            content: { "application/json": { schema: { $ref: `#/components/schemas/${status === 200 ? "CatalogDeletionAck" : "SafeError"}` } } },
+          }])),
+        },
+      } : {},
+    ])),
     components: {
       schemas: {
+        CatalogDeletionAck: {
+          type: "object", required: ["id"], additionalProperties: false,
+          properties: { id: { type: "string", format: "uuid" } },
+        },
         SafeError: {
           type: "object",
           required: ["code", "message", "requestId"],

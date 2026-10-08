@@ -138,6 +138,7 @@ export function buildApi(input: AuthService | ApiOptions) {
     type: string,
     request: FastifyRequest,
     stableKey = `${type}:${randomUUID()}`,
+    payload: object = {},
   ) => ({
     audit: {
       eventType: type,
@@ -146,17 +147,18 @@ export function buildApi(input: AuthService | ApiOptions) {
         .update(`${type}:${request.id}`)
         .digest("hex"),
     },
-    outbox: { topic: type, stableKey, payload: {} },
+    outbox: { topic: type, stableKey, payload },
   });
   const tenantWrite = <T>(
     auth: Session,
     request: FastifyRequest,
     type: string,
     work: Parameters<TenantUnitOfWork["execute"]>[2],
+    payload: object = {},
   ) =>
     new TenantUnitOfWork(pools.api).execute(
       context(auth, request),
-      events(type, request),
+      events(type, request, undefined, payload),
       work,
     ) as Promise<T>;
   const adminWrite = <T>(
@@ -567,6 +569,18 @@ export function buildApi(input: AuthService | ApiOptions) {
       });
     } catch (error) { return resourceFailure(error, request, reply); }
   });
+  app.delete("/me/resources/:id", async (request, reply) => {
+    const auth = await requireTenant(request, reply, true);
+    if (!auth) return;
+    const params = z.object({ id: z.string().uuid().transform(id => id.toLowerCase()) }).safeParse(request.params);
+    if (!params.success) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid resource ID");
+    try {
+      await tenantWrite(auth, request, "resource.deleted", async repo => {
+        if (!await repo.deleteResource(auth.business_id!, params.data.id)) throw resourceMissing;
+      }, { id: params.data.id });
+      return { id: params.data.id };
+    } catch (error) { return resourceFailure(error, request, reply); }
+  });
   app.put("/me/resources/:id/status", async (request, reply) => {
     const auth = await requireTenant(request, reply, true);
     if (!auth) return;
@@ -671,6 +685,8 @@ export function buildApi(input: AuthService | ApiOptions) {
   const serviceFailure = (error: unknown, request: FastifyRequest, reply: FastifyReply) => {
     if (error === serviceNotFound)
       return fail(reply, request, 404, "NOT_FOUND", "Service not found");
+    if (error instanceof ResourceCatalogError && error.code === "FUTURE_APPOINTMENT_CONFLICT")
+      return fail(reply, request, 409, "CONFLICT", "Service change conflicts with future appointments");
     const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
     if (code === "23505")
       return fail(reply, request, 409, "CONFLICT", "Service name already exists");
@@ -718,6 +734,18 @@ export function buildApi(input: AuthService | ApiOptions) {
     } catch (error) {
       return serviceFailure(error, request, reply);
     }
+  });
+  app.delete("/me/services/:id", async (request, reply) => {
+    const auth = await requireTenant(request, reply, true);
+    if (!auth) return;
+    const params = z.object({ id: z.string().uuid().transform(id => id.toLowerCase()) }).safeParse(request.params);
+    if (!params.success) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid service ID");
+    try {
+      await tenantWrite(auth, request, "service.deleted", async repo => {
+        if (!await repo.deleteService(auth.business_id!, params.data.id)) throw serviceNotFound;
+      }, { id: params.data.id });
+      return { id: params.data.id };
+    } catch (error) { return serviceFailure(error, request, reply); }
   });
   app.put("/me/services/:id/status", async (request, reply) => {
     const auth = await requireTenant(request, reply, true);

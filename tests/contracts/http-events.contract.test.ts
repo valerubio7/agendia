@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   AuditEventSchema,
+  CatalogDeletionAckSchema,
   PRODUCT_HTTP_ROUTES,
   SafeErrorSchema,
   buildAuditEvent,
@@ -50,10 +51,10 @@ describe("safe HTTP and event contracts", () => {
       expect(PRODUCT_HTTP_ROUTES as readonly string[]).toContain(route);
       expect(document.paths).toHaveProperty(route);
     }
-    expect(PRODUCT_HTTP_ROUTES.some(route => /services.*delete/.test(route))).toBe(false);
+    expect(PRODUCT_HTTP_ROUTES.some(route => /services.*delete/.test(route))).toBe(false); // DELETE uses the existing detail URI.
   });
 
-  test("allowlists resource catalog and status paths without deletion or booking operations", () => {
+  test("allowlists resource catalog lifecycle paths without booking operations", () => {
     const routes = ["/me/resources", "/me/resources/:id", "/me/resources/:id/status"];
     expect(PRODUCT_HTTP_ROUTES.filter(route => route.includes("resources")) as readonly string[]).toEqual(routes);
     for (const route of routes) expect(toOpenApiDocument().paths).toHaveProperty(route);
@@ -76,6 +77,24 @@ describe("safe HTTP and event contracts", () => {
     const routes = ["/me/business-calendar", "/me/business-calendar/closures", "/me/business-calendar/closures/:id"] as const;
     expect(PRODUCT_HTTP_ROUTES.filter(route => route.includes("calendar"))).toEqual([...routes]);
     for (const route of routes) expect(toOpenApiDocument().paths).toHaveProperty(route);
+  });
+
+  test("documents only catalog DELETE methods with UUID acknowledgements and safe errors", () => {
+    const document = toOpenApiDocument();
+    for (const route of ["/me/services/:id", "/me/resources/:id"]) {
+      expect(document.paths[route]).toHaveProperty("delete.parameters", [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }]);
+      expect(document.paths[route]).toHaveProperty("delete.responses.200.content.application/json.schema.$ref", "#/components/schemas/CatalogDeletionAck");
+      for (const status of [400, 401, 403, 404, 409, 500])
+        expect(document.paths[route]).toHaveProperty(`delete.responses.${status}.content.application/json.schema.$ref`, "#/components/schemas/SafeError");
+    }
+    expect(document.components.schemas).toHaveProperty("CatalogDeletionAck", { type: "object", required: ["id"], additionalProperties: false, properties: { id: { type: "string", format: "uuid" } } });
+    const id = "11111111-1111-4111-8111-111111111111";
+    expect(CatalogDeletionAckSchema.parse({ id })).toEqual({ id });
+    expect(CatalogDeletionAckSchema.safeParse({ id, status: "active" }).success).toBe(false);
+    expect(CatalogDeletionAckSchema.safeParse({ id: "bad" }).success).toBe(false);
+    expect(Object.entries(document.paths).filter(([, item]) => "delete" in item).map(([route]) => route)).toEqual(["/me/services/:id", "/me/resources/:id"]);
+    expect(document.paths["/me/clients/:id"]).not.toHaveProperty("delete");
+    expect(PRODUCT_HTTP_ROUTES.some(route => /appointments|booking|slots/.test(route))).toBe(false);
   });
 
   test("allowlists audit metadata and preserves tenant scope", () => {

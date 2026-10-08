@@ -16,7 +16,7 @@ let app: ReturnType<typeof buildApi>;
 type Auth = { cookie: string; csrf: string; businessId: string; actorId: string };
 let a: Auth, b: Auth, admin: Auth;
 const input = { name: "Cut", durationMinutes: 30, priceArs: 0 };
-const request = (method: "GET" | "POST" | "PUT", url = "/me/services", auth?: Auth, body?: object, origin = ORIGIN, csrf = auth?.csrf) =>
+const request = (method: "GET" | "POST" | "PUT" | "DELETE", url = "/me/services", auth?: Auth, body?: object, origin = ORIGIN, csrf = auth?.csrf) =>
   app.inject({ method, url, ...(body ? { payload: body } : {}), headers: {
     origin, ...(auth ? { cookie: auth.cookie } : {}), ...(csrf ? { "x-csrf-token": csrf } : {}),
   } });
@@ -48,7 +48,7 @@ beforeAll(async () => {
 afterAll(async () => { await app?.close(); await pools?.end(); await database?.stop(); });
 
 test("requires business session and protects every catalog mutation", async () => {
-  for (const [method, url] of [["GET", "/me/services"], ["POST", "/me/services"], ["PUT", `/me/services/${randomUUID()}`], ["PUT", `/me/services/${randomUUID()}/status`]] as const) {
+  for (const [method, url] of [["GET", "/me/services"], ["POST", "/me/services"], ["PUT", `/me/services/${randomUUID()}`], ["PUT", `/me/services/${randomUUID()}/status`], ["DELETE", `/me/services/${randomUUID()}`]] as const) {
     expect((await request(method, url, undefined, input)).statusCode).toBe(401);
     expect((await request(method, url, admin, input)).statusCode).toBe(403);
     if (method !== "GET") {
@@ -235,5 +235,81 @@ test("service HTTP mutations hold the shared lock and audit/outbox failures roll
   } finally {
     await database.sql`drop trigger require_service_lock on services`;
     await database.sql`drop function require_service_lock()`;
+  }
+});
+
+const retirementFixture = async (future = false) => {
+  const name = `Retire ${randomUUID()}`;
+  const full = Object.fromEntries(Array.from({ length: 7 }, (_, day) => [day, [{ startMinute: 0, endMinute: 1440 }]]));
+  expect((await request("PUT", "/me/business-calendar", a, { weeklySchedule: full })).statusCode).toBe(200);
+  const service = (await request("POST", undefined, a, { ...input, name })).json();
+  const resource = (await request("POST", "/me/resources", a, { name, serviceIds: [service.id], weeklySchedule: full })).json();
+  const saved = await pools.api.run(ctx(a), repo => repo.createAppointment(a.businessId,
+    { serviceId: service.id, resourceId: resource.id, startRaw: future ? "2099-06-01T10:00:00-03:00" : "2020-06-01T10:00:00-03:00",
+      newClient: { firstName: "Retirement", lastName: "Client", phone: `+54911${retirementPhone++}` } },
+    { origin: "manual", now: future ? "2099-01-01T00:00:00Z" : "2019-01-01T00:00:00Z", customerResourceExpression: { kind: "chosen", resourceId: resource.id } }));
+  return { service, resource, saved };
+};
+let retirementPhone = 34510000;
+const retirementSnapshot = async () => ({
+  services: await database.sql`select * from services order by id`, resources: await database.sql`select * from resources order by id`,
+  links: await database.sql`select * from resource_services order by resource_id,service_id`,
+  bookings: await database.sql`select * from appointments order by id`, clients: await database.sql`select * from clients order by id`,
+  effects: await effects(),
+});
+
+test("service DELETE acknowledges retirement, hides old IDs and preserves current-client/frozen history", async () => {
+  const { service, resource, saved } = await retirementFixture();
+  const before = await effects(), physical = await database.sql`select * from appointments where id=${saved.id}`;
+  const deleted = await request("DELETE", `/me/services/${service.id.toUpperCase()}`, a);
+  expect(deleted.statusCode).toBe(200); expect(deleted.json<{ id: string }>()).toEqual({ id: service.id });
+  expect((await database.sql`select deleted_at from services where id=${service.id}`)[0]!.deleted_at).not.toBeNull();
+  expect(await database.sql`select * from resource_services where service_id=${service.id}`).toHaveLength(0);
+  expect((await request("GET", undefined, a)).json().some((row: { id: string }) => row.id === service.id)).toBe(false);
+  for (const [method, suffix, body] of [["DELETE", "", undefined], ["PUT", "", input], ["PUT", "/status", { status: "active" }]] as const)
+    expect((await request(method, `/me/services/${service.id}${suffix}`, a, body)).statusCode).toBe(404);
+  const replacement = await request("POST", undefined, a, { ...input, name: service.name });
+  expect(replacement.statusCode).toBe(201); expect(replacement.json().id).not.toBe(service.id);
+  expect((await request("GET", "/me/resources", a)).json()).toContainEqual({ ...resource, serviceIds: [] });
+  await pools.api.run(ctx(a), repo => repo.updateClient(a.businessId, saved.client.id, { ...saved.client, firstName: "Current" }));
+  const history = await pools.api.run(ctx(a), repo => repo.getAppointment(a.businessId, saved.id));
+  expect(history).toMatchObject({ terms: saved.terms, client: { firstName: "Current" }, customerResourcePreference: resource.id });
+  expect([...(await database.sql`select * from appointments where id=${saved.id}`)]).toEqual([...physical]);
+  expect((await effects())!.audit - before!.audit).toBe(2);
+  expect((await effects())!.outbox - before!.outbox).toBe(2);
+  expect((await database.sql`select actor_id from audit_events where event_type='service.deleted'`)[0]!.actor_id).toBe(a.actorId);
+  expect((await database.sql`select payload from outbox_events where topic='service.deleted'`)[0]!.payload).toEqual({ id: service.id });
+  expect(await database.sql`select topic from outbox_events where topic like 'ai.%' or topic like 'whatsapp.%'`).toHaveLength(0);
+});
+
+test("service DELETE rejects malformed/foreign IDs and ALL future states without trusting body authority", async () => {
+  const { service, saved } = await retirementFixture(true), before = await retirementSnapshot();
+  expect((await request("DELETE", "/me/services/bad", a)).statusCode).toBe(400);
+  for (const id of [service.id, randomUUID()]) expect((await request("DELETE", `/me/services/${id}`, b)).statusCode).toBe(404);
+  expect(await retirementSnapshot()).toEqual(before);
+  for (const state of ["confirmed", "cancelled", "done", "no_show"]) {
+    await database.sql`update appointments set state=${state} where id=${saved.id}`;
+    const snapshot = await retirementSnapshot();
+    const result = await request("DELETE", `/me/services/${service.id}`, a, { force: true, now: "2200-01-01T00:00:00Z", businessId: b.businessId, role: "platform_admin", channel: "human", status: "done" });
+    expect(result.statusCode).toBe(409); expect(result.json()).toMatchObject({ code: "CONFLICT", message: "Service change conflicts with future appointments" });
+    expect(result.body).not.toMatch(/postgres|sql|2099|Retire /i); expect(result.body).not.toContain(service.id);
+    expect(await retirementSnapshot()).toEqual(snapshot);
+  }
+});
+
+test("service DELETE rolls back physical tombstone/link failures and audit/outbox failures safely", async () => {
+  const { service } = await retirementFixture();
+  for (const [table, operation] of [["services", "update"], ["resource_services", "delete"], ["audit_events", "insert"], ["outbox_events", "insert"]]) {
+    await database.sql.unsafe(`create function fail_service_retirement() returns trigger language plpgsql as $$ begin raise exception 'forced retirement P0001'; end $$`);
+    await database.sql.unsafe(`create trigger fail_service_retirement before ${operation} on ${table} for each row execute function fail_service_retirement()`);
+    try {
+      const before = await retirementSnapshot(), result = await request("DELETE", `/me/services/${service.id}`, a);
+      expect(result.statusCode).toBe(500); expect(result.json().code).toBe("INTERNAL_ERROR");
+      expect(result.body).not.toMatch(/P0001|forced|postgres|sql/i); expect(result.body).not.toContain(service.id);
+      expect(await retirementSnapshot()).toEqual(before);
+    } finally {
+      await database.sql.unsafe(`drop trigger fail_service_retirement on ${table}`);
+      await database.sql`drop function fail_service_retirement()`;
+    }
   }
 });

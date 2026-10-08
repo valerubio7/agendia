@@ -75,7 +75,7 @@ test("resource routes enforce authentication, Origin/CSRF, valid fields/JSON and
   const foreignService = (await request("POST", "/me/services", b, { name: "Foreign service",durationMinutes: 15,priceArs: 0 })).json();
   const own = (await request("GET",url,a)).json()[0];
   const before = await effects();
-  for (const [method,path] of [["GET",url],["POST",url],["PUT",`${url}/${foreign.id}`],["PUT",`${url}/${foreign.id}/status`]] as const) {
+  for (const [method,path] of [["GET",url],["POST",url],["PUT",`${url}/${foreign.id}`],["PUT",`${url}/${foreign.id}/status`],["DELETE",`${url}/${foreign.id}`]] as const) {
     expect((await request(method,path,undefined,input)).statusCode).toBe(401);
     expect((await request(method,path,admin,input)).statusCode).toBe(403);
     if (method !== "GET") {
@@ -100,7 +100,7 @@ test("resource routes enforce authentication, Origin/CSRF, valid fields/JSON and
   }
   for (const suffix of ["","/status"]) expect((await request("PUT",`${url}/bad${suffix}`,a,input)).statusCode).toBe(400);
   expect((await request("PUT",`${url}/${foreign.id}/status`,b,{ status: "deleted" })).statusCode).toBe(400);
-  expect((await request("DELETE",`${url}/${foreign.id}`,b)).statusCode).toBe(404);
+  expect((await request("DELETE",`${url}/${foreign.id}`,a)).statusCode).toBe(404);
   expect(await effects()).toEqual(before);
 });
 
@@ -232,4 +232,113 @@ test("HTTP resource future conflicts return safe 409 and cannot be evaded by bod
     expect((await database.sql`select * from appointments where id=${saved.id}`)[0]).toEqual(bookingBefore);
     expect(await effects()).toEqual(counts);
   }
+});
+
+const retirementContext = () => tenantContext({ businessId: a.businessId, actorId: a.actorId, role: "business_user", requestId: randomUUID() });
+let retirementPhone = 34520000;
+const retirementFixture = async (future = false, preferredOnly = false) => {
+  const name = `Retire ${randomUUID()}`;
+  const full = Object.fromEntries(Array.from({ length: 7 }, (_, day) => [day, [{ startMinute: 0, endMinute: 1440 }]]));
+  expect((await request("PUT", "/me/business-calendar", a, { weeklySchedule: full })).statusCode).toBe(200);
+  const service = (await request("POST", "/me/services", a, { name, durationMinutes: 15, priceArs: 10 })).json();
+  const resource = (await request("POST", url, a, { name, serviceIds: [service.id], weeklySchedule: full })).json();
+  const actual = preferredOnly ? (await request("POST", url, a, { name: name + " actual", serviceIds: [service.id], weeklySchedule: full })).json() : resource;
+  const saved = await pools.api.run(retirementContext(), repo => repo.createAppointment(a.businessId,
+    { serviceId: service.id, resourceId: actual.id, startRaw: future ? "2099-06-01T10:00:00-03:00" : "2020-06-01T10:00:00-03:00",
+      newClient: { firstName: "Retirement", lastName: "Client", phone: `+54911${retirementPhone++}` } },
+    { origin: "manual", now: future ? "2099-01-01T00:00:00Z" : "2019-01-01T00:00:00Z", customerResourceExpression: { kind: "chosen", resourceId: resource.id } }));
+  return { service, resource, saved };
+};
+const retirementSnapshot = async () => ({
+  services: await database.sql`select * from services order by id`, resources: await database.sql`select * from resources order by id`,
+  links: await database.sql`select * from resource_services order by resource_id,service_id`,
+  bookings: await database.sql`select * from appointments order by id`, clients: await database.sql`select * from clients order by id`, effects: await effects(),
+});
+
+test("resource DELETE preserves frozen history/preferences, allows NEW-ID name reuse and never resurrects", async () => {
+  const { resource, saved } = await retirementFixture(), before = await effects();
+  const physical = await database.sql`select * from appointments where id=${saved.id}`;
+  const deleted = await request("DELETE", `${url}/${resource.id.toUpperCase()}`, a);
+  expect(deleted.statusCode).toBe(200); expect(deleted.json<{ id: string }>()).toEqual({ id: resource.id });
+  expect((await database.sql`select deleted_at from resources where id=${resource.id}`)[0]!.deleted_at).not.toBeNull();
+  expect(await database.sql`select * from resource_services where resource_id=${resource.id}`).toHaveLength(0);
+  expect((await request("GET", url, a)).json().some((row: { id: string }) => row.id === resource.id)).toBe(false);
+  for (const [method, suffix, body] of [["DELETE", "", undefined], ["PUT", "", input], ["PUT", "/status", { status: "active" }]] as const)
+    expect((await request(method, `${url}/${resource.id}${suffix}`, a, body)).statusCode).toBe(404);
+  const replacement = await request("POST", url, a, { ...input, name: resource.name });
+  expect(replacement.statusCode).toBe(201); expect(replacement.json().id).not.toBe(resource.id); expect(replacement.json().serviceIds).toEqual([]);
+  await pools.api.run(retirementContext(), repo => repo.updateClient(a.businessId, saved.client.id, { ...saved.client, firstName: "Current" }));
+  expect(await pools.api.run(retirementContext(), repo => repo.getAppointment(a.businessId, saved.id))).toMatchObject({ terms: saved.terms, client: { firstName: "Current" }, customerResourcePreference: resource.id });
+  expect([...(await database.sql`select * from appointments where id=${saved.id}`)]).toEqual([...physical]);
+  const after = await effects(); expect(after.audit - before.audit).toBe(2); expect(after.outbox - before.outbox).toBe(2);
+  expect(after.messages).toBe(0); expect(after.replies).toBe(0);
+  expect((await database.sql`select actor_id from audit_events where event_type='resource.deleted'`)[0]!.actor_id).toBe(a.actorId);
+  expect((await database.sql`select payload from outbox_events where topic='resource.deleted'`)[0]!.payload).toEqual({ id: resource.id });
+});
+
+test("resource DELETE protects ALL future actual states, foreign ownership and server clock", async () => {
+  const { resource, saved } = await retirementFixture(true), before = await retirementSnapshot();
+  expect((await request("DELETE", `${url}/bad`, a)).statusCode).toBe(400);
+  for (const id of [resource.id, randomUUID()]) expect((await request("DELETE", `${url}/${id}`, b)).statusCode).toBe(404);
+  expect(await retirementSnapshot()).toEqual(before);
+  for (const state of ["confirmed", "cancelled", "done", "no_show"]) {
+    await database.sql`update appointments set state=${state} where id=${saved.id}`;
+    const snapshot = await retirementSnapshot();
+    const result = await request("DELETE", `${url}/${resource.id}`, a, { force: true, now: "2200-01-01T00:00:00Z", businessId: b.businessId, role: "platform_admin", channel: "human", status: "done" });
+    expect(result.statusCode).toBe(409); expect(result.json()).toMatchObject({ code: "CONFLICT", message: "Resource change conflicts with future appointments" });
+    expect(result.body).not.toMatch(/postgres|sql|2099|Retire /i); expect(result.body).not.toContain(resource.id);
+    expect(await retirementSnapshot()).toEqual(snapshot);
+  }
+});
+
+test("future preferred-only resource references do not block HTTP retirement or transfer by name", async () => {
+  const { resource, saved } = await retirementFixture(true, true), physical = await database.sql`select * from appointments where id=${saved.id}`;
+  expect((await request("DELETE", `${url}/${resource.id}`, a)).statusCode).toBe(200);
+  const replacement = await request("POST", url, a, { ...input, name: resource.name });
+  expect(replacement.statusCode).toBe(201); expect(replacement.json().id).not.toBe(resource.id);
+  expect([...(await database.sql`select * from appointments where id=${saved.id}`)]).toEqual([...physical]);
+  expect((await pools.api.run(retirementContext(), repo => repo.getAppointment(a.businessId, saved.id)))!.customerResourcePreference).toBe(resource.id);
+});
+
+test("resource DELETE rolls back tombstone/link SQL and audit/outbox failures without leaking details", async () => {
+  const { resource } = await retirementFixture();
+  for (const [table, operation] of [["resources", "update"], ["resource_services", "delete"], ["audit_events", "insert"], ["outbox_events", "insert"]]) {
+    await database.sql.unsafe(`create function fail_resource_retirement() returns trigger language plpgsql as $$ begin raise exception 'forced retirement P0001'; end $$`);
+    await database.sql.unsafe(`create trigger fail_resource_retirement before ${operation} on ${table} for each row execute function fail_resource_retirement()`);
+    try {
+      const before = await retirementSnapshot(), result = await request("DELETE", `${url}/${resource.id}`, a);
+      expect(result.statusCode).toBe(500); expect(result.json().code).toBe("INTERNAL_ERROR");
+      expect(result.body).not.toMatch(/P0001|forced|postgres|sql/i); expect(result.body).not.toContain(resource.id);
+      expect(await retirementSnapshot()).toEqual(before);
+    } finally {
+      await database.sql.unsafe(`drop trigger fail_resource_retirement on ${table}`);
+      await database.sql`drop function fail_resource_retirement()`;
+    }
+  }
+});
+
+test("HTTP retirement waits behind repository booking on the same business lock without orphan effects", async () => {
+  const { service, resource } = await retirementFixture(), before = await effects();
+  const clients = (await database.sql`select count(*)::int count from clients`)[0]!.count;
+  let entered!: () => void, release!: () => void;
+  const ready = new Promise<void>(resolve => { entered = resolve; }), gate = new Promise<void>(resolve => { release = resolve; });
+  const booking = pools.api.run(retirementContext(), async repo => {
+    const saved = await repo.createAppointment(a.businessId, { serviceId: service.id, resourceId: resource.id, startRaw: "2099-06-01T10:00:00-03:00",
+      newClient: { firstName: "Race", lastName: "Client", phone: `+54911${retirementPhone++}` } }, { origin: "manual", now: "2099-01-01T00:00:00Z" });
+    entered(); await gate; return saved;
+  });
+  await Promise.race([ready, booking.then(() => { throw new Error("Booking did not hold its lock"); })]);
+  const deletion = request("DELETE", `${url}/${resource.id}`, a).then(result => result);
+  try {
+    let waiting = false;
+    for (let attempt = 0; attempt < 100 && !waiting; attempt++) {
+      waiting = (await database.sql`select exists(select 1 from pg_stat_activity where datname=current_database() and wait_event='advisory') waiting`)[0]!.waiting;
+      if (!waiting) await Bun.sleep(10);
+    }
+    expect(waiting).toBe(true);
+  } finally { release(); }
+  const saved = await booking, result = await deletion;
+  expect(result.statusCode).toBe(409); expect(await effects()).toEqual(before);
+  expect((await database.sql`select count(*)::int count from clients`)[0]!.count).toBe(clients + 1);
+  expect(await pools.api.run(retirementContext(), repo => repo.getAppointment(a.businessId, saved.id))).toMatchObject({ id: saved.id });
 });
