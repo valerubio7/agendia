@@ -6,7 +6,9 @@ import { z } from "zod";
 import { ClientInputSchema, InstantSchema, AppointmentOriginSchema, captureAppointmentTerms,
   isNewStartAllowed, isResourceEligibleForService, type AppointmentTermsSnapshot,
   type AppointmentState, type AppointmentOrigin, type ClientInput,
-  prepareAppointmentChange, resolveCustomerResourcePreference, type CustomerResourcePreferenceExpression } from "@agendia/domain";
+  prepareAppointmentChange, resolveCustomerResourcePreference, type CustomerResourcePreferenceExpression,
+  canEditAppointmentNotes, canTransitionAppointment, AppointmentStateSchema,
+  type AppointmentActionContext } from "@agendia/domain";
 import { BusinessClosureInputSchema, parseInstantMs, WeeklyScheduleSchema,
   ResourceInputSchema, isResourceScheduleWithinBusiness, type ResourceInput,
   type BusinessClosure, type BusinessClosureInput, type WeeklySchedule } from "@agendia/domain";
@@ -126,6 +128,14 @@ export type CreateAppointmentInput = {
 export type AppointmentChangeContext = { now: string; customerResourceExpression?: CustomerResourcePreferenceExpression };
 export type AppointmentCreationContext = AppointmentChangeContext & { origin: AppointmentOrigin };
 export type ChangeAppointmentInput = { serviceId: string; resourceId: string; startRaw: string };
+export type AppointmentNotesInput = { notes: string | null };
+export type AppointmentHistoryFilter = { clientId?: string; from?: string; to?: string };
+const appointmentActionFacts = z.object({
+  actor: z.enum(["businessAdmin", "platformAdmin", "customer", "ai"]), channel: z.enum(["manual", "ai"]),
+  now: InstantSchema, confirmed: z.boolean().optional(),
+});
+const appointmentHistoryFilter = z.object({ clientId: appointmentId.optional(), from: InstantSchema.optional(), to: InstantSchema.optional() })
+  .refine(filter => filter.from === undefined || filter.to === undefined || parseInstantMs(filter.from)! < parseInstantMs(filter.to)!);
 const appointmentChangeCommand = z.object({ serviceId: appointmentId, resourceId: appointmentId, startRaw: InstantSchema });
 const customerExpression = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("chosen"), resourceId: appointmentId }), z.object({ kind: z.literal("none") }),
@@ -152,7 +162,8 @@ const appointmentDto = (row: AppointmentRow): StoredAppointment => ({
 });
 export class AppointmentError extends Error {
   constructor(readonly code: "INVALID_INPUT" | "UNKNOWN_OWNED_ID" | "INELIGIBLE_CATALOG" | "UNAVAILABLE" | "BUSY" | "CLIENT_CONFLICT"
-    | "STATE_LOCKED" | "STARTED_STRUCTURE_LOCKED" | "LEAD_TIME") {
+    | "STATE_LOCKED" | "STARTED_STRUCTURE_LOCKED" | "LEAD_TIME" | "NOTES_LOCKED" | "NOT_TRANSITION"
+    | "INVALID_ACTION_CONTEXT" | "ATTENDANCE_FORBIDDEN" | "INVALID_ATTENDANCE_TIME" | "BEFORE_START" | "CONFIRMATION_REQUIRED") {
     super(code);
   }
 }
@@ -191,17 +202,73 @@ export class PostgresRepositories {
     if ("begin" in this.db) throw new Error("Calendar lock requires a transaction");
     return acquireBusinessCalendarLock(this.db as TransactionSql, context);
   }
-  /** Read-only owned projection: current client identity, frozen catalog terms. */
-  async getAppointment(businessId: string, id: string): Promise<StoredAppointment | null> {
-    const [row] = await this.db<AppointmentRow[]>`select ap.id,ap.client_id "clientId",
+  /** Shared owned projection for detail and untruncated history; never converts epochs to ISO. */
+  private appointmentRows(businessId: string, filters: { id?: string; clientId?: string; fromMs?: number; toMs?: number } = {}) {
+    return this.db<AppointmentRow[]>`select ap.id,ap.client_id "clientId",
       c.first_name "firstName",c.last_name "lastName",c.phone,
       ap.start_raw "startsAt",ap.start_ms "startMs",ap.end_ms "endMs",
       ap.service_id "serviceId",ap.service_label "serviceName",ap.resource_id "resourceId",ap.resource_label "resourceName",
       ap.duration_minutes "durationMinutes",ap.price_ars::float8 "priceArs",ap.state,ap.origin,ap.notes,
       ap.customer_resource_preference_id "customerResourcePreference"
       from appointments ap join clients c on (c.business_id,c.id)=(ap.business_id,ap.client_id)
-      where ap.business_id=${businessId} and ap.id=${id}`;
+      where ap.business_id=${businessId}
+        and (${filters.id ?? null}::uuid is null or ap.id=${filters.id ?? null}::uuid)
+        and (${filters.clientId ?? null}::uuid is null or ap.client_id=${filters.clientId ?? null}::uuid)
+        and (${filters.fromMs ?? null}::bigint is null or ap.start_ms>=${filters.fromMs ?? null}::bigint)
+        and (${filters.toMs ?? null}::bigint is null or ap.start_ms<${filters.toMs ?? null}::bigint)
+      order by ap.start_ms,ap.id`;
+  }
+  /** Read-only owned projection: current client identity, frozen catalog terms. */
+  async getAppointment(businessId: string, id: string): Promise<StoredAppointment | null> {
+    const [row] = await this.appointmentRows(businessId, { id });
     return row ? appointmentDto(row) : null;
+  }
+  /** All states, exact half-open START bounds. Caller materializes local dates for UI. */
+  async listAppointments(businessId: string, input: unknown = {}): Promise<StoredAppointment[]> {
+    const scope = appointmentId.safeParse(businessId), filters = appointmentHistoryFilter.safeParse(input);
+    if (!scope.success || !filters.success) throw new AppointmentError("INVALID_INPUT");
+    const value = filters.data;
+    return (await this.appointmentRows(scope.data, { ...(value.clientId ? { clientId: value.clientId } : {}),
+      ...(value.from ? { fromMs: parseInstantMs(value.from)! } : {}), ...(value.to ? { toMs: parseInstantMs(value.to)! } : {}),
+    })).map(appointmentDto);
+  }
+  private async appointmentAction(businessId: string, id: string, trusted: AppointmentActionContext) {
+    const ownedId = appointmentId.safeParse(id), facts = appointmentActionFacts.safeParse(trusted);
+    if (!ownedId.success || !facts.success) throw new AppointmentError("INVALID_INPUT");
+    const current = await this.getAppointment(businessId, ownedId.data);
+    if (!current) throw new AppointmentError("UNKNOWN_OWNED_ID");
+    return { current, facts: facts.data };
+  }
+  /** Caller establishes action facts; only notes change, including on started Confirmed bookings. */
+  async setAppointmentNotes(businessId: string, id: string, input: unknown, trusted: AppointmentActionContext): Promise<StoredAppointment> {
+    await this.acquireBusinessCalendarLock({ businessId });
+    const parsed = z.object({ notes: z.string().refine(text => !text.includes("\u0000")).nullable() }).safeParse(input);
+    if (!parsed.success) throw new AppointmentError("INVALID_INPUT");
+    const { current } = await this.appointmentAction(businessId, id, trusted);
+    if (!canEditAppointmentNotes(current.state).ok) throw new AppointmentError("NOTES_LOCKED");
+    if (current.notes === parsed.data.notes) return current;
+    const updated = await this.db`update appointments set notes=${parsed.data.notes},updated_at=now()
+      where business_id=${businessId} and id=${current.id} and state='confirmed' returning id`;
+    if (!updated.length) throw new AppointmentError("STATE_LOCKED");
+    return { ...current, notes: parsed.data.notes };
+  }
+  /** No automatic states/reopening. Creation origin does not establish this action's channel. */
+  async transitionAppointment(businessId: string, id: string, target: unknown, trusted: AppointmentActionContext): Promise<StoredAppointment> {
+    await this.acquireBusinessCalendarLock({ businessId });
+    const parsed = AppointmentStateSchema.safeParse(target);
+    if (!parsed.success) throw new AppointmentError("INVALID_INPUT");
+    const { current, facts } = await this.appointmentAction(businessId, id, trusted);
+    const policy = canTransitionAppointment(current, parsed.data, facts);
+    if (!policy.ok) {
+      const errors = { notes_locked: "NOTES_LOCKED", not_transition: "NOT_TRANSITION", invalid_action_context: "INVALID_ACTION_CONTEXT",
+        attendance_forbidden: "ATTENDANCE_FORBIDDEN", invalid_attendance_time: "INVALID_ATTENDANCE_TIME",
+        before_start: "BEFORE_START", confirmation_required: "CONFIRMATION_REQUIRED" } as const;
+      throw new AppointmentError(errors[policy.error]);
+    }
+    const updated = await this.db`update appointments set state=${parsed.data},updated_at=now()
+      where business_id=${businessId} and id=${current.id} and state='confirmed' returning id`;
+    if (!updated.length) throw new AppointmentError("STATE_LOCKED");
+    return { ...current, state: parsed.data };
   }
   /** Caller UoW owns client + appointment + audit/outbox rollback; no messaging effects here.
    * Shared business lock precedes every lookup. SQL GiST remains the raw-writer backstop.

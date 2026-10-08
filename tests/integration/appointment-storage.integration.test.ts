@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import postgres, { type Sql } from "postgres";
-import { parseInstantMs, type WeeklySchedule } from "@agendia/domain";
+import { parseInstantMs, type WeeklySchedule, type AppointmentActionContext } from "@agendia/domain";
 import { PostgresRepositories, RolePool, TenantUnitOfWork, tenantContext,
   type AppointmentCreationContext, type AppointmentChangeContext } from "@agendia/db";
 import { applyPostgresMigrations, createRoleLogin, startTestPostgres, type TestPostgres } from "../support/index.ts";
@@ -685,4 +685,169 @@ test("native UPDATE exclusion fallback rolls back the planned change and trigger
     await database.sql`drop trigger appointment_capacity_race on appointments`;
     await database.sql`drop function appointment_capacity_race()`;
   }
+});
+
+const actionFacts: AppointmentActionContext = { actor: "businessAdmin", channel: "manual", confirmed: true, now: "2026-06-01T10:00:00-03:00" };
+const action = (owner: Owner, id: string, kind: "notes" | "state", input: unknown, trusted = actionFacts) => {
+  const key = randomUUID();
+  return new TenantUnitOfWork(new RolePool(runtime, "agendia_runtime")).execute(context(owner), {
+    audit: { eventType: `appointment.${kind}`, outcome: "success", eventHash: createHash("sha256").update(key).digest("hex") },
+    outbox: { topic: `appointment.${kind}`, stableKey: key, payload: { businessId: owner.business } },
+  }, repo => kind === "notes" ? repo.setAppointmentNotes(owner.business, id, input, trusted)
+    : repo.transitionAppointment(owner.business, id, input, trusted));
+};
+const actionRejected = async (owner: Owner, id: string, kind: "notes" | "state", input: unknown, expected: string, trusted = actionFacts) => {
+  const before = await physical(id), counts = await effects(owner);
+  await code(action(owner, id, kind, input, trusted), expected);
+  expect(await physical(id)).toEqual(before);
+  expect(await effects(owner)).toEqual(counts);
+};
+const history = (owner: Owner, filters: unknown = {}) => new RolePool(runtime, "agendia_runtime").run(context(owner), repo => repo.listAppointments(owner.business, filters));
+
+test("started confirmed notes preserve untrimmed text and all unrelated fields without catalog guards", async () => {
+  const owner = await readyOwner(), saved = await book(owner, command(owner, { notes: "original" }), {
+    origin: "ai", now, customerResourceExpression: { kind: "chosen", resourceId: owner.alternate },
+  });
+  const before = await physical(saved.id);
+  await database.sql`insert into business_calendar_closures(business_id,kind,closed_date) values(${owner.business},'date','2026-06-01')`;
+  await database.sql`update services set status='suspended' where id=${owner.service}`;
+  await database.sql`update resources set status='suspended',weekly_schedule='{}' where id=${owner.resource}`;
+  const notes = "  漢é\n".repeat(3000);
+  const edited = await action(owner, saved.id, "notes", { notes, state: "done", origin: "manual", clientId: randomUUID(), priceArs: 0, actor: "ai", channel: "ai" });
+  expect(edited).toEqual({ ...saved, notes });
+  const physicalEdited = await physical(saved.id);
+  expect(physicalEdited).toEqual({ ...before, notes, updated_at: physicalEdited.updated_at });
+  await action(owner, saved.id, "notes", { notes });
+  expect(await physical(saved.id)).toEqual(physicalEdited);
+  expect((await action(owner, saved.id, "notes", { notes: null })).notes).toBeNull();
+  for (const invalid of [{}, { notes: 3 }, { notes: "nul\u0000text" }])
+    await actionRejected(owner, saved.id, "notes", invalid, "INVALID_INPUT");
+});
+
+test("final transition matrix uses trusted action facts, literal confirmation and exact attendance time", async () => {
+  const owner = await readyOwner(), saved = await book(owner, command(owner, { notes: "retained" }), {
+    origin: "ai", now, customerResourceExpression: { kind: "chosen", resourceId: owner.alternate },
+  });
+  await actionRejected(owner, saved.id, "state", "done", "BEFORE_START", { ...actionFacts, now: "2026-06-01T09:59:59.999-03:00" });
+  for (const facts of [{ ...actionFacts, actor: "customer" }, { ...actionFacts, actor: "platformAdmin" }, { ...actionFacts, actor: "ai", channel: "ai" }])
+    await actionRejected(owner, saved.id, "state", "no_show", "ATTENDANCE_FORBIDDEN", facts as AppointmentActionContext);
+  await actionRejected(owner, saved.id, "state", "cancelled", "CONFIRMATION_REQUIRED", { ...actionFacts, confirmed: false });
+  for (const facts of [{ ...actionFacts, actor: "unknown" }, { ...actionFacts, channel: "web" }, { ...actionFacts, now: "bad" }, { ...actionFacts, confirmed: "true" }])
+    await actionRejected(owner, saved.id, "state", "cancelled", "INVALID_INPUT", facts as AppointmentActionContext);
+  await actionRejected(owner, saved.id, "state", "unknown", "INVALID_INPUT");
+  await actionRejected(owner, saved.id, "state", { state: "cancelled", confirmed: true, actor: "ai" }, "INVALID_INPUT");
+  await actionRejected(owner, saved.id, "state", "confirmed", "NOT_TRANSITION");
+  const before = await physical(saved.id);
+  const done = await action(owner, saved.id, "state", "done");
+  expect(done).toEqual({ ...saved, state: "done" });
+  const after = await physical(saved.id);
+  expect(after).toEqual({ ...before, state: "done", updated_at: after.updated_at });
+  for (const target of ["done", "cancelled", "confirmed"])
+    await actionRejected(owner, saved.id, "state", target, "NOT_TRANSITION");
+  await actionRejected(owner, saved.id, "notes", { notes: "forbidden" }, "NOTES_LOCKED");
+  await changeRejected(owner, saved.id, command(owner), "STATE_LOCKED");
+  const second = await book(owner, command(owner, { startRaw: "2026-06-01T11:00:00-03:00" }));
+  expect((await action(owner, second.id, "state", "no_show", { ...actionFacts, now: "2026-06-01T11:00:00.001-03:00" })).state).toBe("no_show");
+  await actionRejected(owner, second.id, "notes", { notes: null }, "NOTES_LOCKED");
+});
+
+test("explicit AI cancellation of past confirmed booking ignores creation origin and disabled catalog; frees capacity", async () => {
+  const owner = await readyOwner(), saved = await book(owner);
+  await database.sql`update services set status='suspended' where id=${owner.service}`;
+  await database.sql`update resources set status='suspended',weekly_schedule='{}' where id=${owner.resource}`;
+  expect((await action(owner, saved.id, "state", "cancelled", { actor: "ai", channel: "ai", now: "2026-06-02T10:00:00-03:00" })).state).toBe("cancelled");
+  await actionRejected(owner, saved.id, "notes", { notes: "locked" }, "NOTES_LOCKED");
+  await insert(row(owner, { state: "confirmed" }));
+  await code(insert(row(owner, { state: "confirmed" })), "23P01");
+  const manual = await insert(row(owner, { start_ms: start + 60 * minutes, end_ms: start + 75 * minutes, state: "confirmed" }));
+  expect((await action(owner, manual.id, "state", "cancelled", { ...actionFacts, now: "2026-06-03T10:00:00-03:00" })).state).toBe("cancelled");
+});
+
+test("notes/state UPDATE and caller audit/outbox failures roll back the actual UoW", async () => {
+  const owner = await readyOwner(), saved = await book(owner);
+  for (const kind of ["notes", "state"] as const) for (const table of ["appointments", "audit_events", "outbox_events"]) {
+    await database.sql.unsafe(`create function appointment_action_failure() returns trigger language plpgsql as $$ begin raise exception 'fixture failure'; end $$`);
+    await database.sql.unsafe(`create trigger appointment_action_failure before ${table === "appointments" ? "update" : "insert"} on ${table} for each row execute function appointment_action_failure()`);
+    try { await actionRejected(owner, saved.id, kind, kind === "notes" ? { notes: "edited" } : "done", "P0001"); }
+    finally {
+      await database.sql.unsafe(`drop trigger appointment_action_failure on ${table}`);
+      await database.sql`drop function appointment_action_failure()`;
+    }
+  }
+});
+
+test("notes/final mutations lock before lookup and deny foreign IDs or mismatched/nontransaction scope", async () => {
+  const owner = await readyOwner(), saved = await book(owner), foreign = await readyOwner();
+  for (const method of ["setAppointmentNotes", "transitionAppointment"] as const) {
+    const input = method === "setAppointmentNotes" ? { notes: "edited" } : "cancelled";
+    await expect(new PostgresRepositories(runtime)[method](owner.business, saved.id, input, actionFacts)).rejects.toThrow("requires a transaction");
+    await expect(new RolePool(runtime, "agendia_runtime").run(context(owner), repo => repo[method](foreign.business, saved.id, input, actionFacts))).rejects.toThrow("matching tenant");
+    await code(new RolePool(runtime, "agendia_runtime").run(context(foreign), repo => repo[method](foreign.business, saved.id, input, actionFacts)), "UNKNOWN_OWNED_ID");
+    await code(action(owner, "bad", method === "setAppointmentNotes" ? "notes" : "state", input), "INVALID_INPUT");
+  }
+  await new RolePool(runtime, "agendia_runtime").run(context(owner), async repo => {
+    const lock = repo.acquireBusinessCalendarLock.bind(repo), read = repo.getAppointment.bind(repo);
+    let locked = false;
+    repo.acquireBusinessCalendarLock = async scope => { await lock(scope); locked = true; };
+    repo.getAppointment = (...args) => { expect(locked).toBe(true); return read(...args); };
+    await repo.setAppointmentNotes(owner.business.toUpperCase(), saved.id.toUpperCase(), { notes: "owned" }, actionFacts);
+    locked = false;
+    await repo.transitionAppointment(owner.business, saved.id, "cancelled", actionFacts);
+  });
+});
+
+test("concurrent notes/final actions serialize; conditional raw finalization never edits final notes or reopens", async () => {
+  const owner = await readyOwner(), saved = await book(owner);
+  const results = await Promise.allSettled([action(owner, saved.id, "notes", { notes: "racing" }), action(owner, saved.id, "state", "done")]);
+  expect(results[1]!.status).toBe("fulfilled");
+  if (results[0]!.status === "rejected") expect(results[0]!.reason).toMatchObject({ code: "NOTES_LOCKED" });
+  expect((await physical(saved.id)).state).toBe("done");
+  for (const kind of ["notes", "state"] as const) {
+    const next = await book(owner, command(owner, { startRaw: kind === "notes" ? "2026-06-01T11:00:00-03:00" : "2026-06-01T12:00:00-03:00" }));
+    const before = await physical(next.id);
+    await code(new RolePool(runtime, "agendia_runtime").run(context(owner), async repo => {
+      const read = repo.getAppointment.bind(repo);
+      repo.getAppointment = async (...args) => {
+        const current = await read(...args);
+        await database.sql`update appointments set state='cancelled' where id=${next.id}`;
+        return current;
+      };
+      return kind === "notes" ? repo.setAppointmentNotes(owner.business, next.id, { notes: "stale" }, actionFacts)
+        : repo.transitionAppointment(owner.business, next.id, "done", { ...actionFacts, now: "2026-06-01T12:00:00-03:00" });
+    }), "STATE_LOCKED");
+    expect(await physical(next.id)).toEqual({ ...before, state: "cancelled" });
+  }
+});
+
+test("business/client history shares current client projection, frozen terms, every state and exact start filters", async () => {
+  const owner = await readyOwner(), foreign = await readyOwner();
+  const saved = await book(owner, command(owner, { notes: "history" }));
+  await action(owner, saved.id, "state", "cancelled");
+  const sameStart = await insert(row(owner, { state: "done" }));
+  const third = await insert(row(owner, { state: "no_show", start_ms: start + 15 * minutes, end_ms: start + 30 * minutes }));
+  await insert(row(owner, { state: "confirmed", start_ms: -62135683140000, end_ms: -62135683140000 + 15 * minutes }));
+  await database.sql`update clients set first_name='Latest',last_name='Names',phone='+5491198765432' where id=${owner.client}`;
+  await database.sql`update services set name='Latest service',price_ars=999,duration_minutes=30 where id=${owner.service}`;
+  await database.sql`update resources set name='Latest resource' where id=${owner.resource}`;
+  const all = await history(owner);
+  expect(all).toHaveLength(4);
+  expect(all.every(item => item.client.id === owner.client && item.client.firstName === "Latest" && item.client.phone === "+5491198765432")).toBe(true);
+  expect(all.find(item => item.id === saved.id)).toMatchObject({ state: "cancelled", notes: "history", terms: saved.terms });
+  expect(() => JSON.stringify(all)).not.toThrow();
+  const bounded = await history(owner, { clientId: owner.client.toUpperCase(), from: "2026-06-01T13:00:00.000Z", to: "2026-06-01T10:15:00-03:00" });
+  expect(bounded.map(item => item.id)).toEqual([saved.id, sameStart.id].sort());
+  expect((await history(owner, { from: "2026-06-01T10:15:00-03:00" })).map(item => item.id)).toEqual([third.id]);
+  expect(await history(owner, { clientId: foreign.client })).toHaveLength(0);
+  expect(await history(owner, { clientId: randomUUID() })).toHaveLength(0);
+  expect(await history(foreign)).toHaveLength(0);
+  for (const filters of [{ clientId: "bad" }, { from: "bad" }, { from: "2026-06-02T00:00:00Z", to: "2026-06-01T00:00:00Z" }, { from: "2026-06-01T00:00:00Z", to: "2026-06-01T00:00:00Z" }])
+    await code(history(owner, filters), "INVALID_INPUT");
+  await code(new RolePool(runtime, "agendia_runtime").run(context(owner), repo => repo.listAppointments("bad")), "INVALID_INPUT");
+  expect(await new RolePool(runtime, "agendia_runtime").run(context(owner), repo => repo.listAppointments(foreign.business))).toHaveLength(0);
+  await database.sql`insert into appointments(business_id,client_id,service_id,resource_id,service_label,resource_label,
+    price_ars,duration_minutes,start_raw,start_ms,end_ms,state,origin)
+    select ${owner.business}::uuid,${owner.client}::uuid,${owner.service}::uuid,${owner.resource}::uuid,'Frozen','Frozen',12,15,
+      '2026-06-01T10:00:00-03:00',${start}::bigint + n*60000,${start}::bigint + (n+15)*60000,'done','manual'
+    from generate_series(1,110) n`;
+  expect(await history(owner, { clientId: owner.client })).toHaveLength(114);
 });
