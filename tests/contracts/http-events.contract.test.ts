@@ -97,7 +97,7 @@ describe("safe HTTP and event contracts", () => {
     expect(CatalogDeletionAckSchema.safeParse({ id: "bad" }).success).toBe(false);
     expect(Object.entries(document.paths).filter(([, item]) => "delete" in item).map(([route]) => route)).toEqual(["/me/services/:id", "/me/resources/:id"]);
     expect(document.paths["/me/clients/:id"]).not.toHaveProperty("delete");
-    expect(PRODUCT_HTTP_ROUTES.filter(route => /appointments|booking|slots/.test(route))).toEqual(["/me/appointments", "/me/appointments/:appointmentId", "/me/appointments/availability"]);
+    expect(PRODUCT_HTTP_ROUTES.filter(route => /appointments|booking|slots/.test(route))).toEqual(["/me/appointments", "/me/appointments/:appointmentId", "/me/appointments/:appointmentId/notes", "/me/appointments/:appointmentId/state", "/me/appointments/availability"]);
   });
 
   test("appointment reads expose exactly two GETs and the strict stored projection", () => {
@@ -179,7 +179,30 @@ describe("safe HTTP and event contracts", () => {
       expect(path).toHaveProperty(`patch.responses.${status}.content.application/json.schema.$ref`, "#/components/schemas/SafeError");
     expect(document.components.schemas).toHaveProperty("ManualAppointmentChange.additionalProperties", false);
     expect(document.components.schemas).toHaveProperty("ManualAppointmentChange.required", ["serviceId", "resourceId", "startRaw", "date", "expectedTerms", "confirmed"]);
-    expect(Object.entries(document.paths).filter(([, item]) => "patch" in item).map(([route]) => route)).toEqual(["/me/appointments/:appointmentId"]);
+    expect(Object.entries(document.paths).filter(([, item]) => "patch" in item).map(([route]) => route)).toEqual(["/me/appointments/:appointmentId", "/me/appointments/:appointmentId/notes", "/me/appointments/:appointmentId/state"]);
+  });
+
+  test("nonstructural suffixes export strict notes and explicitly confirmed final-state contracts", () => {
+    const document = toOpenApiDocument();
+    for (const [suffix, name] of [["notes", "ManualAppointmentNotes"], ["state", "ManualAppointmentState"]]) {
+      const path = document.paths[`/me/appointments/:appointmentId/${suffix}`];
+      expect(path).toBeDefined();
+      expect(Object.keys(path!)).toEqual(["patch"]);
+      expect(path).toHaveProperty("patch.requestBody.content.application/json.schema.$ref", `#/components/schemas/${name}`);
+      expect(path).toHaveProperty("patch.responses.200.content.application/json.schema.$ref", "#/components/schemas/AppointmentRecord");
+      for (const status of [400, 401, 403, 404, 409, 500])
+        expect(path).toHaveProperty(`patch.responses.${status}.content.application/json.schema.$ref`, "#/components/schemas/SafeError");
+      expect(document.components.schemas).toHaveProperty(`${name}.additionalProperties`, false);
+    }
+    expect(httpContracts).toHaveProperty("ManualAppointmentNotesSchema");
+    expect(httpContracts).toHaveProperty("ManualAppointmentStateSchema");
+    const notes = httpContracts.ManualAppointmentNotesSchema, state = httpContracts.ManualAppointmentStateSchema;
+    for (const value of [null, "", "x".repeat(10000)]) expect(notes.safeParse({ notes: value }).success).toBe(true);
+    for (const value of [{}, { notes: 1 }, { notes: "bad\u0000" }, { notes: null, actor: "businessAdmin" }]) expect(notes.safeParse(value).success).toBe(false);
+    for (const value of ["cancelled", "done", "no_show"]) expect(state.safeParse({ state: value, confirmed: true }).success).toBe(true);
+    for (const value of [{ state: "confirmed", confirmed: true }, { state: "pending", confirmed: true }, { state: "done" }, { state: "done", confirmed: "true" }, { state: "done", confirmed: false }, { state: "done", confirmed: true, now: "2099-01-01" }]) expect(state.safeParse(value).success).toBe(false);
+    expect(document.components.schemas).toHaveProperty("ManualAppointmentState.properties.confirmed.const", true);
+    expect(document.components.schemas).toHaveProperty("ManualAppointmentState.properties.state.enum", ["done", "cancelled", "no_show"]);
   });
 
   test("allowlists audit metadata and preserves tenant scope", () => {

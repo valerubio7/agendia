@@ -36,6 +36,18 @@ export const ManualAppointmentChangeSchema = z.object({
 }).strict();
 export type ManualAppointmentChangeRequest = z.infer<typeof ManualAppointmentChangeSchema>;
 export type ManualAppointmentChangeResponse = AppointmentRecord;
+/** Match DAL note validation: null clears; empty string remains a string; no arbitrary length limit. */
+export const ManualAppointmentNotesSchema = z.object({
+  notes: z.string().refine(notes => !notes.includes("\0")).nullable(),
+}).strict();
+/** Manual action authority is server-owned, independent of the stored booking origin. */
+export const ManualAppointmentStateSchema = z.object({
+  state: AppointmentStateSchema.exclude(["confirmed"]), confirmed: z.literal(true),
+}).strict();
+export type ManualAppointmentNotesRequest = z.infer<typeof ManualAppointmentNotesSchema>;
+export type ManualAppointmentNotesResponse = AppointmentRecord;
+export type ManualAppointmentStateRequest = z.infer<typeof ManualAppointmentStateSchema>;
+export type ManualAppointmentStateResponse = AppointmentRecord;
 /** Optimistic offered terms are a precondition, never persistence authority or sender proof. */
 export const ManualAppointmentCreateSchema = z.object({
   serviceId: availabilityId, resourceId: availabilityId, startRaw: InstantSchema, date: CalendarDateSchema,
@@ -72,6 +84,8 @@ export const PRODUCT_HTTP_ROUTES = Object.freeze([
   "/admin/businesses/:id/status",
   "/me/appointments",
   "/me/appointments/:appointmentId",
+  "/me/appointments/:appointmentId/notes",
+  "/me/appointments/:appointmentId/state",
   "/me/appointments/availability",
   "/me/clients",
   "/me/clients/:id",
@@ -164,6 +178,25 @@ export function toOpenApiDocument() {
               : { $ref: "#/components/schemas/SafeError" } } },
           }])),
         },
+      } : route === "/me/appointments/:appointmentId/notes" || route === "/me/appointments/:appointmentId/state" ? {
+        patch: {
+          summary: "Manual owned appointment action (business session, Origin and CSRF required)",
+          description: route.endsWith("/notes")
+            ? "Strict notes string/null only; null clears and empty string is retained. Confirmed-only, including already started. No length limit; NUL is invalid. All other saved fields are preserved."
+            : "Strict final state (done, cancelled, no_show) and confirmed literal true only, even for AI-origin bookings. Server derives businessAdmin/manual and fresh time after the tenant business lock. Cancellation has no cutoff; Done/NoShow are allowed at or after start, not end. Final states are immutable: no reopening or automatic transitions. All other saved fields are preserved.",
+          parameters: [{ name: "appointmentId", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+          requestBody: { required: true, content: { "application/json": { schema: { $ref: `#/components/schemas/${route.endsWith("/notes") ? "ManualAppointmentNotes" : "ManualAppointmentState"}` } } } },
+          responses: Object.fromEntries([200, 400, 401, 403, 404, 409, 500].map(status => [String(status), {
+            description: status === 200 ? "Current client identity and saved appointment terms; atomic generic audit/outbox only, no AI or WhatsApp effects"
+              : status === 400 ? "VALIDATION_FAILED: invalid strict body, ID, query or literal confirmation"
+              : status === 401 ? "UNAUTHENTICATED: session required"
+              : status === 403 ? "FORBIDDEN: business role, Origin or CSRF"
+              : status === 404 ? "NOT_FOUND: unknown or foreign appointment"
+              : status === 409 ? "CONFLICT: final state or attendance before start"
+              : "INTERNAL_ERROR: safe atomic operation failure",
+            content: { "application/json": { schema: { $ref: `#/components/schemas/${status === 200 ? "AppointmentRecord" : "SafeError"}` } } },
+          }])),
+        },
       } : route === "/me/appointments" || route === "/me/appointments/:appointmentId" ? {
         get: {
           summary: "Read owned appointment history (business session; all states, no range default or cap)",
@@ -218,6 +251,8 @@ export function toOpenApiDocument() {
           ],
         },
         ManualAppointmentChange: z.toJSONSchema(ManualAppointmentChangeSchema, { io: "input" }),
+        ManualAppointmentNotes: z.toJSONSchema(ManualAppointmentNotesSchema, { io: "input" }),
+        ManualAppointmentState: z.toJSONSchema(ManualAppointmentStateSchema, { io: "input" }),
         AppointmentRecord: z.toJSONSchema(AppointmentRecordSchema),
         AvailabilitySlot: z.toJSONSchema(AvailabilitySlotSchema, { io: "input" }),
         CatalogDeletionAck: {

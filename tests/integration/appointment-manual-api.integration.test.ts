@@ -371,6 +371,139 @@ test("PATCH P0001 UPDATE/audit/outbox failures roll back every old field and eff
   expect(handler).toContain("{ appointmentId, clock: () => now }"); expect(handler).toContain("{ now }");
 });
 
+const action = (o: Owner, id: string, suffix: "notes" | "state", payload: unknown) =>
+  app.inject({ method: "PATCH", url: `/me/appointments/${id}/${suffix}`, headers: headers(o), payload: payload as Record<string, unknown> });
+const physical = async (id: string) => (await database.sql`select * from appointments where id=${id}`)[0]!;
+const detail = async (o: Owner, id: string) => (await app.inject({ method: "GET", url: `/me/appointments/${id}`, headers: { cookie: o.cookie } })).json();
+
+for (const suffix of ["notes", "state"] as const) test(`${suffix} suffix authenticates before input and rejects all injected authority atomically`, async () => {
+  const o = await fixture(), saved = await booking(o), foreign = await fixture(), admin = await fixture(true);
+  const payload = suffix === "notes" ? { notes: "Changed" } : { state: "cancelled", confirmed: true }, before = await effects(o);
+  expect((await app.inject({ method: "PATCH", url: `/me/appointments/bad/${suffix}`, payload })).statusCode).toBe(401);
+  expect((await action(admin, saved.id, suffix, payload)).statusCode).toBe(403);
+  for (const extra of [{ origin: "https://hostile.test" }, { "x-csrf-token": "bad" }])
+    expect((await app.inject({ method: "PATCH", url: `/me/appointments/${saved.id}/${suffix}`, payload, headers: { ...headers(o), ...extra } })).statusCode).toBe(403);
+  for (const id of [randomUUID(), (await booking(foreign)).id]) expect((await action(o, id, suffix, payload)).statusCode).toBe(404);
+  expect((await action(o, "bad", suffix, payload)).statusCode).toBe(400);
+  expect((await app.inject({ method: "PATCH", url: `/me/appointments/${saved.id}/${suffix}?now=2099`, payload, headers: headers(o) })).statusCode).toBe(400);
+  for (const key of ["actor", "role", "channel", "now", "clock", "businessId", "clientId", "newClient", "serviceId", "resourceId", "expectedTerms", "origin", "customerResourcePreference", "customerResourceExpression", "startRaw", "priceArs", suffix === "notes" ? "state" : "notes"])
+    expect((await action(o, saved.id, suffix, { ...payload, [key]: "hostile" })).statusCode).toBe(400);
+  const invalid = suffix === "notes" ? [{}, { notes: 1 }, { notes: "bad\u0000" }, { notes: null, confirmed: true }]
+    : [{}, { state: "done" }, ...[false, "true", null].map(confirmed => ({ state: "cancelled", confirmed })), ...["confirmed", "pending", "Done"].map(state => ({ state, confirmed: true }))];
+  for (const value of invalid) expect((await action(o, saved.id, suffix, value)).statusCode).toBe(400);
+  expect(await effects(o)).toEqual(before);
+});
+
+test("notes preserve every saved field, clear null, retain empty string and work after start despite retired catalogs", async () => {
+  const o = await fixture(), saved = await booking(o);
+  await database.sql`update appointments set origin='ai',customer_resource_preference_id=${o.resource} where id=${saved.id}`;
+  await database.sql`update clients set first_name='Latest' where id=${saved.client.id}`;
+  for (const notes of ["Changed", "", null, "x".repeat(10000)]) {
+    const before = await physical(saved.id), response = await action(o, saved.id.toUpperCase(), "notes", { notes });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ...await detail(o, saved.id), notes });
+    expect(response.json().client.firstName).toBe("Latest");
+    const after = await physical(saved.id);
+    expect(after).toEqual({ ...before, notes, updated_at: after.updated_at });
+  }
+  await setEpoch(saved.id, Date.now() - 60000);
+  await database.sql`update services set status='suspended',deleted_at=now(),name='Changed',price_ars=999 where id=${o.service}`;
+  await database.sql`update resources set status='suspended',deleted_at=now(),weekly_schedule='{}',name='Changed' where id=${o.resource}`;
+  await database.sql`update business_calendars set weekly_schedule='{}' where business_id=${o.business}`;
+  await database.sql`insert into business_calendar_closures(business_id,kind,closed_date) values(${o.business},'date',${date})`;
+  const before = await physical(saved.id);
+  expect((await action(o, saved.id, "notes", { notes: "Started" })).statusCode).toBe(200);
+  const after = await physical(saved.id);
+  expect(after).toEqual({ ...before, notes: "Started", updated_at: after.updated_at });
+  expect((await action(o, saved.id, "state", { state: "cancelled", confirmed: true })).statusCode).toBe(200);
+  expect((await effects(o)).outbound_commands).toEqual([]); expect((await effects(o)).messages).toEqual([]);
+});
+
+for (const state of ["cancelled", "done", "no_show"]) test(`manual ${state} uses start not end, preserves all fields and permanently frees native occupancy`, async () => {
+  const o = await fixture(), saved = await booking(o);
+  await database.sql`update appointments set origin='ai',customer_resource_preference_id=${o.resource} where id=${saved.id}`;
+  if (state !== "cancelled") {
+    const before = await effects(o);
+    expect((await action(o, saved.id, "state", { state, confirmed: true })).statusCode).toBe(409);
+    expect(await effects(o)).toEqual(before);
+    await setEpoch(saved.id, Date.now() - 1000); // Attendance before end is legal.
+  }
+  await database.sql`update services set status='suspended',deleted_at=now(),name='Changed',duration_minutes=90,price_ars=999 where id=${o.service}`;
+  await database.sql`update resources set status='suspended',deleted_at=now(),weekly_schedule='{}',name='Changed' where id=${o.resource}`;
+  await database.sql`update business_calendars set weekly_schedule='{}' where business_id=${o.business}`;
+  await database.sql`insert into business_calendar_closures(business_id,kind,closed_date) values(${o.business},'date',${date})`;
+  const duplicate = () => database.sql`insert into appointments(id,business_id,client_id,service_id,resource_id,service_label,resource_label,duration_minutes,price_ars,start_raw,start_ms,end_ms,state,origin)
+    select ${randomUUID()},business_id,client_id,service_id,resource_id,service_label,resource_label,duration_minutes,price_ars,start_raw,start_ms,end_ms,'confirmed','manual' from appointments where id=${saved.id}`;
+  await expect(duplicate().then(rows => rows)).rejects.toMatchObject({ code: "23P01" });
+  const before = await physical(saved.id), beforeDto = await detail(o, saved.id), beforeEffects = await effects(o);
+  expect((await action(o, saved.id, "state", { state })).statusCode).toBe(400); // AI creation is not AI action authority.
+  const response = await action(o, saved.id, "state", { state, confirmed: true });
+  expect(response.statusCode).toBe(200); expect(response.json()).toEqual({ ...beforeDto, state });
+  const after = await physical(saved.id);
+  expect(after).toEqual({ ...before, state, updated_at: after.updated_at });
+  const committed = await effects(o);
+  for (const table of ["audit_events", "outbox_events"]) expect(committed[table]).toHaveLength((beforeEffects[table] as unknown[]).length + 1);
+  expect(committed.outbound_commands).toEqual([]); expect(committed.messages).toEqual([]);
+  const [event] = await database.sql`select topic from outbox_events where business_id=${o.business} order by created_at desc limit 1`;
+  expect(event!.topic).toBe("appointment.updated");
+  const locked = await effects(o);
+  for (const target of ["cancelled", "done", "no_show"]) expect((await action(o, saved.id, "state", { state: target, confirmed: true })).statusCode).toBe(409);
+  expect((await action(o, saved.id, "state", { state: "confirmed", confirmed: true })).statusCode).toBe(400);
+  expect((await action(o, saved.id, "notes", { notes: null })).statusCode).toBe(409);
+  expect(await effects(o)).toEqual(locked);
+  // A physical duplicate in this interval is now legal only because the API really changed state.
+  await duplicate();
+  expect((await effects(o)).appointments).toHaveLength(2);
+});
+
+for (const suffix of ["notes", "state"] as const) test(`${suffix} waits on the real tenant calendar lock and derives fresh action time`, async () => {
+  const o = await fixture(), saved = await booking(o), before = await effects(o);
+  let release!: () => void, acquired!: () => void;
+  const ready = new Promise<void>(resolve => { acquired = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const holder = database.sql.begin(async tx => {
+    await tx`select pg_advisory_xact_lock(hashtextextended(${"business-calendar:" + o.business},0))`;
+    acquired(); await gate;
+  });
+  await ready;
+  const pending = action(o, saved.id, suffix, suffix === "notes" ? { notes: "After wait" } : { state: "done", confirmed: true });
+  try {
+    let waiting = false;
+    for (let attempt = 0; attempt < 100 && !waiting; attempt++) {
+      const [row] = await database.sql`select exists(select 1 from pg_locks where locktype='advisory' and not granted) waiting`;
+      waiting = row!.waiting;
+      if (!waiting) await Bun.sleep(10);
+    }
+    expect(waiting).toBe(true); expect(await effects(o)).toEqual(before);
+    // Move start to NOW only after the HTTP action is waiting. A pre-lock clock denies Done.
+    await setEpoch(saved.id, Date.now());
+    await Bun.sleep(20);
+  } finally { release(); await holder; }
+  expect((await pending).statusCode).toBe(200);
+});
+
+for (const state of ["done", "no_show"]) test(`${state} also remains legal after end`, async () => {
+  const o = await fixture(), saved = await booking(o);
+  await setEpoch(saved.id, Date.now() - 3600000);
+  expect((await action(o, saved.id, "state", { state, confirmed: true })).statusCode).toBe(200);
+});
+
+for (const suffix of ["notes", "state"] as const) test(`${suffix} P0001 update/audit/outbox failures safely roll back everything`, async () => {
+  const o = await fixture(), saved = await booking(o), before = await effects(o);
+  await database.sql.unsafe(`create function fail_action_${suffix}() returns trigger language plpgsql as $$ begin raise exception 'private SQL identifiers'; end $$`);
+  try {
+    for (const table of ["appointments", "audit_events", "outbox_events"]) {
+      await database.sql.unsafe(`create trigger fail_action before ${table === "appointments" ? "update" : "insert"} on ${table} for each row execute function fail_action_${suffix}()`);
+      try {
+        const response = await action(o, saved.id, suffix, suffix === "notes" ? { notes: "Changed" } : { state: "cancelled", confirmed: true });
+        expect(response.statusCode).toBe(500); expect(response.json().code).toBe("INTERNAL_ERROR");
+        expect(response.body).not.toMatch(/private|SQL|P0001|postgres|trigger|identifiers/i);
+        expect(await effects(o)).toEqual(before);
+      } finally { await database.sql`drop trigger fail_action on ${database.sql(table)}`; }
+    }
+  } finally { await database.sql.unsafe(`drop function fail_action_${suffix}()`); }
+});
+
 test("physical P0001 failures at each atomic stage roll back client, booking, audit and outbox", async () => {
   const o = await fixture(), payload = body(o, await offer(o)), before = await effects(o);
   await database.sql`create function fail_manual_insert() returns trigger language plpgsql as $$ begin raise exception 'private SQL identifiers'; end $$`;

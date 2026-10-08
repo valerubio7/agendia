@@ -9,7 +9,7 @@ import {
   sessionCookie,
   validateMutationRequest,
 } from "@agendia/auth";
-import { makeSafeError, PlatformAiInstructionsInputSchema, AppointmentListQuerySchema, AppointmentRecordSchema, AppointmentAvailabilityQuerySchema, AvailabilitySlotSchema, ManualAppointmentCreateSchema, ManualAppointmentChangeSchema } from "@agendia/contracts";
+import { makeSafeError, PlatformAiInstructionsInputSchema, AppointmentListQuerySchema, AppointmentRecordSchema, AppointmentAvailabilityQuerySchema, AvailabilitySlotSchema, ManualAppointmentCreateSchema, ManualAppointmentChangeSchema, ManualAppointmentNotesSchema, ManualAppointmentStateSchema } from "@agendia/contracts";
 import {
   parseInstantMs,
   AI_SYSTEM_INSTRUCTIONS,
@@ -562,6 +562,38 @@ export function buildApi(input: AuthService | ApiOptions) {
       return fail(reply, request, 500, "INTERNAL_ERROR", "Appointment change failed");
     }
   });
+  // Nonstructural actions deliberately bypass live catalogs and availability quotes.
+  for (const suffix of ["notes", "state"] as const) {
+    app.patch(`/me/appointments/:appointmentId/${suffix}`, async (request, reply) => {
+      const auth = await requireTenant(request, reply, true);
+      if (!auth) return;
+      const parsed = (suffix === "notes" ? ManualAppointmentNotesSchema : ManualAppointmentStateSchema).safeParse(request.body);
+      const params = z.object({ appointmentId: z.string().uuid().transform(id => id.toLowerCase()) }).strict().safeParse(request.params);
+      if (!parsed.success || !params.success || !z.object({}).strict().safeParse(request.query).success)
+        return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid manual appointment action");
+      try {
+        return await tenantWrite(auth, request, "appointment.updated", async repo => {
+          await repo.acquireBusinessCalendarLock(context(auth, request));
+          const now = new Date().toISOString();
+          const trusted = { actor: "businessAdmin", channel: "manual", now } as const;
+          const value = parsed.data;
+          const saved = "notes" in value
+            ? await repo.setAppointmentNotes(auth.business_id!, params.data.appointmentId, value, trusted)
+            : await repo.transitionAppointment(auth.business_id!, params.data.appointmentId, value.state,
+              { ...trusted, confirmed: value.confirmed });
+          return AppointmentRecordSchema.parse(saved);
+        });
+      } catch (error) {
+        if (error instanceof AppointmentError) {
+          if (error.code === "INVALID_INPUT") return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid manual appointment action");
+          if (error.code === "UNKNOWN_OWNED_ID") return fail(reply, request, 404, "NOT_FOUND", "Appointment not found");
+          if (["NOTES_LOCKED", "STATE_LOCKED", "NOT_TRANSITION", "BEFORE_START", "CONFIRMATION_REQUIRED", "ATTENDANCE_FORBIDDEN"].includes(error.code))
+            return fail(reply, request, 409, "CONFLICT", "Appointment action not allowed");
+        }
+        return fail(reply, request, 500, "INTERNAL_ERROR", "Appointment action failed");
+      }
+    });
+  }
   app.get("/me/appointments/availability", async (request, reply) => {
     const auth = await requireTenant(request, reply);
     if (!auth) return;
