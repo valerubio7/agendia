@@ -2,7 +2,9 @@ import { z } from "zod";
 import { ClientInputSchema } from "@agendia/domain/client-registry";
 import { CalendarDateSchema, InstantSchema, parseInstantMs } from "@agendia/domain/calendar-values";
 import { AppointmentTermsSnapshotSchema, AppointmentStateSchema, AppointmentOriginSchema } from "@agendia/domain/appointment-lifecycle";
-import type { BusinessClosure, BusinessClosureInput, WeeklySchedule, ResourceInput } from "@agendia/domain";
+import type { BusinessClosure, BusinessClosureInput } from "@agendia/domain/business-calendar";
+import type { WeeklySchedule } from "@agendia/domain/agenda-availability";
+import type { ResourceInput } from "@agendia/domain/resource-catalog";
 
 const appointmentId = z.string().uuid();
 export const AppointmentListQuerySchema = z.object({

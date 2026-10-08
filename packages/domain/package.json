@@ -7,6 +7,9 @@
     ".": "./src/index.ts",
     "./client-registry": "./src/client-registry.ts",
     "./calendar-values": "./src/calendar-values.ts",
-    "./appointment-lifecycle": "./src/appointment-lifecycle.ts"
+    "./appointment-lifecycle": "./src/appointment-lifecycle.ts",
+    "./business-calendar": "./src/business-calendar.ts",
+    "./agenda-availability": "./src/agenda-availability.ts",
+    "./resource-catalog": "./src/resource-catalog.ts"
   }
 }
