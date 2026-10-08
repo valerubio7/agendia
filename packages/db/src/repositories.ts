@@ -9,7 +9,7 @@ import { ClientInputSchema, InstantSchema, AppointmentOriginSchema, captureAppoi
   prepareAppointmentChange, resolveCustomerResourcePreference, type CustomerResourcePreferenceExpression,
   canEditAppointmentNotes, canTransitionAppointment, AppointmentStateSchema, AppointmentTermsSnapshotSchema,
   type AppointmentActionContext } from "@agendia/domain";
-import { BusinessClosureInputSchema, parseInstantMs, WeeklyScheduleSchema,
+import { BusinessClosureInputSchema, CalendarDateSchema, materializeArgentinaDayGrid, parseInstantMs, WeeklyScheduleSchema,
   ResourceInputSchema, isResourceScheduleWithinBusiness, normalizeWeeklySchedule, isStructurallyAvailable,
   isEpochIntervalWithinWeeklySchedule, isEpochIntervalOpenForClosures, type EpochInterval, type ResourceInput,
   type BusinessClosure, type BusinessClosureInput, type WeeklySchedule } from "@agendia/domain";
@@ -140,6 +140,14 @@ export type AppointmentChangeContext = { now: string; customerResourceExpression
 export type AppointmentCreationContext = AppointmentChangeContext & { origin: AppointmentOrigin };
 export type ChangeAppointmentInput = { serviceId: string; resourceId: string; startRaw: string };
 export type AppointmentNotesInput = { notes: string | null };
+const appointmentAvailabilityCommand = z.object({
+  serviceId: appointmentId, date: CalendarDateSchema, resourceId: appointmentId.optional(),
+}).strict();
+/** Server-owned, after authorization. Business ownership is NOT customer/sender identity proof. */
+export type AppointmentAvailabilityContext = { appointmentId?: string; clock?: () => string };
+export type AppointmentAvailabilityOption = {
+  start: string; startMs: number; endMs: number; resourceId: string; terms: AppointmentTermsSnapshot;
+};
 export type AppointmentHistoryFilter = { clientId?: string; from?: string; to?: string };
 const appointmentActionFacts = z.object({
   actor: z.enum(["businessAdmin", "platformAdmin", "customer", "ai"]), channel: z.enum(["manual", "ai"]),
@@ -330,6 +338,71 @@ export class PostgresRepositories {
       if (code === "23505") throw new AppointmentError("CLIENT_CONFLICT");
       throw error;
     }
+  }
+  /** Business-scoped advisory read, in one tenant transaction under the shared calendar lock.
+   * Caller must bind the real sender/customer before supplying reschedule context (T14/T15).
+   * No reservation or effects: create/change must revalidate after this transaction releases.
+   */
+  async listAppointmentAvailability(businessId: string, input: unknown,
+    trusted: AppointmentAvailabilityContext = {}): Promise<AppointmentAvailabilityOption[]> {
+    await this.acquireBusinessCalendarLock({ businessId });
+    businessId = businessId.toLowerCase();
+    const parsed = appointmentAvailabilityCommand.safeParse(input);
+    const ownedId = trusted.appointmentId === undefined ? undefined : appointmentId.safeParse(trusted.appointmentId);
+    if (!parsed.success || (ownedId && !ownedId.success) || (trusted.clock !== undefined && typeof trusted.clock !== "function"))
+      throw new AppointmentError("INVALID_INPUT");
+    const clock = InstantSchema.safeParse((trusted.clock ?? (() => new Date().toISOString()))());
+    if (!clock.success) throw new AppointmentError("INVALID_INPUT");
+    const now = clock.data;
+    const current = ownedId?.success ? await this.getAppointment(businessId, ownedId.data) : null;
+    if (ownedId && !current) throw new AppointmentError("UNKNOWN_OWNED_ID");
+    if (current) {
+      if (current.state !== "confirmed") throw new AppointmentError("STATE_LOCKED");
+      const saved = AppointmentTermsSnapshotSchema.safeParse(current.terms);
+      if (!saved.success || parseInstantMs(current.startsAt) !== current.startMs
+        || !Number.isSafeInteger(current.endMs) || current.endMs <= current.startMs
+        || current.endMs > 253402387139999 || current.endMs !== current.startMs + saved.data.durationMinutes * 60000)
+        throw new AppointmentError("INVALID_INPUT");
+      if (parseInstantMs(now)! >= current.startMs) throw new AppointmentError("STARTED_STRUCTURE_LOCKED");
+    }
+    const value = parsed.data;
+    const [service] = await this.db<CatalogService[]>`select id,name,description,duration_minutes "durationMinutes",
+      price_ars::float8 "priceArs",status from services where business_id=${businessId} and id=${value.serviceId} and deleted_at is null`;
+    const resources = value.resourceId
+      ? [await this.getResource(businessId, value.resourceId)] : await this.listResources(businessId);
+    if (!service || resources.some(resource => !resource)) throw new AppointmentError("UNKNOWN_OWNED_ID");
+    const eligible = resources.filter((resource): resource is CatalogResource =>
+      resource !== null && isResourceEligibleForService(resource, service));
+    if (!eligible.length) return [];
+    const calendar = await this.getBusinessCalendar(businessId), closures = await this.listBusinessClosures(businessId);
+    // Numeric occupancy only: raw busy strings need not be coherent or positive-year ISO.
+    // Fetch once for all selected resources, never once per grid point or with a choice limit.
+    const busy = await this.db<{ resourceId: string; startMs: string; endMs: string }[]>`
+      select resource_id "resourceId",start_ms "startMs",end_ms "endMs" from appointments
+      where business_id=${businessId} and state='confirmed' and resource_id in ${this.db(eligible.map(resource => resource.id))}
+        and (${current?.id ?? null}::uuid is null or id<>${current?.id ?? null}::uuid)`;
+    const choices: AppointmentAvailabilityOption[] = [];
+    for (const point of materializeArgentinaDayGrid(value.date)) {
+      for (const resource of eligible) {
+        const facts = { now, businessHours: calendar.weeklySchedule ?? {}, resourceHours: resource.weeklySchedule,
+          closedDates: closures.flatMap(closure => closure.kind === "date" ? [closure.date] : []),
+          closedIntervals: closures.flatMap(closure => closure.kind === "interval" ? [{ start: closure.start, end: closure.end }] : []),
+        };
+        const plan = current ? prepareAppointmentChange(current, { startsAt: point.start, service, resource }, facts) : null;
+        if (plan && !plan.ok) continue;
+        const terms = plan?.ok ? plan.terms : captureAppointmentTerms(service, resource);
+        const startRaw = plan?.ok ? plan.startsAt : point.start;
+        const endMs = point.startMs + terms.durationMinutes * 60000;
+        const interval = { ...facts, start: startRaw, durationMinutes: terms.durationMinutes };
+        // Even a planner no-op must be a live, structurally available alternative here.
+        if (!Number.isSafeInteger(endMs) || point.startMs < -62135683140000 || endMs <= point.startMs || endMs > 253402387139999
+          || !isStructurallyAvailable(interval)
+          || ((!current || point.startMs !== current.startMs) && !isNewStartAllowed(interval, now))
+          || busy.some(row => row.resourceId === resource.id && Number(row.startMs) < endMs && Number(row.endMs) > point.startMs)) continue;
+        choices.push({ start: startRaw, startMs: point.startMs, endMs, resourceId: resource.id, terms });
+      }
+    }
+    return choices;
   }
   private async appointmentPreference(businessId: string, previous: string | null, expression?: CustomerResourcePreferenceExpression) {
     const preference = resolveCustomerResourcePreference(previous, expression);

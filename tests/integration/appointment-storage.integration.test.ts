@@ -235,6 +235,180 @@ const readyOwner = async () => {
     await database.sql`insert into resource_services values(${owner.business},${resource},${owner.service})`;
   return owner;
 };
+const availability = (owner: Owner, input: unknown = { serviceId: owner.service, date: "2026-06-01" },
+  trusted: { appointmentId?: string; clock?: () => string } = { clock: () => now }) =>
+  new RolePool(runtime, "agendia_runtime").run(context(owner), repo => repo.listAppointmentAvailability(owner.business, input, trusted));
+
+test("availability returns all resource choices without effects and offers persistable advisory slots", async () => {
+  const owner = await readyOwner(), before = await effects(owner);
+  const choices = await availability(owner);
+  expect(choices).toHaveLength(112);
+  expect(new Set(choices.map(choice => choice.resourceId))).toEqual(new Set([owner.resource, owner.alternate]));
+  expect(choices[0]).toMatchObject({ startMs: start, endMs: start + 15 * minutes, terms: { durationMinutes: 15, priceArs: 12.34567 } });
+  expect(await effects(owner)).toEqual(before);
+  const offer = choices[0]!;
+  await book(owner, command(owner, { resourceId: offer.resourceId, startRaw: offer.start }));
+  await rejected(owner, command(owner, { resourceId: offer.resourceId, startRaw: offer.start, newClient: clientInput, clientId: undefined }), "BUSY");
+});
+
+test("availability rejects hostile body fields before clock and resolves only owned live IDs", async () => {
+  const owner = await readyOwner(), foreign = await readyOwner(), before = await effects(owner);
+  let calls = 0;
+  const trusted = { clock: () => { calls++; return now; } };
+  for (const field of ["priceArs", "durationMinutes", "start", "now", "role", "businessId", "appointmentId", "excludeAppointmentId"])
+    await code(availability(owner, { serviceId: owner.service, date: "2026-06-01", [field]: foreign.resource }, trusted), "INVALID_INPUT");
+  await code(availability(owner, { serviceId: owner.service, date: "2026-02-30" }, trusted), "INVALID_INPUT");
+  expect(calls).toBe(0);
+  for (const input of [{ serviceId: foreign.service, date: "2026-06-01" },
+    { serviceId: owner.service, date: "2026-06-01", resourceId: foreign.resource }])
+    await code(availability(owner, input), "UNKNOWN_OWNED_ID");
+  for (const id of [randomUUID(), (await book(foreign)).id])
+    await code(availability(owner, undefined, { clock: () => now, appointmentId: id }), "UNKNOWN_OWNED_ID");
+  await code(availability(owner, undefined, { clock: () => "bad" }), "INVALID_INPUT");
+  await availability(owner, undefined, trusted);
+  expect(calls).toBe(1);
+  await database.sql`update resources set status='suspended' where id=${owner.resource}`;
+  expect(await availability(owner, { serviceId: owner.service, date: "2026-06-01", resourceId: owner.resource })).toEqual([]);
+  await database.sql`update resources set deleted_at=now() where id=${owner.resource}`;
+  await code(availability(owner, { serviceId: owner.service, date: "2026-06-01", resourceId: owner.resource }), "UNKNOWN_OWNED_ID");
+  await database.sql`delete from resource_services where resource_id=${owner.alternate}`;
+  expect(await availability(owner)).toEqual([]);
+  await database.sql`update services set deleted_at=now() where id=${owner.service}`;
+  await code(availability(owner), "UNKNOWN_OWNED_ID");
+  expect(await effects(owner)).toEqual(before);
+});
+
+test("availability consumes only numeric Confirmed selected-resource half-open occupancy", async () => {
+  const owner = await readyOwner();
+  // Deliberately incoherent raw dates: occupancy must use only SQL epochs.
+  await insert(row(owner, { state: "confirmed" }));
+  await insert(row(owner, { state: "confirmed", start_ms: start - 15 * minutes, end_ms: start }));
+  for (const state of ["done", "cancelled", "no_show"])
+    await insert(row(owner, { state, start_ms: start + 15 * minutes, end_ms: start + 30 * minutes }));
+  const before = await effects(owner), offers = await availability(owner);
+  expect(offers.filter(offer => offer.startMs === start).map(offer => offer.resourceId)).toEqual([owner.alternate]);
+  expect(offers.filter(offer => offer.startMs === start + 15 * minutes)).toHaveLength(2);
+  expect(await effects(owner)).toEqual(before);
+});
+
+test("availability checks whole pauses, off hours, overnight and cross-date closures", async () => {
+  const owner = await readyOwner();
+  await database.sql`update services set duration_minutes=30 where id=${owner.service}`;
+  const query = { serviceId: owner.service, date: "2026-06-01", resourceId: owner.resource };
+  for (const hours of [{}, { 1: [{ startMinute: 600, endMinute: 615 }, { startMinute: 630, endMinute: 660 }] }]) {
+    await database.sql`update resources set weekly_schedule=${database.sql.json(hours)} where id=${owner.resource}`;
+    const offers = await availability(owner, query);
+    expect(offers.map(offer => offer.startMs)).toEqual(Object.keys(hours).length ? [start + 30 * minutes] : []);
+  }
+  const overnight = { 1: [{ startMinute: 1380, endMinute: 60 }] };
+  await database.sql`update resources set weekly_schedule=${database.sql.json(overnight)} where id=${owner.resource}`;
+  const before = await effects(owner);
+  const overnightOffers = await availability(owner, query);
+  expect(overnightOffers).toHaveLength(4);
+  expect(overnightOffers.at(-1)!.startMs).toBe(parseInstantMs("2026-06-01T23:45:00-03:00")!);
+  await database.sql`insert into business_calendar_closures(business_id,kind,closed_date) values(${owner.business},'date','2026-06-02')`;
+  expect((await availability(owner, query)).map(offer => offer.startMs)).toEqual(overnightOffers.slice(0, 3).map(offer => offer.startMs));
+  await database.sql`insert into business_calendar_closures(business_id,kind,start_raw,end_raw,start_ms,end_ms)
+    values(${owner.business},'interval','2026-06-01T23:15:00-03:00','2026-06-01T23:30:00-03:00',
+      ${parseInstantMs("2026-06-01T23:15:00-03:00")!},${parseInstantMs("2026-06-01T23:30:00-03:00")!})`;
+  expect((await availability(owner, query)).map(offer => offer.startMs)).toEqual([parseInstantMs("2026-06-01T23:30:00-03:00")!]);
+  await database.sql`update business_calendars set weekly_schedule='{}'::jsonb where business_id=${owner.business}`;
+  expect(await availability(owner, query)).toEqual([]);
+  const unconfigured = await fixture();
+  expect(await availability(unconfigured)).toEqual([]);
+  expect(await effects(owner)).toEqual(before);
+});
+
+test("reschedule availability retains agreed identities, excludes only owned self and permits unchanged upcoming epoch inside lead", async () => {
+  const owner = await readyOwner(), saved = await book(owner);
+  await database.sql`update services set name='Changed',duration_minutes=30,price_ars=999 where id=${owner.service}`;
+  await database.sql`update resources set name='Changed resource' where id=${owner.resource}`;
+  const trusted = { appointmentId: saved.id.toUpperCase(), clock: () => "2026-06-01T09:45:00-03:00" };
+  const before = await effects(owner), offers = await availability(owner, undefined, trusted);
+  const unchanged = offers.find(offer => offer.startMs === start && offer.resourceId === owner.resource)!;
+  expect(unchanged.start).toBe(saved.startsAt);
+  expect(unchanged.terms).toEqual(saved.terms);
+  expect(offers.find(offer => offer.startMs === start && offer.resourceId === owner.alternate)!.terms.resourceName).toBe(owner.alternate);
+  expect(offers.every(offer => offer.startMs === start || offer.startMs >= start + 45 * minutes)).toBe(true);
+  await insert(row(owner, { state: "confirmed", resource_id: owner.alternate }));
+  expect((await availability(owner, undefined, trusted)).some(offer => offer.startMs === start && offer.resourceId === owner.alternate)).toBe(false);
+  const service = randomUUID();
+  await database.sql`insert into services(id,business_id,name,duration_minutes,price_ars) values(${service},${owner.business},'New',30,99)`;
+  await database.sql`insert into resource_services values(${owner.business},${owner.resource},${service})`;
+  const changed = await availability(owner, { serviceId: service, date: "2026-06-01", resourceId: owner.resource }, trusted);
+  expect(changed[0]).toMatchObject({ startMs: start, terms: { serviceId: service, serviceName: "New", durationMinutes: 30, priceArs: 99, resourceName: saved.terms.resourceName } });
+  expect(await effects(owner)).toEqual({ ...before, appointments: before.appointments + 1 });
+  await code(availability(owner, undefined, { appointmentId: saved.id, clock: () => saved.startsAt }), "STARTED_STRUCTURE_LOCKED");
+  await database.sql`update appointments set state='done' where id=${saved.id}`;
+  await code(availability(owner, undefined, trusted), "STATE_LOCKED");
+  await database.sql`update appointments set state='confirmed',start_raw='2026-06-01T11:00:00-03:00' where id=${saved.id}`;
+  await code(availability(owner, undefined, trusted), "INVALID_INPUT");
+});
+
+test("availability never aliases a retired preference or offers an inactive stored no-op", async () => {
+  const owner = await readyOwner();
+  const saved = await book(owner, command(owner), { origin: "manual", now,
+    customerResourceExpression: { kind: "chosen", resourceId: owner.alternate } });
+  await database.sql`update resources set deleted_at=now() where id=${owner.alternate}`;
+  const before = await effects(owner);
+  const offers = await availability(owner, undefined, { appointmentId: saved.id, clock: () => now });
+  expect(offers.length).toBeGreaterThan(3);
+  expect(offers.every(offer => offer.resourceId === owner.resource)).toBe(true);
+  const loaded = await new RolePool(runtime, "agendia_runtime").run(context(owner), repo => repo.getAppointment(owner.business, saved.id));
+  expect(loaded!.customerResourcePreference).toBe(owner.alternate);
+  await database.sql`update services set status='suspended' where id=${owner.service}`;
+  expect(await availability(owner, undefined, { appointmentId: saved.id, clock: () => now })).toEqual([]);
+  await database.sql`update services set deleted_at=now() where id=${owner.service}`;
+  await code(availability(owner, undefined, { appointmentId: saved.id, clock: () => now }), "UNKNOWN_OWNED_ID");
+  expect(await effects(owner)).toEqual(before);
+});
+
+test("availability has no horizon and boundary offers retain exact grid serialization and persist", async () => {
+  const owner = await readyOwner();
+  for (const date of ["0001-01-01", "9999-12-31"]) {
+    const before = await effects(owner);
+    const offers = await availability(owner, { serviceId: owner.service, date, resourceId: owner.resource },
+      { clock: () => "0001-01-01T00:00:00+23:59" });
+    expect(offers.length).toBeGreaterThan(3);
+    expect(offers.every(offer => parseInstantMs(offer.start) === offer.startMs && Number.isSafeInteger(offer.endMs)
+      && offer.endMs <= 253402387139999)).toBe(true);
+    expect(await effects(owner)).toEqual(before);
+    const offer = offers.at(-1)!;
+    const saved = await book(owner, command(owner, { startRaw: offer.start }), { origin: "manual", now: "0001-01-01T00:00:00+23:59" });
+    expect(saved.startMs).toBe(offer.startMs);
+  }
+});
+
+test("availability clock waits for actual matching-tenant calendar lock and snapshot", async () => {
+  const owner = await readyOwner();
+  let release!: () => void, held!: () => void, pid = 0, calls = 0;
+  const ready = new Promise<void>(resolve => { held = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const holder = tenant(owner.business, async sql => {
+    await new PostgresRepositories(sql).acquireBusinessCalendarLock({ businessId: owner.business });
+    held(); await gate;
+    await sql`update services set status='suspended' where id=${owner.service}`;
+  });
+  await ready;
+  const waiting = tenant(owner.business, async sql => {
+    const [backend] = await sql`select pg_backend_pid() pid`; pid = backend!.pid;
+    return new PostgresRepositories(sql).listAppointmentAvailability(owner.business,
+      { serviceId: owner.service, date: "2026-06-01" }, { clock: () => { calls++; return now; } });
+  });
+  try {
+    let blocked = false;
+    for (let attempt = 0; attempt < 100 && !blocked; attempt++) {
+      const [activity] = await database.sql`select wait_event_type from pg_stat_activity where pid=${pid}`;
+      blocked = activity?.wait_event_type === "Lock";
+      if (!blocked) await Bun.sleep(10);
+    }
+    expect(blocked).toBe(true); expect(calls).toBe(0);
+  } finally { release(); await holder; }
+  expect(await waiting).toEqual([]); expect(calls).toBe(1);
+  await expect(new PostgresRepositories(runtime).listAppointmentAvailability(owner.business, {})).rejects.toThrow("transaction");
+  await expect(tenant(b.business, sql => new PostgresRepositories(sql).listAppointmentAvailability(owner.business, {}))).rejects.toThrow("matching tenant");
+});
+
 const book = (owner: Owner, input: unknown = command(owner), trusted: AppointmentCreationContext = { origin: "manual", now }) => {
   const key = randomUUID();
   return new TenantUnitOfWork(new RolePool(runtime, "agendia_runtime")).execute(context(owner), {
