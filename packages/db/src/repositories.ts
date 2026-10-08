@@ -7,7 +7,7 @@ import { ClientInputSchema, InstantSchema, AppointmentOriginSchema, captureAppoi
   isNewStartAllowed, isResourceEligibleForService, type AppointmentTermsSnapshot,
   type AppointmentState, type AppointmentOrigin, type ClientInput,
   prepareAppointmentChange, resolveCustomerResourcePreference, type CustomerResourcePreferenceExpression,
-  canEditAppointmentNotes, canTransitionAppointment, AppointmentStateSchema,
+  canEditAppointmentNotes, canTransitionAppointment, AppointmentStateSchema, AppointmentTermsSnapshotSchema,
   type AppointmentActionContext } from "@agendia/domain";
 import { BusinessClosureInputSchema, parseInstantMs, WeeklyScheduleSchema,
   ResourceInputSchema, isResourceScheduleWithinBusiness, normalizeWeeklySchedule, isStructurallyAvailable,
@@ -293,7 +293,7 @@ export class PostgresRepositories {
     if (!parsed.success || !facts.success) throw new AppointmentError("INVALID_INPUT");
     const value = parsed.data;
     const [service] = await this.db<CatalogService[]>`select id,name,description,duration_minutes "durationMinutes",
-      price_ars::float8 "priceArs",status from services where business_id=${businessId} and id=${value.serviceId}`;
+      price_ars::float8 "priceArs",status from services where business_id=${businessId} and id=${value.serviceId} and deleted_at is null`;
     const resource = await this.getResource(businessId, value.resourceId);
     const client = value.clientId ? await this.getClientById(value.clientId) : null;
     if (!service || !resource || (value.clientId && !client)) throw new AppointmentError("UNKNOWN_OWNED_ID");
@@ -353,8 +353,20 @@ export class PostgresRepositories {
     const current = await this.getAppointment(businessId, id);
     if (!current) throw new AppointmentError("UNKNOWN_OWNED_ID");
     if (current.state !== "confirmed") throw new AppointmentError("STATE_LOCKED");
+    const savedTerms = AppointmentTermsSnapshotSchema.safeParse(current.terms);
+    if (!savedTerms.success || parseInstantMs(current.startsAt) !== current.startMs
+      || !Number.isSafeInteger(current.endMs) || current.endMs <= current.startMs
+      || current.endMs > 253402387139999 || current.endMs !== current.startMs + savedTerms.data.durationMinutes * 60000)
+      throw new AppointmentError("INVALID_INPUT");
+    const preference = await this.appointmentPreference(businessId, current.customerResourcePreference, facts.data.customerResourceExpression);
+    const preferenceChanged = preference !== current.customerResourcePreference;
+    // A validated stored no-op needs no live catalog lookup or snapshot refresh.
+    if (parsed.data.serviceId === savedTerms.data.serviceId && parsed.data.resourceId === savedTerms.data.resourceId
+      && parseInstantMs(parsed.data.startRaw) === current.startMs && !preferenceChanged) return current;
+    if (preferenceChanged && parseInstantMs(facts.data.now)! >= current.startMs)
+      throw new AppointmentError("STARTED_STRUCTURE_LOCKED");
     const [service] = await this.db<CatalogService[]>`select id,name,description,duration_minutes "durationMinutes",
-      price_ars::float8 "priceArs",status from services where business_id=${businessId} and id=${parsed.data.serviceId}`;
+      price_ars::float8 "priceArs",status from services where business_id=${businessId} and id=${parsed.data.serviceId} and deleted_at is null`;
     const resource = await this.getResource(businessId, parsed.data.resourceId);
     if (!service || !resource) throw new AppointmentError("UNKNOWN_OWNED_ID");
     const calendar = await this.getBusinessCalendar(businessId);
@@ -370,10 +382,6 @@ export class PostgresRepositories {
         structural_unavailable: "UNAVAILABLE", lead_time: "LEAD_TIME" } as const;
       throw new AppointmentError(errors[plan.error]);
     }
-    const preference = await this.appointmentPreference(businessId, current.customerResourcePreference, facts.data.customerResourceExpression);
-    const preferenceChanged = preference !== current.customerResourcePreference;
-    if (preferenceChanged && parseInstantMs(facts.data.now)! >= current.startMs)
-      throw new AppointmentError("STARTED_STRUCTURE_LOCKED");
     if (!plan.changed && !preferenceChanged) return current;
     const startMs = parseInstantMs(plan.startsAt)!, endMs = startMs + plan.terms.durationMinutes * 60000;
     if (!Number.isSafeInteger(endMs) || endMs <= startMs || endMs > 253402387139999)
@@ -463,15 +471,15 @@ export class PostgresRepositories {
   }
   listResources(businessId: string) {
     return this.db<CatalogResource[]>`select r.id,r.name,r.description,r.status,r.weekly_schedule "weeklySchedule",
-      array(select service_id::text from resource_services rs
-        where rs.business_id=r.business_id and rs.resource_id=r.id order by service_id) "serviceIds"
-      from resources r where r.business_id=${businessId} order by r.normalized_name,r.id`;
+      array(select rs.service_id::text from resource_services rs join services s on (s.business_id,s.id)=(rs.business_id,rs.service_id)
+        where rs.business_id=r.business_id and rs.resource_id=r.id and s.deleted_at is null order by rs.service_id) "serviceIds"
+      from resources r where r.business_id=${businessId} and r.deleted_at is null order by r.normalized_name,r.id`;
   }
   async getResource(businessId: string, id: string) {
     const [row] = await this.db<CatalogResource[]>`select r.id,r.name,r.description,r.status,r.weekly_schedule "weeklySchedule",
-      array(select service_id::text from resource_services rs
-        where rs.business_id=r.business_id and rs.resource_id=r.id order by service_id) "serviceIds"
-      from resources r where r.business_id=${businessId} and r.id=${id}`;
+      array(select rs.service_id::text from resource_services rs join services s on (s.business_id,s.id)=(rs.business_id,rs.service_id)
+        where rs.business_id=r.business_id and rs.resource_id=r.id and s.deleted_at is null order by rs.service_id) "serviceIds"
+      from resources r where r.business_id=${businessId} and r.id=${id} and r.deleted_at is null`;
     return row ?? null;
   }
   private async validateResource(businessId: string, input: ResourceInput) {
@@ -480,7 +488,7 @@ export class PostgresRepositories {
     if (!isResourceScheduleWithinBusiness(valid.weeklySchedule, calendar.weeklySchedule ?? {}))
       throw new ResourceCatalogError("HOURS_CONFLICT");
     if (valid.serviceIds.length) {
-      const services = await this.db`select id from services where business_id=${businessId} and id in ${this.db(valid.serviceIds)}`;
+      const services = await this.db`select id from services where business_id=${businessId} and deleted_at is null and id in ${this.db(valid.serviceIds)}`;
       if (services.length !== valid.serviceIds.length) throw new ResourceCatalogError("UNKNOWN_SERVICE");
     }
     return valid;
@@ -526,13 +534,13 @@ export class PostgresRepositories {
     const valid = await this.validateResource(businessId, input);
     await this.guardResourceAppointments(businessId, current, valid, nowMs);
     await this.db`update resources set name=${valid.name},description=${valid.description ?? null},
-      weekly_schedule=${this.db.json(asDbJson(valid.weeklySchedule))} where business_id=${businessId} and id=${id}`;
+      weekly_schedule=${this.db.json(asDbJson(valid.weeklySchedule))} where business_id=${businessId} and id=${id} and deleted_at is null`;
     await this.replaceResourceServices(businessId, id, valid.serviceIds);
     return this.getResource(businessId, id);
   }
   async setResourceStatus(businessId: string, id: string, status: CatalogResource["status"]): Promise<CatalogResource | null> {
     await this.acquireBusinessCalendarLock({ businessId });
-    await this.db`update resources set status=${status} where business_id=${businessId} and id=${id}`;
+    await this.db`update resources set status=${status} where business_id=${businessId} and id=${id} and deleted_at is null`;
     return this.getResource(businessId, id);
   }
   listClients(q = "") {
@@ -574,7 +582,7 @@ export class PostgresRepositories {
   listServices() {
     return this.db<CatalogService[]>`
       select id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status
-      from services order by normalized_name,id`;
+      from services where deleted_at is null order by normalized_name,id`;
   }
   async createService(businessId: string, input: ServiceCatalogInput) {
     await this.acquireBusinessCalendarLock({ businessId });
@@ -588,16 +596,43 @@ export class PostgresRepositories {
     await this.acquireBusinessCalendarLock({ businessId });
     const [row] = await this.db<CatalogService[]>`
       update services set name=${input.name},description=${input.description ?? null},
-      duration_minutes=${input.durationMinutes},price_ars=${input.priceArs} where business_id=${businessId} and id=${id}
+      duration_minutes=${input.durationMinutes},price_ars=${input.priceArs} where business_id=${businessId} and id=${id} and deleted_at is null
       returning id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status`;
     return row ?? null;
   }
   async setServiceStatus(businessId: string, id: string, status: CatalogService["status"]) {
     await this.acquireBusinessCalendarLock({ businessId });
     const [row] = await this.db<CatalogService[]>`
-      update services set status=${status} where business_id=${businessId} and id=${id}
+      update services set status=${status} where business_id=${businessId} and id=${id} and deleted_at is null
       returning id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status`;
     return row ?? null;
+  }
+  /** Internal retirement only: caller UoW owns tombstone + links + audit/outbox rollback. */
+  private async retireCatalogItem(businessId: string, id: string, table: "services" | "resources") {
+    await this.acquireBusinessCalendarLock({ businessId });
+    const nowMs = Date.now();
+    const ownedId = appointmentId.safeParse(id);
+    if (!ownedId.success) return false;
+    id = ownedId.data;
+    const [owned] = await this.db`select id from ${this.db(table)} where business_id=${businessId} and id=${id} and deleted_at is null`;
+    if (!owned) return false;
+    if (!Number.isSafeInteger(nowMs)) throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
+    const column = table === "services" ? "service_id" : "resource_id";
+    // ALL states, actual assignment only. A historical preference FK does not reserve this resource.
+    const future = await this.db`select id from appointments where business_id=${businessId}
+      and ${this.db(column)}=${id} and start_ms>${nowMs} limit 1`;
+    if (future.length) throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
+    const updated = await this.db`update ${this.db(table)} set deleted_at=${new Date(nowMs)}
+      where business_id=${businessId} and id=${id} and deleted_at is null returning id`;
+    if (!updated.length) return false;
+    await this.db`delete from resource_services where business_id=${businessId} and ${this.db(column)}=${id}`;
+    return true;
+  }
+  deleteService(businessId: string, id: string): Promise<boolean> {
+    return this.retireCatalogItem(businessId, id, "services");
+  }
+  deleteResource(businessId: string, id: string): Promise<boolean> {
+    return this.retireCatalogItem(businessId, id, "resources");
   }
   async platformAiInstructions() {
     const [row] = await this.db<{ additional_instructions: string }[]>`

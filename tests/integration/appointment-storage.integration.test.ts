@@ -1178,3 +1178,160 @@ test("calendar and closure valid writes roll back on mutation, audit and outbox 
     }
   }
 });
+
+const retire = (owner: Owner, kind: "service" | "resource", id = kind === "service" ? owner.service : owner.resource) => calendarWork(owner,
+  repo => kind === "service" ? repo.deleteService(owner.business, id) : repo.deleteResource(owner.business, id));
+const retirementSnapshot = async (owner: Owner) => ({ ...await calendarSnapshot(owner),
+  services: await database.sql`select * from services where business_id=${owner.business} order by id`,
+});
+const pastFixture = async () => {
+  const owner = await readyOwner();
+  const saved = await book(owner, command(owner, { startRaw: "2000-01-01T10:00:00-03:00", notes: "History" }), {
+    origin: "ai", now: "1999-01-01T00:00:00Z", customerResourceExpression: { kind: "chosen", resourceId: owner.alternate },
+  });
+  return { owner, saved };
+};
+
+test("tombstone migration adds nullable metadata without widening physical privileges", async () => {
+  expect((await database.sql`select deleted_at from services where id=${a.service}`)[0]!.deleted_at).toBeNull();
+  expect((await database.sql`select deleted_at from resources where id=${a.resource}`)[0]!.deleted_at).toBeNull();
+  for (const table of ["services", "resources"]) {
+    const [permissions] = await database.sql`select has_table_privilege('agendia_runtime',${table},'DELETE') deletion,
+      has_table_privilege('agendia_runtime',${table},'TRUNCATE') truncation`;
+    expect(permissions).toEqual({ deletion: false, truncation: false });
+  }
+});
+
+test("retired names are reusable with new IDs, while past Confirmed history and true no-op remain unchanged", async () => {
+  const { owner, saved } = await pastFixture();
+  const before = await physical(saved.id);
+  expect(await retire(owner, "service")).toBe(true);
+  expect(await retire(owner, "resource")).toBe(true);
+  const replacement = await new RolePool(runtime, "agendia_runtime").run(context(owner), async repo => ({
+    service: await repo.createService(owner.business, { name: "Current service", durationMinutes: 30, priceArs: 900 }),
+    resource: await repo.createResource(owner.business, { name: owner.resource, serviceIds: [], weeklySchedule: full }),
+  }));
+  expect(replacement.service.id).not.toBe(owner.service);
+  expect(replacement.resource.id).not.toBe(owner.resource);
+  await database.sql`update clients set first_name='Latest',phone='+5491198765432' where id=${owner.client}`;
+  const noop = await change(owner, saved.id, command(owner, { serviceId: owner.service.toUpperCase(), resourceId: owner.resource.toUpperCase(), startRaw: "2000-01-01T13:00:00.000Z" }), { now });
+  expect(noop.terms).toEqual(saved.terms);
+  expect(noop.customerResourcePreference).toBe(owner.alternate);
+  expect(noop.client).toMatchObject({ id: owner.client, firstName: "Latest", phone: "+5491198765432" });
+  expect(await physical(saved.id)).toEqual(before);
+  expect((await history(owner))[0]!.terms).toEqual(saved.terms);
+  await changeRejected(owner, saved.id, command(owner, { startRaw: "2099-06-01T10:00:00-03:00" }), "UNKNOWN_OWNED_ID");
+  await changeRejected(owner, saved.id, command(owner), "INVALID_INPUT", { now: "bad" });
+  await changeRejected(owner, saved.id, command(owner), "STARTED_STRUCTURE_LOCKED", { now, customerResourceExpression: { kind: "none" } });
+  await rejected(owner, command(owner, { startRaw: futureStart }), "UNKNOWN_OWNED_ID", { origin: "manual", now: "2099-01-01T00:00:00Z" });
+  await database.sql`update appointments set state='done' where id=${saved.id}`;
+  await changeRejected(owner, saved.id, command(owner, { startRaw: "2000-01-01T13:00:00Z" }), "STATE_LOCKED");
+});
+
+test("retirement blocks actual future appointments in every state and preserves all records/effects", async () => {
+  const { owner, saved } = await futureFixture();
+  for (const state of ["confirmed", "done", "cancelled", "no_show"]) {
+    await database.sql`update appointments set state=${state} where id=${saved.id}`;
+    for (const kind of ["service", "resource"] as const) {
+      const before = await retirementSnapshot(owner), counts = await effects(owner);
+      await code(retire(owner, kind), "FUTURE_APPOINTMENT_CONFLICT");
+      expect(await retirementSnapshot(owner)).toEqual(before);
+      expect(await effects(owner)).toEqual(counts);
+    }
+  }
+});
+
+test("currently started Confirmed records do not block retirement and their physical history remains intact", async () => {
+  const { owner, saved } = await pastFixture();
+  const epoch = Date.now(), raw = new Date(epoch).toISOString();
+  await database.sql`update appointments set start_raw=${raw},start_ms=${epoch},end_ms=${epoch + 15 * minutes} where id=${saved.id}`;
+  const before = await physical(saved.id);
+  expect(await retire(owner, "service")).toBe(true);
+  expect(await retire(owner, "resource")).toBe(true);
+  expect(await physical(saved.id)).toEqual(before);
+});
+
+test("preferred-only resource retirement retains historical preference and hides every live lookup/write path", async () => {
+  const { owner, saved } = await futureFixture();
+  await change(owner, saved.id, command(owner, { startRaw: futureStart }), { now: "2099-01-01T00:00:00Z", customerResourceExpression: { kind: "chosen", resourceId: owner.alternate } });
+  expect(await retire(owner, "resource", owner.alternate)).toBe(true);
+  const replacement = await new RolePool(runtime, "agendia_runtime").run(context(owner), repo => repo.createResource(owner.business, { name: owner.alternate, serviceIds: [owner.service], weeklySchedule: full }));
+  expect((await history(owner))[0]!.customerResourcePreference).toBe(owner.alternate);
+  expect(replacement.id).not.toBe(owner.alternate);
+  await changeRejected(owner, saved.id, command(owner, { startRaw: futureStart }), "UNKNOWN_OWNED_ID", {
+    now: "2099-01-01T00:00:00Z", customerResourceExpression: { kind: "chosen", resourceId: owner.alternate },
+  });
+  await new RolePool(runtime, "agendia_runtime").run(context(owner), async repo => {
+    expect(await repo.getResource(owner.business, owner.alternate)).toBeNull();
+    expect((await repo.listResources(owner.business)).some(resource => resource.id === owner.alternate)).toBe(false);
+    expect(await repo.updateResource(owner.business, owner.alternate, { name: "Resurrect", serviceIds: [], weeklySchedule: {} })).toBeNull();
+    expect(await repo.setResourceStatus(owner.business, owner.alternate, "active")).toBeNull();
+    expect(await repo.deleteResource(owner.business, owner.alternate)).toBe(false);
+  });
+  const past = await pastFixture();
+  expect(await retire(past.owner, "service")).toBe(true);
+  await new RolePool(runtime, "agendia_runtime").run(context(past.owner), async repo => {
+    expect((await repo.listServices()).some(service => service.id === past.owner.service)).toBe(false);
+    expect(await repo.updateService(past.owner.business, past.owner.service, serviceEdit)).toBeNull();
+    expect(await repo.setServiceStatus(past.owner.business, past.owner.service, "active")).toBeNull();
+    await code(repo.createResource(past.owner.business, { name: "Deleted assignment", serviceIds: [past.owner.service], weeklySchedule: {} }), "UNKNOWN_SERVICE");
+  });
+  expect(await retire(past.owner, "resource")).toBe(true);
+  await new RolePool(runtime, "agendia_runtime").run(context(past.owner), async repo => {
+    await repo.updateResource(past.owner.business, past.owner.alternate, { name: past.owner.alternate, serviceIds: [], weeklySchedule: {} });
+    expect(await repo.saveBusinessCalendar(past.owner.business, {})).toEqual({ weeklySchedule: {} });
+  });
+});
+
+test("partial name indexes preserve Unicode/case/trim, suspended uniqueness, tenant isolation and native races", async () => {
+  const { owner } = await pastFixture();
+  const long = "漢é".repeat(3200);
+  await database.sql`update services set name=${long} where id=${owner.service}`;
+  await database.sql`update resources set name=${long} where id=${owner.resource}`;
+  expect(await retire(owner, "service")).toBe(true);
+  expect(await retire(owner, "resource")).toBe(true);
+  const service = await new RolePool(runtime, "agendia_runtime").run(context(owner), repo => repo.createService(owner.business, { name: long, durationMinutes: 15, priceArs: 0 }));
+  await database.sql`update services set status='suspended' where id=${service.id}`;
+  await code(database.sql`insert into services(business_id,name,duration_minutes,price_ars) values(${owner.business},${" \t" + long.toUpperCase() + "\ufeff"},15,0)`.execute(), "23505");
+  await new RolePool(runtime, "agendia_runtime").run(context(owner), repo => repo.createResource(owner.business, { name: long, serviceIds: [], weeklySchedule: {} }));
+  await code(database.sql`insert into resources(business_id,name,status,weekly_schedule) values(${owner.business},${long.toUpperCase()},'suspended','{}')`.execute(), "23505");
+  const foreign = await readyOwner();
+  await database.sql`insert into services(business_id,name,duration_minutes,price_ars) values(${foreign.business},${long},15,0)`;
+  const race = await Promise.allSettled([1,2].map(() => database.sql`insert into services(business_id,name,duration_minutes,price_ars) values(${owner.business},'Native live race',15,0)`.execute()));
+  expect(race.filter(result => result.status === "fulfilled")).toHaveLength(1);
+  expect(race.find(result => result.status === "rejected")).toMatchObject({ reason: { code: "23505" } });
+});
+
+test("retirement versus booking shares the early lock in both orders without orphan clients", async () => {
+  for (const kind of ["service", "resource"] as const) for (const bookingFirst of [true, false]) {
+    const owner = await readyOwner();
+    const booking = (repo: PostgresRepositories) => repo.createAppointment(owner.business, { ...command(owner), startRaw: futureStart, clientId: undefined, newClient: clientInput }, { origin: "manual", now: "2099-01-01T00:00:00Z" });
+    const removal = (repo: PostgresRepositories) => kind === "service" ? repo.deleteService(owner.business, owner.service) : repo.deleteResource(owner.business, owner.resource);
+    const result = bookingFirst ? await orderedCatalogRace(owner, booking, removal) : await orderedCatalogRace(owner, removal, booking);
+    expect(result[1]).toMatchObject({ error: { code: bookingFirst ? "FUTURE_APPOINTMENT_CONFLICT" : "UNKNOWN_OWNED_ID" } });
+    expect((await effects(owner)).clients).toBe(bookingFirst ? 2 : 1);
+    expect((await effects(owner)).appointments).toBe(bookingFirst ? 1 : 0);
+  }
+});
+
+test("retirement UPDATE/link DELETE/audit/outbox failure rolls back rows, links, history and name availability", async () => {
+  for (const kind of ["service", "resource"] as const) {
+    const { owner } = await pastFixture();
+    for (const table of [kind === "service" ? "services" : "resources", "resource_services", "audit_events", "outbox_events"]) {
+      const operation = table === "resource_services" ? "delete" : table === "audit_events" || table === "outbox_events" ? "insert" : "update";
+      await database.sql.unsafe(`create function retire_failure() returns trigger language plpgsql as $$ begin raise exception 'forced retirement failure'; end $$`);
+      await database.sql.unsafe(`create trigger retire_failure before ${operation} on ${table} for each row execute function retire_failure()`);
+      const before = await retirementSnapshot(owner), counts = await effects(owner);
+      try {
+        await code(retire(owner, kind), "P0001");
+        expect(await retirementSnapshot(owner)).toEqual(before);
+        expect(await effects(owner)).toEqual(counts);
+      } finally {
+        await database.sql.unsafe(`drop trigger retire_failure on ${table}`);
+        await database.sql`drop function retire_failure()`;
+      }
+    }
+    await code(kind === "service" ? database.sql`insert into services(business_id,name,duration_minutes,price_ars) values(${owner.business},'Current service',15,0)`.execute()
+      : database.sql`insert into resources(business_id,name,weekly_schedule) values(${owner.business},${owner.resource},'{}')`.execute(), "23505");
+  }
+});

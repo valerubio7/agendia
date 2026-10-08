@@ -131,6 +131,35 @@ test("resource names use uncapped Unicode case/outer trim hashing, not accent or
   expect((await resourceWork(repo => repo.getResource(tenantA,direct)))?.name).toBe("\tDIRECT\ufeff");
 });
 
+// Physical RLS probes precede the later test's global advisory-lock trigger.
+test("tombstones preserve forced physical RLS and least privileges separately from retirement scope guards", async () => {
+  const service = randomUUID(), resource = randomUUID();
+  await admin`insert into services(id,business_id,name,duration_minutes,price_ars) values(${service},${tenantB},'Retirement foreign service',15,0)`;
+  await admin`insert into resources(id,business_id,name,weekly_schedule) values(${resource},${tenantB},'Retirement foreign resource','{}')`;
+  for (const [table, id] of [["services", service], ["resources", resource]] as const) {
+    const before = await admin.unsafe(`select * from ${table} where id=$1`, [id]);
+    const changed = await withTenantTransaction(admin, resourceContext(), async tx => {
+      expect((await tx`select current_user role`)[0]!.role).toBe("agendia_runtime");
+      expect(await tx.unsafe(`select * from ${table} where id=$1`, [id])).toHaveLength(0);
+      return tx.unsafe(`update ${table} set deleted_at=now() where id=$1 returning id`, [id]);
+    });
+    expect(changed).toHaveLength(0);
+    expect(await admin.unsafe(`select * from ${table} where id=$1`, [id])).toEqual(before);
+    for (const operation of [`delete from ${table} where id='${id}'`, `truncate ${table}`])
+      await expect(withTenantTransaction(admin, resourceContext(), tx => tx.unsafe(operation))).rejects.toMatchObject({ code: "42501" });
+    await expect(resourceWork(repo => table === "services" ? repo.deleteService(tenantB, id) : repo.deleteResource(tenantB, id))).rejects.toThrow("matching tenant context");
+    expect(await resourceWork(repo => table === "services" ? repo.deleteService(tenantA, id) : repo.deleteResource(tenantA, id))).toBe(false);
+    await expect((table === "services" ? new PostgresRepositories(admin).deleteService(tenantB, id)
+      : new PostgresRepositories(admin).deleteResource(tenantB, id))).rejects.toThrow("requires a transaction");
+  }
+  await expect(withTenantTransaction(admin, resourceContext(), tx => tx`insert into services(business_id,name,duration_minutes,price_ars)
+    values(${tenantB},'Physical foreign insert',15,0)`)).rejects.toMatchObject({ code: "42501" });
+  await expect(withTenantTransaction(admin, resourceContext(), tx => tx`insert into resources(business_id,name,weekly_schedule)
+    values(${tenantB},'Physical foreign insert','{}')`)).rejects.toMatchObject({ code: "42501" });
+  expect((await admin`select count(*)::int count from services where name='Physical foreign insert'`)[0]!.count).toBe(0);
+  expect((await admin`select count(*)::int count from resources where name='Physical foreign insert'`)[0]!.count).toBe(0);
+});
+
 test("repository hours guards hold the early shared lock and preserve both directions including suspended hours", async () => {
   const businessId = randomUUID();
   await admin`insert into businesses(id,name) values(${businessId},'Hours')`;
