@@ -215,6 +215,105 @@ describe("injected-clock new-start gate", () => {
   });
 });
 
+describe("Argentina local-day candidate grid", () => {
+  const localFormatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Argentina/Buenos_Aires", calendar: "gregory",
+    numberingSystem: "latn", hourCycle: "h23", era: "short",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
+  const localFields = (ms: number) => Object.fromEntries(
+    localFormatter.formatToParts(ms).map(({ type, value }) => [type, value]),
+  );
+  const checkedGrid = (date: string, count: number) => {
+    const grid = agenda.materializeArgentinaDayGrid(date);
+    expect(grid).toHaveLength(count);
+    expect(Object.isFrozen(grid)).toBe(true);
+    expect(new Set(grid.map(({ startMs }) => startMs)).size).toBe(count);
+    for (const [index, candidate] of grid.entries()) {
+      expect(Object.isFrozen(candidate)).toBe(true);
+      expect(agenda.InstantSchema.safeParse(candidate.start).success).toBe(true);
+      expect(agenda.parseInstantMs(candidate.start)).toBe(candidate.startMs);
+      expect(Number.isSafeInteger(candidate.startMs)).toBe(true);
+      if (index > 0) expect(candidate.startMs).toBeGreaterThan(grid[index - 1]!.startMs);
+      const local = localFields(candidate.startMs);
+      expect(local.era).toBe("AD");
+      expect(`${local.year!.padStart(4, "0")}-${local.month}-${local.day}`).toBe(date);
+      expect(Number(local.minute) % 15).toBe(0);
+      expect(local.second).toBe("00");
+    }
+    return grid;
+  };
+
+  test("enumerates 96 modern quarter starts including midnight and 23:45, without interval filtering", () => {
+    const grid = checkedGrid("2026-06-01", 96);
+    const midnight = agenda.parseInstantMs("2026-06-01T00:00:00-03:00")!;
+    expect(grid.map(({ startMs }) => startMs)).toEqual(
+      Array.from({ length: 96 }, (_, quarter) => midnight + quarter * 15 * 60000),
+    );
+    expect(localFields(grid[0]!.startMs)).toMatchObject({ hour: "00", minute: "00" });
+    expect(localFields(grid.at(-1)!.startMs)).toMatchObject({ hour: "23", minute: "45" });
+    // A grid start does not promise that even a 30-minute interval fits this date's hours.
+    expect(isStructurallyAvailable(request({ start: grid.at(-1)!.start }))).toBe(false);
+  });
+
+  test("retains historical second offsets and the earliest positive local year", () => {
+    const grid = checkedGrid("0001-01-01", 96);
+    expect(grid[0]).toEqual({
+      start: "0001-01-01T03:53:48.000Z",
+      startMs: agenda.parseInstantMs("0001-01-01T03:53:48Z")!,
+    });
+    expect(grid.at(-1)!.start).toBe("0001-01-02T03:38:48.000Z");
+    expect(grid.every(({ startMs }) => new Date(startMs).getUTCSeconds() === 48)).toBe(true);
+  });
+
+  test("skips the missing midnight hour on the actual forward-transition date", () => {
+    const grid = checkedGrid("2007-12-30", 92);
+    expect(grid[0]!.startMs).toBe(agenda.parseInstantMs("2007-12-30T01:00:00-02:00")!);
+    expect(grid.every(({ startMs }) => localFields(startMs).hour !== "00")).toBe(true);
+    checkedGrid("2007-12-29", 96);
+  });
+
+  test("retains both real instants of each repeated quarter on the preceding Saturday", () => {
+    const grid = checkedGrid("2008-03-15", 100);
+    for (const minute of ["00", "15", "30", "45"]) {
+      const repeated = grid.filter(({ startMs }) => {
+        const local = localFields(startMs);
+        return local.hour === "23" && local.minute === minute;
+      });
+      expect(repeated.map(({ startMs }) => startMs)).toEqual([
+        agenda.parseInstantMs(`2008-03-15T23:${minute}:00-02:00`)!,
+        agenda.parseInstantMs(`2008-03-15T23:${minute}:00-03:00`)!,
+      ]);
+    }
+    checkedGrid("2008-03-16", 96);
+  });
+
+  test("has no future cap and serializes the final local date without an external extended year", () => {
+    checkedGrid("9000-01-01", 96);
+    const grid = checkedGrid("9999-12-31", 96);
+    expect(grid.at(-1)).toEqual({
+      start: "9999-12-31T23:45:00-03:00",
+      startMs: agenda.parseInstantMs("9999-12-31T23:45:00-03:00")!,
+    });
+    expect(new Date(grid.at(-1)!.startMs).getUTCFullYear()).toBe(10000);
+    expect(grid.every(({ start }) => /^\d{4}-/.test(start))).toBe(true);
+  });
+
+  test("fails closed for impossible, non-four-digit and external year-zero dates", () => {
+    for (const date of [
+      "2026-02-30", "2025-02-29", "2026-13-01", "2026-00-01", "2026-01-00",
+      "0000-01-01", "001-01-01", "10000-01-01", "+010000-01-01",
+      "2026-6-01", "2026-06-01T00:00:00Z", "", "invalid",
+    ]) {
+      const grid = agenda.materializeArgentinaDayGrid(date);
+      expect(grid).toEqual([]);
+      expect(Object.isFrozen(grid)).toBe(true);
+    }
+    checkedGrid("2024-02-29", 96);
+  });
+});
+
 const epochInterval = (start: string, elapsedMinutes: number) => ({ startMs: agenda.parseInstantMs(start)!, endMs: agenda.parseInstantMs(start)! + elapsedMinutes * 60000 });
 test("epoch weekly containment uses existing whole-interval kernel without booking grid or lead policy", () => {
   const interval = epochInterval("2026-06-01T09:01:00-03:00", 30);

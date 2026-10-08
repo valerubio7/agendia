@@ -98,7 +98,7 @@ function offsetAt(instant: number): number {
 }
 
 /** Visit linear wall-clock segments, splitting at IANA transitions (including skipped/repeated local time). */
-function everyLocalSegment(start: number, end: number, accept: (localStart: number, localEnd: number) => boolean): boolean {
+function everyLocalSegment(start: number, end: number, accept: (localStart: number, localEnd: number, offset: number) => boolean): boolean {
   let cursor = start;
   while (cursor < end) {
     const offset = offsetAt(cursor);
@@ -114,10 +114,52 @@ function everyLocalSegment(start: number, end: number, accept: (localStart: numb
       }
       next = high;
     }
-    if (!accept(cursor + offset, next + offset)) return false;
+    if (!accept(cursor + offset, next + offset, offset)) return false;
     cursor = next;
   }
   return true;
+}
+
+export interface ArgentinaDayGridStart {
+  readonly start: string;
+  readonly startMs: number;
+}
+
+/**
+ * Pure advisory candidate starts on a positive four-digit Gregorian Argentina date.
+ * Invalid dates fail closed with a frozen empty grid. Missing wall quarters are skipped;
+ * repeated quarters retain both actual instants. No hours, duration, lead or booking
+ * policy is applied: callers must validate the entire proposed interval separately.
+ */
+export function materializeArgentinaDayGrid(date: string): readonly ArgentinaDayGridStart[] {
+  const midnight = parseDate(date);
+  if (midnight === undefined) return Object.freeze([]);
+  const quarterMs = 15 * MINUTE_MS;
+  const grid: ArgentinaDayGridStart[] = [];
+  // Buenos Aires offsets fit comfortably within this bounded physical window,
+  // including BCE projection beside year 0001 and UTC year 10000 beside local 9999.
+  everyLocalSegment(midnight - 2 * DAY_MS, midnight + 3 * DAY_MS, (localStart, localEnd, offset) => {
+    const first = Math.max(midnight, localStart);
+    const end = Math.min(midnight + DAY_MS, localEnd);
+    for (let wall = midnight + Math.ceil((first - midnight) / quarterMs) * quarterMs; wall < end; wall += quarterMs) {
+      const startMs = wall - offset;
+      let start = new Date(startMs).toISOString();
+      if (!/^\d{4}-/.test(start)) {
+        // The final local 9999 evening maps to UTC year 10000. Preserve the
+        // positive-four-digit raw instant contract using the IANA-derived offset.
+        // That boundary's offset is whole minutes; historical second offsets
+        // instead retain their exact UTC seconds in the ordinary ISO path above.
+        const minutes = Math.abs(offset) / MINUTE_MS;
+        const hours = String(Math.floor(minutes / 60)).padStart(2, "0");
+        const remainder = String(minutes % 60).padStart(2, "0");
+        start = `${new Date(wall).toISOString().slice(0, 19)}${offset < 0 ? "-" : "+"}${hours}:${remainder}`;
+      }
+      grid.push(Object.freeze({ start, startMs }));
+    }
+    return true;
+  });
+  grid.sort((a, b) => a.startMs - b.startMs);
+  return Object.freeze(grid);
 }
 
 function fitsWeekly(start: number, end: number, union: WeeklyOpenInterval[]): boolean {
