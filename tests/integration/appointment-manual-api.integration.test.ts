@@ -193,6 +193,184 @@ test("POST waits on actual calendar lock; source binds its single clock after ac
   expect(handler).toContain("{ clock: () => now }"); expect(handler).toContain('{ origin: "manual", now }');
 });
 
+const patch = (o: Owner, id: string, payload: Record<string, unknown>) => app.inject({ method: "PATCH", url: `/me/appointments/${id}`, headers: headers(o), payload });
+const editBody = (o: Owner, slot: AvailabilitySlot) => ({ serviceId: o.service, resourceId: slot.resourceId, date, startRaw: slot.start, expectedTerms: slot.terms, confirmed: true });
+const booking = async (o: Owner) => {
+  const response = await post(o, body(o, await offer(o)));
+  expect(response.statusCode).toBe(201);
+  return response.json();
+};
+const editOffer = async (o: Owner, id: string, index = 44) => {
+  const response = await app.inject({ method: "GET", url: `/me/appointments/availability?serviceId=${o.service}&resourceId=${o.resource}&date=${date}&appointmentId=${id}`, headers: { cookie: o.cookie } });
+  expect(response.statusCode).toBe(200);
+  return response.json<AvailabilitySlot[]>()[index]!;
+};
+const alternate = async (o: Owner) => {
+  const service = randomUUID(), resource = randomUUID();
+  await database.sql`insert into services(id,business_id,name,duration_minutes,price_ars) values(${service},${o.business},'New service',60,99)`;
+  await database.sql`insert into resources(id,business_id,name,weekly_schedule) values(${resource},${o.business},'New resource',${database.sql.json(full)})`;
+  for (const s of [o.service, service]) await database.sql`insert into resource_services values(${o.business},${resource},${s})`;
+  await database.sql`insert into resource_services values(${o.business},${o.resource},${service})`;
+  return { ...o, service, resource };
+};
+const setEpoch = async (id: string, epoch: number) => {
+  await database.sql`update appointments set start_raw=${new Date(epoch).toISOString()},start_ms=${epoch},end_ms=${epoch}::bigint + duration_minutes * 60000 where id=${id}`;
+};
+
+test("PATCH structural changes preserve identity, historical terms and retired customer preference", async () => {
+  const o = await fixture(), saved = await booking(o), next = await alternate(o);
+  await database.sql`update appointments set customer_resource_preference_id=${o.resource},origin='ai' where id=${saved.id}`;
+  await database.sql`update services set name='Renamed',duration_minutes=90,price_ars=500 where id=${o.service}`;
+  await database.sql`update resources set name='Renamed resource' where id=${o.resource}`;
+  const time = await patch(o, saved.id, editBody(o, await editOffer(o, saved.id)));
+  expect(time.statusCode).toBe(200);
+  expect(time.json().terms).toEqual(saved.terms);
+  expect(time.json().endMs - time.json().startMs).toBe(30 * 60000);
+  const resourceOnly = { ...o, resource: next.resource };
+  const moved = await patch(o, saved.id, editBody(resourceOnly, await editOffer(resourceOnly, saved.id)));
+  expect(moved.statusCode).toBe(200);
+  expect(moved.json()).toMatchObject({ client: saved.client, notes: saved.notes, origin: "ai", customerResourcePreference: o.resource,
+    terms: { ...saved.terms, resourceId: next.resource, resourceName: "New resource" } });
+  await database.sql`update resources set deleted_at=now() where id=${o.resource}`;
+  const payload = editBody(next, await editOffer(next, saved.id));
+  await database.sql`update services set price_ars=101 where id=${next.service}`;
+  const before = await effects(o);
+  expect((await patch(o, saved.id, payload)).statusCode).toBe(409); expect(await effects(o)).toEqual(before);
+  const changed = await patch(o, saved.id, editBody(next, await editOffer(next, saved.id)));
+  expect(changed.statusCode).toBe(200);
+  expect(changed.json()).toMatchObject({ client: saved.client, notes: saved.notes, origin: "ai", customerResourcePreference: o.resource,
+    terms: { serviceId: next.service, serviceName: "New service", resourceId: next.resource, resourceName: "New resource", durationMinutes: 60, priceArs: 101 } });
+  expect(changed.json().endMs - changed.json().startMs).toBe(60 * 60000);
+});
+
+test("PATCH true epoch/ID no-op retains every physical field despite started, retired or closed catalogs", async () => {
+  const o = await fixture(), saved = await booking(o);
+  await database.sql`update appointments set customer_resource_preference_id=${o.resource} where id=${saved.id}`;
+  const payload = { ...editBody(o, await offer(o)), startRaw: "2099-06-01T13:00:00Z", expectedTerms: saved.terms };
+  await database.sql`update services set status='suspended',name='Changed',price_ars=900 where id=${o.service}`;
+  await database.sql`update resources set status='suspended',name='Changed' where id=${o.resource}`;
+  await database.sql`insert into business_calendar_closures(business_id,kind,closed_date) values(${o.business},'date',${date})`;
+  let before = await effects(o);
+  expect((await patch(o, saved.id, payload)).statusCode).toBe(200);
+  expect((await effects(o)).appointments).toEqual(before.appointments);
+  const past = Date.now() - 3600000;
+  await setEpoch(saved.id, past);
+  await database.sql`update services set deleted_at=now() where id=${o.service}`;
+  await database.sql`update resources set deleted_at=now() where id=${o.resource}`;
+  before = await effects(o);
+  const alias = new Date(past + 3600000).toISOString().replace("Z", "+01:00");
+  const noop = { ...payload, date: "0001-01-01", startRaw: alias, serviceId: o.service.toUpperCase(), resourceId: o.resource.toUpperCase(),
+    expectedTerms: { ...saved.terms, serviceId: o.service.toUpperCase(), resourceId: o.resource.toUpperCase() } };
+  expect((await patch(o, saved.id.toUpperCase(), noop)).statusCode).toBe(200);
+  expect((await effects(o)).appointments).toEqual(before.appointments);
+  expect((await effects(o)).outbound_commands).toEqual([]);
+  expect((await patch(o, saved.id, { ...noop, expectedTerms: { ...noop.expectedTerms, priceArs: 901 } })).statusCode).toBe(409);
+  await database.sql`update appointments set start_raw=${new Date(past + 1).toISOString()} where id=${saved.id}`;
+  const incoherent = await effects(o);
+  expect((await patch(o, saved.id, noop)).statusCode).toBe(400); expect(await effects(o)).toEqual(incoherent);
+  await setEpoch(saved.id, past);
+  const coherent = await effects(o);
+  // Native duration/end constraint prevents this hostile row before it can reach the API.
+  await expect(database.sql`update appointments set end_ms=end_ms+1 where id=${saved.id}`.then(rows => rows)).rejects.toMatchObject({ code: "23514" });
+  expect(await effects(o)).toEqual(coherent);
+});
+
+test("PATCH upcoming original within one hour permits resource/service edits but not a new short-lead start or started/final changes", async () => {
+  const o = await fixture(), saved = await booking(o), next = await alternate(o), near = Math.ceil((Date.now() + 30 * 60000) / (15 * 60000)) * (15 * 60000);
+  await setEpoch(saved.id, near);
+  const localDate = new Date(near - 3 * 3600000).toISOString().slice(0, 10);
+  const payload = { serviceId: next.service, resourceId: next.resource, date: localDate, startRaw: new Date(near).toISOString(), confirmed: true,
+    expectedTerms: { serviceId: next.service, resourceId: next.resource, serviceName: "New service", resourceName: "New resource", durationMinutes: 60, priceArs: 99 } };
+  expect((await patch(o, saved.id, payload)).statusCode).toBe(200);
+  const before = await effects(o);
+  expect((await patch(o, saved.id, { ...payload, startRaw: new Date(near + 15 * 60000).toISOString() })).statusCode).toBe(409);
+  expect(await effects(o)).toEqual(before);
+  await setEpoch(saved.id, Date.now() - 60000);
+  expect((await patch(o, saved.id, payload)).statusCode).toBe(409);
+  for (const state of ["cancelled", "done", "no_show"]) {
+    await database.sql`update appointments set state=${state} where id=${saved.id}`;
+    const [row] = await database.sql`select start_raw from appointments where id=${saved.id}`;
+    const locked = await effects(o);
+    expect((await patch(o, saved.id, { ...payload, startRaw: row!.start_raw })).statusCode).toBe(409);
+    expect((await patch(o, saved.id, payload)).statusCode).toBe(409); expect(await effects(o)).toEqual(locked);
+  }
+});
+
+test("PATCH same labels with new catalog IDs is a real change, not a stored no-op", async () => {
+  const o = await fixture(), saved = await booking(o), next = await alternate(o);
+  await database.sql`update services set name='Renamed old service' where id=${o.service}`;
+  await database.sql`update resources set name='Renamed old resource' where id=${o.resource}`;
+  await database.sql`update services set name='Service' where id=${next.service}`;
+  await database.sql`update resources set name='Resource' where id=${next.resource}`;
+  const payload = { ...editBody(next, await editOffer(next, saved.id, 40)), startRaw: saved.startsAt };
+  const changed = await patch(o, saved.id, payload);
+  expect(changed.statusCode).toBe(200);
+  expect(changed.json().terms).toMatchObject({ serviceId: next.service, resourceId: next.resource, serviceName: "Service", resourceName: "Resource", durationMinutes: 60, priceArs: 99 });
+  expect(changed.json().endMs).toBe(saved.startMs + 60 * 60000);
+  await setEpoch(saved.id, Date.now() - 60000);
+  const before = await effects(o);
+  expect((await patch(o, saved.id, { ...payload, serviceId: o.service, resourceId: o.resource, expectedTerms: saved.terms })).statusCode).toBe(409);
+  expect(await effects(o)).toEqual(before);
+});
+
+test("PATCH strict authority, auth, ownership and unavailable guards are atomic and safe", async () => {
+  const o = await fixture(), saved = await booking(o), foreign = await fixture(), admin = await fixture(true), payload = editBody(o, await editOffer(o, saved.id)), before = await effects(o);
+  expect((await app.inject({ method: "PATCH", url: `/me/appointments/${saved.id}`, payload })).statusCode).toBe(401);
+  expect((await patch(admin, saved.id, payload)).statusCode).toBe(403);
+  // Reserved static GET URI must never become an authorized structural-write target.
+  expect((await patch(o, "availability", payload)).statusCode).toBe(404);
+  expect(await effects(o)).toEqual(before);
+  expect((await app.inject({ method: "PATCH", url: "/me/appointments/bad", payload })).statusCode).toBe(401);
+  for (const extra of [{ origin: "https://hostile.test" }, { "x-csrf-token": "bad" }])
+    expect((await app.inject({ method: "PATCH", url: `/me/appointments/${saved.id}`, payload, headers: { ...headers(o), ...extra } })).statusCode).toBe(403);
+  for (const id of [randomUUID(), (await booking(foreign)).id]) expect((await patch(o, id, payload)).statusCode).toBe(404);
+  expect((await patch(o, "bad", payload)).statusCode).toBe(400);
+  for (const key of ["clientId", "newClient", "notes", "state", "origin", "actor", "role", "channel", "now", "clock", "businessId", "preferredResourceId", "customerResourceExpression", "priceArs", "durationMinutes"])
+    expect((await patch(o, saved.id, { ...payload, [key]: "hostile" })).statusCode).toBe(400);
+  for (const value of [{ ...payload, confirmed: false }, { ...payload, date: "2099-02-30" }, { ...payload, serviceId: "bad" }, { ...payload, startRaw: "bad\u0000" }, { ...payload, expectedTerms: { ...payload.expectedTerms, serviceName: "bad\u0000" } }])
+    expect((await patch(o, saved.id, value)).statusCode).toBe(400);
+  expect((await patch(o, saved.id, { ...payload, serviceId: foreign.service })).statusCode).toBe(404);
+  expect((await patch(o, saved.id, { ...payload, startRaw: "2099-06-01T10:01:00-03:00" })).statusCode).toBe(409);
+  await database.sql`update resources set status='suspended' where id=${o.resource}`;
+  expect((await patch(o, saved.id, payload)).statusCode).toBe(409);
+  expect(await effects(o)).toEqual(before);
+});
+
+test("PATCH and POST race for one new slot; loser retains old record without orphan effects", async () => {
+  const o = await fixture(), saved = await booking(o), payload = editBody(o, await editOffer(o, saved.id)), before = await effects(o);
+  const create = { ...body(o, await offer(o)), ...payload, newClient: { firstName: "Race", lastName: "Client", phone: "1123456791" } };
+  const [edit, made] = await Promise.all([patch(o, saved.id, payload), post(o, create)]);
+  expect([edit.statusCode, made.statusCode].sort()).toEqual(edit.statusCode === 200 ? [200, 409] : [201, 409]);
+  const after = await effects(o);
+  expect(after.audit_events).toHaveLength((before.audit_events as unknown[]).length + 1);
+  expect(after.outbox_events).toHaveLength((before.outbox_events as unknown[]).length + 1);
+  expect(after.clients).toHaveLength(edit.statusCode === 200 ? 2 : 3);
+  if (edit.statusCode === 409) {
+    const detail = await app.inject({ method: "GET", url: `/me/appointments/${saved.id}`, headers: { cookie: o.cookie } });
+    expect(detail.json()).toEqual(saved);
+  }
+});
+
+test("PATCH P0001 UPDATE/audit/outbox failures roll back every old field and effect", async () => {
+  const o = await fixture(), saved = await booking(o), payload = editBody(o, await editOffer(o, saved.id));
+  await database.sql`update appointments set customer_resource_preference_id=${o.resource},origin='ai' where id=${saved.id}`;
+  const before = await effects(o);
+  await database.sql`create function fail_manual_patch() returns trigger language plpgsql as $$ begin raise exception 'private SQL identifiers'; end $$`;
+  for (const table of ["appointments", "audit_events", "outbox_events"]) {
+    await database.sql.unsafe(`create trigger fail_patch before ${table === "appointments" ? "update" : "insert"} on ${table} for each row execute function fail_manual_patch()`);
+    try {
+      const response = await patch(o, saved.id, payload);
+      expect(response.statusCode).toBe(500); expect(response.json().code).toBe("INTERNAL_ERROR");
+      expect(response.body).not.toMatch(/private|SQL|P0001|postgres|trigger|identifiers/i);
+      expect(await effects(o)).toEqual(before);
+    } finally { await database.sql`drop trigger fail_patch on ${database.sql(table)}`; }
+  }
+  const source = await readFile(join(import.meta.dir, "../../apps/api/src/app.ts"), "utf8");
+  const handler = source.slice(source.indexOf('app.patch("/me/appointments/:appointmentId"'), source.indexOf('app.get("/me/appointments/availability"'));
+  expect(handler).toMatch(/await repo\.acquireBusinessCalendarLock\(context\(auth, request\)\);\s*const now = new Date\(\)\.toISOString\(\);/);
+  expect(handler).toContain("{ appointmentId, clock: () => now }"); expect(handler).toContain("{ now }");
+});
+
 test("physical P0001 failures at each atomic stage roll back client, booking, audit and outbox", async () => {
   const o = await fixture(), payload = body(o, await offer(o)), before = await effects(o);
   await database.sql`create function fail_manual_insert() returns trigger language plpgsql as $$ begin raise exception 'private SQL identifiers'; end $$`;

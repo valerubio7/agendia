@@ -27,6 +27,15 @@ export const AvailabilitySlotSchema = z.object({
   start: InstantSchema, startMs: z.number().int().safe(), endMs: z.number().int().safe(),
   resourceId: availabilityId, terms: AppointmentTermsSnapshotSchema.unwrap().strict(),
 }).strict();
+/** Structural edits cannot change client, notes, state, origin or customer preference. */
+export const ManualAppointmentChangeSchema = z.object({
+  serviceId: availabilityId, resourceId: availabilityId, startRaw: InstantSchema, date: CalendarDateSchema,
+  expectedTerms: AvailabilitySlotSchema.shape.terms.extend({ serviceId: availabilityId, resourceId: availabilityId })
+    .refine(terms => !terms.serviceName.includes("\0") && !terms.resourceName.includes("\0")),
+  confirmed: z.literal(true),
+}).strict();
+export type ManualAppointmentChangeRequest = z.infer<typeof ManualAppointmentChangeSchema>;
+export type ManualAppointmentChangeResponse = AppointmentRecord;
 /** Optimistic offered terms are a precondition, never persistence authority or sender proof. */
 export const ManualAppointmentCreateSchema = z.object({
   serviceId: availabilityId, resourceId: availabilityId, startRaw: InstantSchema, date: CalendarDateSchema,
@@ -178,7 +187,16 @@ export function toOpenApiDocument() {
             description: status === 201 ? "Current client identity and server snapshot" : status === 400 ? "VALIDATION_FAILED: invalid strict body or confirmation" : status === 401 ? "UNAUTHENTICATED: session required" : status === 403 ? "FORBIDDEN: business role, Origin or CSRF" : status === 404 ? "NOT_FOUND: foreign, missing or retired owned ID" : status === 409 ? "CONFLICT: no current offer, stale terms, busy capacity or duplicate client phone" : "INTERNAL_ERROR: safe atomic operation failure",
             content: { "application/json": { schema: { $ref: `#/components/schemas/${status === 201 ? "AppointmentRecord" : "SafeError"}` } } },
           }])),
-        } } : {}),
+        } } : { patch: {
+          summary: "Change owned Confirmed appointment structure (business session, Origin and CSRF required)",
+          description: "Strict serviceId/resourceId/startRaw/date/expectedTerms/confirmed body only. Literal true is manual confirmation, not customer sender proof. Server locks then revalidates epoch and full effective snapshot: unchanged identities retain saved terms. Actual changes require live eligible choices; final or started structural changes conflict. A validated stored identity/epoch no-op retains all physical fields without availability or catalog refresh, even after start or retirement. Client, notes, state, origin and preference are immutable; no WhatsApp/AI effects or idempotency guarantee. Notes/state/delete operations are unsupported.",
+          parameters: [{ name: "appointmentId", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+          requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/ManualAppointmentChange" } } } },
+          responses: Object.fromEntries([200, 400, 401, 403, 404, 409, 500].map(status => [String(status), {
+            description: status === 200 ? "Current client identity and effective server snapshot" : status === 400 ? "VALIDATION_FAILED: invalid strict body, ID or confirmation" : status === 401 ? "UNAUTHENTICATED: session required" : status === 403 ? "FORBIDDEN: business role, Origin or CSRF" : status === 404 ? "NOT_FOUND: unknown or foreign owned context" : status === 409 ? "CONFLICT: final/started structure, unavailable or busy choice, stale terms" : "INTERNAL_ERROR: safe atomic operation failure",
+            content: { "application/json": { schema: { $ref: `#/components/schemas/${status === 200 ? "AppointmentRecord" : "SafeError"}` } } },
+          }])),
+        } }),
       } : route === "/me/services/:id" || route === "/me/resources/:id" ? {
         delete: {
           summary: "Retire owned catalog item (business session, Origin and CSRF required)",
@@ -199,6 +217,7 @@ export function toOpenApiDocument() {
             { required: ["newClient"], not: { required: ["clientId"] } },
           ],
         },
+        ManualAppointmentChange: z.toJSONSchema(ManualAppointmentChangeSchema, { io: "input" }),
         AppointmentRecord: z.toJSONSchema(AppointmentRecordSchema),
         AvailabilitySlot: z.toJSONSchema(AvailabilitySlotSchema, { io: "input" }),
         CatalogDeletionAck: {

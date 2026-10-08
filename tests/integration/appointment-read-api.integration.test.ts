@@ -117,8 +117,9 @@ test("tenant sessions isolate same-name identities and reject authority/filter i
   }
   expect((await get("/me/appointments/not-a-uuid", a)).statusCode).toBe(400);
   expect((await get(`/me/appointments/${a.ids[0]}?role=customer`, a)).statusCode).toBe(400);
-  for (const method of ["POST", "PUT", "PATCH", "DELETE"] as const)
+  for (const method of ["POST", "PUT", "DELETE"] as const)
     expect((await app.inject({ method, url: `/me/appointments/${a.ids[0]}`, headers: { cookie: a.cookie }, payload: { state: "cancelled", businessId: b.businessId } })).statusCode).toBe(404);
+  expect((await app.inject({ method: "PATCH", url: `/me/appointments/${a.ids[0]}`, headers: { cookie: a.cookie }, payload: { state: "cancelled", businessId: b.businessId } })).statusCode).toBe(403);
   expect(await effects()).toEqual(before);
   expect(await pools.api.run(undefined, repo => repo.listAppointments(a.businessId))).toEqual([]);
 });

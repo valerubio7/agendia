@@ -103,7 +103,7 @@ describe("safe HTTP and event contracts", () => {
   test("appointment reads expose exactly two GETs and the strict stored projection", () => {
     const document = toOpenApiDocument();
     for (const route of ["/me/appointments", "/me/appointments/:appointmentId"]) {
-      expect(Object.keys(document.paths[route]!)).toEqual(route === "/me/appointments" ? ["get", "post"] : ["get"]);
+      expect(Object.keys(document.paths[route]!)).toEqual(route === "/me/appointments" ? ["get", "post"] : ["get", "patch"]);
       for (const status of [400, 401, 403, 404, 500])
         expect(document.paths[route]).toHaveProperty(`get.responses.${status}.content.application/json.schema.$ref`, "#/components/schemas/SafeError");
     }
@@ -166,8 +166,20 @@ describe("safe HTTP and event contracts", () => {
       { required: ["newClient"], not: { required: ["clientId"] } },
     ]);
     for (const route of ["/me/appointments", "/me/appointments/:appointmentId", "/me/appointments/availability"])
-      for (const method of ["patch", "put", "delete"]) expect(document.paths[route]).not.toHaveProperty(method);
+      for (const method of ["patch", "put", "delete"])
+        if (route !== "/me/appointments/:appointmentId" || method !== "patch") expect(document.paths[route]).not.toHaveProperty(method);
     expect(httpContracts).toHaveProperty("ManualAppointmentCreateSchema");
+  });
+
+  test("structural PATCH alone has strict confirmation/terms preconditions and safe responses", () => {
+    const document = toOpenApiDocument(), path = document.paths["/me/appointments/:appointmentId"];
+    expect(path).toHaveProperty("patch.requestBody.content.application/json.schema.$ref", "#/components/schemas/ManualAppointmentChange");
+    expect(path).toHaveProperty("patch.responses.200.content.application/json.schema.$ref", "#/components/schemas/AppointmentRecord");
+    for (const status of [400, 401, 403, 404, 409, 500])
+      expect(path).toHaveProperty(`patch.responses.${status}.content.application/json.schema.$ref`, "#/components/schemas/SafeError");
+    expect(document.components.schemas).toHaveProperty("ManualAppointmentChange.additionalProperties", false);
+    expect(document.components.schemas).toHaveProperty("ManualAppointmentChange.required", ["serviceId", "resourceId", "startRaw", "date", "expectedTerms", "confirmed"]);
+    expect(Object.entries(document.paths).filter(([, item]) => "patch" in item).map(([route]) => route)).toEqual(["/me/appointments/:appointmentId"]);
   });
 
   test("allowlists audit metadata and preserves tenant scope", () => {
