@@ -9,7 +9,7 @@ import {
   sessionCookie,
   validateMutationRequest,
 } from "@agendia/auth";
-import { makeSafeError, PlatformAiInstructionsInputSchema } from "@agendia/contracts";
+import { makeSafeError, PlatformAiInstructionsInputSchema, AppointmentListQuerySchema, AppointmentRecordSchema } from "@agendia/contracts";
 import {
   AI_SYSTEM_INSTRUCTIONS,
   AssistantConfigInputSchema,
@@ -472,6 +472,33 @@ export function buildApi(input: AuthService | ApiOptions) {
       : error instanceof ResourceCatalogError && error.code === "FUTURE_APPOINTMENT_CONFLICT"
         ? fail(reply, request, 409, "CONFLICT", "Calendar change conflicts with future appointments")
         : fail(reply, request, 500, "INTERNAL_ERROR", "Calendar operation failed");
+  app.get("/me/appointments", async (request, reply) => {
+    const auth = await requireTenant(request, reply);
+    if (!auth) return;
+    const parsed = AppointmentListQuerySchema.safeParse(request.query);
+    if (!parsed.success) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid appointment filters");
+    try {
+      const records = await pools.api.run(context(auth, request), repo => repo.listAppointments(auth.business_id!, parsed.data));
+      return AppointmentRecordSchema.array().parse(records);
+    } catch {
+      return fail(reply, request, 500, "INTERNAL_ERROR", "Appointment read failed");
+    }
+  });
+  // Future static availability route belongs before this detail route; not exposed in E1.
+  app.get("/me/appointments/:appointmentId", async (request, reply) => {
+    const auth = await requireTenant(request, reply);
+    if (!auth) return;
+    const params = z.object({ appointmentId: z.string().uuid().transform(id => id.toLowerCase()) }).strict().safeParse(request.params);
+    if (!params.success || !z.object({}).strict().safeParse(request.query).success)
+      return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid appointment ID or query");
+    try {
+      const record = await pools.api.run(context(auth, request), repo => repo.getAppointment(auth.business_id!, params.data.appointmentId));
+      if (!record) return fail(reply, request, 404, "NOT_FOUND", "Appointment not found");
+      return AppointmentRecordSchema.parse(record);
+    } catch {
+      return fail(reply, request, 500, "INTERNAL_ERROR", "Appointment read failed");
+    }
+  });
   app.get("/me/business-calendar/closures", async (request, reply) => {
     const auth = await requireTenant(request, reply);
     if (!auth) return;

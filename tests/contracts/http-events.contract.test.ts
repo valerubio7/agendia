@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
+  AppointmentRecordSchema,
+  type AppointmentRecord,
   AuditEventSchema,
   CatalogDeletionAckSchema,
   PRODUCT_HTTP_ROUTES,
@@ -94,7 +96,33 @@ describe("safe HTTP and event contracts", () => {
     expect(CatalogDeletionAckSchema.safeParse({ id: "bad" }).success).toBe(false);
     expect(Object.entries(document.paths).filter(([, item]) => "delete" in item).map(([route]) => route)).toEqual(["/me/services/:id", "/me/resources/:id"]);
     expect(document.paths["/me/clients/:id"]).not.toHaveProperty("delete");
-    expect(PRODUCT_HTTP_ROUTES.some(route => /appointments|booking|slots/.test(route))).toBe(false);
+    expect(PRODUCT_HTTP_ROUTES.filter(route => /appointments|booking|slots/.test(route))).toEqual(["/me/appointments", "/me/appointments/:appointmentId"]);
+  });
+
+  test("appointment reads expose exactly two GETs and the strict stored projection", () => {
+    const document = toOpenApiDocument();
+    for (const route of ["/me/appointments", "/me/appointments/:appointmentId"]) {
+      expect(Object.keys(document.paths[route]!)).toEqual(["get"]);
+      for (const status of [400, 401, 403, 404, 500])
+        expect(document.paths[route]).toHaveProperty(`get.responses.${status}.content.application/json.schema.$ref`, "#/components/schemas/SafeError");
+    }
+    expect(document.paths["/me/appointments"]).toHaveProperty("get.parameters", [
+      { name: "clientId", in: "query", required: false, schema: { type: "string", format: "uuid" } },
+      ...["from", "to"].map(name => ({ name, in: "query", required: false, schema: { type: "string", format: "date-time" }, description: name === "from" ? "Inclusive start instant (explicit offset)" : "Exclusive start instant (explicit offset); must be after from" })),
+    ]);
+    expect(document.paths["/me/appointments/:appointmentId"]).toHaveProperty("get.parameters", [{ name: "appointmentId", in: "path", required: true, schema: { type: "string", format: "uuid" } }]);
+    expect(document.paths["/me/appointments"]).toHaveProperty("get.responses.200.content.application/json.schema", { type: "array", items: { $ref: "#/components/schemas/AppointmentRecord" } });
+    expect(document.paths["/me/appointments/:appointmentId"]).toHaveProperty("get.responses.200.content.application/json.schema.$ref", "#/components/schemas/AppointmentRecord");
+    const id = "11111111-1111-4111-8111-111111111111";
+    const record: AppointmentRecord = { id, client: { id, firstName: "Current", lastName: "Name", phone: "+5491123456789" }, startsAt: "2026-06-01T00:00:00-03:00", startMs: 1780282800000, endMs: 1780283700000,
+      terms: { serviceId: id, serviceName: "Frozen", resourceId: id, resourceName: "Frozen", durationMinutes: 15, priceArs: 0 }, state: "cancelled", origin: "ai", notes: null, customerResourcePreference: id };
+    expect(AppointmentRecordSchema.parse(record)).toEqual(record);
+    const schema = document.components.schemas.AppointmentRecord;
+    expect(schema.required).toEqual(Object.keys(record));
+    expect(schema.additionalProperties).toBe(false);
+    expect(Object.keys(schema.properties!)).toEqual(Object.keys(record));
+    for (const invalid of [{ ...record, clock: 1 }, { ...record, role: "customer" }, { ...record, id: undefined }, { ...record, startMs: 1n }, { ...record, terms: { ...record.terms, priceArs: Infinity } }, { ...record, terms: { ...record.terms, priceArs: -1 } }, { ...record, client: { ...record.client, phone: undefined } }])
+      expect(AppointmentRecordSchema.safeParse(invalid).success).toBe(false);
   });
 
   test("allowlists audit metadata and preserves tenant scope", () => {

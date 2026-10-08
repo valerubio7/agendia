@@ -1,5 +1,22 @@
 import { z } from "zod";
-import type { BusinessClosure, BusinessClosureInput, WeeklySchedule, ResourceInput } from "@agendia/domain";
+import { InstantSchema, parseInstantMs, AppointmentStateSchema, AppointmentOriginSchema, type BusinessClosure, type BusinessClosureInput, type WeeklySchedule, type ResourceInput } from "@agendia/domain";
+
+const appointmentId = z.string().uuid();
+export const AppointmentListQuerySchema = z.object({
+  clientId: appointmentId.optional(), from: InstantSchema.optional(), to: InstantSchema.optional(),
+}).strict().refine(value => value.from === undefined || value.to === undefined || parseInstantMs(value.from)! < parseInstantMs(value.to)!);
+/** Current client identity and historical terms, matching the DAL read projection. */
+export const AppointmentRecordSchema = z.object({
+  id: appointmentId,
+  client: z.object({ id: appointmentId, firstName: z.string(), lastName: z.string(), phone: z.string() }).strict(),
+  startsAt: InstantSchema,
+  startMs: z.number().int(), endMs: z.number().int(),
+  terms: z.object({ serviceId: appointmentId, serviceName: z.string(), resourceId: appointmentId,
+    resourceName: z.string(), durationMinutes: z.number().int().positive(), priceArs: z.number().finite().nonnegative() }).strict(),
+  state: AppointmentStateSchema, origin: AppointmentOriginSchema,
+  notes: z.string().nullable(), customerResourcePreference: appointmentId.nullable(),
+}).strict();
+export type AppointmentRecord = z.infer<typeof AppointmentRecordSchema>;
 export type ResourceRequest = ResourceInput;
 export type ResourceDto = Omit<ResourceInput, "description"> & {
   id: string; description: string | null; status: "active" | "suspended";
@@ -21,6 +38,8 @@ export const PRODUCT_HTTP_ROUTES = Object.freeze([
   "/admin/ai-instructions",
   "/admin/businesses/:id/user",
   "/admin/businesses/:id/status",
+  "/me/appointments",
+  "/me/appointments/:appointmentId",
   "/me/clients",
   "/me/clients/:id",
   "/me/services",
@@ -96,7 +115,22 @@ export function toOpenApiDocument() {
     openapi: "3.1.0" as const,
     info: { title: "agendIA API", version: "1.0.0" },
     paths: Object.fromEntries(PRODUCT_HTTP_ROUTES.map((route) => [route,
-      route === "/me/services/:id" || route === "/me/resources/:id" ? {
+      route === "/me/appointments" || route === "/me/appointments/:appointmentId" ? {
+        get: {
+          summary: "Read owned appointment history (business session; all states, no range default or cap)",
+          description: "Strict query keys only. Bounds are exact explicit-offset instants, not calendar dates. Session determines business scope; business-admin access does not authenticate a customer sender.",
+          parameters: route === "/me/appointments" ? [
+            { name: "clientId", in: "query", required: false, schema: { type: "string", format: "uuid" } },
+            ...["from", "to"].map(name => ({ name, in: "query", required: false, schema: { type: "string", format: "date-time" }, description: name === "from" ? "Inclusive start instant (explicit offset)" : "Exclusive start instant (explicit offset); must be after from" })),
+          ] : [{ name: "appointmentId", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+          responses: Object.fromEntries([200, 400, 401, 403, 404, 500].map(status => [String(status), {
+            description: status === 200 ? "Current client identity and frozen appointment terms" : "Safe operation error",
+            content: { "application/json": { schema: status !== 200 ? { $ref: "#/components/schemas/SafeError" }
+              : route === "/me/appointments" ? { type: "array", items: { $ref: "#/components/schemas/AppointmentRecord" } }
+              : { $ref: "#/components/schemas/AppointmentRecord" } } },
+          }])),
+        },
+      } : route === "/me/services/:id" || route === "/me/resources/:id" ? {
         delete: {
           summary: "Retire owned catalog item (business session, Origin and CSRF required)",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
@@ -109,6 +143,7 @@ export function toOpenApiDocument() {
     ])),
     components: {
       schemas: {
+        AppointmentRecord: z.toJSONSchema(AppointmentRecordSchema),
         CatalogDeletionAck: {
           type: "object", required: ["id"], additionalProperties: false,
           properties: { id: { type: "string", format: "uuid" } },
