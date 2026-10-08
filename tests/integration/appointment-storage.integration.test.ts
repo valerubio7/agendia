@@ -1085,3 +1085,96 @@ test("future-safe resource UPDATE and audit/outbox failures retain resource, ass
     }
   }
 });
+
+const calendarWork = <T>(owner: Owner, work: (repo: PostgresRepositories) => Promise<T>) => {
+  const key = randomUUID();
+  return new TenantUnitOfWork(new RolePool(runtime, "agendia_runtime")).execute(context(owner), {
+    audit: { eventType: "calendar.changed", outcome: "success", eventHash: createHash("sha256").update(key).digest("hex") },
+    outbox: { topic: "calendar.changed", stableKey: key, payload: {} },
+  }, work);
+};
+const calendarSnapshot = async (owner: Owner) => ({ ...await resourceSnapshot(owner),
+  calendar: (await database.sql`select * from business_calendars where business_id=${owner.business}`),
+  closures: (await database.sql`select * from business_calendar_closures where business_id=${owner.business} order by id`),
+});
+const calendarRejected = async (owner: Owner, work: (repo: PostgresRepositories) => Promise<unknown>, expected = "FUTURE_APPOINTMENT_CONFLICT") => {
+  const before = await calendarSnapshot(owner), counts = await effects(owner);
+  await code(calendarWork(owner, work), expected);
+  expect(await calendarSnapshot(owner)).toEqual(before);
+  expect(await effects(owner)).toEqual(counts);
+};
+
+test("calendar weekly guard protects saved future Confirmed intervals independently of legacy resource hours", async () => {
+  const { owner, saved } = await futureFixture();
+  // Privileged legacy fixture isolates the appointment guard from configured-resource containment.
+  await database.sql`update resources set weekly_schedule='{}',status='suspended' where business_id=${owner.business}`;
+  await database.sql`update services set duration_minutes=15,status='suspended' where id=${owner.service}`;
+  await calendarRejected(owner, repo => repo.saveBusinessCalendar(owner.business, {}));
+  const day = new Date(saved.startMs - 3 * 60 * minutes).getUTCDay();
+  await calendarRejected(owner, repo => repo.saveBusinessCalendar(owner.business, { [day]: [{ startMinute: 600, endMinute: 630 }] }));
+  expect(await calendarWork(owner, repo => repo.saveBusinessCalendar(owner.business, { [day]: [{ startMinute: 600, endMinute: 645 }] }))).toHaveProperty("weeklySchedule");
+  await database.sql`update appointments set state='cancelled' where id=${saved.id}`;
+  expect(await calendarWork(owner, repo => repo.saveBusinessCalendar(owner.business, {}))).toEqual({ weeklySchedule: {} });
+  await database.sql`update appointments set state='confirmed',start_raw='2000-01-01T10:00:00-03:00',start_ms=${parseInstantMs("2000-01-01T10:00:00-03:00")!},end_ms=${parseInstantMs("2000-01-01T10:00:00-03:00")! + 45 * minutes} where id=${saved.id}`;
+  expect(await calendarWork(owner, repo => repo.saveBusinessCalendar(owner.business, {}))).toEqual({ weeklySchedule: {} });
+});
+
+test("global closure create/update checks saved physical intervals only and permits adjacency, foreign scopes and deletion", async () => {
+  const { owner, saved } = await futureFixture(45, "2099-06-01T23:45:00-03:00");
+  await database.sql`update resources set weekly_schedule='{}',status='suspended' where business_id=${owner.business}`;
+  await database.sql`update business_calendars set weekly_schedule='{}' where business_id=${owner.business}`;
+  await database.sql`update services set duration_minutes=15,status='suspended' where id=${owner.service}`;
+  await calendarRejected(owner, repo => repo.createBusinessClosure(owner.business, { kind: "date", date: "2099-06-02" }));
+  await calendarRejected(owner, repo => repo.createBusinessClosure(owner.business, { kind: "interval", start: "2099-06-02T03:15:00Z", end: "2099-06-02T03:45:00Z" }));
+  const unrelated = await calendarWork(owner, repo => repo.createBusinessClosure(owner.business, { kind: "date", date: "2099-06-03" }));
+  await calendarRejected(owner, repo => repo.updateBusinessClosure(owner.business, unrelated.id, { kind: "date", date: "2099-06-02" }));
+  await calendarRejected(owner, repo => repo.updateBusinessClosure(owner.business, unrelated.id, { kind: "interval", start: "2099-06-02T03:29:59.999Z", end: "2099-06-02T04:00:00Z" }));
+  for (const [start, end] of [["2099-06-02T02:00:00Z", "2099-06-02T02:45:00Z"], ["2099-06-02T03:30:00Z", "2099-06-02T04:00:00Z"]])
+    expect(await calendarWork(owner, repo => repo.createBusinessClosure(owner.business, { kind: "interval", start: start!, end: end! }))).toHaveProperty("id");
+  const foreign = await readyOwner();
+  const foreignClosure = await calendarWork(foreign, repo => repo.createBusinessClosure(foreign.business, { kind: "date", date: "2099-06-02" }));
+  for (const id of [foreignClosure.id, randomUUID()])
+    expect(await new RolePool(runtime, "agendia_runtime").run(context(owner), repo => repo.updateBusinessClosure(owner.business, id, { kind: "date", date: "2099-06-02" }))).toBeNull();
+  expect(await calendarWork(owner, repo => repo.deleteBusinessClosure(owner.business, unrelated.id))).toBe(true);
+  await database.sql`update appointments set start_raw='2099-06-01T22:45:00-03:00' where id=${saved.id}`;
+  await calendarRejected(owner, repo => repo.createBusinessClosure(owner.business, { kind: "date", date: "2099-06-02" }));
+  await database.sql`update appointments set state='cancelled' where id=${saved.id}`;
+  expect(await calendarWork(owner, repo => repo.createBusinessClosure(owner.business, { kind: "date", date: "2099-06-02" }))).toHaveProperty("id");
+});
+
+test("calendar and date/interval closures serialize with booking in both orderings", async () => {
+  for (const kind of ["weekly", "date", "interval"] as const) for (const bookingFirst of [true, false]) {
+    const owner = await readyOwner();
+    const booking = (repo: PostgresRepositories) => repo.createAppointment(owner.business, { ...command(owner), startRaw: futureStart, clientId: undefined, newClient: clientInput }, { origin: "manual", now: "2099-01-01T00:00:00Z" });
+    const guard = async (repo: PostgresRepositories) => {
+      if (kind === "weekly") {
+        // Legacy/off fixture makes future-booking guard observable, not HOURS_CONFLICT.
+        await database.sql`update resources set weekly_schedule='{}' where business_id=${owner.business}`;
+        return repo.saveBusinessCalendar(owner.business, {});
+      }
+      return repo.createBusinessClosure(owner.business, kind === "date" ? { kind, date: "2099-06-01" }
+        : { kind, start: "2099-06-01T10:00:00-03:00", end: "2099-06-01T10:15:00-03:00" });
+    };
+    const race = bookingFirst ? await orderedCatalogRace(owner, booking, guard) : await orderedCatalogRace(owner, guard, booking);
+    expect(race[1]).toMatchObject({ error: { code: bookingFirst ? "FUTURE_APPOINTMENT_CONFLICT" : "UNAVAILABLE" } });
+    expect((await effects(owner)).clients).toBe(bookingFirst ? 2 : 1);
+    expect((await effects(owner)).appointments).toBe(bookingFirst ? 1 : 0);
+  }
+});
+
+test("calendar and closure valid writes roll back on mutation, audit and outbox failures", async () => {
+  const { owner } = await futureFixture();
+  const closure = await calendarWork(owner, repo => repo.createBusinessClosure(owner.business, { kind: "date", date: "2099-06-03" }));
+  for (const kind of ["weekly", "closure"] as const) for (const table of [kind === "weekly" ? "business_calendars" : "business_calendar_closures", "audit_events", "outbox_events"]) {
+    await database.sql.unsafe(`create function calendar_booking_failure() returns trigger language plpgsql as $$ begin raise exception 'forced calendar booking failure'; end $$`);
+    await database.sql.unsafe(`create trigger calendar_booking_failure before insert or update on ${table} for each row execute function calendar_booking_failure()`);
+    try {
+      await calendarRejected(owner, repo => kind === "weekly" ? repo.saveBusinessCalendar(owner.business, full)
+        : repo.createBusinessClosure(owner.business, { kind: "date", date: "2099-06-03" }), "P0001");
+      if (kind === "closure") await calendarRejected(owner, repo => repo.updateBusinessClosure(owner.business, closure.id, { kind: "date", date: "2099-06-04" }), "P0001");
+    } finally {
+      await database.sql.unsafe(`drop trigger calendar_booking_failure on ${table}`);
+      await database.sql`drop function calendar_booking_failure()`;
+    }
+  }
+});

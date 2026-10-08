@@ -269,3 +269,33 @@ test("transaction lock precedes mutation even without a calendar row and release
     expect(await probe()).toBe(true);
   }
 });
+
+test("future calendar/closure conflicts are safe 409, ignore body clocks and keep owned 404 preflight", async () => {
+  const full = Object.fromEntries(Array.from({ length: 7 }, (_, day) => [day, [{ startMinute: 0, endMinute: 1440 }]]));
+  expect((await request("PUT", a, { weeklySchedule: full })).statusCode).toBe(200);
+  const client = randomUUID(), service = randomUUID(), resource = randomUUID();
+  await database.sql`insert into clients(id,business_id,first_name,last_name,phone) values(${client},${a.businessId},'Future','Client','+5491123456785')`;
+  await database.sql`insert into services(id,business_id,name,duration_minutes,price_ars) values(${service},${a.businessId},'Calendar guard',45,10)`;
+  await database.sql`insert into resources(id,business_id,name,weekly_schedule) values(${resource},${a.businessId},'Calendar guard',${database.sql.json(full)})`;
+  await database.sql`insert into resource_services values(${a.businessId},${resource},${service})`;
+  const saved = await pools.api.run(ctx(a), repo => repo.createAppointment(a.businessId, {
+    clientId: client, serviceId: service, resourceId: resource, startRaw: "2099-06-01T10:00:00-03:00",
+  }, { origin: "manual", now: "2099-01-01T00:00:00Z" }));
+  await database.sql`update resources set weekly_schedule='{}' where business_id=${a.businessId}`;
+  const unrelated = (await closureRequest("POST", a, { kind: "date", date: "2099-06-02" })).json();
+  const before = { calendar: await effects(), closures: await closureEffects() };
+  const appointment = (await database.sql`select * from appointments where id=${saved.id}`)[0];
+  const responses = [await request("PUT", a, { weeklySchedule: {}, now: "2200-01-01T00:00:00Z" }),
+    await closureRequest("POST", a, { kind: "date", date: "2099-06-01" }),
+    await closureRequest("PUT", a, { kind: "date", date: "2099-06-01" }, unrelated.id)];
+  for (const response of responses) {
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ code: "CONFLICT" });
+    expect(response.body).not.toMatch(/postgres|sql|Calendar guard|2099/);
+  }
+  // Existing strict closure keys reject fake clocks rather than changing the public contract.
+  expect((await closureRequest("POST", a, { kind: "date", date: "2099-06-01", now: "2200-01-01T00:00:00Z" })).statusCode).toBe(400);
+  expect((await closureRequest("PUT", a, { kind: "date", date: "2099-06-01" }, randomUUID())).statusCode).toBe(404);
+  expect({ calendar: await effects(), closures: await closureEffects() }).toEqual(before);
+  expect((await database.sql`select * from appointments where id=${saved.id}`)[0]).toEqual(appointment);
+});

@@ -10,7 +10,8 @@ import { ClientInputSchema, InstantSchema, AppointmentOriginSchema, captureAppoi
   canEditAppointmentNotes, canTransitionAppointment, AppointmentStateSchema,
   type AppointmentActionContext } from "@agendia/domain";
 import { BusinessClosureInputSchema, parseInstantMs, WeeklyScheduleSchema,
-  ResourceInputSchema, isResourceScheduleWithinBusiness, normalizeWeeklySchedule, isStructurallyAvailable, type ResourceInput,
+  ResourceInputSchema, isResourceScheduleWithinBusiness, normalizeWeeklySchedule, isStructurallyAvailable,
+  isEpochIntervalWithinWeeklySchedule, isEpochIntervalOpenForClosures, type EpochInterval, type ResourceInput,
   type BusinessClosure, type BusinessClosureInput, type WeeklySchedule } from "@agendia/domain";
 
 type ClosureRow = { id: string; kind: string; date: string | null; start: string | null; end: string | null };
@@ -33,6 +34,16 @@ export type CatalogResource = Omit<ResourceInput, "description"> & {
 /** B2 maps these domain conflicts to safe HTTP errors; no persistence details escape. */
 export class ResourceCatalogError extends Error {
   constructor(readonly code: "UNKNOWN_SERVICE" | "HOURS_CONFLICT" | "FUTURE_APPOINTMENT_CONFLICT") { super(code); }
+}
+
+type SavedAppointmentInterval = { startRaw: string; startMs: string; endMs: string; durationMinutes: number };
+function appointmentInterval(row: SavedAppointmentInterval): EpochInterval {
+  const startMs = Number(row.startMs), endMs = Number(row.endMs);
+  if (parseInstantMs(row.startRaw) !== startMs || !Number.isSafeInteger(endMs) || endMs <= startMs
+    || endMs > 253402387139999 || !Number.isSafeInteger(row.durationMinutes) || row.durationMinutes <= 0
+    || row.durationMinutes % 15 !== 0 || endMs !== startMs + row.durationMinutes * 60000)
+    throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
+  return { startMs, endMs };
 }
 
 /** Acquire inside the tenant UoW BEFORE reads/guards/mutations (also when no row exists).
@@ -388,14 +399,27 @@ export class PostgresRepositories {
       select weekly_schedule "weeklySchedule" from business_calendars where business_id=${businessId}`;
     return { weeklySchedule: row ? WeeklyScheduleSchema.parse(row.weeklySchedule) : null };
   }
+  /** Called only after the shared early lock; B2 protects Confirmed only, unlike B1 resources. */
+  private async futureConfirmedIntervals(businessId: string, nowMs: number): Promise<EpochInterval[]> {
+    if (!Number.isSafeInteger(nowMs)) throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
+    const rows = await this.db<SavedAppointmentInterval[]>`select start_raw "startRaw",start_ms "startMs",end_ms "endMs",duration_minutes "durationMinutes"
+      from appointments where business_id=${businessId} and state='confirmed' and start_ms>${nowMs}`;
+    return rows.map(appointmentInterval);
+  }
+  private async guardClosureAppointments(businessId: string, input: BusinessClosureInput, nowMs: number) {
+    if ((await this.futureConfirmedIntervals(businessId, nowMs)).some(interval => !isEpochIntervalOpenForClosures(interval, [input])))
+      throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
+  }
   /** Transaction required; uses the same early lock as public calendar/closure callers. */
   async saveBusinessCalendar(businessId: string, weeklySchedule: WeeklySchedule): Promise<BusinessCalendar> {
     await this.acquireBusinessCalendarLock({ businessId });
+    const nowMs = Date.now();
     const valid = WeeklyScheduleSchema.parse(weeklySchedule);
     const resources = await this.listResources(businessId);
     if (resources.some(resource => !isResourceScheduleWithinBusiness(resource.weeklySchedule, valid)))
       throw new ResourceCatalogError("HOURS_CONFLICT");
-    // Confirmed-booking guards integrate in T09; configured suspended hours count here.
+    if ((await this.futureConfirmedIntervals(businessId, nowMs)).some(interval => !isEpochIntervalWithinWeeklySchedule(interval, valid)))
+      throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
     const [row] = await this.db<BusinessCalendar[]>`
       insert into business_calendars(business_id,weekly_schedule) values(${businessId},${this.db.json(asDbJson(valid))})
       on conflict(business_id) do update set weekly_schedule=excluded.weekly_schedule
@@ -410,7 +434,9 @@ export class PostgresRepositories {
   /** All closure mutations require the shared early calendar lock in the caller's UoW. */
   async createBusinessClosure(businessId: string, input: BusinessClosureInput): Promise<BusinessClosure> {
     await this.acquireBusinessCalendarLock({ businessId });
+    const nowMs = Date.now();
     const v = closureValues(input);
+    await this.guardClosureAppointments(businessId, input, nowMs);
     const [row] = await this.db<ClosureRow[]>`insert into business_calendar_closures
       (business_id,kind,closed_date,start_raw,end_raw,start_ms,end_ms)
       values(${businessId},${v.kind},${v.date},${v.start},${v.end},${v.startMs},${v.endMs})
@@ -419,7 +445,11 @@ export class PostgresRepositories {
   }
   async updateBusinessClosure(businessId: string, id: string, input: BusinessClosureInput): Promise<BusinessClosure | null> {
     await this.acquireBusinessCalendarLock({ businessId });
+    const nowMs = Date.now();
+    const [owned] = await this.db`select id from business_calendar_closures where business_id=${businessId} and id=${id}`;
+    if (!owned) return null;
     const v = closureValues(input);
+    await this.guardClosureAppointments(businessId, input, nowMs);
     const [row] = await this.db<ClosureRow[]>`update business_calendar_closures set kind=${v.kind},closed_date=${v.date},
       start_raw=${v.start},end_raw=${v.end},start_ms=${v.startMs},end_ms=${v.endMs}
       where business_id=${businessId} and id=${id}
@@ -477,15 +507,12 @@ export class PostgresRepositories {
     const removedAssignment = current.serviceIds.some(serviceId => !proposed.serviceIds.includes(serviceId));
     if (!hoursChanged && !removedAssignment) return;
     if (!Number.isSafeInteger(nowMs)) throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
-    const appointments = await this.db<{ serviceId: string; startRaw: string; startMs: string; endMs: string; durationMinutes: number }[]>`
+    const appointments = await this.db<(SavedAppointmentInterval & { serviceId: string })[]>`
       select service_id "serviceId",start_raw "startRaw",start_ms "startMs",end_ms "endMs",duration_minutes "durationMinutes"
       from appointments where business_id=${businessId} and resource_id=${current.id} and start_ms>${nowMs}`;
     for (const appointment of appointments) {
-      const startMs = Number(appointment.startMs), endMs = Number(appointment.endMs);
-      // Supported booking writers derive these scalars; hostile raw SQL must not cause a false pass.
-      if (parseInstantMs(appointment.startRaw) !== startMs || !Number.isSafeInteger(endMs)
-        || endMs <= startMs || endMs > 253402387139999 || endMs !== startMs + appointment.durationMinutes * 60000
-        || !proposed.serviceIds.includes(appointment.serviceId)
+      appointmentInterval(appointment); // Hostile raw SQL must not cause a false pass.
+      if (!proposed.serviceIds.includes(appointment.serviceId)
         || !isStructurallyAvailable({ start: appointment.startRaw, durationMinutes: appointment.durationMinutes,
           businessHours: proposed.weeklySchedule, resourceHours: proposed.weeklySchedule }))
         throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");

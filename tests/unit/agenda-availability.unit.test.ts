@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import * as agenda from "../../packages/domain/src/index.ts";
 import {
   WeeklyScheduleSchema,
   normalizeWeeklySchedule,
@@ -212,4 +213,36 @@ describe("injected-clock new-start gate", () => {
     expect(isNewStartAllowed(request({ start: "2026-06-01T09:01:00-03:00" }), now)).toBe(false);
     expect(isNewStartAllowed(request(), "2026-02-30T08:00:00-03:00")).toBe(false);
   });
+});
+
+const epochInterval = (start: string, elapsedMinutes: number) => ({ startMs: agenda.parseInstantMs(start)!, endMs: agenda.parseInstantMs(start)! + elapsedMinutes * 60000 });
+test("epoch weekly containment uses existing whole-interval kernel without booking grid or lead policy", () => {
+  const interval = epochInterval("2026-06-01T09:01:00-03:00", 30);
+  expect(agenda.isEpochIntervalWithinWeeklySchedule(interval, monday)).toBe(true);
+  expect(agenda.isEpochIntervalWithinWeeklySchedule(epochInterval("2026-06-01T11:45:00-03:00", 30), monday)).toBe(false);
+  expect(agenda.isEpochIntervalWithinWeeklySchedule(epochInterval("2026-06-06T23:45:00-03:00", 45), { 6: [span(1380, 30)] })).toBe(true);
+  expect(agenda.isEpochIntervalWithinWeeklySchedule(epochInterval("0001-01-01T00:00:00+23:59", 15), allWeek)).toBe(true);
+  expect(agenda.isEpochIntervalWithinWeeklySchedule(epochInterval("2007-12-29T23:45:00-03:00", 75), { 6: [span(1380, 120)] })).toBe(true);
+  expect(agenda.isEpochIntervalWithinWeeklySchedule(epochInterval("2007-12-29T23:45:00-03:00", 90), { 6: [span(1380, 120)] })).toBe(false);
+  expect(agenda.isEpochIntervalWithinWeeklySchedule(null as never, allWeek)).toBe(false);
+  for (const value of [{ startMs: NaN, endMs: 1 }, { startMs: 0, endMs: Infinity }, { startMs: 0.1, endMs: 1 }, { startMs: 1, endMs: 1 }, { startMs: 2, endMs: 1 }, { startMs: 0, endMs: 8640000000000001 }]) {
+    expect(agenda.isEpochIntervalWithinWeeklySchedule(value, allWeek)).toBe(false);
+    expect(agenda.isEpochIntervalOpenForClosures(value, [])).toBe(false);
+  }
+});
+test("epoch closure-only predicate retains half-open dates, offset/DST segments and strict validation", () => {
+  const interval = epochInterval("2026-06-01T23:45:00-03:00", 30);
+  expect(agenda.isEpochIntervalOpenForClosures(interval, [{ kind: "date", date: "2026-06-02" }])).toBe(false);
+  expect(agenda.isEpochIntervalOpenForClosures(interval, [{ kind: "date", date: "2026-06-03" }])).toBe(true);
+  expect(agenda.isEpochIntervalOpenForClosures(interval, [{ kind: "interval", start: "2026-06-02T03:15:00Z", end: "2026-06-02T04:00:00Z" }])).toBe(true);
+  expect(agenda.isEpochIntervalOpenForClosures(interval, [{ kind: "interval", start: "2026-06-02T03:14:59.999Z", end: "2026-06-02T04:00:00Z" }])).toBe(false);
+  for (const date of ["0000-01-01", "2026-02-30", "bad"]) expect(agenda.isEpochIntervalOpenForClosures(interval, [{ kind: "date", date }])).toBe(false);
+  expect(agenda.isEpochIntervalOpenForClosures(interval, [{ kind: "interval", start: "bad", end: "bad" }])).toBe(false);
+  expect(agenda.isEpochIntervalOpenForClosures(interval, [{ kind: "interval", start: "2026-06-01T00:00:00Z", end: "2026-06-01T00:00:00Z" }])).toBe(false);
+  expect(agenda.isEpochIntervalOpenForClosures(interval, [{ kind: "unknown" } as never])).toBe(false);
+  expect(agenda.isEpochIntervalOpenForClosures(interval, [{ kind: "date", date: "2026-06-03", resourceId: "unsupported" } as never])).toBe(false);
+  const spring = epochInterval("2007-12-29T23:45:00-03:00", 15);
+  expect(agenda.isEpochIntervalOpenForClosures(spring, [{ kind: "date", date: "2007-12-30" }])).toBe(true);
+  expect(agenda.isEpochIntervalOpenForClosures({ ...spring, endMs: spring.endMs + 1 }, [{ kind: "date", date: "2007-12-30" }])).toBe(false);
+  expect(agenda.isEpochIntervalOpenForClosures(epochInterval("2008-03-15T23:45:00-02:00", 75), [{ kind: "date", date: "2008-03-16" }])).toBe(true);
 });

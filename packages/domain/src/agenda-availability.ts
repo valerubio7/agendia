@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { calendarMs, parseCalendarDateMs as parseDate, parseInstantMs as parseInstant } from "./calendar-values.ts";
+import { BusinessClosureInputSchema, type BusinessClosureInput } from "./business-calendar.ts";
 
 const DAY_MINUTES = 1440;
 const WEEK_MINUTES = 7 * DAY_MINUTES;
@@ -150,6 +151,39 @@ function avoidsIntervals(start: number, end: number, intervals: readonly Instant
   return true;
 }
 
+export interface EpochInterval { readonly startMs: number; readonly endMs: number }
+function validEpochInterval(interval: EpochInterval): boolean {
+  return interval !== null && typeof interval === "object"
+    && Number.isSafeInteger(interval.startMs) && Number.isSafeInteger(interval.endMs)
+    && interval.startMs >= -MAX_DATE_MS && interval.endMs <= MAX_DATE_MS && interval.endMs > interval.startMs;
+}
+/** Exact whole-interval Argentina IANA containment, without booking grid/lead/eligibility policy. */
+export function isEpochIntervalWithinWeeklySchedule(interval: EpochInterval, schedule: WeeklySchedule): boolean {
+  return validEpochInterval(interval) && WeeklyScheduleSchema.safeParse(schedule).success
+    && fitsWeekly(interval.startMs, interval.endMs, normalizeWeeklySchedule(schedule));
+}
+function avoidsDates(start: number, end: number, dates: readonly string[]): boolean {
+  for (const closedDate of dates) {
+    const midnight = parseDate(closedDate);
+    if (midnight === undefined) return false;
+    // Only inspect the physical window around this date, not every day of a potentially huge appointment.
+    const windowStart = Math.max(start, midnight - 2 * DAY_MS);
+    const windowEnd = Math.min(end, midnight + 3 * DAY_MS);
+    if (!everyLocalSegment(windowStart, windowEnd, (a, b) => !(a < midnight + DAY_MS && midnight < b))) return false;
+  }
+  return true;
+}
+/** Closure-only physical overlap; never consults weekly hours, grid, lead time or catalog state. */
+export function isEpochIntervalOpenForClosures(interval: EpochInterval, closures: readonly BusinessClosureInput[]): boolean {
+  if (!validEpochInterval(interval) || !Array.isArray(closures)) return false;
+  return closures.every(closure => {
+    const parsed = BusinessClosureInputSchema.safeParse(closure);
+    if (!parsed.success) return false;
+    return parsed.data.kind === "date" ? avoidsDates(interval.startMs, interval.endMs, [parsed.data.date])
+      : avoidsIntervals(interval.startMs, interval.endMs, [parsed.data]);
+  });
+}
+
 /** Half-open availability in Argentina local time. No clock/lead-time, eligibility, ownership or state policy is inferred. */
 export function isStructurallyAvailable(input: AvailabilityInput): boolean {
   const start = parseInstant(input.start);
@@ -159,19 +193,10 @@ export function isStructurallyAvailable(input: AvailabilityInput): boolean {
   if (!Number.isSafeInteger(end) || end > MAX_DATE_MS || end <= start) return false;
   const localStart = start + offsetAt(start);
   if (localStart % (15 * MINUTE_MS) !== 0) return false;
-  if (!WeeklyScheduleSchema.safeParse(input.businessHours).success || !WeeklyScheduleSchema.safeParse(input.resourceHours).success) return false;
-  if (!fitsWeekly(start, end, normalizeWeeklySchedule(input.businessHours))
-    || !fitsWeekly(start, end, normalizeWeeklySchedule(input.resourceHours))) return false;
+  if (!isEpochIntervalWithinWeeklySchedule({ startMs: start, endMs: end }, input.businessHours)
+    || !isEpochIntervalWithinWeeklySchedule({ startMs: start, endMs: end }, input.resourceHours)) return false;
   if (!avoidsIntervals(start, end, input.busyIntervals ?? []) || !avoidsIntervals(start, end, input.closedIntervals ?? [])) return false;
-  for (const closedDate of input.closedDates ?? []) {
-    const midnight = parseDate(closedDate);
-    if (midnight === undefined) return false;
-    // Only inspect the physical window around this date, not every day of a potentially huge appointment.
-    const windowStart = Math.max(start, midnight - 2 * DAY_MS);
-    const windowEnd = Math.min(end, midnight + 3 * DAY_MS);
-    if (!everyLocalSegment(windowStart, windowEnd, (a, b) => !(a < midnight + DAY_MS && midnight < b))) return false;
-  }
-  return true;
+  return avoidsDates(start, end, input.closedDates ?? []);
 }
 
 /** New bookings/new-start reschedules require >= one hour from injected now; unchanged-start edits use structural checking alone. */

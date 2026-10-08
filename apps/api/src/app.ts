@@ -467,7 +467,9 @@ export function buildApi(input: AuthService | ApiOptions) {
   const closureFailure = (error: unknown, request: FastifyRequest, reply: FastifyReply) =>
     error === closureMissing
       ? fail(reply, request, 404, "NOT_FOUND", "Closure not found")
-      : fail(reply, request, 500, "INTERNAL_ERROR", "Calendar operation failed");
+      : error instanceof ResourceCatalogError && error.code === "FUTURE_APPOINTMENT_CONFLICT"
+        ? fail(reply, request, 409, "CONFLICT", "Calendar change conflicts with future appointments")
+        : fail(reply, request, 500, "INTERNAL_ERROR", "Calendar operation failed");
   app.get("/me/business-calendar/closures", async (request, reply) => {
     const auth = await requireTenant(request, reply);
     if (!auth) return;
@@ -482,7 +484,7 @@ export function buildApi(input: AuthService | ApiOptions) {
     if (!parsed.success) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid closure fields");
     try {
       const saved = await tenantWrite(auth, request, "business_closure.created", async repo => {
-        // Repository acquires the early lock; future-booking guards follow in T09-B.
+        // Repository owns the early lock and future-Confirmed closure guard.
         return repo.createBusinessClosure(auth.business_id!, parsed.data);
       });
       return reply.code(201).send(saved);
@@ -599,10 +601,12 @@ export function buildApi(input: AuthService | ApiOptions) {
     try {
       return await tenantWrite(auth, request, "business_calendar.updated", async repo => {
         await repo.acquireBusinessCalendarLock(context(auth, request));
-        // Repository guards all configured resource hours; booking guards integrate in T09.
+        // Repository guards configured resource hours and future Confirmed intervals.
         return repo.saveBusinessCalendar(auth.business_id!, parsed.data.weeklySchedule);
       });
     } catch (error) {
+      if (error instanceof ResourceCatalogError && error.code === "FUTURE_APPOINTMENT_CONFLICT")
+        return closureFailure(error, request, reply);
       if (error instanceof ResourceCatalogError) return resourceFailure(error, request, reply);
       return fail(reply, request, 500, "INTERNAL_ERROR", "Calendar operation failed");
     }
