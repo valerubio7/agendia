@@ -518,6 +518,8 @@ export function buildApi(input: AuthService | ApiOptions) {
   const resourceFailure = (error: unknown, request: FastifyRequest, reply: FastifyReply) => {
     if (error === resourceMissing)
       return fail(reply, request, 404, "NOT_FOUND", "Resource not found");
+    if (error instanceof ResourceCatalogError && error.code === "FUTURE_APPOINTMENT_CONFLICT")
+      return fail(reply, request, 409, "CONFLICT", "Resource change conflicts with future appointments");
     if (error instanceof ResourceCatalogError)
       return error.code === "UNKNOWN_SERVICE"
         ? fail(reply, request, 400, "VALIDATION_FAILED", "Services must belong to this business")

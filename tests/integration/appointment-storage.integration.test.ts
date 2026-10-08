@@ -976,3 +976,112 @@ test("shared catalog/closure/booking UoW rolls back mutation and audit/outbox fa
   const [jobs] = await database.sql`select count(*)::int count from outbox_events where business_id=${owner.business} and (topic like 'ai.%' or topic like 'whatsapp.%')`;
   expect(jobs!.count).toBe(0);
 });
+
+const futureStart = "2099-06-01T10:00:00-03:00";
+const futureFixture = async (duration = 45, startRaw = futureStart) => {
+  const owner = await readyOwner();
+  await database.sql`update services set duration_minutes=${duration} where id=${owner.service}`;
+  const saved = await book(owner, command(owner, { startRaw }), { origin: "manual", now: "2099-01-01T00:00:00Z" });
+  return { owner, saved };
+};
+const resourceBody = (owner: Owner, extra: Record<string, unknown> = {}) => ({ name: owner.resource, serviceIds: [owner.service], weeklySchedule: full, ...extra });
+const resourceEdit = (owner: Owner, input = resourceBody(owner)) => {
+  const key = randomUUID();
+  return new TenantUnitOfWork(new RolePool(runtime, "agendia_runtime")).execute(context(owner), {
+    audit: { eventType: "resource.updated", outcome: "success", eventHash: createHash("sha256").update(key).digest("hex") },
+    outbox: { topic: "resource.updated", stableKey: key, payload: {} },
+  }, repo => repo.updateResource(owner.business, owner.resource, input as Parameters<PostgresRepositories["updateResource"]>[2]));
+};
+const resourceSnapshot = async (owner: Owner) => (await database.sql`select
+  (select jsonb_agg(r order by id) from resources r where business_id=${owner.business}) resources,
+  (select jsonb_agg(rs order by resource_id,service_id) from resource_services rs where business_id=${owner.business}) assignments,
+  (select jsonb_agg(ap order by id) from appointments ap where business_id=${owner.business}) appointments`)[0]!;
+const resourceRejected = async (owner: Owner, input: ReturnType<typeof resourceBody>, expected = "FUTURE_APPOINTMENT_CONFLICT") => {
+  const before = await resourceSnapshot(owner), counts = await effects(owner);
+  await code(resourceEdit(owner, input), expected);
+  expect(await resourceSnapshot(owner)).toEqual(before);
+  expect(await effects(owner)).toEqual(counts);
+};
+
+test("resource future guard covers all states and agreed duration, not changed catalog terms", async () => {
+  const { owner, saved } = await futureFixture();
+  expect((await new RolePool(runtime, "agendia_runtime").run(context(owner), repo => repo.setResourceStatus(owner.business, owner.resource, "suspended")))!.status).toBe("suspended");
+  await database.sql`update services set duration_minutes=30,status='suspended' where id=${owner.service}`;
+  await database.sql`update resources set status='suspended' where id=${owner.resource}`;
+  for (const state of ["confirmed", "done", "cancelled", "no_show"]) {
+    await database.sql`update appointments set state=${state} where id=${saved.id}`;
+    await resourceRejected(owner, resourceBody(owner, { weeklySchedule: {} }));
+    await resourceRejected(owner, resourceBody(owner, { serviceIds: [] }));
+  }
+  const day = new Date(saved.startMs - 3 * 60 * minutes).getUTCDay();
+  await resourceRejected(owner, resourceBody(owner, { weeklySchedule: { [day]: [{ startMinute: 600, endMinute: 630 }] } }));
+  const retained = await resourceEdit(owner, resourceBody(owner, { weeklySchedule: { [day]: [{ startMinute: 600, endMinute: 645 }] }, name: "Renamed", description: "Allowed metadata" }));
+  expect(retained!.status).toBe("suspended");
+  expect((await physical(saved.id)).duration_minutes).toBe(45);
+  const shorter = await futureFixture(30);
+  await database.sql`update services set duration_minutes=45,status='suspended' where id=${shorter.owner.service}`;
+  expect(await resourceEdit(shorter.owner, resourceBody(shorter.owner, { weeklySchedule: { [day]: [{ startMinute: 600, endMinute: 630 }] } }))).not.toBeNull();
+});
+
+test("resource guard checks every future interval rather than only the earliest booking", async () => {
+  const { owner, saved } = await futureFixture(30);
+  await book(owner, command(owner, { startRaw: "2099-06-01T11:00:00-03:00" }), { origin: "ai", now: "2099-01-01T00:00:00Z" });
+  const day = new Date(saved.startMs - 3 * 60 * minutes).getUTCDay();
+  await resourceRejected(owner, resourceBody(owner, { weeklySchedule: { [day]: [{ startMinute: 600, endMinute: 660 }] } }));
+  expect(await resourceEdit(owner, resourceBody(owner, { weeklySchedule: { [day]: [{ startMinute: 600, endMinute: 690 }] } }))).not.toBeNull();
+});
+
+test("whole overnight/week-wrap and pause intervals are guarded; equivalent unions and unrelated assignments remain editable", async () => {
+  // 2099-06-06 is Saturday; a 45-minute booking crosses into Sunday.
+  const { owner, saved } = await futureFixture(45, "2099-06-06T23:45:00-03:00");
+  const overnight = { 6: [{ startMinute: 1425, endMinute: 30 }] };
+  expect(await resourceEdit(owner, resourceBody(owner, { weeklySchedule: overnight }))).not.toBeNull();
+  await resourceRejected(owner, resourceBody(owner, { weeklySchedule: { 6: [{ startMinute: 1425, endMinute: 15 }] } }));
+  await resourceRejected(owner, resourceBody(owner, { weeklySchedule: { 6: [{ startMinute: 1425, endMinute: 1440 }], 0: [{ startMinute: 1, endMinute: 30 }] } }));
+  const service = await new RolePool(runtime, "agendia_runtime").run(context(owner), repo => repo.createService(owner.business, { name: "Unbooked", durationMinutes: 15, priceArs: 0 }));
+  expect(await resourceEdit(owner, resourceBody(owner, { weeklySchedule: overnight, serviceIds: [owner.service, service.id] }))).not.toBeNull();
+  expect(await resourceEdit(owner, resourceBody(owner, { weeklySchedule: { 6: [{ startMinute: 1425, endMinute: 1440 }], 0: [{ startMinute: 0, endMinute: 30 }] } }))).not.toBeNull();
+  const before = await physical(saved.id);
+  expect(await resourceEdit(owner, resourceBody(owner, { weeklySchedule: overnight, name: "Only rename", description: "No new eligibility" }))).not.toBeNull();
+  expect(await physical(saved.id)).toEqual(before);
+});
+
+test("future guard isolates resource/business and past rows; hostile raw/epoch mismatch cannot pass", async () => {
+  const { owner, saved } = await futureFixture();
+  const other = await readyOwner();
+  expect(await resourceEdit(other, resourceBody(other, { weeklySchedule: {}, serviceIds: [] }))).not.toBeNull();
+  expect(await new RolePool(runtime, "agendia_runtime").run(context(owner), repo => repo.updateResource(owner.business, owner.alternate, { name: owner.alternate, weeklySchedule: {}, serviceIds: [] }))).not.toBeNull();
+  await database.sql`update appointments set start_raw='2099-06-01T11:00:00-03:00' where id=${saved.id}`;
+  await resourceRejected(owner, resourceBody(owner, { weeklySchedule: { 1: [{ startMinute: 600, endMinute: 720 }] } }));
+  // Metadata-only updates do not reinterpret or repair historical records.
+  expect(await resourceEdit(owner, resourceBody(owner, { name: "Metadata only" }))).not.toBeNull();
+  await database.sql`update appointments set start_raw='2000-01-01T10:00:00-03:00',start_ms=${parseInstantMs("2000-01-01T10:00:00-03:00")!},
+    end_ms=${parseInstantMs("2000-01-01T10:00:00-03:00")! + 45 * minutes} where id=${saved.id}`;
+  expect(await resourceEdit(owner, resourceBody(owner, { weeklySchedule: {}, serviceIds: [] }))).not.toBeNull();
+});
+
+test("booking versus incompatible resource hours/removal shares early lock in either ordering", async () => {
+  for (const extra of [{ weeklySchedule: {} }, { serviceIds: [] }]) for (const bookingFirst of [true, false]) {
+    const owner = await readyOwner(), input = resourceBody(owner, extra);
+    const booking = (repo: PostgresRepositories) => repo.createAppointment(owner.business, { ...command(owner), startRaw: futureStart, clientId: undefined, newClient: clientInput }, { origin: "manual", now: "2099-01-01T00:00:00Z" });
+    const edit = (repo: PostgresRepositories) => repo.updateResource(owner.business, owner.resource, input as Parameters<PostgresRepositories["updateResource"]>[2]);
+    const race = bookingFirst ? await orderedCatalogRace(owner, booking, edit) : await orderedCatalogRace(owner, edit, booking);
+    expect(race[1]).toMatchObject({ error: { code: bookingFirst ? "FUTURE_APPOINTMENT_CONFLICT" : "serviceIds" in extra ? "INELIGIBLE_CATALOG" : "UNAVAILABLE" } });
+    const counts = await effects(owner);
+    expect(counts.clients).toBe(bookingFirst ? 2 : 1);
+    expect(counts.appointments).toBe(bookingFirst ? 1 : 0);
+  }
+});
+
+test("future-safe resource UPDATE and audit/outbox failures retain resource, assignments and bookings", async () => {
+  const { owner } = await futureFixture();
+  for (const table of ["resources", "audit_events", "outbox_events"]) {
+    await database.sql.unsafe(`create function future_resource_failure() returns trigger language plpgsql as $$ begin raise exception 'forced resource failure'; end $$`);
+    await database.sql.unsafe(`create trigger future_resource_failure before ${table === "resources" ? "update" : "insert"} on ${table} for each row execute function future_resource_failure()`);
+    try { await resourceRejected(owner, resourceBody(owner, { name: "Not persisted", description: "Not persisted" }), "P0001"); }
+    finally {
+      await database.sql.unsafe(`drop trigger future_resource_failure on ${table}`);
+      await database.sql`drop function future_resource_failure()`;
+    }
+  }
+});

@@ -10,7 +10,7 @@ import { ClientInputSchema, InstantSchema, AppointmentOriginSchema, captureAppoi
   canEditAppointmentNotes, canTransitionAppointment, AppointmentStateSchema,
   type AppointmentActionContext } from "@agendia/domain";
 import { BusinessClosureInputSchema, parseInstantMs, WeeklyScheduleSchema,
-  ResourceInputSchema, isResourceScheduleWithinBusiness, type ResourceInput,
+  ResourceInputSchema, isResourceScheduleWithinBusiness, normalizeWeeklySchedule, isStructurallyAvailable, type ResourceInput,
   type BusinessClosure, type BusinessClosureInput, type WeeklySchedule } from "@agendia/domain";
 
 type ClosureRow = { id: string; kind: string; date: string | null; start: string | null; end: string | null };
@@ -32,7 +32,7 @@ export type CatalogResource = Omit<ResourceInput, "description"> & {
 };
 /** B2 maps these domain conflicts to safe HTTP errors; no persistence details escape. */
 export class ResourceCatalogError extends Error {
-  constructor(readonly code: "UNKNOWN_SERVICE" | "HOURS_CONFLICT") { super(code); }
+  constructor(readonly code: "UNKNOWN_SERVICE" | "HOURS_CONFLICT" | "FUTURE_APPOINTMENT_CONFLICT") { super(code); }
 }
 
 /** Acquire inside the tenant UoW BEFORE reads/guards/mutations (also when no row exists).
@@ -470,10 +470,34 @@ export class PostgresRepositories {
     await this.replaceResourceServices(businessId, row!.id, valid.serviceIds);
     return (await this.getResource(businessId, row!.id))!;
   }
+  /** Protect all strictly future states, using agreed appointment duration rather than current catalog terms. */
+  private async guardResourceAppointments(businessId: string, current: CatalogResource, proposed: ResourceInput, nowMs: number) {
+    const hoursChanged = JSON.stringify(normalizeWeeklySchedule(current.weeklySchedule))
+      !== JSON.stringify(normalizeWeeklySchedule(proposed.weeklySchedule));
+    const removedAssignment = current.serviceIds.some(serviceId => !proposed.serviceIds.includes(serviceId));
+    if (!hoursChanged && !removedAssignment) return;
+    if (!Number.isSafeInteger(nowMs)) throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
+    const appointments = await this.db<{ serviceId: string; startRaw: string; startMs: string; endMs: string; durationMinutes: number }[]>`
+      select service_id "serviceId",start_raw "startRaw",start_ms "startMs",end_ms "endMs",duration_minutes "durationMinutes"
+      from appointments where business_id=${businessId} and resource_id=${current.id} and start_ms>${nowMs}`;
+    for (const appointment of appointments) {
+      const startMs = Number(appointment.startMs), endMs = Number(appointment.endMs);
+      // Supported booking writers derive these scalars; hostile raw SQL must not cause a false pass.
+      if (parseInstantMs(appointment.startRaw) !== startMs || !Number.isSafeInteger(endMs)
+        || endMs <= startMs || endMs > 253402387139999 || endMs !== startMs + appointment.durationMinutes * 60000
+        || !proposed.serviceIds.includes(appointment.serviceId)
+        || !isStructurallyAvailable({ start: appointment.startRaw, durationMinutes: appointment.durationMinutes,
+          businessHours: proposed.weeklySchedule, resourceHours: proposed.weeklySchedule }))
+        throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
+    }
+  }
   async updateResource(businessId: string, id: string, input: ResourceInput): Promise<CatalogResource | null> {
     await this.acquireBusinessCalendarLock({ businessId });
-    if (!await this.getResource(businessId, id)) return null;
+    const nowMs = Date.now(); // One server clock, after locking; never a request/model field.
+    const current = await this.getResource(businessId, id);
+    if (!current) return null;
     const valid = await this.validateResource(businessId, input);
+    await this.guardResourceAppointments(businessId, current, valid, nowMs);
     await this.db`update resources set name=${valid.name},description=${valid.description ?? null},
       weekly_schedule=${this.db.json(asDbJson(valid.weeklySchedule))} where business_id=${businessId} and id=${id}`;
     await this.replaceResourceServices(businessId, id, valid.serviceIds);

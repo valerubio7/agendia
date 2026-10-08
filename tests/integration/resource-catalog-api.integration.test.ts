@@ -3,7 +3,7 @@ import { hash, Algorithm } from "@node-rs/argon2";
 import { join } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 import { buildApi } from "../../apps/api/src/app.ts";
-import { createRuntimePools } from "@agendia/db";
+import { createRuntimePools, tenantContext } from "@agendia/db";
 import { isResourceEligibleForService, isResourceScheduleWithinBusiness } from "@agendia/domain";
 import { applyPostgresMigrations, startTestPostgres, type TestPostgres } from "../support/index.ts";
 
@@ -208,4 +208,28 @@ test("audit/outbox failures roll back resource, assignment, status and calendar 
   }
   expect((await effects()).messages).toBe(0);
   expect((await effects()).replies).toBe(0);
+});
+
+test("HTTP resource future conflicts return safe 409 and cannot be evaded by body clocks", async () => {
+  const full = Object.fromEntries(Array.from({ length: 7 }, (_, day) => [day, [{ startMinute: 0, endMinute: 1440 }]]));
+  expect((await request("PUT", "/me/business-calendar", a, { weeklySchedule: full })).statusCode).toBe(200);
+  const service = (await request("POST", "/me/services", a, { name: "Future guard service", durationMinutes: 45, priceArs: 10 })).json();
+  const client = (await request("POST", "/me/clients", a, { firstName: "Future", lastName: "Client", phone: "+5491123456785" })).json();
+  const body = { name: "Future guard resource", serviceIds: [service.id], weeklySchedule: full };
+  const created = await request("POST", url, a, body);
+  expect(created.statusCode).toBe(201);
+  const resource = created.json();
+  const saved = await pools.api.run(tenantContext({ businessId: a.businessId, actorId: a.actorId, role: "business_user", requestId: randomUUID() }), repo =>
+    repo.createAppointment(a.businessId, { serviceId: service.id, resourceId: resource.id, clientId: client.id, startRaw: "2099-06-01T10:00:00-03:00" }, { origin: "manual", now: "2099-01-01T00:00:00Z" }));
+  const bookingBefore = (await database.sql`select * from appointments where id=${saved.id}`)[0];
+  const counts = await effects();
+  for (const extra of [{ weeklySchedule: {} }, { serviceIds: [] }]) {
+    const failed = await request("PUT", `${url}/${resource.id}`, a, { ...body, ...extra, name: "Not saved", now: "2200-01-01T00:00:00Z" });
+    expect(failed.statusCode).toBe(409);
+    expect(failed.json()).toMatchObject({ code: "CONFLICT", message: "Resource change conflicts with future appointments" });
+    expect(failed.body).not.toMatch(/postgres|sql|2099|Future guard service/i);
+    expect((await request("GET", url, a)).json()).toContainEqual(resource);
+    expect((await database.sql`select * from appointments where id=${saved.id}`)[0]).toEqual(bookingBefore);
+    expect(await effects()).toEqual(counts);
+  }
 });
