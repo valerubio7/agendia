@@ -19,6 +19,9 @@
     ],
     "baseUrl": ".",
     "paths": {
+      "@agendia/domain/client-registry": ["packages/domain/src/client-registry.ts"],
+      "@agendia/domain/calendar-values": ["packages/domain/src/calendar-values.ts"],
+      "@agendia/domain/appointment-lifecycle": ["packages/domain/src/appointment-lifecycle.ts"],
       "@agendia/*": [
         "packages/*/src/index.ts"
       ]
