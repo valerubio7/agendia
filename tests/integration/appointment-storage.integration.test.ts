@@ -3,7 +3,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import postgres, { type Sql } from "postgres";
 import { parseInstantMs, type WeeklySchedule } from "@agendia/domain";
-import { PostgresRepositories, RolePool, TenantUnitOfWork, tenantContext } from "@agendia/db";
+import { PostgresRepositories, RolePool, TenantUnitOfWork, tenantContext,
+  type AppointmentCreationContext, type AppointmentChangeContext } from "@agendia/db";
 import { applyPostgresMigrations, createRoleLogin, startTestPostgres, type TestPostgres } from "../support/index.ts";
 
 let database: TestPostgres;
@@ -234,7 +235,7 @@ const readyOwner = async () => {
     await database.sql`insert into resource_services values(${owner.business},${resource},${owner.service})`;
   return owner;
 };
-const book = (owner: Owner, input: unknown = command(owner), trusted = { origin: "manual" as "manual" | "ai", now }) => {
+const book = (owner: Owner, input: unknown = command(owner), trusted: AppointmentCreationContext = { origin: "manual", now }) => {
   const key = randomUUID();
   return new TenantUnitOfWork(new RolePool(runtime, "agendia_runtime")).execute(context(owner), {
     audit: { eventType: "appointment.created", outcome: "success", eventHash: createHash("sha256").update(key).digest("hex") },
@@ -433,4 +434,255 @@ test("native exclusion fallback rolls back new client if a raw writer bypasses t
     return repo.createAppointment(owner.business, { ...command(owner), clientId: undefined, newClient: clientInput }, { origin: "manual", now });
   }), "BUSY");
   expect(await effects(owner)).toEqual({ clients: 1, appointments: 1, audit: 0, outbox: 0 });
+});
+
+const change = (owner: Owner, id: string, input: unknown = command(owner), trusted: AppointmentChangeContext = { now }) => {
+  const key = randomUUID();
+  return new TenantUnitOfWork(new RolePool(runtime, "agendia_runtime")).execute(context(owner), {
+    audit: { eventType: "appointment.changed", outcome: "success", eventHash: createHash("sha256").update(key).digest("hex") },
+    outbox: { topic: "appointment.changed", stableKey: key, payload: { businessId: owner.business } },
+  }, repo => repo.changeAppointment(owner.business, id, input, trusted));
+};
+const physical = async (id: string) => (await database.sql`select * from appointments where id=${id}`)[0]!;
+const changeRejected = async (owner: Owner, id: string, input: unknown, expected: string, trusted: AppointmentChangeContext = { now }) => {
+  const before = await physical(id), counts = await effects(owner);
+  await code(change(owner, id, input, trusted), expected);
+  expect(await physical(id)).toEqual(before);
+  expect(await effects(owner)).toEqual(counts);
+};
+
+test("structural changes retain agreed same-service terms and capture only changed catalog identities", async () => {
+  const owner = await readyOwner();
+  const saved = await book(owner, command(owner, { notes: "original" }), { origin: "ai", now });
+  const birth = await physical(saved.id);
+  await database.sql`update services set name='Renamed service',price_ars=900,duration_minutes=30 where id=${owner.service}`;
+  await database.sql`update resources set name='Renamed resource' where id=${owner.resource}`;
+  const moved = await change(owner, saved.id, command(owner, { startRaw: "2026-06-01T11:00:00-03:00", notes: "ignored", clientId: randomUUID(), state: "done", origin: "manual", priceArs: 0, durationMinutes: 45 }));
+  expect(moved.terms).toEqual(saved.terms);
+  expect(moved.endMs).toBe(moved.startMs + 15 * minutes);
+  expect(moved.client).toEqual(saved.client);
+  expect(moved.origin).toBe("ai");
+  expect(moved.notes).toBe("original");
+  const reassigned = await change(owner, saved.id, command(owner, { resourceId: owner.alternate, startRaw: moved.startsAt }));
+  expect(reassigned.terms).toEqual({ ...saved.terms, resourceId: owner.alternate, resourceName: owner.alternate });
+  const serviceId = randomUUID();
+  await database.sql`insert into services(id,business_id,name,duration_minutes,price_ars) values(${serviceId},${owner.business},'New terms',30,55)`;
+  await database.sql`insert into resource_services values(${owner.business},${owner.alternate},${serviceId})`;
+  await database.sql`update resources set name='Another rename' where id=${owner.alternate}`;
+  const switched = await change(owner, saved.id, command(owner, { serviceId, resourceId: owner.alternate, startRaw: moved.startsAt }));
+  expect(switched.terms).toEqual({ serviceId, serviceName: "New terms", durationMinutes: 30, priceArs: 55, resourceId: owner.alternate, resourceName: owner.alternate });
+  expect(switched.endMs).toBe(switched.startMs + 30 * minutes);
+  expect((await physical(saved.id)).created_at).toEqual(birth.created_at);
+});
+
+test("semantic no-op canonicalizes IDs/epochs without touching raw terms or timestamps", async () => {
+  const owner = await readyOwner(), saved = await book(owner);
+  const before = await physical(saved.id);
+  await database.sql`update services set name='Changed',price_ars=800,status='suspended' where id=${owner.service}`;
+  await database.sql`update resources set name='Changed',status='suspended',weekly_schedule='{}' where id=${owner.resource}`;
+  const result = await change(owner, saved.id.toUpperCase(), command(owner, { serviceId: owner.service.toUpperCase(), resourceId: owner.resource.toUpperCase(), startRaw: "2026-06-01T13:00:00.000000Z", customerResourcePreference: owner.alternate }), { now: "2026-06-01T10:00:00-03:00" });
+  expect(result).toEqual(saved);
+  expect(await physical(saved.id)).toEqual(before);
+});
+
+test("current-start lock, lead time and invalid/final input preserve original data", async () => {
+  const owner = await readyOwner(), saved = await book(owner), foreign = await readyOwner();
+  for (const clock of ["2026-06-01T10:00:00-03:00", "2026-06-01T10:00:00.001-03:00"])
+    await changeRejected(owner, saved.id, command(owner, { resourceId: owner.alternate }), "STARTED_STRUCTURE_LOCKED", { now: clock });
+  expect((await change(owner, saved.id, command(owner, { resourceId: owner.alternate }), { now: "2026-06-01T09:59:59.999-03:00" })).terms.resourceId).toBe(owner.alternate);
+  for (const extra of [{ serviceId: "bad" }, { resourceId: "bad" }, { startRaw: "bad" }])
+    await changeRejected(owner, saved.id, command(owner, extra), "INVALID_INPUT");
+  await code(change(owner, "bad", command(owner)), "INVALID_INPUT");
+  await changeRejected(owner, saved.id, command(owner), "INVALID_INPUT", { now: "bad" });
+  for (const extra of [{ serviceId: foreign.service }, { resourceId: foreign.resource }, { serviceId: randomUUID() }, { resourceId: randomUUID() }])
+    await changeRejected(owner, saved.id, command(owner, extra), "UNKNOWN_OWNED_ID");
+  await changeRejected(foreign, saved.id, command(foreign), "UNKNOWN_OWNED_ID");
+  await changeRejected(owner, saved.id, command(owner, { startRaw: "2026-06-01T10:30:00-03:00" }), "LEAD_TIME", { now: "2026-06-01T09:30:00.001-03:00" });
+  // Clock must remain before CURRENT start; exact one-hour new start is accepted.
+  expect((await change(owner, saved.id, command(owner, { startRaw: "2026-06-01T10:30:00-03:00" }), { now: "2026-06-01T09:30:00-03:00" })).startMs).toBe(start + 30 * minutes);
+  for (const state of ["done", "cancelled", "no_show"]) {
+    await database.sql`update appointments set state=${state} where id=${saved.id}`;
+    await changeRejected(owner, saved.id, command(owner), "STATE_LOCKED");
+  }
+});
+
+test("actual changes use whole agreed interval, current eligibility, closures and selected-resource capacity", async () => {
+  const owner = await readyOwner(), saved = await book(owner);
+  const input = command(owner, { resourceId: owner.alternate });
+  await database.sql`update resources set weekly_schedule='{"1":[{"startMinute":600,"endMinute":610},{"startMinute":611,"endMinute":630}]}' where id=${owner.alternate}`;
+  await changeRejected(owner, saved.id, input, "UNAVAILABLE");
+  await database.sql`update resources set weekly_schedule=${database.sql.json(full)},status='suspended' where id=${owner.alternate}`;
+  await changeRejected(owner, saved.id, input, "INELIGIBLE_CATALOG");
+  await database.sql`update resources set status='active' where id=${owner.alternate}`;
+  await database.sql`delete from resource_services where resource_id=${owner.alternate}`;
+  await changeRejected(owner, saved.id, input, "INELIGIBLE_CATALOG");
+  await database.sql`insert into resource_services values(${owner.business},${owner.alternate},${owner.service})`;
+  await database.sql`update services set status='suspended' where id=${owner.service}`;
+  await changeRejected(owner, saved.id, input, "INELIGIBLE_CATALOG");
+  await database.sql`update services set status='active' where id=${owner.service}`;
+  await changeRejected(owner, saved.id, command(owner, { startRaw: "2026-06-01T11:01:00-03:00" }), "UNAVAILABLE");
+  const closure = randomUUID();
+  await database.sql`insert into business_calendar_closures(id,business_id,kind,closed_date) values(${closure},${owner.business},'date','2026-06-01')`;
+  await changeRejected(owner, saved.id, input, "UNAVAILABLE");
+  await database.sql`delete from business_calendar_closures where id=${closure}`;
+  await database.sql`insert into business_calendar_closures(id,business_id,kind,start_raw,end_raw,start_ms,end_ms)
+    values(${closure},${owner.business},'interval','2026-06-01T10:14:00-03:00','2026-06-01T10:16:00-03:00',${start + 14 * minutes},${start + 16 * minutes})`;
+  await changeRejected(owner, saved.id, input, "UNAVAILABLE");
+  await database.sql`delete from business_calendar_closures where id=${closure}`;
+  await database.sql`update resources set weekly_schedule='{}' where id=${owner.alternate}`;
+  await changeRejected(owner, saved.id, input, "UNAVAILABLE");
+  await database.sql`update resources set weekly_schedule=${database.sql.json(full)} where id=${owner.alternate}`;
+  await insert(row(owner, { state: "confirmed", start_ms: -62135683140000, end_ms: -62135683140000 + 15 * minutes }));
+  const busy = await insert(row(owner, { state: "confirmed", resource_id: owner.alternate }));
+  await changeRejected(owner, saved.id, input, "BUSY");
+  await database.sql`update appointments set state='done' where id=${busy.id}`;
+  expect((await change(owner, saved.id, input)).terms.resourceId).toBe(owner.alternate);
+  expect((await change(owner, saved.id, command(owner))).terms.resourceId).toBe(owner.resource);
+});
+
+test("trusted explicit customer expressions create/update preference; assignment and body fields do not", async () => {
+  const owner = await readyOwner(), foreign = await readyOwner();
+  await database.sql`update resources set status='suspended',weekly_schedule='{}' where id=${owner.alternate}`;
+  const saved = await book(owner, command(owner, { customerResourcePreference: foreign.resource }), {
+    origin: "manual", now, customerResourceExpression: { kind: "chosen", resourceId: owner.alternate.toUpperCase() },
+  });
+  expect(saved.customerResourcePreference).toBe(owner.alternate);
+  await database.sql`update resources set status='active',weekly_schedule=${database.sql.json(full)} where id=${owner.alternate}`;
+  expect((await change(owner, saved.id, command(owner, { resourceId: owner.alternate }))).customerResourcePreference).toBe(owner.alternate);
+  const chosen = await change(owner, saved.id, command(owner, { resourceId: owner.resource }), { now, customerResourceExpression: { kind: "chosen", resourceId: owner.resource.toUpperCase() } });
+  expect(chosen.customerResourcePreference).toBe(owner.resource);
+  expect((await change(owner, saved.id, command(owner, { resourceId: owner.alternate, customerResourcePreference: foreign.resource }))).customerResourcePreference).toBe(owner.resource);
+  expect((await change(owner, saved.id, command(owner), { now, customerResourceExpression: { kind: "none" } })).customerResourcePreference).toBeNull();
+  for (const expression of [{ kind: "chosen", resourceId: foreign.resource }, { kind: "chosen", resourceId: randomUUID() }]) {
+    await changeRejected(owner, saved.id, command(owner), "UNKNOWN_OWNED_ID", { now, customerResourceExpression: expression as { kind: "chosen"; resourceId: string } });
+    await rejected(owner, command(owner, { startRaw: "2026-06-01T11:00:00-03:00" }), "UNKNOWN_OWNED_ID", { origin: "manual", now, customerResourceExpression: expression } as AppointmentCreationContext);
+  }
+  for (const expression of [{ kind: "unknown" }, { kind: "chosen", resourceId: "bad" }]) {
+    await changeRejected(owner, saved.id, command(owner), "INVALID_INPUT", { now, customerResourceExpression: expression } as AppointmentChangeContext);
+    await rejected(owner, command(owner, { startRaw: "2026-06-01T11:00:00-03:00" }), "INVALID_INPUT", { origin: "manual", now, customerResourceExpression: expression } as AppointmentCreationContext);
+  }
+  const none = await book(owner, command(owner, { startRaw: "2026-06-01T11:00:00-03:00" }), { origin: "ai", now, customerResourceExpression: { kind: "none" } });
+  expect(none.customerResourcePreference).toBeNull();
+  await changeRejected(owner, saved.id, command(owner), "STARTED_STRUCTURE_LOCKED", { now: "2026-06-01T10:00:00-03:00", customerResourceExpression: { kind: "chosen", resourceId: owner.alternate } });
+  expect((await change(owner, saved.id, command(owner), { now: "2026-06-01T10:00:00-03:00" })).customerResourcePreference).toBeNull();
+});
+
+test("upcoming preference-only metadata remains editable with suspended catalogs and cleared hours", async () => {
+  const owner = await readyOwner();
+  const saved = await book(owner, command(owner, { notes: "Keep notes" }), { origin: "ai", now });
+  const before = await physical(saved.id);
+  // Fixture drift characterizes existing bookings, not future T09 catalog mutation guards.
+  await database.sql`update services set status='suspended' where id=${owner.service}`;
+  await database.sql`update resources set status='suspended',weekly_schedule='{}' where id=${owner.resource}`;
+  await database.sql`update business_calendars set weekly_schedule='{}' where business_id=${owner.business}`;
+  const clock = "2026-06-01T09:30:00-03:00";
+  const stableFields = (row: Record<string, unknown>) => {
+    const { customer_resource_preference_id: _preference, updated_at: _updated, ...stable } = row;
+    return stable;
+  };
+  const chosen = await change(owner, saved.id, command(owner), {
+    now: clock, customerResourceExpression: { kind: "chosen", resourceId: owner.alternate },
+  });
+  expect(chosen).toEqual({ ...saved, customerResourcePreference: owner.alternate });
+  const chosenRow = await physical(saved.id);
+  expect(stableFields(chosenRow)).toEqual(stableFields(before));
+  expect((await change(owner, saved.id, command(owner), { now: clock })).customerResourcePreference).toBe(owner.alternate);
+  expect(await physical(saved.id)).toEqual(chosenRow);
+  const cleared = await change(owner, saved.id, command(owner), {
+    now: clock, customerResourceExpression: { kind: "none" },
+  });
+  expect(cleared).toEqual(saved);
+  const clearedRow = await physical(saved.id);
+  expect(stableFields(clearedRow)).toEqual(stableFields(before));
+  expect((await change(owner, saved.id, command(owner), { now: clock })).customerResourcePreference).toBeNull();
+  expect(await physical(saved.id)).toEqual(clearedRow);
+});
+
+test("structural UPDATE and caller audit/outbox failures roll back original snapshot/preference", async () => {
+  const owner = await readyOwner(), saved = await book(owner);
+  for (const table of ["appointments", "audit_events", "outbox_events"]) {
+    await database.sql.unsafe(`create function appointment_change_failure() returns trigger language plpgsql as $$ begin raise exception 'fixture failure'; end $$`);
+    await database.sql.unsafe(`create trigger appointment_change_failure before ${table === "appointments" ? "update" : "insert"} on ${table} for each row execute function appointment_change_failure()`);
+    try { await changeRejected(owner, saved.id, command(owner, { resourceId: owner.alternate }), "P0001", { now, customerResourceExpression: { kind: "chosen", resourceId: owner.alternate } }); }
+    finally {
+      await database.sql.unsafe(`drop trigger appointment_change_failure on ${table}`);
+      await database.sql`drop function appointment_change_failure()`;
+    }
+  }
+});
+
+test("concurrent edit versus creation arbitrates selected capacity and preserves immutable identity", async () => {
+  const owner = await readyOwner(), saved = await book(owner);
+  const results = await Promise.allSettled([
+    change(owner, saved.id, command(owner, { startRaw: "2026-06-01T11:00:00-03:00" })),
+    book(owner, command(owner, { startRaw: "2026-06-01T11:00:00-03:00", clientId: undefined, newClient: clientInput })),
+  ]);
+  expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+  expect(results.find(result => result.status === "rejected")).toMatchObject({ reason: { code: "BUSY" } });
+  const current = await new RolePool(runtime, "agendia_runtime").run(context(owner), repo => repo.getAppointment(owner.business, saved.id));
+  expect(current!.client).toEqual(saved.client);
+  expect(current!.origin).toBe(saved.origin);
+});
+
+test("change locks before owned reads and rejects raw pools and mismatched tenant transactions", async () => {
+  const owner = await readyOwner(), saved = await book(owner), foreign = await readyOwner();
+  await expect(new PostgresRepositories(runtime).changeAppointment(owner.business, saved.id, command(owner), { now })).rejects.toThrow("requires a transaction");
+  await expect(new RolePool(runtime, "agendia_runtime").run(context(owner), repo => repo.changeAppointment(foreign.business, saved.id, command(owner), { now }))).rejects.toThrow("matching tenant");
+  await new RolePool(runtime, "agendia_runtime").run(context(owner), async repo => {
+    const lock = repo.acquireBusinessCalendarLock.bind(repo);
+    let locked = false;
+    repo.acquireBusinessCalendarLock = async scope => { await lock(scope); locked = true; };
+    for (const method of ["getAppointment", "getResource", "getBusinessCalendar", "listBusinessClosures"] as const) {
+      const read = repo[method].bind(repo) as (...args: string[]) => Promise<unknown>;
+      Object.assign(repo, { [method]: (...args: string[]) => { expect(locked).toBe(true); return read(...args); } });
+    }
+    expect((await repo.changeAppointment(owner.business.toUpperCase(), saved.id, command(owner, { resourceId: owner.alternate }), { now })).terms.resourceId).toBe(owner.alternate);
+  });
+});
+
+test("invalid saved terms fail with a typed error instead of authorizing a refresh", async () => {
+  const owner = await readyOwner(), saved = await book(owner);
+  const before = await physical(saved.id);
+  await code(new RolePool(runtime, "agendia_runtime").run(context(owner), async repo => {
+    const read = repo.getAppointment.bind(repo);
+    repo.getAppointment = async (...args) => {
+      const current = await read(...args);
+      return current ? { ...current, terms: { ...current.terms, priceArs: NaN } } : null;
+    };
+    return repo.changeAppointment(owner.business, saved.id, command(owner), { now });
+  }), "INVALID_INPUT");
+  expect(await physical(saved.id)).toEqual(before);
+});
+
+test("conditional update never reopens an appointment finalized by a raw writer after lookup", async () => {
+  const owner = await readyOwner(), saved = await book(owner);
+  const original = await physical(saved.id);
+  await code(new RolePool(runtime, "agendia_runtime").run(context(owner), async repo => {
+    const read = repo.listBusinessClosures.bind(repo);
+    repo.listBusinessClosures = async businessId => {
+      const closures = await read(businessId);
+      await database.sql`update appointments set state='cancelled' where id=${saved.id}`;
+      return closures;
+    };
+    return repo.changeAppointment(owner.business, saved.id, command(owner, { resourceId: owner.alternate }), { now });
+  }), "STATE_LOCKED");
+  expect(await physical(saved.id)).toEqual({ ...original, state: "cancelled" });
+});
+
+test("native UPDATE exclusion fallback rolls back the planned change and trigger fixture", async () => {
+  const owner = await readyOwner(), saved = await book(owner);
+  await database.sql.unsafe(`create function appointment_capacity_race() returns trigger language plpgsql security definer as $$
+    begin
+      insert into appointments(business_id,client_id,service_id,resource_id,service_label,resource_label,price_ars,
+        duration_minutes,start_raw,start_ms,end_ms,state,origin)
+      values(new.business_id,new.client_id,new.service_id,new.resource_id,new.service_label,new.resource_label,new.price_ars,
+        new.duration_minutes,new.start_raw,new.start_ms,new.end_ms,'confirmed','manual');
+      return new;
+    end $$`);
+  await database.sql`create trigger appointment_capacity_race before update on appointments for each row execute function appointment_capacity_race()`;
+  try { await changeRejected(owner, saved.id, command(owner, { startRaw: "2026-06-01T11:00:00-03:00" }), "BUSY"); }
+  finally {
+    await database.sql`drop trigger appointment_capacity_race on appointments`;
+    await database.sql`drop function appointment_capacity_race()`;
+  }
 });

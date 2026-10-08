@@ -5,7 +5,8 @@ import { replyDeadline } from "./reply-pacing.ts";
 import { z } from "zod";
 import { ClientInputSchema, InstantSchema, AppointmentOriginSchema, captureAppointmentTerms,
   isNewStartAllowed, isResourceEligibleForService, type AppointmentTermsSnapshot,
-  type AppointmentState, type AppointmentOrigin, type ClientInput } from "@agendia/domain";
+  type AppointmentState, type AppointmentOrigin, type ClientInput,
+  prepareAppointmentChange, resolveCustomerResourcePreference, type CustomerResourcePreferenceExpression } from "@agendia/domain";
 import { BusinessClosureInputSchema, parseInstantMs, WeeklyScheduleSchema,
   ResourceInputSchema, isResourceScheduleWithinBusiness, type ResourceInput,
   type BusinessClosure, type BusinessClosureInput, type WeeklySchedule } from "@agendia/domain";
@@ -122,7 +123,14 @@ export type CreateAppointmentInput = {
   serviceId: string; resourceId: string; startRaw: string; notes?: string | null;
 } & ({ clientId: string; newClient?: never } | { clientId?: never; newClient: ClientInput });
 /** Established by the authenticated caller, not fields of a booking body. */
-export type AppointmentCreationContext = { origin: AppointmentOrigin; now: string };
+export type AppointmentChangeContext = { now: string; customerResourceExpression?: CustomerResourcePreferenceExpression };
+export type AppointmentCreationContext = AppointmentChangeContext & { origin: AppointmentOrigin };
+export type ChangeAppointmentInput = { serviceId: string; resourceId: string; startRaw: string };
+const appointmentChangeCommand = z.object({ serviceId: appointmentId, resourceId: appointmentId, startRaw: InstantSchema });
+const customerExpression = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("chosen"), resourceId: appointmentId }), z.object({ kind: z.literal("none") }),
+]);
+const appointmentChangeFacts = z.object({ now: InstantSchema, customerResourceExpression: customerExpression.optional() });
 export type StoredAppointment = {
   id: string; client: RegistryClient; startsAt: string; startMs: number; endMs: number;
   terms: AppointmentTermsSnapshot; state: AppointmentState; origin: AppointmentOrigin;
@@ -143,7 +151,8 @@ const appointmentDto = (row: AppointmentRow): StoredAppointment => ({
   state: row.state, origin: row.origin, notes: row.notes, customerResourcePreference: row.customerResourcePreference,
 });
 export class AppointmentError extends Error {
-  constructor(readonly code: "INVALID_INPUT" | "UNKNOWN_OWNED_ID" | "INELIGIBLE_CATALOG" | "UNAVAILABLE" | "BUSY" | "CLIENT_CONFLICT") {
+  constructor(readonly code: "INVALID_INPUT" | "UNKNOWN_OWNED_ID" | "INELIGIBLE_CATALOG" | "UNAVAILABLE" | "BUSY" | "CLIENT_CONFLICT"
+    | "STATE_LOCKED" | "STARTED_STRUCTURE_LOCKED" | "LEAD_TIME") {
     super(code);
   }
 }
@@ -196,13 +205,13 @@ export class PostgresRepositories {
   }
   /** Caller UoW owns client + appointment + audit/outbox rollback; no messaging effects here.
    * Shared business lock precedes every lookup. SQL GiST remains the raw-writer backstop.
-   * Customer-expression preference is deferred to C; creation defaults to null.
+   * Only trusted explicit customer expression sets preference; absence defaults to null.
    */
   async createAppointment(businessId: string, input: unknown, trusted: AppointmentCreationContext): Promise<StoredAppointment> {
     await this.acquireBusinessCalendarLock({ businessId });
     businessId = businessId.toLowerCase();
     const parsed = appointmentCommand.safeParse(input);
-    const facts = z.object({ origin: AppointmentOriginSchema, now: InstantSchema }).safeParse(trusted);
+    const facts = appointmentChangeFacts.extend({ origin: AppointmentOriginSchema }).safeParse(trusted);
     if (!parsed.success || !facts.success) throw new AppointmentError("INVALID_INPUT");
     const value = parsed.data;
     const [service] = await this.db<CatalogService[]>`select id,name,description,duration_minutes "durationMinutes",
@@ -212,6 +221,7 @@ export class PostgresRepositories {
     if (!service || !resource || (value.clientId && !client)) throw new AppointmentError("UNKNOWN_OWNED_ID");
     if (!isResourceEligibleForService(resource, service))
       throw new AppointmentError("INELIGIBLE_CATALOG");
+    const preference = await this.appointmentPreference(businessId, null, facts.data.customerResourceExpression);
     const terms = captureAppointmentTerms(service, resource);
     const startMs = parseInstantMs(value.startRaw)!;
     const endMs = startMs + terms.durationMinutes * 60000;
@@ -232,14 +242,77 @@ export class PostgresRepositories {
       const selectedClient = client ?? await this.createClient(businessId, value.newClient!);
       const [saved] = await this.db<{ id: string }[]>`insert into appointments
         (business_id,client_id,service_id,resource_id,service_label,resource_label,price_ars,duration_minutes,
-         start_raw,start_ms,end_ms,state,origin,notes)
+         start_raw,start_ms,end_ms,state,origin,notes,customer_resource_preference_id)
         values(${businessId},${selectedClient.id},${terms.serviceId},${terms.resourceId},${terms.serviceName},${terms.resourceName},
-          ${terms.priceArs},${terms.durationMinutes},${value.startRaw},${startMs},${endMs},'confirmed',${facts.data.origin},${value.notes ?? null}) returning id`;
+          ${terms.priceArs},${terms.durationMinutes},${value.startRaw},${startMs},${endMs},'confirmed',${facts.data.origin},${value.notes ?? null},${preference}) returning id`;
       return (await this.getAppointment(businessId, saved!.id))!;
     } catch (error) {
       const code = (error as { code?: string }).code;
       if (code === "23P01") throw new AppointmentError("BUSY");
       if (code === "23505") throw new AppointmentError("CLIENT_CONFLICT");
+      throw error;
+    }
+  }
+  private async appointmentPreference(businessId: string, previous: string | null, expression?: CustomerResourcePreferenceExpression) {
+    const preference = resolveCustomerResourcePreference(previous, expression);
+    if (expression?.kind === "chosen" && !(await this.getResource(businessId, preference!)))
+      throw new AppointmentError("UNKNOWN_OWNED_ID");
+    return preference;
+  }
+  /** Otherwise-authorized structural changes or explicit upcoming customer-preference metadata.
+   * Preference-only changes do not require active catalogs/hours or promise availability;
+   * they never change schedule, agreed terms, assigned resource, client, notes, state or origin.
+   * Caller establishes explicit customer expression and any transport confirmation.
+   * The existing T07 planner owns identity/epoch no-op, agreed-term and time policy.
+   */
+  async changeAppointment(businessId: string, id: string, input: unknown, trusted: AppointmentChangeContext): Promise<StoredAppointment> {
+    await this.acquireBusinessCalendarLock({ businessId });
+    businessId = businessId.toLowerCase();
+    const ownedId = appointmentId.safeParse(id), parsed = appointmentChangeCommand.safeParse(input);
+    const facts = appointmentChangeFacts.safeParse(trusted);
+    if (!ownedId.success || !parsed.success || !facts.success) throw new AppointmentError("INVALID_INPUT");
+    id = ownedId.data;
+    const current = await this.getAppointment(businessId, id);
+    if (!current) throw new AppointmentError("UNKNOWN_OWNED_ID");
+    if (current.state !== "confirmed") throw new AppointmentError("STATE_LOCKED");
+    const [service] = await this.db<CatalogService[]>`select id,name,description,duration_minutes "durationMinutes",
+      price_ars::float8 "priceArs",status from services where business_id=${businessId} and id=${parsed.data.serviceId}`;
+    const resource = await this.getResource(businessId, parsed.data.resourceId);
+    if (!service || !resource) throw new AppointmentError("UNKNOWN_OWNED_ID");
+    const calendar = await this.getBusinessCalendar(businessId);
+    const closures = await this.listBusinessClosures(businessId);
+    const plan = prepareAppointmentChange(current, { startsAt: parsed.data.startRaw, service, resource }, {
+      now: facts.data.now, businessHours: calendar.weeklySchedule ?? {}, resourceHours: resource.weeklySchedule,
+      closedDates: closures.flatMap(closure => closure.kind === "date" ? [closure.date] : []),
+      closedIntervals: closures.flatMap(closure => closure.kind === "interval" ? [{ start: closure.start, end: closure.end }] : []),
+    });
+    if (!plan.ok) {
+      const errors = { state_locked: "STATE_LOCKED", invalid_change_input: "INVALID_INPUT",
+        started_structure_locked: "STARTED_STRUCTURE_LOCKED", ineligible_catalog: "INELIGIBLE_CATALOG",
+        structural_unavailable: "UNAVAILABLE", lead_time: "LEAD_TIME" } as const;
+      throw new AppointmentError(errors[plan.error]);
+    }
+    const preference = await this.appointmentPreference(businessId, current.customerResourcePreference, facts.data.customerResourceExpression);
+    const preferenceChanged = preference !== current.customerResourcePreference;
+    if (preferenceChanged && parseInstantMs(facts.data.now)! >= current.startMs)
+      throw new AppointmentError("STARTED_STRUCTURE_LOCKED");
+    if (!plan.changed && !preferenceChanged) return current;
+    const startMs = parseInstantMs(plan.startsAt)!, endMs = startMs + plan.terms.durationMinutes * 60000;
+    if (!Number.isSafeInteger(endMs) || endMs <= startMs || endMs > 253402387139999)
+      throw new AppointmentError("UNAVAILABLE");
+    const busy = await this.db`select id from appointments where business_id=${businessId} and resource_id=${plan.terms.resourceId}
+      and state='confirmed' and id<>${id} and start_ms<${endMs} and end_ms>${startMs} limit 1`;
+    if (busy.length) throw new AppointmentError("BUSY");
+    try {
+      const updated = await this.db`update appointments set service_id=${plan.terms.serviceId},resource_id=${plan.terms.resourceId},
+        service_label=${plan.terms.serviceName},resource_label=${plan.terms.resourceName},price_ars=${plan.terms.priceArs},
+        duration_minutes=${plan.terms.durationMinutes},start_raw=${plan.startsAt},start_ms=${startMs},end_ms=${endMs},
+        customer_resource_preference_id=${preference},updated_at=now()
+        where business_id=${businessId} and id=${id} and state='confirmed' returning id`;
+      if (!updated.length) throw new AppointmentError("STATE_LOCKED");
+      return (await this.getAppointment(businessId, id))!;
+    } catch (error) {
+      if ((error as { code?: string }).code === "23P01") throw new AppointmentError("BUSY");
       throw error;
     }
   }
