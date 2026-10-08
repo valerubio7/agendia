@@ -3,8 +3,9 @@ import { hash, Algorithm } from "@node-rs/argon2";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { buildApi } from "../../apps/api/src/app.ts";
-import { createRuntimePools, tenantContext } from "@agendia/db";
-import { applyPostgresMigrations, startTestPostgres, type TestPostgres } from "../support/index.ts";
+import postgres from "postgres";
+import { createRuntimePools, tenantContext, withTenantTransaction } from "@agendia/db";
+import { applyPostgresMigrations, createRoleLogin, startTestPostgres, type TestPostgres } from "../support/index.ts";
 
 const ORIGIN = "https://panel.agendia.test";
 const password = "correct horse battery staple";
@@ -164,7 +165,20 @@ test("unbounded Unicode names have no name uniqueness or Btree-size limit", asyn
 test("RLS fails closed and runtime cannot delete or insert another business", async () => {
   expect(await pools.api.run(undefined, repo => repo.listClients())).toHaveLength(0);
   expect(await pools.api.run(undefined, repo => repo.findClientByCanonicalPhone("+5491123456789"))).toBeNull();
-  await expect(pools.api.run(ctx(a), repo => repo.createClient(b.businessId, { ...input, phone: "+5491123456781" }))).rejects.toMatchObject({ code: "42501" });
+  const before = await effects();
+  await expect(pools.api.run(ctx(a), repo => repo.createClient(b.businessId, { ...input, phone: "+5491123456781" }))).rejects.toThrow("matching tenant context");
+  expect(await effects()).toEqual(before);
+  expect(await pools.api.run(ctx(b), repo => repo.findClientByCanonicalPhone("+5491123456781"))).toBeNull();
+  const ownedBefore = await pools.api.run(ctx(a), repo => repo.listClients());
+  const raw = postgres(await createRoleLogin(database, "client_rls_probe", "agendia_runtime"));
+  try {
+    // Bypass DAO guards: runtime role + tenant A directly attacks business B.
+    await expect(withTenantTransaction(raw, ctx(a), tx => tx`insert into clients(business_id,first_name,last_name,phone)
+      values(${b.businessId},'Valid','Client','+5491123456781')`)).rejects.toMatchObject({ code: "42501" });
+  } finally { await raw.end(); }
+  expect((await database.sql`select count(*)::int count from clients where business_id=${b.businessId} and phone='+5491123456781'`)[0]!.count).toBe(0);
+  expect(await pools.api.run(ctx(a), repo => repo.listClients())).toEqual(ownedBefore);
+  expect(await effects()).toEqual(before);
   const [permissions] = await database.sql`select has_table_privilege('agendia_runtime','clients','DELETE') deletion, relrowsecurity enabled, relforcerowsecurity forced from pg_class where oid='clients'::regclass`;
   expect(permissions).toEqual({ deletion: false, enabled: true, forced: true });
   for (const [firstName, lastName] of [["\t\ufeff", "Last"], ["First", "\u00a0 "]]) {
@@ -194,4 +208,23 @@ test("audit and outbox failures roll back create/update without orphans or reply
     await database.sql.unsafe(`create or replace function reject_client_effect_${table}() returns trigger language plpgsql as $$ begin return NEW; end $$`);
   }
   expect((await effects()).replies).toBe(0);
+});
+
+test("client HTTP create/edit already hold the shared business lock at their first write", async () => {
+  await database.sql.unsafe(`create function require_client_lock() returns trigger language plpgsql as $$
+    declare key bigint := hashtextextended('business-calendar:' || NEW.business_id::text,0);
+    begin if not exists(select 1 from pg_locks where locktype='advisory' and pid=pg_backend_pid()
+      and classid=((key >> 32) & 4294967295)::oid and objid=(key & 4294967295)::oid and objsubid=1 and granted)
+      then raise exception 'client write without lock'; end if; return NEW; end $$`);
+  await database.sql`create trigger require_client_lock before insert or update on clients for each row execute function require_client_lock()`;
+  try {
+    const created = await request("POST", undefined, a, { ...input, phone: "+5491123456785" });
+    expect(created.statusCode).toBe(201);
+    const edited = await request("PUT", `/me/clients/${created.json().id}`, a, { ...input, phone: "+5491123456786" });
+    expect(edited.statusCode).toBe(200);
+    expect(edited.json().id).toBe(created.json().id);
+  } finally {
+    await database.sql`drop trigger require_client_lock on clients`;
+    await database.sql`drop function require_client_lock()`;
+  }
 });

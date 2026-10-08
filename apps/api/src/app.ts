@@ -482,8 +482,7 @@ export function buildApi(input: AuthService | ApiOptions) {
     if (!parsed.success) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid closure fields");
     try {
       const saved = await tenantWrite(auth, request, "business_closure.created", async repo => {
-        await repo.acquireBusinessCalendarLock(context(auth, request));
-        // Confirmed-booking guards integrate here in T09 before full calendar acceptance.
+        // Repository acquires the early lock; future-booking guards follow in T09-B.
         return repo.createBusinessClosure(auth.business_id!, parsed.data);
       });
       return reply.code(201).send(saved);
@@ -497,7 +496,6 @@ export function buildApi(input: AuthService | ApiOptions) {
     if (!params.success || !parsed.success) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid closure fields");
     try {
       return await tenantWrite(auth, request, "business_closure.updated", async repo => {
-        await repo.acquireBusinessCalendarLock(context(auth, request));
         const saved = await repo.updateBusinessClosure(auth.business_id!, params.data.id, parsed.data);
         if (!saved) throw closureMissing;
         return saved;
@@ -511,7 +509,6 @@ export function buildApi(input: AuthService | ApiOptions) {
     if (!params.success) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid closure ID");
     try {
       await tenantWrite(auth, request, "business_closure.deleted", async repo => {
-        await repo.acquireBusinessCalendarLock(context(auth, request));
         if (!await repo.deleteBusinessClosure(auth.business_id!, params.data.id)) throw closureMissing;
       });
       return reply.code(204).send();
@@ -656,7 +653,7 @@ export function buildApi(input: AuthService | ApiOptions) {
       return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid client fields");
     try {
       return await tenantWrite(auth, request, "client.updated", async repo => {
-        const saved = await repo.updateClient(params.data.id, parsed.data);
+        const saved = await repo.updateClient(auth.business_id!, params.data.id, parsed.data);
         if (!saved) throw clientNotFound;
         return saved;
       });
@@ -708,7 +705,7 @@ export function buildApi(input: AuthService | ApiOptions) {
       return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid service fields");
     try {
       return await tenantWrite(auth, request, "service.updated", async repo => {
-        const saved = await repo.updateService(params.data.id, parsed.data);
+        const saved = await repo.updateService(auth.business_id!, params.data.id, parsed.data);
         if (!saved) throw serviceNotFound;
         return saved;
       });
@@ -725,7 +722,7 @@ export function buildApi(input: AuthService | ApiOptions) {
       return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid service status");
     try {
       return await tenantWrite(auth, request, "service.status_changed", async repo => {
-        const saved = await repo.setServiceStatus(params.data.id, parsed.data.status);
+        const saved = await repo.setServiceStatus(auth.business_id!, params.data.id, parsed.data.status);
         if (!saved) throw serviceNotFound;
         return saved;
       });

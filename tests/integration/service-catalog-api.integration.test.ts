@@ -3,9 +3,10 @@ import { hash, Algorithm } from "@node-rs/argon2";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { buildApi } from "../../apps/api/src/app.ts";
-import { createRuntimePools, tenantContext } from "@agendia/db";
+import postgres from "postgres";
+import { createRuntimePools, tenantContext, withTenantTransaction } from "@agendia/db";
 import { normalizeServiceName } from "@agendia/domain";
-import { applyPostgresMigrations, startTestPostgres, type TestPostgres } from "../support/index.ts";
+import { applyPostgresMigrations, createRoleLogin, startTestPostgres, type TestPostgres } from "../support/index.ts";
 
 const ORIGIN = "https://panel.agendia.test";
 const password = "correct horse battery staple";
@@ -178,13 +179,61 @@ test("runtime RLS isolates reads/inserts/updates and has no DELETE grant; DB val
   expect((await pools.api.run(undefined, repo => repo.listServices())).length).toBe(0);
   const rows = await pools.api.run(ctx(a), repo => repo.listServices());
   expect(rows.some(row => row.id === own.id)).toBe(false);
-  expect(await pools.api.run(ctx(a), repo => repo.updateService(own.id, input))).toBeNull();
-  expect(await pools.api.run(ctx(a), repo => repo.setServiceStatus(own.id, "suspended"))).toBeNull();
-  await expect(pools.api.run(ctx(a), repo => repo.createService(b.businessId, { ...input, name: "Forbidden" }))).rejects.toMatchObject({ code: "42501" });
+  const before = await effects();
+  expect(await pools.api.run(ctx(a), repo => repo.updateService(a.businessId, own.id, input))).toBeNull();
+  expect(await pools.api.run(ctx(a), repo => repo.setServiceStatus(a.businessId, own.id, "suspended"))).toBeNull();
+  await expect(pools.api.run(ctx(a), repo => repo.createService(b.businessId, { ...input, name: "Forbidden" }))).rejects.toThrow("matching tenant context");
+  const raw = postgres(await createRoleLogin(database, "service_rls_probe", "agendia_runtime"));
+  try {
+    // Fully valid scalars; no DAO guard or business-B lock precedes this physical RLS probe.
+    await expect(withTenantTransaction(raw, ctx(a), tx => tx`insert into services(business_id,name,duration_minutes,price_ars)
+      values(${b.businessId},'Physical RLS probe',15,0)`)).rejects.toMatchObject({ code: "42501" });
+  } finally { await raw.end(); }
+  expect((await database.sql`select count(*)::int count from services where business_id=${b.businessId} and name='Physical RLS probe'`)[0]!.count).toBe(0);
+  expect(await pools.api.run(ctx(a), repo => repo.listServices())).toEqual(rows);
+  expect(await effects()).toEqual(before);
   const [permissions] = await database.sql`select has_table_privilege('agendia_runtime','services','DELETE') deletion, relrowsecurity enabled, relforcerowsecurity forced from pg_class where oid='services'::regclass`;
   expect(permissions).toEqual({ deletion: false, enabled: true, forced: true });
   for (const [duration, price, name, status] of [[0, "0", "bad", "active"], [16, "0", "bad", "active"], [15, "-1", "bad", "active"], [15, "NaN", "bad", "active"], [15, "Infinity", "bad", "active"], [15, "0", "\t\ufeff", "active"], [15, "0", "bad", "deleted"]] as const) {
     await expect(database.sql`insert into services(business_id,name,duration_minutes,price_ars,status) values(${a.businessId},${name},${duration},${price}::numeric,${status})`.execute()).rejects.toMatchObject({ code: "23514" });
   }
   expect((await request("GET", undefined, b)).json()).toContainEqual(own);
+});
+
+test("service HTTP mutations hold the shared lock and audit/outbox failures roll back every write", async () => {
+  await database.sql.unsafe(`create function require_service_lock() returns trigger language plpgsql as $$
+    declare key bigint := hashtextextended('business-calendar:' || NEW.business_id::text,0);
+    begin if not exists(select 1 from pg_locks where locktype='advisory' and pid=pg_backend_pid()
+      and classid=((key >> 32) & 4294967295)::oid and objid=(key & 4294967295)::oid and objsubid=1 and granted)
+      then raise exception 'service write without lock'; end if; return NEW; end $$`);
+  await database.sql`create trigger require_service_lock before insert or update on services for each row execute function require_service_lock()`;
+  try {
+    const created = await request("POST", undefined, a, { ...input, name: "Locked service" });
+    expect(created.statusCode).toBe(201);
+    const id = created.json().id;
+    const updated = await request("PUT", `/me/services/${id}`, a, { ...input, name: "Locked edit" });
+    expect(updated.statusCode).toBe(200);
+    expect((await request("PUT", `/me/services/${id}/status`, a, { status: "suspended" })).statusCode).toBe(200);
+    for (const table of ["audit_events", "outbox_events"]) {
+      await database.sql.unsafe(`create function reject_service_effect() returns trigger language plpgsql as $$ begin raise exception 'forced service effect failure'; end $$`);
+      await database.sql.unsafe(`create trigger reject_service_effect before insert on ${table} for each row execute function reject_service_effect()`);
+      try {
+        const before = await effects(), rows = (await request("GET", undefined, a)).json();
+        for (const [method, url, body] of [["POST", "/me/services", { ...input, name: "Not saved" }],
+          ["PUT", `/me/services/${id}`, { ...input, name: "Not saved" }], ["PUT", `/me/services/${id}/status`, { status: "active" }]] as const) {
+          const failed = await request(method, url, a, body);
+          expect(failed.statusCode).toBe(500);
+          expect(failed.body).not.toMatch(/forced service|postgres|sql/i);
+          expect((await request("GET", undefined, a)).json()).toEqual(rows);
+          expect(await effects()).toEqual(before);
+        }
+      } finally {
+        await database.sql.unsafe(`drop trigger reject_service_effect on ${table}`);
+        await database.sql`drop function reject_service_effect()`;
+      }
+    }
+  } finally {
+    await database.sql`drop trigger require_service_lock on services`;
+    await database.sql`drop function require_service_lock()`;
+  }
 });

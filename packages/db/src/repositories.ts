@@ -409,6 +409,7 @@ export class PostgresRepositories {
   }
   /** All closure mutations require the shared early calendar lock in the caller's UoW. */
   async createBusinessClosure(businessId: string, input: BusinessClosureInput): Promise<BusinessClosure> {
+    await this.acquireBusinessCalendarLock({ businessId });
     const v = closureValues(input);
     const [row] = await this.db<ClosureRow[]>`insert into business_calendar_closures
       (business_id,kind,closed_date,start_raw,end_raw,start_ms,end_ms)
@@ -417,6 +418,7 @@ export class PostgresRepositories {
     return closureDto(row!);
   }
   async updateBusinessClosure(businessId: string, id: string, input: BusinessClosureInput): Promise<BusinessClosure | null> {
+    await this.acquireBusinessCalendarLock({ businessId });
     const v = closureValues(input);
     const [row] = await this.db<ClosureRow[]>`update business_calendar_closures set kind=${v.kind},closed_date=${v.date},
       start_raw=${v.start},end_raw=${v.end},start_ms=${v.startMs},end_ms=${v.endMs}
@@ -425,6 +427,7 @@ export class PostgresRepositories {
     return row ? closureDto(row) : null;
   }
   async deleteBusinessClosure(businessId: string, id: string): Promise<boolean> {
+    await this.acquireBusinessCalendarLock({ businessId });
     const rows = await this.db`delete from business_calendar_closures where business_id=${businessId} and id=${id} returning id`;
     return rows.length > 0;
   }
@@ -503,16 +506,18 @@ export class PostgresRepositories {
     return row ?? null;
   }
   async createClient(businessId: string, input: ClientRegistryInput) {
+    await this.acquireBusinessCalendarLock({ businessId });
     const [row] = await this.db<RegistryClient[]>`
       insert into clients(business_id,first_name,last_name,phone)
       values(${businessId},${input.firstName},${input.lastName},${input.phone})
       returning id,first_name "firstName",last_name "lastName",phone`;
     return row!;
   }
-  async updateClient(id: string, input: ClientRegistryInput) {
+  async updateClient(businessId: string, id: string, input: ClientRegistryInput) {
+    await this.acquireBusinessCalendarLock({ businessId });
     const [row] = await this.db<RegistryClient[]>`
       update clients set first_name=${input.firstName},last_name=${input.lastName},phone=${input.phone}
-      where id=${id} returning id,first_name "firstName",last_name "lastName",phone`;
+      where business_id=${businessId} and id=${id} returning id,first_name "firstName",last_name "lastName",phone`;
     return row ?? null;
   }
   listServices() {
@@ -521,22 +526,25 @@ export class PostgresRepositories {
       from services order by normalized_name,id`;
   }
   async createService(businessId: string, input: ServiceCatalogInput) {
+    await this.acquireBusinessCalendarLock({ businessId });
     const [row] = await this.db<CatalogService[]>`
       insert into services(business_id,name,description,duration_minutes,price_ars)
       values(${businessId},${input.name},${input.description ?? null},${input.durationMinutes},${input.priceArs})
       returning id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status`;
     return row!;
   }
-  async updateService(id: string, input: ServiceCatalogInput) {
+  async updateService(businessId: string, id: string, input: ServiceCatalogInput) {
+    await this.acquireBusinessCalendarLock({ businessId });
     const [row] = await this.db<CatalogService[]>`
       update services set name=${input.name},description=${input.description ?? null},
-      duration_minutes=${input.durationMinutes},price_ars=${input.priceArs} where id=${id}
+      duration_minutes=${input.durationMinutes},price_ars=${input.priceArs} where business_id=${businessId} and id=${id}
       returning id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status`;
     return row ?? null;
   }
-  async setServiceStatus(id: string, status: CatalogService["status"]) {
+  async setServiceStatus(businessId: string, id: string, status: CatalogService["status"]) {
+    await this.acquireBusinessCalendarLock({ businessId });
     const [row] = await this.db<CatalogService[]>`
-      update services set status=${status} where id=${id}
+      update services set status=${status} where business_id=${businessId} and id=${id}
       returning id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status`;
     return row ?? null;
   }

@@ -851,3 +851,128 @@ test("business/client history shares current client projection, frozen terms, ev
     from generate_series(1,110) n`;
   expect(await history(owner, { clientId: owner.client })).toHaveLength(114);
 });
+
+const serviceEdit = { name: "Edited terms", durationMinutes: 30, priceArs: 80 };
+const clientEdit = { firstName: "Edited", lastName: "Identity", phone: "+5491198765432" };
+const catalogMutations = (owner: Owner, closure: string): Array<(repo: PostgresRepositories, business?: string) => Promise<unknown>> => [
+  (repo: PostgresRepositories, business = owner.business) => repo.createClient(business, { ...clientEdit, phone: "+5491187654321" }),
+  (repo: PostgresRepositories, business = owner.business) => repo.updateClient(business, owner.client, clientEdit),
+  (repo: PostgresRepositories, business = owner.business) => repo.createService(business, { ...serviceEdit, name: "Another service" }),
+  (repo: PostgresRepositories, business = owner.business) => repo.updateService(business, owner.service, serviceEdit),
+  (repo: PostgresRepositories, business = owner.business) => repo.setServiceStatus(business, owner.service, "suspended"),
+  (repo: PostgresRepositories, business = owner.business) => repo.createBusinessClosure(business, { kind: "date", date: "2026-06-02" }),
+  (repo: PostgresRepositories, business = owner.business) => repo.updateBusinessClosure(business, closure, { kind: "date", date: "2026-06-03" }),
+  (repo: PostgresRepositories, business = owner.business) => repo.deleteBusinessClosure(business, closure),
+];
+const waitForAdvisory = async () => {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const [activity] = await database.sql`select exists(select 1 from pg_stat_activity
+      where usename='appointment_test' and wait_event='advisory') waiting`;
+    if (activity!.waiting) return;
+  }
+  throw new Error("Expected an observed advisory-lock waiter");
+};
+const orderedCatalogRace = async <T, U>(owner: Owner, first: (repo: PostgresRepositories) => Promise<T>, second: (repo: PostgresRepositories) => Promise<U>) => {
+  let release!: () => void, entered!: () => void, failed!: (error: unknown) => void;
+  const ready = new Promise<void>((resolve, reject) => { entered = resolve; failed = reject; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const pool = new RolePool(runtime, "agendia_runtime");
+  const winner = pool.run(context(owner), async repo => { const result = await first(repo); entered(); await gate; return result; });
+  void winner.catch(failed);
+  await ready;
+  const loser = pool.run(context(owner), second).then(result => ({ result }), error => ({ error }));
+  try { await waitForAdvisory(); } finally { release(); }
+  return [await winner, await loser] as const;
+};
+
+test("every client/service/closure mutation rejects raw pools and mismatched scope before writing", async () => {
+  const owner = await readyOwner(), foreign = await readyOwner();
+  const closure = (await insertClosure(owner)).id;
+  const before = await effects(owner);
+  for (const mutate of catalogMutations(owner, closure)) {
+    await expect(mutate(new PostgresRepositories(runtime))).rejects.toThrow("requires a transaction");
+    await expect(new RolePool(runtime, "agendia_runtime").run(context(owner), repo => mutate(repo, foreign.business))).rejects.toThrow("matching tenant context");
+  }
+  expect(await effects(owner)).toEqual(before);
+  expect((await database.sql`select first_name,phone from clients where id=${owner.client}`)[0]).toEqual({ first_name: "Current", phone: "+5491123456789" });
+  expect((await database.sql`select name,status from services where id=${owner.service}`)[0]).toEqual({ name: "Current service", status: "active" });
+});
+const insertClosure = async (owner: Owner) => (await database.sql<{ id: string }[]>`insert into business_calendar_closures(business_id,kind,closed_date)
+  values(${owner.business},'date','2026-06-02') returning id`)[0]!;
+
+test("direct supported client/service/closure mutations wait at the first shared lock", async () => {
+  const owner = await readyOwner(), closure = await insertClosure(owner);
+  for (const mutate of catalogMutations(owner, closure.id)) {
+    const [_, outcome] = await orderedCatalogRace(owner,
+      async repo => { await repo.acquireBusinessCalendarLock(context(owner)); }, repo => mutate(repo));
+    expect(outcome).toHaveProperty("result");
+  }
+});
+
+test("service/client edits first make booking capture coherent new terms and current identity", async () => {
+  const owner = await readyOwner();
+  const [_, outcome] = await orderedCatalogRace(owner, async repo => {
+    await repo.updateService(owner.business, owner.service, serviceEdit);
+    await repo.updateClient(owner.business, owner.client, clientEdit);
+  }, repo => repo.createAppointment(owner.business, command(owner), { origin: "manual", now }));
+  if (!("result" in outcome)) throw outcome.error;
+  expect(outcome.result.terms).toMatchObject({ serviceName: serviceEdit.name, priceArs: 80, durationMinutes: 30 });
+  expect(outcome.result.client).toEqual({ id: owner.client, ...clientEdit });
+  expect(outcome.result.endMs).toBe(start + 30 * minutes);
+});
+
+test("booking first preserves old snapshot while later client edits remain current by stable ID", async () => {
+  const owner = await readyOwner();
+  const [saved, outcome] = await orderedCatalogRace(owner,
+    repo => repo.createAppointment(owner.business, command(owner), { origin: "manual", now }), async repo => {
+      await repo.updateService(owner.business, owner.service, serviceEdit);
+      await repo.updateClient(owner.business, owner.client, clientEdit);
+      await repo.setServiceStatus(owner.business, owner.service, "suspended");
+    });
+  expect(outcome).toHaveProperty("result");
+  const [current] = await history(owner);
+  expect(current!.terms).toEqual(saved.terms);
+  expect(current!.state).toBe("confirmed");
+  expect(current!.client).toEqual({ id: owner.client, ...clientEdit });
+});
+
+test("suspension first rejects the waiting new booking without creating a client", async () => {
+  const owner = await readyOwner(), before = await effects(owner);
+  const [_, outcome] = await orderedCatalogRace(owner, repo => repo.setServiceStatus(owner.business, owner.service, "suspended"),
+    repo => repo.createAppointment(owner.business, { ...command(owner), clientId: undefined, newClient: clientInput }, { origin: "ai", now }));
+  expect(outcome).toMatchObject({ error: { code: "INELIGIBLE_CATALOG" } });
+  expect(await effects(owner)).toEqual(before);
+});
+
+test("shared catalog/closure/booking UoW rolls back mutation and audit/outbox failures together", async () => {
+  const owner = await readyOwner(), saved = await book(owner);
+  const snapshot = async () => (await database.sql`select
+    (select jsonb_agg(c) from clients c where business_id=${owner.business}) clients,
+    (select jsonb_agg(s) from services s where business_id=${owner.business}) services,
+    (select jsonb_agg(c) from business_calendar_closures c where business_id=${owner.business}) closures,
+    (select jsonb_agg(a) from appointments a where business_id=${owner.business}) appointments`)[0]!;
+  const before = await snapshot(), counts = await effects(owner);
+  for (const table of ["services", "appointments", "audit_events", "outbox_events"]) {
+    await database.sql.unsafe(`create function catalog_booking_failure() returns trigger language plpgsql as $$ begin raise exception 'forced catalog booking failure'; end $$`);
+    await database.sql.unsafe(`create trigger catalog_booking_failure before ${table === "services" ? "update" : "insert"} on ${table} for each row execute function catalog_booking_failure()`);
+    try {
+      await code(new TenantUnitOfWork(new RolePool(runtime, "agendia_runtime")).execute(context(owner), {
+        audit: { eventType: "catalog.updated", outcome: "success", eventHash: "a".repeat(64) },
+        outbox: { topic: "catalog.updated", stableKey: randomUUID(), payload: {} },
+      }, async repo => {
+        await repo.updateClient(owner.business, owner.client, clientEdit);
+        await repo.createBusinessClosure(owner.business, { kind: "date", date: "2026-06-02" });
+        await repo.updateService(owner.business, owner.service, serviceEdit);
+        return repo.createAppointment(owner.business, command(owner, { startRaw: "2026-06-01T11:00:00-03:00" }), { origin: "manual", now });
+      }), "P0001");
+      expect(await snapshot()).toEqual(before);
+      expect(await effects(owner)).toEqual(counts);
+    } finally {
+      await database.sql.unsafe(`drop trigger catalog_booking_failure on ${table}`);
+      await database.sql`drop function catalog_booking_failure()`;
+    }
+  }
+  expect((await physical(saved.id)).state).toBe("confirmed");
+  const [jobs] = await database.sql`select count(*)::int count from outbox_events where business_id=${owner.business} and (topic like 'ai.%' or topic like 'whatsapp.%')`;
+  expect(jobs!.count).toBe(0);
+});
