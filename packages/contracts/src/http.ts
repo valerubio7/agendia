@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CalendarDateSchema, AppointmentTermsSnapshotSchema, InstantSchema, parseInstantMs, AppointmentStateSchema, AppointmentOriginSchema, type BusinessClosure, type BusinessClosureInput, type WeeklySchedule, type ResourceInput } from "@agendia/domain";
+import { ClientInputSchema, CalendarDateSchema, AppointmentTermsSnapshotSchema, InstantSchema, parseInstantMs, AppointmentStateSchema, AppointmentOriginSchema, type BusinessClosure, type BusinessClosureInput, type WeeklySchedule, type ResourceInput } from "@agendia/domain";
 
 const appointmentId = z.string().uuid();
 export const AppointmentListQuerySchema = z.object({
@@ -27,6 +27,17 @@ export const AvailabilitySlotSchema = z.object({
   start: InstantSchema, startMs: z.number().int().safe(), endMs: z.number().int().safe(),
   resourceId: availabilityId, terms: AppointmentTermsSnapshotSchema.unwrap().strict(),
 }).strict();
+/** Optimistic offered terms are a precondition, never persistence authority or sender proof. */
+export const ManualAppointmentCreateSchema = z.object({
+  serviceId: availabilityId, resourceId: availabilityId, startRaw: InstantSchema, date: CalendarDateSchema,
+  expectedTerms: AvailabilitySlotSchema.shape.terms.extend({ serviceId: availabilityId, resourceId: availabilityId })
+    .refine(terms => !terms.serviceName.includes("\0") && !terms.resourceName.includes("\0")),
+  confirmed: z.literal(true), clientId: availabilityId.optional(),
+  newClient: ClientInputSchema.strict().refine(client => !client.firstName.includes("\0") && !client.lastName.includes("\0")).optional(),
+  notes: z.string().refine(notes => !notes.includes("\0")).optional(),
+}).strict().refine(value => (value.clientId !== undefined) !== (value.newClient !== undefined), { message: "Exactly one client source is required" });
+export type ManualAppointmentCreateRequest = z.infer<typeof ManualAppointmentCreateSchema>;
+export type ManualAppointmentCreateResponse = AppointmentRecord;
 export type AvailabilitySlot = z.infer<typeof AvailabilitySlotSchema>;
 export type AppointmentAvailabilityQuery = z.infer<typeof AppointmentAvailabilityQuerySchema>;
 export type ResourceRequest = ResourceInput;
@@ -159,6 +170,15 @@ export function toOpenApiDocument() {
               : { $ref: "#/components/schemas/AppointmentRecord" } } },
           }])),
         },
+        ...(route === "/me/appointments" ? { post: {
+          summary: "Create a Confirmed manual appointment (business session, Origin and CSRF required)",
+          description: "Strict body; exactly one owned clientId or newClient. confirmed must be literal true: explicit manual commit, not customer/AI sender proof. date is the selected local calendar date. Server revalidates exact epoch availability and every expectedTerms field under the business lock; terms are only an optimistic precondition. Persisted identity and terms come from the server. No customer preference, WhatsApp jobs or idempotency guarantee.",
+          requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/ManualAppointmentCreate" } } } },
+          responses: Object.fromEntries([201, 400, 401, 403, 404, 409, 500].map(status => [String(status), {
+            description: status === 201 ? "Current client identity and server snapshot" : status === 400 ? "VALIDATION_FAILED: invalid strict body or confirmation" : status === 401 ? "UNAUTHENTICATED: session required" : status === 403 ? "FORBIDDEN: business role, Origin or CSRF" : status === 404 ? "NOT_FOUND: foreign, missing or retired owned ID" : status === 409 ? "CONFLICT: no current offer, stale terms, busy capacity or duplicate client phone" : "INTERNAL_ERROR: safe atomic operation failure",
+            content: { "application/json": { schema: { $ref: `#/components/schemas/${status === 201 ? "AppointmentRecord" : "SafeError"}` } } },
+          }])),
+        } } : {}),
       } : route === "/me/services/:id" || route === "/me/resources/:id" ? {
         delete: {
           summary: "Retire owned catalog item (business session, Origin and CSRF required)",
@@ -172,6 +192,13 @@ export function toOpenApiDocument() {
     ])),
     components: {
       schemas: {
+        ManualAppointmentCreate: {
+          ...z.toJSONSchema(ManualAppointmentCreateSchema, { io: "input" }),
+          oneOf: [
+            { required: ["clientId"], not: { required: ["newClient"] } },
+            { required: ["newClient"], not: { required: ["clientId"] } },
+          ],
+        },
         AppointmentRecord: z.toJSONSchema(AppointmentRecordSchema),
         AvailabilitySlot: z.toJSONSchema(AvailabilitySlotSchema, { io: "input" }),
         CatalogDeletionAck: {

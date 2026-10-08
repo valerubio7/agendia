@@ -9,8 +9,9 @@ import {
   sessionCookie,
   validateMutationRequest,
 } from "@agendia/auth";
-import { makeSafeError, PlatformAiInstructionsInputSchema, AppointmentListQuerySchema, AppointmentRecordSchema, AppointmentAvailabilityQuerySchema, AvailabilitySlotSchema } from "@agendia/contracts";
+import { makeSafeError, PlatformAiInstructionsInputSchema, AppointmentListQuerySchema, AppointmentRecordSchema, AppointmentAvailabilityQuerySchema, AvailabilitySlotSchema, ManualAppointmentCreateSchema } from "@agendia/contracts";
 import {
+  parseInstantMs,
   AI_SYSTEM_INSTRUCTIONS,
   AssistantConfigInputSchema,
   BusinessProfileSchema,
@@ -483,6 +484,38 @@ export function buildApi(input: AuthService | ApiOptions) {
       return AppointmentRecordSchema.array().parse(records);
     } catch {
       return fail(reply, request, 500, "INTERNAL_ERROR", "Appointment read failed");
+    }
+  });
+  app.post("/me/appointments", async (request, reply) => {
+    const auth = await requireTenant(request, reply, true);
+    if (!auth) return;
+    const parsed = ManualAppointmentCreateSchema.safeParse(request.body);
+    if (!parsed.success) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid manual appointment request");
+    try {
+      const saved = await tenantWrite(auth, request, "appointment.created", async repo => {
+        // Clock freshness starts AFTER the actual advisory lock wait, not at HTTP arrival.
+        await repo.acquireBusinessCalendarLock(context(auth, request));
+        const now = new Date().toISOString();
+        const { serviceId, resourceId, startRaw, date, expectedTerms, clientId, newClient, notes } = parsed.data;
+        if (clientId && !await repo.getClientById(clientId)) throw new AppointmentError("UNKNOWN_OWNED_ID");
+        const slots = await repo.listAppointmentAvailability(auth.business_id!, { serviceId, resourceId, date }, { clock: () => now });
+        const slot = slots.find(slot => slot.startMs === parseInstantMs(startRaw));
+        if (!slot || Object.keys(expectedTerms).some(key => expectedTerms[key as keyof typeof expectedTerms] !== slot.terms[key as keyof typeof slot.terms]))
+          throw new AppointmentError("UNAVAILABLE");
+        // Never persist request terms, confirmation as customer proof, or assigned-resource preference.
+        return AppointmentRecordSchema.parse(await repo.createAppointment(auth.business_id!,
+          { serviceId, resourceId, startRaw, ...(clientId ? { clientId } : { newClient }), ...(notes === undefined ? {} : { notes }) },
+          { origin: "manual", now }));
+      });
+      return reply.code(201).send(saved);
+    } catch (error) {
+      if (error instanceof AppointmentError) {
+        if (error.code === "INVALID_INPUT") return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid manual appointment request");
+        if (error.code === "UNKNOWN_OWNED_ID") return fail(reply, request, 404, "NOT_FOUND", "Appointment context not found");
+        if (["INELIGIBLE_CATALOG", "UNAVAILABLE", "BUSY", "CLIENT_CONFLICT"].includes(error.code))
+          return fail(reply, request, 409, "CONFLICT", "Appointment offer no longer available");
+      }
+      return fail(reply, request, 500, "INTERNAL_ERROR", "Appointment creation failed");
     }
   });
   app.get("/me/appointments/availability", async (request, reply) => {

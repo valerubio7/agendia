@@ -103,7 +103,7 @@ describe("safe HTTP and event contracts", () => {
   test("appointment reads expose exactly two GETs and the strict stored projection", () => {
     const document = toOpenApiDocument();
     for (const route of ["/me/appointments", "/me/appointments/:appointmentId"]) {
-      expect(Object.keys(document.paths[route]!)).toEqual(["get"]);
+      expect(Object.keys(document.paths[route]!)).toEqual(route === "/me/appointments" ? ["get", "post"] : ["get"]);
       for (const status of [400, 401, 403, 404, 500])
         expect(document.paths[route]).toHaveProperty(`get.responses.${status}.content.application/json.schema.$ref`, "#/components/schemas/SafeError");
     }
@@ -154,6 +154,20 @@ describe("safe HTTP and event contracts", () => {
       ...["resourceId", "appointmentId"].map(name => ({ name, in: "query", required: false, schema: { type: "string", format: "uuid" } })),
     ]);
     expect(document.components.schemas).toHaveProperty("AvailabilitySlot.additionalProperties", false);
+  });
+
+  test("manual POST alone documents explicit confirmation, client XOR and safe errors", () => {
+    const document = toOpenApiDocument(), path = document.paths["/me/appointments"];
+    expect(path).toHaveProperty("post.responses.201.content.application/json.schema.$ref", "#/components/schemas/AppointmentRecord");
+    for (const status of [400, 401, 403, 404, 409, 500])
+      expect(path).toHaveProperty(`post.responses.${status}.content.application/json.schema.$ref`, "#/components/schemas/SafeError");
+    expect(document.components.schemas).toHaveProperty("ManualAppointmentCreate.oneOf", [
+      { required: ["clientId"], not: { required: ["newClient"] } },
+      { required: ["newClient"], not: { required: ["clientId"] } },
+    ]);
+    for (const route of ["/me/appointments", "/me/appointments/:appointmentId", "/me/appointments/availability"])
+      for (const method of ["patch", "put", "delete"]) expect(document.paths[route]).not.toHaveProperty(method);
+    expect(httpContracts).toHaveProperty("ManualAppointmentCreateSchema");
   });
 
   test("allowlists audit metadata and preserves tenant scope", () => {
