@@ -10,6 +10,7 @@ import {
   makeSafeError,
   toOpenApiDocument,
 } from "../../packages/contracts/src/index.ts";
+import * as httpContracts from "../../packages/contracts/src/http.ts";
 import { AtomicUnitOfWork } from "../../packages/domain/src/unit-of-work.ts";
 
 describe("safe HTTP and event contracts", () => {
@@ -96,7 +97,7 @@ describe("safe HTTP and event contracts", () => {
     expect(CatalogDeletionAckSchema.safeParse({ id: "bad" }).success).toBe(false);
     expect(Object.entries(document.paths).filter(([, item]) => "delete" in item).map(([route]) => route)).toEqual(["/me/services/:id", "/me/resources/:id"]);
     expect(document.paths["/me/clients/:id"]).not.toHaveProperty("delete");
-    expect(PRODUCT_HTTP_ROUTES.filter(route => /appointments|booking|slots/.test(route))).toEqual(["/me/appointments", "/me/appointments/:appointmentId"]);
+    expect(PRODUCT_HTTP_ROUTES.filter(route => /appointments|booking|slots/.test(route))).toEqual(["/me/appointments", "/me/appointments/:appointmentId", "/me/appointments/availability"]);
   });
 
   test("appointment reads expose exactly two GETs and the strict stored projection", () => {
@@ -123,6 +124,36 @@ describe("safe HTTP and event contracts", () => {
     expect(Object.keys(schema.properties!)).toEqual(Object.keys(record));
     for (const invalid of [{ ...record, clock: 1 }, { ...record, role: "customer" }, { ...record, id: undefined }, { ...record, startMs: 1n }, { ...record, terms: { ...record.terms, priceArs: Infinity } }, { ...record, terms: { ...record.terms, priceArs: -1 } }, { ...record, client: { ...record.client, phone: undefined } }])
       expect(AppointmentRecordSchema.safeParse(invalid).success).toBe(false);
+  });
+
+  test("availability has one static GET and strict query/slot contracts matching D2", () => {
+    const document = toOpenApiDocument();
+    const route = "/me/appointments/availability";
+    expect(document.paths).toHaveProperty(route);
+    const schemas = httpContracts;
+    expect(schemas.AvailabilitySlotSchema).toBeDefined();
+    expect(schemas.AppointmentAvailabilityQuerySchema).toBeDefined();
+    const id = "11111111-1111-4111-8111-111111111111";
+    const slot = { start: "0001-01-01T00:00:00-03:00", startMs: -62135586000000, endMs: -62135584200000, resourceId: id,
+      terms: { serviceId: id, serviceName: "Saved", resourceId: id, resourceName: "Saved", durationMinutes: 30, priceArs: 12.34567 } };
+    expect(schemas.AvailabilitySlotSchema!.safeParse(slot).success).toBe(true);
+    expect(schemas.AvailabilitySlotSchema!.safeParse({ ...slot, start: "9999-12-31T23:45:00-03:00", startMs: 253402310700000, endMs: 253402312500000 }).success).toBe(true);
+    for (const invalid of [{ ...slot, clock: 1 }, { ...slot, startMs: Infinity }, { ...slot, endMs: Number.MAX_SAFE_INTEGER + 1 }, { ...slot, start: "0000-01-01T00:00:00Z" }, { ...slot, terms: { ...slot.terms, priceArs: -1 } }, { ...slot, terms: { ...slot.terms, role: "customer" } }])
+      expect(schemas.AvailabilitySlotSchema!.safeParse(invalid).success).toBe(false);
+    expect(schemas.AppointmentAvailabilityQuerySchema!.safeParse({ serviceId: id, date: "0001-01-01", resourceId: id, appointmentId: id }).success).toBe(true);
+    for (const query of [{ date: "2099-06-01" }, { serviceId: id }, { serviceId: id, date: "0000-01-01" }, { serviceId: id, date: "2099-02-30" }, { serviceId: id, date: "2099-06-01", clock: "past" }])
+      expect(schemas.AppointmentAvailabilityQuerySchema!.safeParse(query).success).toBe(false);
+    const path = document.paths[route]!;
+    expect(Object.keys(path)).toEqual(["get"]);
+    expect(path).toHaveProperty("get.responses.200.content.application/json.schema", { type: "array", items: { $ref: "#/components/schemas/AvailabilitySlot" } });
+    for (const status of [400, 401, 403, 404, 409, 500])
+      expect(path).toHaveProperty(`get.responses.${status}.content.application/json.schema.$ref`, "#/components/schemas/SafeError");
+    expect(path).toHaveProperty("get.parameters", [
+      { name: "serviceId", in: "query", required: true, schema: { type: "string", format: "uuid" } },
+      { name: "date", in: "query", required: true, schema: { type: "string", format: "date", pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" } },
+      ...["resourceId", "appointmentId"].map(name => ({ name, in: "query", required: false, schema: { type: "string", format: "uuid" } })),
+    ]);
+    expect(document.components.schemas).toHaveProperty("AvailabilitySlot.additionalProperties", false);
   });
 
   test("allowlists audit metadata and preserves tenant scope", () => {

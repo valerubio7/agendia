@@ -9,7 +9,7 @@ import {
   sessionCookie,
   validateMutationRequest,
 } from "@agendia/auth";
-import { makeSafeError, PlatformAiInstructionsInputSchema, AppointmentListQuerySchema, AppointmentRecordSchema } from "@agendia/contracts";
+import { makeSafeError, PlatformAiInstructionsInputSchema, AppointmentListQuerySchema, AppointmentRecordSchema, AppointmentAvailabilityQuerySchema, AvailabilitySlotSchema } from "@agendia/contracts";
 import {
   AI_SYSTEM_INSTRUCTIONS,
   AssistantConfigInputSchema,
@@ -25,6 +25,7 @@ import {
   tenantContext,
   TenantUnitOfWork,
   ResourceCatalogError,
+  AppointmentError,
   type createRuntimePools,
 } from "@agendia/db";
 
@@ -484,7 +485,33 @@ export function buildApi(input: AuthService | ApiOptions) {
       return fail(reply, request, 500, "INTERNAL_ERROR", "Appointment read failed");
     }
   });
-  // Future static availability route belongs before this detail route; not exposed in E1.
+  app.get("/me/appointments/availability", async (request, reply) => {
+    const auth = await requireTenant(request, reply);
+    if (!auth) return;
+    const parsed = AppointmentAvailabilityQuerySchema.safeParse(request.query);
+    // Fastify does not parse GET payloads; reject their framing as well as parsed bodies.
+    const hasBody = request.body !== undefined || request.headers["transfer-encoding"] !== undefined
+      || (request.headers["content-length"] !== undefined && request.headers["content-length"] !== "0");
+    if (!parsed.success || hasBody)
+      return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid availability query");
+    // Business authorization precedes trusted reschedule context; this is not sender proof.
+    const { appointmentId, ...query } = parsed.data;
+    try {
+      const slots = await pools.api.run(context(auth, request), repo => repo.listAppointmentAvailability(
+        auth.business_id!, query, appointmentId === undefined ? {} : { appointmentId },
+      ));
+      return AvailabilitySlotSchema.array().parse(slots);
+    } catch (error) {
+      if (error instanceof AppointmentError) {
+        if (error.code === "INVALID_INPUT") return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid availability query");
+        if (error.code === "UNKNOWN_OWNED_ID" || error.code === "INELIGIBLE_CATALOG")
+          return fail(reply, request, 404, "NOT_FOUND", "Availability context not found");
+        if (error.code === "STATE_LOCKED" || error.code === "STARTED_STRUCTURE_LOCKED")
+          return fail(reply, request, 409, "CONFLICT", "Appointment cannot be rescheduled");
+      }
+      return fail(reply, request, 500, "INTERNAL_ERROR", "Availability read failed");
+    }
+  });
   app.get("/me/appointments/:appointmentId", async (request, reply) => {
     const auth = await requireTenant(request, reply);
     if (!auth) return;

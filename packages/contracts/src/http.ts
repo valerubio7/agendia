@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { InstantSchema, parseInstantMs, AppointmentStateSchema, AppointmentOriginSchema, type BusinessClosure, type BusinessClosureInput, type WeeklySchedule, type ResourceInput } from "@agendia/domain";
+import { CalendarDateSchema, AppointmentTermsSnapshotSchema, InstantSchema, parseInstantMs, AppointmentStateSchema, AppointmentOriginSchema, type BusinessClosure, type BusinessClosureInput, type WeeklySchedule, type ResourceInput } from "@agendia/domain";
 
 const appointmentId = z.string().uuid();
 export const AppointmentListQuerySchema = z.object({
@@ -17,6 +17,18 @@ export const AppointmentRecordSchema = z.object({
   notes: z.string().nullable(), customerResourcePreference: appointmentId.nullable(),
 }).strict();
 export type AppointmentRecord = z.infer<typeof AppointmentRecordSchema>;
+const availabilityId = appointmentId.transform(id => id.toLowerCase());
+export const AppointmentAvailabilityQuerySchema = z.object({
+  serviceId: availabilityId, date: CalendarDateSchema,
+  resourceId: availabilityId.optional(), appointmentId: availabilityId.optional(),
+}).strict();
+/** Exact D2 advisory projection; saves must revalidate, not reserve these offers. */
+export const AvailabilitySlotSchema = z.object({
+  start: InstantSchema, startMs: z.number().int().safe(), endMs: z.number().int().safe(),
+  resourceId: availabilityId, terms: AppointmentTermsSnapshotSchema.unwrap().strict(),
+}).strict();
+export type AvailabilitySlot = z.infer<typeof AvailabilitySlotSchema>;
+export type AppointmentAvailabilityQuery = z.infer<typeof AppointmentAvailabilityQuerySchema>;
 export type ResourceRequest = ResourceInput;
 export type ResourceDto = Omit<ResourceInput, "description"> & {
   id: string; description: string | null; status: "active" | "suspended";
@@ -40,6 +52,7 @@ export const PRODUCT_HTTP_ROUTES = Object.freeze([
   "/admin/businesses/:id/status",
   "/me/appointments",
   "/me/appointments/:appointmentId",
+  "/me/appointments/availability",
   "/me/clients",
   "/me/clients/:id",
   "/me/services",
@@ -115,7 +128,23 @@ export function toOpenApiDocument() {
     openapi: "3.1.0" as const,
     info: { title: "agendIA API", version: "1.0.0" },
     paths: Object.fromEntries(PRODUCT_HTTP_ROUTES.map((route) => [route,
-      route === "/me/appointments" || route === "/me/appointments/:appointmentId" ? {
+      route === "/me/appointments/availability" ? {
+        get: {
+          summary: "Query all owned business appointment availability choices",
+          description: "Strict serviceId/date query with optional resourceId and owned upcoming Confirmed appointmentId reschedule context. Unknown query keys or a request body are invalid. Server clock determines lead time. Suspended or unassigned live catalogs yield no offers; foreign or retired IDs are not found. Advisory only: saves must revalidate; no reservation or customer/sender identity proof.",
+          parameters: [
+            { name: "serviceId", in: "query", required: true, schema: { type: "string", format: "uuid" } },
+            { name: "date", in: "query", required: true, schema: { type: "string", format: "date", pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" } },
+            ...["resourceId", "appointmentId"].map(name => ({ name, in: "query", required: false, schema: { type: "string", format: "uuid" } })),
+          ],
+          responses: Object.fromEntries([200, 400, 401, 403, 404, 409, 500].map(status => [String(status), {
+            description: status === 200 ? "All advisory D2 slots" : status === 409 ? "Reschedule appointment is final or started" : "Safe operation error",
+            content: { "application/json": { schema: status === 200
+              ? { type: "array", items: { $ref: "#/components/schemas/AvailabilitySlot" } }
+              : { $ref: "#/components/schemas/SafeError" } } },
+          }])),
+        },
+      } : route === "/me/appointments" || route === "/me/appointments/:appointmentId" ? {
         get: {
           summary: "Read owned appointment history (business session; all states, no range default or cap)",
           description: "Strict query keys only. Bounds are exact explicit-offset instants, not calendar dates. Session determines business scope; business-admin access does not authenticate a customer sender.",
@@ -144,6 +173,7 @@ export function toOpenApiDocument() {
     components: {
       schemas: {
         AppointmentRecord: z.toJSONSchema(AppointmentRecordSchema),
+        AvailabilitySlot: z.toJSONSchema(AvailabilitySlotSchema, { io: "input" }),
         CatalogDeletionAck: {
           type: "object", required: ["id"], additionalProperties: false,
           properties: { id: { type: "string", format: "uuid" } },
