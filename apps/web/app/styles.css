@@ -1428,11 +1428,11 @@ main.login-frame {
 }
 
 .assistant-screen {
-  --assistant-ink: #18231f;
-  --assistant-night: #111c19;
-  --assistant-violet: #37314d;
-  --assistant-lilac: #bcb4df;
-  --assistant-line: rgba(24, 35, 31, 0.15);
+  --assistant-ink: var(--ink);
+  --assistant-night: var(--pine-deep);
+  --assistant-violet: var(--pine);
+  --assistant-lilac: var(--paper);
+  --assistant-line: var(--line);
   width: 100%;
   min-width: 0;
   color: var(--assistant-ink);
@@ -1447,18 +1447,7 @@ main.login-frame {
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: clamp(1.1rem, 2.5vw, 1.75rem);
-  background:
-    radial-gradient(
-      circle at 11% 8%,
-      rgba(255, 107, 73, 0.22),
-      transparent 20rem
-    ),
-    radial-gradient(
-      circle at 86% 74%,
-      rgba(188, 180, 223, 0.15),
-      transparent 22rem
-    ),
-    linear-gradient(138deg, #111c19 0%, #1d2926 48%, #29263a 100%);
+  background: var(--pine-deep);
   color: var(--paper);
   box-shadow: 0 1.6rem 4rem rgba(17, 28, 25, 0.2);
 }
@@ -1485,7 +1474,7 @@ main.login-frame {
   bottom: -10rem;
   width: 22rem;
   height: 22rem;
-  border: 1px solid rgba(188, 180, 223, 0.13);
+  border: 1px solid var(--line);
   border-radius: 50%;
   content: "";
   pointer-events: none;
@@ -1505,10 +1494,10 @@ main.login-frame {
 
 .assistant-screen .assistant-hero__eyebrow {
   margin: 0 0 1.1rem;
-  color: #c8c0e8;
-  font-family: var(--font-mono);
+  color: var(--paper);
+  font-family: var(--font-body);
   font-size: 0.72rem;
-  font-weight: 750;
+  font-weight: 650;
   letter-spacing: 0.11em;
   text-transform: uppercase;
 }
@@ -1519,7 +1508,7 @@ main.login-frame {
   color: var(--paper);
   font-family: var(--font-display);
   font-size: clamp(2.55rem, 5.5vw, 5.25rem);
-  font-weight: 640;
+  font-weight: 650;
   letter-spacing: -0.067em;
   line-height: 0.94;
   text-wrap: balance;
@@ -1528,7 +1517,7 @@ main.login-frame {
 .assistant-screen .assistant-hero__copy > p:last-child {
   max-width: 39rem;
   margin: 1.5rem 0 0;
-  color: rgba(241, 238, 227, 0.7);
+  color: var(--paper);
   font-size: clamp(1rem, 1.4vw, 1.13rem);
   line-height: 1.68;
 }
@@ -1540,7 +1529,7 @@ main.login-frame {
   padding: 1rem;
   border: 1px solid rgba(241, 238, 227, 0.14);
   border-radius: 1.1rem;
-  background: rgba(8, 14, 13, 0.42);
+  background: var(--pine-deep);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
   backdrop-filter: blur(0.8rem);
 }
@@ -1551,16 +1540,16 @@ main.login-frame {
   gap: 1rem;
   padding: 0.1rem 0.15rem 0.75rem;
   border-bottom: 1px solid rgba(241, 238, 227, 0.11);
-  color: rgba(241, 238, 227, 0.54);
-  font-family: var(--font-mono);
+  color: var(--paper);
+  font-family: var(--font-body);
   font-size: 0.62rem;
-  font-weight: 700;
+  font-weight: 650;
   letter-spacing: 0.07em;
   text-transform: uppercase;
 }
 
 .assistant-screen .assistant-signal__header strong {
-  color: var(--coral);
+  color: var(--paper);
 }
 
 .assistant-screen .assistant-signal__stage {
@@ -1579,7 +1568,7 @@ main.login-frame {
 }
 
 .assistant-screen .assistant-signal__orbit {
-  border: 1px solid rgba(188, 180, 223, 0.24);
+  border: 1px solid var(--line);
   border-radius: 50%;
 }
 
@@ -1601,11 +1590,11 @@ main.login-frame {
   width: 2.9rem;
   height: 2.9rem;
   border-radius: 50%;
-  background: var(--coral);
-  color: var(--assistant-night);
-  font-family: var(--font-display);
+  background: var(--honey);
+  color: var(--ink);
+  font-family: var(--font-body);
   font-size: 0.75rem;
-  font-weight: 850;
+  font-weight: 650;
   box-shadow: 0 0 0 0.45rem rgba(255, 107, 73, 0.08);
 }
 
@@ -1681,21 +1670,23 @@ main.login-frame {
 
 .assistant-screen .assistant-signal__legend span {
   margin-bottom: 0.25rem;
-  color: var(--coral);
+  color: var(--paper);
   font-family: var(--font-mono);
   font-size: 0.56rem;
-  font-weight: 800;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 .assistant-screen .assistant-signal__legend strong {
   color: var(--paper);
   font-family: var(--font-display);
   font-size: 0.8rem;
+  font-weight: 650;
 }
 
 .assistant-screen .assistant-signal__legend small {
   margin-top: 0.2rem;
-  color: rgba(241, 238, 227, 0.48);
+  color: var(--paper);
   font-size: 0.62rem;
   line-height: 1.35;
   overflow-wrap: anywhere;
@@ -1727,15 +1718,17 @@ main.login-frame {
 }
 
 .assistant-screen .assistant-feedback [role="alert"] {
-  border-color: rgba(194, 75, 58, 0.28);
+  border-color: var(--danger);
   border-left-color: var(--danger);
-  background: var(--danger-soft);
+  background: var(--danger);
+  color: var(--white);
 }
 
 .assistant-screen .assistant-feedback [role="status"] {
-  border-color: rgba(47, 110, 82, 0.28);
-  border-left-color: var(--pine);
-  background: var(--pine-soft);
+  border-color: var(--ok);
+  border-left-color: var(--ok);
+  background: var(--ok);
+  color: var(--white);
 }
 
 .assistant-screen .assistant-conflict-action {
@@ -1745,8 +1738,8 @@ main.login-frame {
   border: 1px solid var(--assistant-violet);
   border-radius: 0.85rem;
   background: var(--assistant-violet);
-  color: var(--paper);
-  font-weight: 800;
+  color: var(--white);
+  font-weight: 650;
   white-space: nowrap;
   box-shadow: 0 0.65rem 1.8rem rgba(23, 38, 32, 0.12);
   transition:
@@ -1757,13 +1750,13 @@ main.login-frame {
 }
 
 .assistant-screen .assistant-conflict-action:hover {
-  border-color: var(--assistant-night);
-  background: var(--assistant-night);
+  border-color: var(--pine);
+  background: var(--pine);
   transform: translateY(-1px);
 }
 
 .assistant-screen .assistant-conflict-action:focus-visible {
-  outline: 0.2rem solid var(--coral);
+  outline: 0.2rem solid var(--focus);
   outline-offset: 0.18rem;
   box-shadow: 0 0 0 0.3rem rgba(255, 107, 73, 0.18);
 }
@@ -1795,9 +1788,7 @@ main.login-frame {
   border: 1px solid rgba(255, 107, 73, 0.22);
   border-left: 0.45rem solid var(--coral);
   border-radius: 0.25rem 1.25rem 1.25rem 0.25rem;
-  background:
-    linear-gradient(90deg, rgba(255, 107, 73, 0.08), transparent 24%),
-    var(--surface);
+  background: var(--paper);
   box-shadow: 0 1rem 2.8rem rgba(23, 38, 32, 0.07);
 }
 
@@ -1805,13 +1796,7 @@ main.login-frame {
   padding: clamp(1.1rem, 3vw, 2.25rem);
   border: 1px solid rgba(241, 238, 227, 0.11);
   border-radius: 1.25rem 0.25rem 1.25rem 1.25rem;
-  background:
-    radial-gradient(
-      circle at 100% 0%,
-      rgba(188, 180, 223, 0.14),
-      transparent 20rem
-    ),
-    var(--assistant-night);
+  background: var(--pine-deep);
   color: var(--paper);
   box-shadow: 0 1.3rem 3rem rgba(17, 28, 25, 0.15);
 }
@@ -1889,9 +1874,11 @@ main.login-frame {
 }
 
 .assistant-screen .assistant-section__index {
-  border: 1px solid rgba(188, 180, 223, 0.4);
+  border: 1px solid var(--line);
   border-radius: 0.85rem 0.85rem 0.85rem 0;
-  color: var(--assistant-lilac);
+  color: var(--paper);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 .assistant-screen .assistant-section__boundary {
@@ -1903,16 +1890,16 @@ main.login-frame {
 
 .assistant-screen .assistant-section__header p {
   margin: 0 0 0.25rem;
-  color: #737f79;
-  font-family: var(--font-mono);
+  color: var(--ink-2);
+  font-family: var(--font-body);
   font-size: 0.65rem;
-  font-weight: 750;
+  font-weight: 650;
   letter-spacing: 0.07em;
   text-transform: uppercase;
 }
 
 .assistant-screen .assistant-section--context .assistant-section__header p {
-  color: #a69fc5;
+  color: var(--paper);
 }
 
 .assistant-screen .assistant-section__header h2 {
@@ -1920,6 +1907,7 @@ main.login-frame {
   color: var(--assistant-ink);
   font-family: var(--font-display);
   font-size: clamp(1.5rem, 3vw, 2.1rem);
+  font-weight: 650;
   letter-spacing: -0.045em;
   line-height: 1.08;
 }
@@ -1932,7 +1920,7 @@ main.login-frame {
   display: block;
   max-width: 43rem;
   margin-top: 0.55rem;
-  color: #59675f;
+  color: var(--ink-2);
   font-size: 0.9rem;
   line-height: 1.55;
 }
@@ -1942,7 +1930,7 @@ main.login-frame {
   .assistant-section__header
   div
   > span {
-  color: rgba(241, 238, 227, 0.58);
+  color: var(--paper);
 }
 
 .assistant-screen .assistant-section__fields {
@@ -1962,7 +1950,7 @@ main.login-frame {
 .assistant-screen .assistant-field__label {
   color: var(--assistant-ink);
   font-size: 0.88rem;
-  font-weight: 820;
+  font-weight: 650;
   letter-spacing: -0.01em;
 }
 
@@ -1975,11 +1963,13 @@ main.login-frame {
   max-width: 100%;
   min-height: 9rem;
   padding: 0.85rem 0.95rem;
-  border: 1px solid #c4c0b5;
+  border: 1px solid var(--line);
   border-radius: 0.75rem;
   outline: none;
-  background: rgba(255, 255, 255, 0.94);
+  background: var(--paper);
   color: var(--assistant-ink);
+  font-family: var(--font-mono);
+  font-weight: 450;
   line-height: 1.58;
   resize: vertical;
   box-shadow: inset 0 1px 0 rgba(23, 38, 32, 0.04);
@@ -1994,8 +1984,8 @@ main.login-frame {
 }
 
 .assistant-screen .assistant-section--context .assistant-field textarea {
-  border-color: rgba(188, 180, 223, 0.45);
-  background: #f8f6ef;
+  border-color: var(--line);
+  background: var(--paper);
 }
 
 .assistant-screen .assistant-section--limits .assistant-field textarea {
@@ -2004,14 +1994,14 @@ main.login-frame {
 }
 
 .assistant-screen .assistant-field textarea:hover {
-  border-color: #8f8878;
-  background: var(--white);
+  border-color: var(--pine);
+  background: var(--paper);
 }
 
 .assistant-screen .assistant-field textarea:focus-visible {
-  border-color: var(--assistant-violet);
-  outline: none;
-  background: var(--white);
+  border-color: var(--focus);
+  outline: 0.2rem solid var(--focus);
+  background: var(--paper);
   box-shadow: 0 0 0 0.25rem rgba(55, 49, 77, 0.2);
 }
 
@@ -2019,20 +2009,20 @@ main.login-frame {
   .assistant-section--context
   .assistant-field
   textarea:focus-visible {
-  border-color: var(--assistant-lilac);
+  border-color: var(--focus);
   box-shadow: 0 0 0 0.25rem rgba(188, 180, 223, 0.22);
 }
 
 .assistant-screen .assistant-field__hint {
   max-width: 65ch;
-  color: #68756f;
+  color: var(--ink-2);
   font-size: 0.72rem;
-  font-weight: 500;
+  font-weight: 450;
   line-height: 1.5;
 }
 
 .assistant-screen .assistant-section--context .assistant-field__hint {
-  color: rgba(241, 238, 227, 0.54);
+  color: var(--paper);
 }
 
 .assistant-screen .assistant-activation {
@@ -2043,7 +2033,7 @@ main.login-frame {
   padding: clamp(1.15rem, 3vw, 1.75rem);
   border: 1px solid rgba(55, 49, 77, 0.2);
   border-radius: 1.15rem;
-  background: #e5e1f0;
+  background: var(--paper);
   box-shadow: 0 1rem 2.5rem rgba(55, 49, 77, 0.09);
   transition:
     background-color 160ms ease,
@@ -2052,7 +2042,7 @@ main.login-frame {
 
 .assistant-screen .assistant-activation--active {
   border-color: rgba(47, 110, 82, 0.32);
-  background: #dceade;
+  background: var(--paper);
 }
 
 .assistant-screen .assistant-activation__status {
@@ -2064,9 +2054,9 @@ main.login-frame {
   border: 1px solid rgba(55, 49, 77, 0.2);
   border-radius: 2rem;
   color: var(--assistant-violet);
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 0.62rem;
-  font-weight: 800;
+  font-weight: 650;
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
@@ -2075,12 +2065,12 @@ main.login-frame {
   width: 0.48rem;
   height: 0.48rem;
   border-radius: 50%;
-  background: #756d8f;
+  background: var(--pine);
 }
 
 .assistant-screen .assistant-activation--active .assistant-activation__status {
   border-color: rgba(47, 110, 82, 0.28);
-  color: #20573e;
+  color: var(--pine);
 }
 
 .assistant-screen
@@ -2093,10 +2083,10 @@ main.login-frame {
 
 .assistant-screen .assistant-activation__copy p {
   margin: 0 0 0.25rem;
-  color: #6a637f;
-  font-family: var(--font-mono);
+  color: var(--ink-2);
+  font-family: var(--font-body);
   font-size: 0.63rem;
-  font-weight: 800;
+  font-weight: 650;
   letter-spacing: 0.07em;
   text-transform: uppercase;
 }
@@ -2109,6 +2099,7 @@ main.login-frame {
   margin: 0;
   font-family: var(--font-display);
   font-size: clamp(1.25rem, 2.5vw, 1.65rem);
+  font-weight: 650;
   letter-spacing: -0.04em;
   line-height: 1.12;
 }
@@ -2117,7 +2108,7 @@ main.login-frame {
   display: block;
   max-width: 49rem;
   margin-top: 0.55rem;
-  color: #555e59;
+  color: var(--ink-2);
   font-size: 0.82rem;
   line-height: 1.55;
 }
@@ -2131,7 +2122,7 @@ main.login-frame {
   padding: 0.65rem 0.8rem;
   border: 1px solid rgba(55, 49, 77, 0.2);
   border-radius: 0.85rem;
-  background: rgba(255, 255, 255, 0.6);
+  background: var(--paper);
   color: var(--assistant-ink);
   cursor: pointer;
 }
@@ -2149,7 +2140,7 @@ main.login-frame {
   flex: 0 0 auto;
   padding: 0.2rem;
   border-radius: 2rem;
-  background: #777184;
+  background: var(--ink-2);
   transition: background-color 160ms ease;
 }
 
@@ -2182,12 +2173,13 @@ main.login-frame {
   .assistant-activation__switch
   input:focus-visible
   + .assistant-activation__track {
-  outline: 0.2rem solid var(--assistant-violet);
+  outline: 0.2rem solid var(--focus);
   outline-offset: 0.2rem;
 }
 
 .assistant-screen .assistant-activation__switch strong {
   font-size: 0.8rem;
+  font-weight: 650;
   line-height: 1.35;
 }
 
@@ -2205,15 +2197,15 @@ main.login-frame {
 .assistant-screen .assistant-rail__guide {
   padding: 1.3rem;
   border: 1px solid rgba(55, 49, 77, 0.16);
-  background: #f5f1e8;
+  background: var(--paper);
 }
 
 .assistant-screen .assistant-rail__eyebrow {
   margin: 0 0 0.45rem;
-  color: #6a5e9a;
-  font-family: var(--font-mono);
+  color: var(--ink-2);
+  font-family: var(--font-body);
   font-size: 0.64rem;
-  font-weight: 800;
+  font-weight: 650;
   letter-spacing: 0.07em;
   text-transform: uppercase;
 }
@@ -2222,6 +2214,7 @@ main.login-frame {
   margin: 0;
   font-family: var(--font-display);
   font-size: 1.3rem;
+  font-weight: 650;
   letter-spacing: -0.035em;
 }
 
@@ -2236,7 +2229,7 @@ main.login-frame {
 .assistant-screen .assistant-rail li {
   position: relative;
   padding-left: 1.25rem;
-  color: #555f5a;
+  color: var(--ink-2);
   font-size: 0.82rem;
   line-height: 1.5;
 }
@@ -2253,14 +2246,14 @@ main.login-frame {
 
 .assistant-screen .assistant-save-panel {
   padding: 1.1rem;
-  background: var(--assistant-violet);
+  background: var(--pine-deep);
   color: var(--paper);
   box-shadow: 0 1rem 2.5rem rgba(36, 31, 54, 0.2);
 }
 
 .assistant-screen .assistant-save-panel p {
   margin: 0 0 0.9rem;
-  color: rgba(241, 238, 227, 0.66);
+  color: var(--paper);
   font-size: 0.75rem;
   line-height: 1.5;
 }
@@ -2271,10 +2264,10 @@ main.login-frame {
   padding: 0.8rem 1rem;
   border: 1px solid transparent;
   border-radius: 0.75rem;
-  background: var(--coral);
-  color: var(--assistant-night);
+  background: var(--coral-ink);
+  color: var(--white);
   cursor: pointer;
-  font-weight: 850;
+  font-weight: 650;
   box-shadow: 0 0.75rem 1.6rem rgba(17, 14, 28, 0.27);
   transition:
     background-color 140ms ease,
@@ -2283,13 +2276,13 @@ main.login-frame {
 }
 
 .assistant-screen .assistant-save-panel button:hover:not(:disabled) {
-  background: #ff8064;
+  background: var(--coral-ink);
   box-shadow: 0 0.9rem 1.9rem rgba(17, 14, 28, 0.36);
   transform: translateY(-1px);
 }
 
 .assistant-screen .assistant-save-panel button:focus-visible {
-  outline: 0.2rem solid var(--paper);
+  outline: 0.2rem solid var(--focus);
   outline-offset: 0.18rem;
 }
 
