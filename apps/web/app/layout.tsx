@@ -5,6 +5,7 @@ import "./styles.css";
 export const metadata: Metadata = {
   title: "agendIA",
   description: "Administración segura de asistentes para WhatsApp",
+  icons: { icon: { url: "/brand/favicon.svg", type: "image/svg+xml" } },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

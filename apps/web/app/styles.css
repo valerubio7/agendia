@@ -120,48 +120,32 @@ textarea {
   background: #fff1f0;
 }
 
-.brand {
+.brand,
+.branded-name {
+  --brand-height: 32px;
+  /* Official spark spans y=6..116 in the 120-unit lockup. */
+  --brand-clearspace: calc(var(--brand-height) * 11 / 12);
   display: inline-flex;
   align-items: center;
-  gap: 0.7rem;
-  color: var(--ink);
-  font-family: var(--font-display);
-}
-
-.brand--inverse {
-  color: var(--paper);
-}
-
-.brand--inverse .brand__calendar {
-  fill: var(--paper);
-}
-
-.brand--inverse .brand__calendar-grid,
-.brand--inverse .brand__check-outline {
-  stroke: var(--ink-secondary);
-}
-
-.brand__mark {
-  display: block;
-  width: 2.75rem;
-  height: 2.75rem;
   flex: 0 0 auto;
+  padding: var(--brand-clearspace);
+}
+
+.brand__image,
+.branded-name img {
+  display: block;
+  height: var(--brand-height);
+  width: auto;
+  object-fit: contain;
 }
 
 .branded-name {
-  color: inherit;
-  font-family: var(--font-display);
-  font-weight: 600;
-  letter-spacing: -0.045em;
+  /* Wordmark lettering is 56/58 of lockup lettering in a 90-unit root. */
+  --brand-clearspace: calc(var(--brand-height) * 110 * 56 / 58 / 90);
 }
 
-.branded-name strong {
-  color: var(--coral);
-  font-weight: 750;
-}
-
-.brand__word {
-  font-size: 1.35rem;
+.branded-name .branded-name__compact {
+  display: none;
 }
 
 main.login-frame {
@@ -353,13 +337,8 @@ main.login-frame {
   align-self: flex-start;
 }
 
-.login-story__brand .brand__mark {
-  width: clamp(4.25rem, 19vw, 5.5rem);
-  height: clamp(4.25rem, 19vw, 5.5rem);
-}
-
-.login-story__brand .brand__word {
-  font-size: clamp(2.125rem, 9vw, 2.75rem);
+.login-story__brand {
+  --brand-height: 48px;
 }
 
 .login-story__content {
@@ -483,7 +462,6 @@ main.login-frame {
 
 .authenticated-shell__sidebar .brand {
   align-self: flex-start;
-  padding-inline: 0.5rem;
 }
 
 .authenticated-shell__navigation,
@@ -660,6 +638,7 @@ main.login-frame {
 }
 
 .authenticated-terminal {
+  box-sizing: border-box;
   width: min(calc(100% - 2rem), 38rem);
   min-height: calc(100vh - 2rem);
   min-height: calc(100svh - 2rem);
@@ -680,6 +659,10 @@ main.login-frame {
     var(--surface);
   color: var(--ink);
   box-shadow: 0 1.25rem 3.5rem rgba(23, 38, 32, 0.09);
+}
+
+.authenticated-terminal .branded-name {
+  align-self: flex-start;
 }
 
 .authenticated-terminal[data-state="loading"] {
@@ -757,8 +740,17 @@ main.login-frame {
   }
 
   .authenticated-shell__mobile-brand {
-    display: inline;
-    font-size: 1.25rem;
+    --brand-height: 24px;
+    --brand-clearspace: calc(var(--brand-height) * 11 / 12);
+    display: inline-flex;
+  }
+
+  .authenticated-shell__mobile-brand .branded-name__wordmark {
+    display: none;
+  }
+
+  .authenticated-shell__mobile-brand .branded-name__compact {
+    display: block;
   }
 
   .authenticated-shell__section span {

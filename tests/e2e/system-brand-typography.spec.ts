@@ -35,6 +35,48 @@ async function noClipping(page: Page) {
   }
 }
 
+async function officialBrand(page: Page, selector: string, asset: string, height: number) {
+  const wrapper = page.locator(selector);
+  await expect(wrapper).toHaveAccessibleName("agendIA");
+  await expect(wrapper.getByRole("img", { name: "agendIA", exact: true })).toHaveCount(0);
+  const image = wrapper.locator(`img[src="/brand/${asset}.svg"]`);
+  await expect(image).toBeVisible();
+  await expect(image).toHaveAttribute("alt", "");
+  const geometry = await image.evaluate((element: HTMLImageElement) => {
+    const box = element.getBoundingClientRect();
+    const parent = element.parentElement!;
+    const outer = parent.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    const padding = getComputedStyle(parent);
+    return {
+      height: box.height, ratio: box.width / box.height,
+      natural: [element.naturalWidth, element.naturalHeight],
+      clearspace: [box.left - outer.left, outer.right - box.right,
+        box.top - outer.top, outer.bottom - box.bottom],
+      padding: [padding.paddingTop, padding.paddingRight, padding.paddingBottom, padding.paddingLeft].map(Number.parseFloat),
+      effects: [style.filter, style.boxShadow, style.clipPath,
+        padding.filter, padding.boxShadow, padding.clipPath],
+      fits: outer.left >= 0 && outer.right <= document.documentElement.clientWidth + 1,
+      text: parent.textContent?.trim(),
+    };
+  });
+  const wordmark = asset.includes("wordmark");
+  expect(geometry.natural).toEqual(wordmark ? [300, 90] : [300, 93]);
+  const response = await page.request.get(new URL(`/brand/${asset}.svg`, page.url()).href);
+  expect(response.status()).toBe(200);
+  expect(await response.text()).toContain(`viewBox="0 0 ${wordmark ? "300 90" : "388 120"}"`);
+  expect(geometry.height).toBe(height);
+  expect(geometry.height).toBeGreaterThanOrEqual(24);
+  expect(geometry.ratio).toBeCloseTo(wordmark ? 300 / 90 : 388 / 120, 2);
+  const spark = wordmark ? height * 110 * 56 / 58 / 90 : height * 110 / 120;
+  for (const space of [...geometry.clearspace, ...geometry.padding])
+    expect(space).toBeGreaterThanOrEqual(spark - 0.1);
+  expect(geometry.effects).toEqual(Array(6).fill("none"));
+  expect(geometry.fits).toBe(true);
+  expect(geometry.text).toBe("");
+  if (height < 32) expect(asset).toBe("logo-mono-outlined");
+}
+
 async function login(page: Page, url: string, email: string, password: string) {
   await page.goto(url);
   await page.getByLabel("Correo", { exact: true }).fill(email);
@@ -58,6 +100,17 @@ test("official local faces, root tokens and shared roles survive real login/prof
   await page.goto(system.webUrl);
   await expect(page.getByRole("heading", { name: "Iniciar sesión", exact: true })).toBeVisible();
   await loaded(page);
+  await expect(page.locator('.login-card img[src="/brand/logo-primary-outlined.svg"]')).toBeVisible();
+  await expect(page.locator('.login-story img[src="/brand/logo-inverse-outlined.svg"]')).toBeVisible();
+  const favicon = page.locator('link[rel="icon"][href="/brand/favicon.svg"]');
+  await expect(favicon).toHaveAttribute("type", "image/svg+xml");
+  const faviconResponse = await page.request.get(`${system.webUrl}/brand/favicon.svg`);
+  expect(faviconResponse.status()).toBe(200);
+  expect(await faviconResponse.text()).toContain('viewBox="0 0 64 64"');
+  await officialBrand(page, ".login-card .brand", "logo-primary-outlined", 32);
+  await officialBrand(page, ".login-story .brand", "logo-inverse-outlined", 48);
+  await expect(page.getByRole("img", { name: "agendIA", exact: true })).toHaveCount(2);
+  await page.screenshot({ path: testInfo.outputPath("brand-login-desktop.png"), fullPage: true });
   const actualTokens = await page.evaluate((names) => {
     const style = getComputedStyle(document.documentElement);
     return Object.fromEntries(names.map((name) => [name, style.getPropertyValue(name).trim()]));
@@ -97,6 +150,9 @@ test("official local faces, root tokens and shared roles survive real login/prof
   await noClipping(page);
   await page.setViewportSize({ width: 360, height: 800 });
   await noClipping(page);
+  await officialBrand(page, ".login-card .brand", "logo-primary-outlined", 32);
+  await officialBrand(page, ".login-story .brand", "logo-inverse-outlined", 48);
+  await page.screenshot({ path: testInfo.outputPath("brand-login-mobile.png"), fullPage: true });
   await page.setViewportSize({ width: 1280, height: 900 });
   await zoom200();
   await noClipping(page);
@@ -104,6 +160,45 @@ test("official local faces, root tokens and shared roles survive real login/prof
 
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
+  await page.goto(`${system.webUrl}/profile`);
+  await expect(page.locator('.authenticated-terminal[data-state="denied"]')).toBeVisible();
+  await officialBrand(page, ".authenticated-terminal .branded-name", "logo-wordmark-outlined", 32);
+  await expect(page.getByRole("img", { name: "agendIA", exact: true })).toHaveCount(1);
+  await page.screenshot({ path: testInfo.outputPath("brand-terminal-desktop.png"), fullPage: true });
+  await page.setViewportSize({ width: 360, height: 800 });
+  await officialBrand(page, ".authenticated-terminal .branded-name", "logo-wordmark-outlined", 32);
+  const terminalBox = await page.locator('.authenticated-terminal[data-state="denied"]').evaluate((terminal) => {
+    const root = document.documentElement;
+    const ancestors = [];
+    for (let element: Element | null = terminal; element; element = element.parentElement) {
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      const padding = [style.paddingLeft, style.paddingRight].map(Number.parseFloat);
+      const borders = [style.borderLeftWidth, style.borderRightWidth].map(Number.parseFloat);
+      ancestors.push({
+        tag: element.tagName, className: element.className,
+        clientWidth: element.clientWidth, scrollWidth: element.scrollWidth,
+        left: rect.left, right: rect.right, width: rect.width,
+        contentWidth: rect.width - padding[0]! - padding[1]! - borders[0]! - borders[1]!,
+        cssWidth: style.width, boxSizing: style.boxSizing, fontSize: style.fontSize,
+        padding, borders, margins: [style.marginLeft, style.marginRight],
+      });
+    }
+    return { clientWidth: root.clientWidth, scrollWidth: root.scrollWidth, ancestors };
+  });
+  console.log("terminal-mobile-box-model", JSON.stringify(terminalBox));
+  await testInfo.attach("terminal-mobile-box-model", {
+    body: JSON.stringify(terminalBox, null, 2), contentType: "application/json",
+  });
+  await noClipping(page);
+  const mainBox = terminalBox.ancestors[0]!;
+  expect(mainBox.boxSizing).toBe("border-box");
+  expect(mainBox.left).toBeGreaterThanOrEqual(0);
+  expect(mainBox.right).toBeLessThanOrEqual(terminalBox.clientWidth);
+  expect(mainBox.width).toBe(terminalBox.clientWidth - 32);
+  await page.screenshot({ path: testInfo.outputPath("brand-terminal-mobile.png"), fullPage: true });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(`${system.webUrl}/businesses`);
   const name = "Asesoramiento y planificación para pequeños negocios de Buenos Aires";
   const email = "brand-typography@example.test";
   const password = "brand typography password safe";
@@ -133,6 +228,8 @@ test("official local faces, root tokens and shared roles survive real login/prof
   await page.getByRole("button", { name: "Guardar perfil", exact: true }).click();
   await expect(page.getByRole("status")).toHaveText("Perfil guardado");
   await loaded(page);
+  await officialBrand(page, ".authenticated-shell__sidebar .brand", "logo-inverse-outlined", 32);
+  await expect(page.getByRole("img", { name: "agendIA", exact: true })).toHaveCount(1);
   expect.soft(await page.evaluate(() => [
     document.fonts.check('650 16px "Source Sans 3"'),
     document.fonts.check('450 16px "JetBrains Mono"'),
@@ -163,6 +260,9 @@ test("official local faces, root tokens and shared roles survive real login/prof
   await page.setViewportSize({ width: 360, height: 800 });
   await noClipping(page);
   await expect(heading).toBeVisible();
+  await officialBrand(page, ".authenticated-shell__mobile-brand", "logo-mono-outlined", 24);
+  await expect(page.locator('.authenticated-shell__mobile-brand .branded-name__wordmark')).toBeHidden();
+  await expect(page.getByRole("img", { name: "agendIA", exact: true })).toHaveCount(1);
   await page.screenshot({ path: testInfo.outputPath("typography-mobile.png"), fullPage: true });
   await page.setViewportSize({ width: 1280, height: 900 });
   await zoom200();
