@@ -2428,12 +2428,12 @@ main.login-frame {
 }
 
 .whatsapp-screen {
-  --whatsapp-night: #0b2725;
-  --whatsapp-deep: #123c37;
+  --whatsapp-night: var(--pine-deep);
+  --whatsapp-deep: var(--pine);
   --whatsapp-green: #25d366;
-  --whatsapp-mint: #bcebd2;
-  --whatsapp-blue: #78d5d0;
-  --whatsapp-line: rgba(18, 60, 55, 0.16);
+  --whatsapp-mint: var(--paper);
+  --whatsapp-blue: var(--honey);
+  --whatsapp-line: var(--line);
   color: var(--ink);
 }
 
@@ -2446,14 +2446,7 @@ main.login-frame {
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: clamp(1.1rem, 2.5vw, 1.75rem);
-  background:
-    radial-gradient(circle at 9% 2%, rgba(37, 211, 102, 0.2), transparent 19rem),
-    radial-gradient(
-      circle at 87% 86%,
-      rgba(120, 213, 208, 0.16),
-      transparent 21rem
-    ),
-    linear-gradient(132deg, #071e1d 0%, var(--whatsapp-night) 48%, #165047 100%);
+  background: var(--pine-deep);
   color: var(--paper);
   box-shadow: 0 1.6rem 4rem rgba(8, 38, 34, 0.2);
 }
@@ -2466,7 +2459,7 @@ main.login-frame {
   height: 34rem;
   background: linear-gradient(
     transparent,
-    rgba(120, 213, 208, 0.25),
+    var(--honey),
     transparent
   );
   content: "";
@@ -2480,7 +2473,7 @@ main.login-frame {
   bottom: -11rem;
   width: 25rem;
   height: 25rem;
-  border: 1px solid rgba(37, 211, 102, 0.13);
+  border: 1px solid var(--line);
   border-radius: 50%;
   content: "";
   pointer-events: none;
@@ -2501,9 +2494,9 @@ main.login-frame {
 .whatsapp-screen .whatsapp-hero__eyebrow {
   margin: 0 0 1.1rem;
   color: var(--whatsapp-mint);
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 0.72rem;
-  font-weight: 750;
+  font-weight: 650;
   letter-spacing: 0.11em;
   text-transform: uppercase;
 }
@@ -2514,7 +2507,7 @@ main.login-frame {
   color: var(--paper);
   font-family: var(--font-display);
   font-size: clamp(2.55rem, 5.5vw, 5.2rem);
-  font-weight: 640;
+  font-weight: 650;
   letter-spacing: -0.067em;
   line-height: 0.94;
   text-wrap: balance;
@@ -2523,7 +2516,7 @@ main.login-frame {
 .whatsapp-screen .whatsapp-hero__copy > p:last-child {
   max-width: 39rem;
   margin: 1.5rem 0 0;
-  color: rgba(241, 238, 227, 0.72);
+  color: var(--paper);
   font-size: clamp(1rem, 1.4vw, 1.13rem);
   line-height: 1.68;
 }
@@ -2533,9 +2526,9 @@ main.login-frame {
   display: grid;
   grid-template-rows: auto minmax(10rem, 1fr) auto;
   padding: 1rem;
-  border: 1px solid rgba(188, 235, 210, 0.2);
+  border: 1px solid var(--line);
   border-radius: 1.1rem;
-  background: rgba(3, 20, 18, 0.48);
+  background: var(--pine-deep);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
   backdrop-filter: blur(0.8rem);
 }
@@ -2546,10 +2539,10 @@ main.login-frame {
   gap: 1rem;
   padding: 0.1rem 0.15rem 0.8rem;
   border-bottom: 1px solid rgba(241, 238, 227, 0.12);
-  color: rgba(241, 238, 227, 0.54);
-  font-family: var(--font-mono);
+  color: var(--paper);
+  font-family: var(--font-body);
   font-size: 0.61rem;
-  font-weight: 750;
+  font-weight: 650;
   letter-spacing: 0.07em;
   text-transform: uppercase;
 }
@@ -2571,7 +2564,7 @@ main.login-frame {
   height: 4.6rem;
   border: 1px solid rgba(241, 238, 227, 0.2);
   border-radius: 1.15rem;
-  background: #102f2b;
+  background: var(--pine-deep);
   color: var(--paper);
   font-family: var(--font-display);
   box-shadow: 0 0.8rem 2rem rgba(0, 0, 0, 0.18);
@@ -2594,11 +2587,11 @@ main.login-frame {
 
 .whatsapp-screen .whatsapp-bridge__node--whatsapp {
   gap: 0.25rem;
-  border-color: rgba(37, 211, 102, 0.44);
+  border-color: var(--line);
   border-radius: 50% 50% 0.85rem 50%;
-  background: rgba(37, 211, 102, 0.13);
+  background: var(--pine-deep);
   font-size: 0.55rem;
-  font-weight: 750;
+  font-weight: 650;
 }
 
 .whatsapp-screen .whatsapp-bridge__node--whatsapp svg {
@@ -2621,9 +2614,9 @@ main.login-frame {
   margin-block: 0.3rem;
   background: linear-gradient(
     90deg,
-    rgba(255, 107, 73, 0.55),
-    rgba(120, 213, 208, 0.25) 38%,
-    rgba(37, 211, 102, 0.6)
+    var(--coral),
+    var(--honey) 38%,
+    var(--pine)
   );
 }
 
@@ -2665,7 +2658,7 @@ main.login-frame {
   margin: 0;
   padding: 0.8rem 0.15rem 0.05rem;
   border-top: 1px solid rgba(241, 238, 227, 0.12);
-  color: rgba(241, 238, 227, 0.58);
+  color: var(--paper);
   font-size: 0.71rem;
   line-height: 1.5;
 }
@@ -2692,15 +2685,17 @@ main.login-frame {
 }
 
 .whatsapp-screen .whatsapp-feedback [role="alert"] {
-  border-color: rgba(194, 75, 58, 0.28);
+  border-color: var(--danger);
   border-left-color: var(--danger);
-  background: var(--danger-soft);
+  background: var(--danger);
+  color: var(--white);
 }
 
 .whatsapp-screen .whatsapp-feedback [role="status"] {
-  border-color: rgba(47, 110, 82, 0.28);
-  border-left-color: var(--pine);
-  background: var(--pine-soft);
+  border-color: var(--ok);
+  border-left-color: var(--ok);
+  background: var(--ok);
+  color: var(--white);
 }
 
 .whatsapp-screen .whatsapp-workspace {
@@ -2727,29 +2722,25 @@ main.login-frame {
 }
 
 .whatsapp-screen .whatsapp-status {
-  --status-accent: #5d746b;
-  --status-soft: #e7ebe8;
+  --status-accent: var(--pine);
+  --status-soft: var(--paper);
+  --status-text: var(--white);
   padding: clamp(1.2rem, 3vw, 2rem);
   overflow: hidden;
   border-top: 0.38rem solid var(--status-accent);
-  background:
-    radial-gradient(
-      circle at 100% 0%,
-      color-mix(in srgb, var(--status-accent) 13%, transparent),
-      transparent 14rem
-    ),
-    var(--surface);
+  background: var(--paper);
   box-shadow: 0 1rem 2.8rem rgba(23, 38, 32, 0.07);
 }
 
 .whatsapp-screen .whatsapp-status[data-status="connected"] {
-  --status-accent: #228b55;
-  --status-soft: #dcecdf;
+  --status-accent: var(--ok);
+  --status-soft: var(--paper);
 }
 
 .whatsapp-screen .whatsapp-status[data-status="link_required"] {
-  --status-accent: #a66b19;
-  --status-soft: #f5e8cc;
+  --status-accent: var(--honey);
+  --status-soft: var(--paper);
+  --status-text: var(--ink);
 }
 
 .whatsapp-screen .whatsapp-status[data-status="error"] {
@@ -2769,10 +2760,10 @@ main.login-frame {
 .whatsapp-screen .whatsapp-metadata__heading p,
 .whatsapp-screen .whatsapp-link-panel__header > p {
   margin: 0 0 0.35rem;
-  color: #65736c;
-  font-family: var(--font-mono);
+  color: var(--ink-2);
+  font-family: var(--font-body);
   font-size: 0.64rem;
-  font-weight: 800;
+  font-weight: 650;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -2784,6 +2775,7 @@ main.login-frame {
   color: var(--ink);
   font-family: var(--font-display);
   font-size: clamp(1.45rem, 2.8vw, 2rem);
+  font-weight: 650;
   letter-spacing: -0.045em;
   line-height: 1.08;
 }
@@ -2797,11 +2789,11 @@ main.login-frame {
   padding: 0.42rem 0.65rem;
   border: 1px solid color-mix(in srgb, var(--status-accent) 32%, transparent);
   border-radius: 2rem;
-  background: var(--status-soft);
-  color: var(--status-accent);
-  font-family: var(--font-mono);
+  background: var(--status-accent);
+  color: var(--status-text);
+  font-family: var(--font-body);
   font-size: 0.65rem;
-  font-weight: 850;
+  font-weight: 650;
   letter-spacing: 0.04em;
   line-height: 1.2;
   text-transform: uppercase;
@@ -2822,15 +2814,14 @@ main.login-frame {
   margin: 1.4rem 0 0;
   padding-top: 1.15rem;
   border-top: 1px solid rgba(23, 38, 32, 0.12);
-  color: #52625b;
+  color: var(--ink-2);
   font-size: 0.9rem;
   line-height: 1.62;
 }
 
 .whatsapp-screen .whatsapp-metadata {
   padding: clamp(1.2rem, 3vw, 2rem);
-  background:
-    linear-gradient(135deg, rgba(120, 213, 208, 0.08), transparent 42%), #f5f4ed;
+  background: var(--paper);
 }
 
 .whatsapp-screen .whatsapp-metadata__heading {
@@ -2858,9 +2849,9 @@ main.login-frame {
 }
 
 .whatsapp-screen .whatsapp-metadata dt {
-  color: #68766f;
+  color: var(--ink-2);
   font-size: 0.75rem;
-  font-weight: 700;
+  font-weight: 650;
 }
 
 .whatsapp-screen .whatsapp-metadata dd {
@@ -2870,7 +2861,8 @@ main.login-frame {
   color: var(--ink);
   font-family: var(--font-mono);
   font-size: 0.77rem;
-  font-weight: 750;
+  font-weight: 450;
+  font-variant-numeric: tabular-nums;
   line-height: 1.45;
 }
 
@@ -2879,9 +2871,7 @@ main.login-frame {
   gap: 1.2rem;
   padding: clamp(1.2rem, 3vw, 2rem);
   border-color: rgba(18, 60, 55, 0.2);
-  background:
-    linear-gradient(180deg, rgba(188, 235, 210, 0.14), transparent 18rem),
-    var(--surface);
+  background: var(--paper);
   box-shadow: 0 1.3rem 3.4rem rgba(8, 38, 34, 0.09);
 }
 
@@ -2899,13 +2889,7 @@ main.login-frame {
   overflow: hidden;
   border: 1px dashed rgba(18, 60, 55, 0.32);
   border-radius: 1rem;
-  background:
-    linear-gradient(rgba(250, 248, 241, 0.92), rgba(250, 248, 241, 0.92)),
-    repeating-linear-gradient(
-      45deg,
-      rgba(18, 60, 55, 0.08) 0 0.5rem,
-      transparent 0.5rem 1rem
-    );
+  background: var(--paper);
 }
 
 .whatsapp-screen .whatsapp-scan-target--ready {
@@ -2916,14 +2900,8 @@ main.login-frame {
 
 .whatsapp-screen .whatsapp-scan-target--connected {
   border-style: solid;
-  border-color: rgba(37, 139, 85, 0.28);
-  background:
-    radial-gradient(
-      circle at 50% 45%,
-      rgba(37, 211, 102, 0.12),
-      transparent 10rem
-    ),
-    #eef5ed;
+  border-color: var(--ok);
+  background: var(--paper);
 }
 
 .whatsapp-screen .whatsapp-scan-target figure {
@@ -2946,7 +2924,8 @@ main.login-frame {
 
 .whatsapp-screen .whatsapp-scan-target figcaption {
   max-width: 34rem;
-  color: #596861;
+  color: var(--ink-2);
+  background: var(--paper);
   font-size: 0.76rem;
   line-height: 1.5;
   text-align: center;
@@ -2971,7 +2950,7 @@ main.login-frame {
   padding: 1rem;
   border: 1px solid rgba(18, 60, 55, 0.16);
   border-radius: 50% 50% 0.9rem 50%;
-  background: rgba(188, 235, 210, 0.28);
+  background: var(--paper);
 }
 
 .whatsapp-screen .whatsapp-scan-target__placeholder i {
@@ -2999,12 +2978,12 @@ main.login-frame {
   display: grid;
   place-items: center;
   margin-bottom: 1rem;
-  border: 1px solid rgba(34, 139, 85, 0.32);
+  border: 1px solid var(--ok);
   border-radius: 50%;
-  background: rgba(37, 211, 102, 0.14);
-  color: #187442;
+  background: var(--ok);
+  color: var(--white);
   font-size: 2rem;
-  font-weight: 850;
+  font-weight: 650;
   box-shadow: 0 0 0 0.7rem rgba(37, 211, 102, 0.05);
 }
 
@@ -3013,13 +2992,14 @@ main.login-frame {
   color: var(--ink);
   font-family: var(--font-display);
   font-size: 1.15rem;
+  font-weight: 650;
   letter-spacing: -0.025em;
 }
 
 .whatsapp-screen .whatsapp-scan-target__placeholder p,
 .whatsapp-screen .whatsapp-scan-target__confirmation p {
   margin: 0.55rem 0 0;
-  color: #65736c;
+  color: var(--ink-2);
   font-size: 0.8rem;
   line-height: 1.55;
 }
@@ -3052,7 +3032,8 @@ main.login-frame {
   color: var(--whatsapp-deep);
   font-family: var(--font-mono);
   font-size: 0.58rem;
-  font-weight: 850;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 .whatsapp-screen .whatsapp-link-steps p {
@@ -3064,10 +3045,11 @@ main.login-frame {
 .whatsapp-screen .whatsapp-link-steps strong {
   color: var(--ink);
   font-size: 0.8rem;
+  font-weight: 650;
 }
 
 .whatsapp-screen .whatsapp-link-steps small {
-  color: #68766f;
+  color: var(--ink-2);
   font-size: 0.7rem;
   line-height: 1.45;
 }
@@ -3079,10 +3061,10 @@ main.login-frame {
   margin: 0;
   padding: 0.8rem;
   border-radius: 0.75rem;
-  background: #e7efea;
-  color: #405a4f;
+  background: var(--paper);
+  color: var(--ink-2);
   font-size: 0.72rem;
-  font-weight: 650;
+  font-weight: 450;
   line-height: 1.5;
 }
 
@@ -3102,7 +3084,7 @@ main.login-frame {
   background: var(--whatsapp-deep);
   color: var(--white);
   cursor: pointer;
-  font-weight: 850;
+  font-weight: 650;
   box-shadow: 0 0.8rem 1.8rem rgba(8, 38, 34, 0.2);
   transition:
     background-color 140ms ease,
@@ -3111,28 +3093,28 @@ main.login-frame {
 }
 
 .whatsapp-screen .whatsapp-link-panel > button:hover:not(:disabled) {
-  background: #185a50;
+  background: var(--coral-ink);
   box-shadow: 0 0.95rem 2rem rgba(8, 38, 34, 0.27);
   transform: translateY(-1px);
 }
 
 .whatsapp-screen .whatsapp-link-panel > button:focus-visible {
-  outline: 0.22rem solid var(--coral);
+  outline: 0.22rem solid var(--focus);
   outline-offset: 0.18rem;
 }
 
 .whatsapp-screen .whatsapp-link-panel > button:disabled {
   cursor: default;
-  background: #62716b;
-  opacity: 0.72;
+  background: var(--pine);
+  opacity: 1;
   box-shadow: none;
 }
 
 .whatsapp-screen
   .whatsapp-link-panel:has(.whatsapp-scan-target--connected)
   > button:disabled {
-  background: #dbe9de;
-  color: #245b40;
+  background: var(--ok);
+  color: var(--white);
   opacity: 1;
 }
 

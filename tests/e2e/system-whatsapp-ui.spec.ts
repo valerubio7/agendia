@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page } from "@playwright/test";
+import { expect, type Locator, type Page, type Route } from "@playwright/test";
 import { test } from "./support/fixtures.ts";
 
 const tenant = {
@@ -45,11 +45,22 @@ async function expectMetadata(metadata: Locator) {
   }
 }
 
+async function expectPair(locator: Locator, color: string, background: string) {
+  await expect(locator).toHaveCSS("color", color);
+  await expect(locator).toHaveCSS("background-color", background);
+}
+
+const paper = "rgb(243, 238, 225)";
+const white = "rgb(255, 255, 255)";
+const pine = "rgb(46, 107, 78)";
+const ok = "rgb(46, 125, 79)";
+const danger = "rgb(179, 58, 31)";
+
 test("the redesigned WhatsApp screen completes the real linking lifecycle responsively", async ({
   browser,
   page,
   system,
-}) => {
+}, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
@@ -153,6 +164,18 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
     await expect(qrImage).toBeHidden();
     await expectNoHorizontalOverflow(tenantPage);
 
+    await expect(screen.locator(".whatsapp-security-note")).toHaveCSS("font-weight", "450");
+    await expectPair(hero, paper, "rgb(18, 55, 42)");
+    await expect(hero.getByRole("heading", { level: 1 })).toHaveCSS("font-weight", "650");
+    await expect(hero.getByRole("heading", { level: 1 })).toHaveCSS("font-family", /Source Sans 3/);
+    await expect(hero.locator(".whatsapp-hero__eyebrow")).toHaveCSS("font-weight", "650");
+    await expect(metadata.locator("dd").first()).toHaveCSS("font-family", /JetBrains Mono/);
+    await expect(metadata.locator("dd").first()).toHaveCSS("font-weight", "450");
+    await expect(metadata.locator("dd").first()).toHaveCSS("font-variant-numeric", "tabular-nums");
+    const initialState = await statusPanel.getAttribute("data-status");
+    await expectPair(currentStatus, initialState === "link_required" ? "rgb(28, 38, 32)" : white,
+      initialState === "link_required" ? "rgb(233, 180, 76)" : pine);
+
     await expect(screen.locator("input, select, textarea, form")).toHaveCount(
       0,
     );
@@ -168,12 +191,90 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
       ),
     ).toHaveCount(0);
 
+    await expectPair(action, white, pine);
+    await expect(action).toHaveCSS("font-weight", "650");
+    // Real keyboard modality, never programmatic focus or forced DOM state.
+    for (let attempt = 0; attempt < 12 && !(await action.evaluate((el) => el === document.activeElement)); attempt++) {
+      await tenantPage.keyboard.press("Tab");
+    }
+    await expect(action).toBeFocused();
+    await tenantPage.keyboard.press("Shift+Tab");
+    await expect(action).not.toBeFocused();
+    await tenantPage.keyboard.press("Tab");
+    await expect(action).toBeFocused();
+    expect(await action.evaluate((el) => el.matches(":focus-visible"))).toBe(true);
+    await expect(action).toHaveCSS("outline-color", "rgb(168, 58, 26)");
+    await tenantPage.screenshot({ path: testInfo.outputPath("whatsapp-desktop.png"), fullPage: true });
+
+    // Schema-correct mocked UI-state coverage; not a real provider failure.
+    const statusUrl = "**/api/me/whatsapp/status";
+    const linkUrl = "**/api/me/whatsapp/link";
+    const errorStatus = (route: Route) => route.fulfill({
+      status: 200, json: { status: "error", linkedNumber: null, linkedAt: null, lastConnectedAt: null },
+    });
+    let releaseLink!: () => void;
+    const linkGate = new Promise<void>((resolve) => { releaseLink = resolve; });
+    const linkFailure = async (route: Route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      await linkGate;
+      await route.fulfill({ status: 503, json: { code: "INTERNAL_ERROR", message: "Mocked link failure" } });
+    };
+    await tenantPage.route(statusUrl, errorStatus);
+    await tenantPage.route(linkUrl, linkFailure);
+    try {
+      await tenantPage.reload();
+      await expect(statusPanel).toHaveAttribute("data-status", "error");
+      await expect(currentStatus).toHaveText("Error de conexión");
+      await expectPair(currentStatus, white, danger);
+      await action.click();
+      const pending = linkPanel.getByRole("button", { name: "Esperando conexión…", exact: true });
+      await expect(pending).toBeDisabled();
+      await expectPair(pending, white, pine);
+      await expect(pending).toHaveCSS("opacity", "1");
+      await expect(pending).toHaveCSS("cursor", "default");
+      await tenantPage.screenshot({ path: testInfo.outputPath("whatsapp-mocked-pending.png"), fullPage: true });
+      releaseLink();
+      const alert = screen.getByRole("alert");
+      await expect(alert).toBeVisible();
+      await expectPair(alert, white, danger);
+      await expect(action).toBeEnabled();
+      await tenantPage.screenshot({ path: testInfo.outputPath("whatsapp-mocked-error.png"), fullPage: true });
+    } finally {
+      releaseLink();
+      await tenantPage.unroute(statusUrl, errorStatus);
+      await tenantPage.unroute(linkUrl, linkFailure);
+    }
+    // Schema-correct mocked disconnected UI state, not a provider transition.
+    const disconnectedStatus = (route: Route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      return route.fulfill({
+        status: 200, json: { status: "disconnected", linkedNumber: null, linkedAt: null, lastConnectedAt: null },
+      });
+    };
+    await tenantPage.route(statusUrl, disconnectedStatus);
+    try {
+      await tenantPage.reload();
+      await expect(statusPanel).toHaveAttribute("data-status", "disconnected");
+      await expect(currentStatus).toHaveText("Desconectado");
+      await expectPair(currentStatus, white, pine);
+      await tenantPage.screenshot({ path: testInfo.outputPath("whatsapp-mocked-disconnected.png"), fullPage: true });
+    } finally {
+      await tenantPage.unroute(statusUrl, disconnectedStatus);
+    }
+    await tenantPage.reload();
+    await expect(currentStatus).toHaveText(/^(Requiere vinculación|Desconectado)$/);
+    await expect(screen.getByRole("alert")).toHaveCount(0);
+
+    // Original real API/database lifecycle uses deterministic provider doubles.
     await action.click();
     await expect(action).toHaveText("Esperando conexión…");
     await expect(action).toBeDisabled();
 
     await expect(qrImage).toBeVisible();
     await expect(qrImage).toHaveAttribute("src", /^data:image\/png;base64,/);
+    await expectPair(action, white, pine);
+    await expectPair(screen.locator('.whatsapp-feedback [role="status"]'), white, ok);
+    await tenantPage.screenshot({ path: testInfo.outputPath("whatsapp-qr.png"), fullPage: true });
 
     await expect(currentStatus).toHaveText("Conectado", { timeout: 15_000 });
     await expect(
@@ -182,6 +283,11 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
     await expect(qrImage).toBeHidden();
     await expect(action).toHaveText("WhatsApp vinculado");
     await expect(action).toBeDisabled();
+
+    await expectPair(currentStatus, white, ok);
+    await expectPair(action, white, ok);
+    await expectPair(screen.locator('.whatsapp-feedback [role="status"]'), white, ok);
+    await tenantPage.screenshot({ path: testInfo.outputPath("whatsapp-connected.png"), fullPage: true });
 
     await tenantPage.setViewportSize({ width: 360, height: 800 });
     await expectReachable(hero);
@@ -194,6 +300,7 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
     await expect(action).toHaveText("WhatsApp vinculado");
     await expect(action).toBeDisabled();
     await expectNoHorizontalOverflow(tenantPage);
+    await tenantPage.screenshot({ path: testInfo.outputPath("whatsapp-mobile.png"), fullPage: true });
   } finally {
     await tenantContext.close();
   }
