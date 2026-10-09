@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 import { test } from "./support/fixtures.ts";
 
 const tenant = {
@@ -12,6 +12,22 @@ async function login(page: Page, url: string, email: string, password: string) {
   await page.getByLabel("Correo", { exact: true }).fill(email);
   await page.getByLabel("Contraseña", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Ingresar", exact: true }).click();
+}
+
+async function primaryPair(control: Locator) {
+  await expect(control).toHaveCSS("background-color", "rgb(46, 107, 78)");
+  await expect(control).toHaveCSS("color", "rgb(255, 255, 255)");
+  await expect(control).toHaveCSS("font-weight", "650");
+}
+
+async function focusRing(control: Locator, color = "rgb(168, 58, 26)") {
+  await control.focus();
+  await control.page().keyboard.press("Tab");
+  await control.page().keyboard.press("Shift+Tab");
+  await expect(control).toBeFocused();
+  expect(await control.evaluate((element) => element.matches(":focus-visible"))).toBe(true);
+  await expect(control).toHaveCSS("outline-color", color);
+  await expect(control).toHaveCSS("outline-style", "solid");
 }
 
 test("role-aware authenticated shells recover safely and expose only valid navigation", async ({
@@ -41,6 +57,16 @@ test("role-aware authenticated shells recover safely and expose only valid navig
     sessionRecovery.getByText("Cargando panel…", { exact: true }),
   ).toHaveCount(0);
 
+  for (const width of [1280, 360]) {
+    await page.setViewportSize({ width, height: 800 });
+    await expect(sessionRecovery).toHaveCSS("background-color", "rgb(243, 238, 225)");
+    await expect(sessionRecovery.locator("h1")).toHaveCSS("font-weight", "650");
+    await expect(sessionRecovery.getByRole("alert")).toHaveCSS("color", "rgb(168, 58, 26)");
+    await expect(sessionRecovery.getByRole("alert")).toHaveCSS("background-color", "rgb(243, 238, 225)");
+    const recoveryLink = sessionRecovery.getByRole("link", { name: "Ir a iniciar sesión", exact: true });
+    await primaryPair(recoveryLink);
+    await focusRing(recoveryLink);
+  }
   await page.setViewportSize({ width: 1280, height: 800 });
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
@@ -58,6 +84,15 @@ test("role-aware authenticated shells recover safely and expose only valid navig
     exact: true,
   });
   await expect(adminNavigation).toHaveCount(1);
+  await expect(adminShell.locator(".authenticated-shell__sidebar")).toHaveCSS("background-color", "rgb(18, 55, 42)");
+  await expect(adminShell.locator(".authenticated-shell__sidebar")).toHaveCSS("color", "rgb(243, 238, 225)");
+  const adminActive = adminNavigation.locator('[aria-current="page"]');
+  await primaryPair(adminActive);
+  await focusRing(adminActive, "rgb(243, 238, 225)");
+  await expect(adminShell.locator(".authenticated-shell__section strong")).toHaveCSS("font-weight", "650");
+  await expect(adminShell.locator(".authenticated-shell__section span")).toHaveCSS("font-family", /"JetBrains Mono"/);
+  await expect(adminShell.locator(".authenticated-shell__section span")).toHaveCSS("font-weight", "700");
+  await expect(adminShell.locator(".authenticated-shell__section span")).toHaveCSS("font-variant-numeric", "tabular-nums");
   await expect(adminNavigation.getByRole("link")).toHaveText(["Negocios"]);
   await expect(
     adminNavigation.getByRole("link", { name: "Negocios", exact: true }),
@@ -156,6 +191,7 @@ test("role-aware authenticated shells recover safely and expose only valid navig
       '[data-ui="desktop-navigation"]',
     );
     await expect(desktopNavigation).toBeVisible();
+    await primaryPair(desktopNavigation.locator('[aria-current="page"]'));
 
     await businessNavigation
       .getByRole("link", { name: "Asistente", exact: true })
@@ -211,11 +247,14 @@ test("role-aware authenticated shells recover safely and expose only valid navig
 
     const mobileLinks = mobileNavigation.getByRole("link");
     await expect(mobileLinks).toHaveText(["Perfil", "Asistente", "WhatsApp"]);
+    await primaryPair(mobileNavigation.locator('[aria-current="page"]'));
+    await expect(businessShell.locator(".authenticated-shell__mobile-menu")).toHaveCSS("background-color", "rgb(243, 238, 225)");
     for (const name of ["Perfil", "Asistente", "WhatsApp"] as const) {
       const link = mobileNavigation.getByRole("link", { name, exact: true });
       await expect(link).toBeVisible();
       await link.focus();
       await expect(link).toBeFocused();
+      await focusRing(link);
     }
 
     const logout = mobileNavigation.getByRole("button", {
@@ -225,6 +264,8 @@ test("role-aware authenticated shells recover safely and expose only valid navig
     await expect(logout).toBeVisible();
     await logout.focus();
     await expect(logout).toBeFocused();
+    await primaryPair(logout);
+    await focusRing(logout);
     expect(
       await businessPage.evaluate(
         () =>
@@ -249,12 +290,14 @@ test("role-aware authenticated shells recover safely and expose only valid navig
 
     await Promise.all([logoutRequestObserved, logout.click()]);
     try {
-      await expect(
-        mobileNavigation.getByRole("button", {
-          name: "Cerrando sesión…",
-          exact: true,
-        }),
-      ).toBeDisabled();
+      const pendingLogout = mobileNavigation.getByRole("button", {
+        name: "Cerrando sesión…",
+        exact: true,
+      });
+      await expect(pendingLogout).toBeDisabled();
+      await primaryPair(pendingLogout);
+      await expect(pendingLogout).toHaveCSS("opacity", "1");
+      await expect(pendingLogout).toHaveCSS("cursor", "wait");
     } finally {
       releaseLogoutRequest();
     }
