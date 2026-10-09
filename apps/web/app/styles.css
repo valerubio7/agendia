@@ -2571,18 +2571,13 @@ main.login-frame {
 }
 
 .whatsapp-screen .whatsapp-bridge__node--agendia {
-  grid-template-columns: auto auto;
+  grid-template-columns: auto;
   align-content: center;
-  column-gap: 0;
   border-radius: 50% 50% 50% 0.85rem;
-  font-size: 0.72rem;
-  font-weight: 650;
-  letter-spacing: -0.04em;
 }
 
-.whatsapp-screen .whatsapp-bridge__node--agendia strong {
-  color: var(--coral);
-  font-weight: 850;
+.whatsapp-screen .whatsapp-bridge__brand {
+  --brand-height: 24px;
 }
 
 .whatsapp-screen .whatsapp-bridge__node--whatsapp {
@@ -3174,6 +3169,12 @@ main.login-frame {
   .whatsapp-screen .whatsapp-bridge__node {
     width: 4.1rem;
     height: 4.1rem;
+  }
+
+  .whatsapp-screen .whatsapp-bridge__node--agendia {
+    box-sizing: border-box;
+    width: 70px;
+    height: 70px;
   }
 
   .whatsapp-screen .whatsapp-status,

@@ -50,6 +50,64 @@ async function expectPair(locator: Locator, color: string, background: string) {
   await expect(locator).toHaveCSS("background-color", background);
 }
 
+async function expectBridgeBrand(screen: Locator, mobile: boolean) {
+  const node = screen.locator(".whatsapp-bridge__node--agendia");
+  const brand = node.locator(".brand.whatsapp-bridge__brand");
+  const image = brand.locator('img.brand__image[src="/brand/logo-symbol-inverse.svg"]');
+  await expect(image).toHaveCount(1);
+  await expect(node.locator("strong")).toHaveCount(0);
+  await expect(brand).toHaveAttribute("aria-hidden", "true");
+  await expect(image).toHaveAttribute("alt", "");
+  await expect(node.locator('xpath=..')).toHaveAttribute("aria-hidden", "true");
+  await expect(node.getByRole("img")).toHaveCount(0);
+  await expect.poll(() => image.evaluate((el: HTMLImageElement) => el.complete &&
+    Number.isFinite(el.naturalWidth) && Number.isFinite(el.naturalHeight) &&
+    el.naturalWidth > 0 && el.naturalHeight > 0 && el.naturalWidth === el.naturalHeight)).toBe(true);
+  for (const target of [brand, image]) {
+    for (const property of ["box-shadow", "filter", "transform"] as const) {
+      await expect(target).toHaveCSS(property, "none");
+    }
+  }
+  await expect(image).toHaveCSS("object-fit", "contain");
+  await expect(node).toHaveCSS("background-color", "rgb(18, 55, 42)");
+  for (const side of ["top", "right", "bottom", "left"]) {
+    await expect(brand).toHaveCSS(`padding-${side}`, "22px");
+  }
+  const fit = await brand.evaluate((el) => {
+    const rect = (e: Element) => {
+      const r = e.getBoundingClientRect();
+      return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height };
+    };
+    const node = el.parentElement!;
+    const image = el.querySelector("img")!;
+    const provider = node.parentElement!.querySelector(".whatsapp-bridge__node--whatsapp")!;
+    const n = rect(node), b = rect(el), i = rect(image), p = rect(provider);
+    const s = getComputedStyle(node);
+    const inner = { left: n.left + parseFloat(s.borderLeftWidth), right: n.right - parseFloat(s.borderRightWidth),
+      top: n.top + parseFloat(s.borderTopWidth), bottom: n.bottom - parseFloat(s.borderBottomWidth) };
+    const clipped: string[] = [];
+    for (let a = el.parentElement; a; a = a.parentElement) {
+      const r = rect(a), style = getComputedStyle(a);
+      if ((/(hidden|clip|scroll|auto)/.test(style.overflowX) && (b.left < r.left || b.right > r.right)) ||
+          (/(hidden|clip|scroll|auto)/.test(style.overflowY) && (b.top < r.top || b.bottom > r.bottom))) clipped.push(a.className);
+    }
+    return { node: n, brand: b, image: i, provider: p, inner, clipped };
+  });
+  expect([fit.image.width, fit.image.height]).toEqual([24, 24]);
+  expect([fit.brand.width, fit.brand.height]).toEqual([68, 68]);
+  expect(fit.brand.left).toBeGreaterThanOrEqual(fit.inner.left);
+  expect(fit.brand.right).toBeLessThanOrEqual(fit.inner.right);
+  expect(fit.brand.top).toBeGreaterThanOrEqual(fit.inner.top);
+  expect(fit.brand.bottom).toBeLessThanOrEqual(fit.inner.bottom);
+  expect(fit.brand.right).toBeLessThan(fit.provider.left);
+  expect(fit.clipped).toEqual([]);
+  expect(Math.abs(fit.node.width - (mobile ? 70 : 73.6))).toBeLessThanOrEqual(1 / 64);
+  expect(Math.abs(fit.node.height - (mobile ? 70 : 73.6))).toBeLessThanOrEqual(1 / 64);
+  expect(Math.abs(fit.provider.width - (mobile ? 65.6 : 73.6))).toBeLessThanOrEqual(1 / 64);
+  expect(Math.abs(fit.provider.height - (mobile ? 65.6 : 73.6))).toBeLessThanOrEqual(1 / 64);
+  console.log("WhatsApp official brand fit", mobile ? "mobile360" : "desktop1280", JSON.stringify(fit));
+}
+
 const paper = "rgb(243, 238, 225)";
 const white = "rgb(255, 255, 255)";
 const pine = "rgb(46, 107, 78)";
@@ -164,6 +222,13 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
     await expect(qrImage).toBeHidden();
     await expectNoHorizontalOverflow(tenantPage);
 
+    await expectBridgeBrand(screen, false);
+    const symbolResponse = await tenantPage.request.get(new URL("/brand/logo-symbol-inverse.svg", tenantPage.url()).href);
+    expect(symbolResponse.ok()).toBe(true);
+    const symbol = await symbolResponse.text();
+    expect(symbol).toContain('viewBox="0 0 120 120"');
+    expect(symbol).toContain('fill="#F3EEE1"');
+    expect(symbol).toContain('fill="#FF6B49"');
     await expect(screen.locator(".whatsapp-security-note")).toHaveCSS("font-weight", "450");
     await expectPair(hero, paper, "rgb(18, 55, 42)");
     await expect(hero.getByRole("heading", { level: 1 })).toHaveCSS("font-weight", "650");
@@ -291,6 +356,7 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
 
     await tenantPage.setViewportSize({ width: 360, height: 800 });
     await expectReachable(hero);
+    await expectBridgeBrand(screen, true);
     await expectReachable(statusPanel);
     await expect(currentStatus).toHaveText("Conectado");
     for (const label of metadataLabels) {
