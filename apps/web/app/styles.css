@@ -1548,8 +1548,8 @@ main.login-frame {
   text-transform: uppercase;
 }
 
-.assistant-screen .assistant-signal__header strong {
-  color: var(--paper);
+.assistant-signal__brand {
+  --brand-height: 24px;
 }
 
 .assistant-screen .assistant-signal__stage {

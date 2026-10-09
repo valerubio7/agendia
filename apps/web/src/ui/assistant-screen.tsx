@@ -92,8 +92,12 @@ export function AssistantScreen({
         >
           <div className="assistant-signal__header">
             <span>Señal de dirección</span>
-            <span aria-hidden="true">
-              agend<strong>IA</strong>
+            <span className="brand assistant-signal__brand" aria-hidden="true">
+              <img
+                className="brand__image"
+                src="/brand/logo-symbol-inverse.svg"
+                alt=""
+              />
             </span>
           </div>
           <div className="assistant-signal__stage" aria-hidden="true">

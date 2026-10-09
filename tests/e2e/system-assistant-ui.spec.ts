@@ -59,6 +59,67 @@ async function expectKeyboardFocus(page: Page, locator: Locator) {
   await expect(locator).toHaveCSS("outline-style", "solid");
 }
 
+async function expectOfficialSignalBrand(page: Page, shell: Locator) {
+  const header = shell.locator(".assistant-signal__header");
+  const wrapper = header.locator(".assistant-signal__brand");
+  const image = wrapper.locator("img");
+  // First guard must expose the actual missing SVG before testing geometry.
+  await expect(image).toHaveCount(1);
+  await expect(image).toHaveAttribute("src", "/brand/logo-symbol-inverse.svg");
+  await expect(wrapper).toHaveAttribute("aria-hidden", "true");
+  await expect(image).toHaveAttribute("alt", "");
+  await expect(shell.getByRole("img", { name: "agendIA", exact: true })).toHaveCount(1);
+  await expect(header).not.toContainText(/agendIA/i);
+  await expect(shell.locator(".assistant-signal__core")).toHaveText("IA");
+  const asset = await page.context().request.get(new URL("/brand/logo-symbol-inverse.svg", page.url()).href);
+  expect(asset.ok()).toBe(true);
+  expect(await asset.text()).toMatch(/viewBox="0 0 120 120"/);
+  await expect.poll(() => image.evaluate((element) => {
+    const img = element as HTMLImageElement;
+    // ViewBox coordinates do not prescribe a viewBox-only SVG's natural pixels.
+    return img.complete && Number.isFinite(img.naturalWidth) &&
+      Number.isFinite(img.naturalHeight) && img.naturalWidth > 0 &&
+      img.naturalHeight > 0 && img.naturalWidth === img.naturalHeight;
+  })).toBe(true);
+  await expect(image).toHaveCSS("object-fit", "contain");
+  for (const side of ["top", "right", "bottom", "left"]) {
+    await expect(wrapper).toHaveCSS(`padding-${side}`, "22px");
+  }
+  for (const element of [wrapper, image]) {
+    await expect(element).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(element).toHaveCSS("background-image", "none");
+    await expect(element).toHaveCSS("box-shadow", "none");
+    await expect(element).toHaveCSS("filter", "none");
+    await expect(element).toHaveCSS("transform", "none");
+    await expect(element).toHaveCSS("opacity", "1");
+  }
+  await header.scrollIntoViewIfNeeded();
+  const bounds = await header.evaluate((element) => {
+    const box = (node: Element) => {
+      const rect = node.getBoundingClientRect();
+      return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height };
+    };
+    return {
+      header: box(element), label: box(element.firstElementChild!),
+      wrapper: box(element.querySelector(".assistant-signal__brand")!),
+      image: box(element.querySelector("img")!), card: box(element.closest(".assistant-signal")!),
+      viewport: { left: 0, right: innerWidth, top: 0, bottom: innerHeight },
+    };
+  });
+  expect(bounds.image.width).toBe(24);
+  expect(bounds.image.height).toBe(24);
+  expect(bounds.wrapper.width).toBe(68);
+  expect(bounds.wrapper.height).toBe(68);
+  expect(bounds.wrapper.left - bounds.label.right).toBeGreaterThanOrEqual(16);
+  for (const container of [bounds.header, bounds.card, bounds.viewport]) {
+    expect(bounds.wrapper.left).toBeGreaterThanOrEqual(container.left);
+    expect(bounds.wrapper.right).toBeLessThanOrEqual(container.right);
+    expect(bounds.wrapper.top).toBeGreaterThanOrEqual(container.top);
+    expect(bounds.wrapper.bottom).toBeLessThanOrEqual(container.bottom);
+  }
+  console.log("Assistant official symbol bounds", JSON.stringify(bounds));
+}
+
 test("the redesigned Assistant screen preserves the real configuration workflow responsively", async ({
   browser,
   page,
@@ -123,6 +184,8 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
         exact: true,
       }),
     ).toBeVisible();
+
+    await expectOfficialSignalBrand(tenantPage, shell);
 
     // Official palette and role weights: assert the genuine hero mismatch first.
     await expectPair(hero, "rgb(243, 238, 225)", "rgb(18, 55, 42)");
@@ -370,6 +433,7 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
     await expectReachable(mobileSave);
     await expect(mobileSave).toBeEnabled();
     await expectNoHorizontalOverflow(tenantPage);
+    await expectOfficialSignalBrand(tenantPage, shell);
     await tenantPage.screenshot({ path: testInfo.outputPath("assistant-mobile.png"), fullPage: true });
   } finally {
     await tenantContext.close();
