@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page } from "@playwright/test";
+import { expect, type Locator, type Page, type Route } from "@playwright/test";
 import { test } from "./support/fixtures.ts";
 
 const tenant = {
@@ -53,7 +53,7 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
   browser,
   page,
   system,
-}) => {
+}, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
@@ -169,6 +169,31 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
     for (const optionalField of fields.slice(1)) {
       await expect(optionalField).not.toHaveAttribute("required", /.*/);
     }
+    // Pin the mounted Profile palette and typography, not shared-shell styles.
+    await expect(hero).toHaveCSS("background-color", "rgb(18, 55, 42)");
+    await expect(hero.locator("h1")).toHaveCSS("font-weight", "650");
+    for (const selector of [".profile-hero__eyebrow", ".profile-hero__copy > p:last-child", ".profile-knowledge-map__heading", ".profile-knowledge-map__heading strong", ".profile-knowledge-map small", ".profile-knowledge-map li > span"]) {
+      for (const element of await hero.locator(selector).all())
+        await expect(element).toHaveCSS("color", "rgb(243, 238, 225)");
+    }
+    await expect(hero.locator(".profile-knowledge-map")).toHaveCSS("background-color", "rgb(18, 55, 42)");
+    for (const section of sections) {
+      await expect(section).toHaveCSS("background-color", "rgb(243, 238, 225)");
+      await expect(section.locator("h2")).toHaveCSS("font-weight", "650");
+    }
+    await expect(form.locator('label[for="profile-displayName"]')).toHaveCSS("font-weight", "650");
+    await expect(displayName).toHaveCSS("background-color", "rgb(243, 238, 225)");
+    await expect(displayName).toHaveCSS("color", "rgb(28, 38, 32)");
+    await expect(displayName).toHaveCSS("font-weight", "450");
+    await expect(displayName).toHaveCSS("font-family", /Source Sans 3/);
+    await expect(businessHours).toHaveCSS("font-family", /JetBrains Mono/);
+    await expect(businessHours).toHaveCSS("font-variant-numeric", "tabular-nums");
+    await expect(form.locator('label[for="profile-businessHours"]')).toHaveCSS("font-weight", "700");
+    await expect(savePanel).toHaveCSS("background-color", "rgb(18, 55, 42)");
+    await expect(savePanel.locator("p")).toHaveCSS("color", "rgb(243, 238, 225)");
+    await expect(save).toHaveCSS("background-color", "rgb(168, 58, 26)");
+    await expect(save).toHaveCSS("color", "rgb(255, 255, 255)");
+    await expect(save).toHaveCSS("font-weight", "650");
     await expectTextInput(displayName, "160");
     await expectTextarea(description, "4000");
     await expectTextInput(address, "500");
@@ -195,7 +220,7 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
     const saveRequestReleased = new Promise<void>((resolve) => {
       releaseSaveRequest = resolve;
     });
-    await tenantPage.route("**/me/business-profile", async (route) => {
+    const saveHandler = async (route: Route) => {
       if (route.request().method() !== "PUT") {
         await route.continue();
         return;
@@ -204,17 +229,32 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
       observeSaveRequest();
       await saveRequestReleased;
       await route.continue();
-    });
+    };
+    await tenantPage.route("**/me/business-profile", saveHandler);
 
+    // Enter keyboard modality through the last field, then genuinely Tab to save.
+    await offerings.click();
+    await tenantPage.keyboard.press("Tab");
+    await expect(save).toBeFocused();
+    expect(await save.evaluate((element) => element.matches(":focus-visible"))).toBe(true);
+    await expect(save).toHaveCSS("outline-color", "rgb(243, 238, 225)");
+    await expect(save).toHaveCSS("outline-style", "solid");
     await Promise.all([saveRequestObserved, save.click()]);
     try {
       await expect(
         savePanel.getByRole("button", { name: "Guardando…", exact: true }),
       ).toBeDisabled();
+      const pending = savePanel.getByRole("button", { name: "Guardando…", exact: true });
+      await expect(pending).toHaveCSS("background-color", "rgb(168, 58, 26)");
+      await expect(pending).toHaveCSS("color", "rgb(255, 255, 255)");
+      await expect(form).toHaveAttribute("aria-busy", "true");
     } finally {
       releaseSaveRequest();
     }
     await expect(screen.getByRole("status")).toHaveText("Perfil guardado");
+    await expect(screen.getByRole("status")).toHaveCSS("background-color", "rgb(46, 125, 79)");
+    await expect(screen.getByRole("status")).toHaveCSS("color", "rgb(255, 255, 255)");
+    await tenantPage.unroute("**/me/business-profile", saveHandler);
 
     await tenantPage.reload();
     await expect(tenantPage).toHaveURL(/\/profile$/);
@@ -233,6 +273,65 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
       await expect(tenantPage.locator(`#business-profile-form [name="${name}"]`)).toHaveCount(0);
     await expectNoHorizontalOverflow(tenantPage);
 
+    // Exercise the real API's parse-before-write rejection with a valid UI draft.
+    const readProfile = async () => {
+      const response = await tenantContext.request.get(`${system.webUrl}/api/me/business-profile`);
+      expect(response.ok()).toBe(true);
+      return response.json();
+    };
+    const baseline = await readProfile();
+    expect(baseline).toEqual(values);
+    const draft = { ...values, description: "Descripción vigente para reintentar el guardado." };
+    await description.fill(draft.description);
+    let observeFault!: () => void;
+    const faultObserved = new Promise<void>((resolve) => { observeFault = resolve; });
+    let releaseFault!: () => void;
+    const faultReleased = new Promise<void>((resolve) => { releaseFault = resolve; });
+    const faultHandler = async (route: Route) => {
+      if (route.request().method() !== "PUT") return route.continue();
+      const payload = route.request().postDataJSON();
+      expect(payload).toEqual(draft);
+      observeFault();
+      await faultReleased;
+      await route.continue({ postData: JSON.stringify({ ...payload, description: "x".repeat(4001) }) });
+    };
+    await tenantPage.route("**/api/me/business-profile", faultHandler);
+    const rejectedResponse = tenantPage.waitForResponse((response) =>
+      new URL(response.url()).pathname === "/api/me/business-profile" && response.request().method() === "PUT",
+    );
+    try {
+      await Promise.all([faultObserved, save.click()]);
+      await expect(savePanel.getByRole("button", { name: "Guardando…", exact: true })).toBeDisabled();
+      await expect(form).toHaveAttribute("aria-busy", "true");
+      releaseFault();
+      const response = await rejectedResponse;
+      expect(response.status()).toBe(400);
+      expect(await response.json()).toMatchObject({ code: "VALIDATION_FAILED" });
+      const alert = screen.getByRole("alert");
+      await expect(alert).toHaveText("Revisá los campos indicados.");
+      await expect(alert).toHaveCSS("color", "rgb(255, 255, 255)");
+      await expect(alert).toHaveCSS("background-color", "rgb(179, 58, 31)");
+      await expect(description).toHaveValue(draft.description);
+      await expect(form).toHaveAttribute("aria-busy", "false");
+      await expect(save).toBeEnabled();
+      await expect(screen.getByRole("status")).toHaveCount(0);
+      expect(await readProfile()).toEqual(baseline);
+      await tenantPage.screenshot({ path: testInfo.outputPath("profile-error.png"), fullPage: true });
+    } finally {
+      releaseFault();
+      await tenantPage.unroute("**/api/me/business-profile", faultHandler);
+    }
+    await save.click();
+    await expect(screen.getByRole("status")).toHaveText("Perfil guardado");
+    await expect(screen.getByRole("status")).toHaveCSS("color", "rgb(255, 255, 255)");
+    await expect(screen.getByRole("status")).toHaveCSS("background-color", "rgb(46, 125, 79)");
+    await expect(screen.getByRole("alert")).toHaveCount(0);
+    expect(await readProfile()).toEqual(draft);
+    await tenantPage.reload();
+    for (const [name, value] of Object.entries(draft))
+      await expect(form.locator(`[name="${name}"]`)).toHaveValue(value);
+    await expectNoHorizontalOverflow(tenantPage);
+    await tenantPage.screenshot({ path: testInfo.outputPath("profile-desktop.png"), fullPage: true });
     await tenantPage.setViewportSize({ width: 360, height: 800 });
     for (const field of fields) {
       const label = await field.getAttribute("name");
@@ -253,6 +352,7 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
     await expect(mobileSave).toBeVisible();
     await expect(mobileSave).toBeEnabled();
     await expectNoHorizontalOverflow(tenantPage);
+    await tenantPage.screenshot({ path: testInfo.outputPath("profile-mobile.png"), fullPage: true });
   } finally {
     await tenantContext.close();
   }

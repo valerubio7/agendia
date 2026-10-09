@@ -847,13 +847,7 @@ main.login-frame {
   overflow: hidden;
   border: 1px solid rgba(241, 238, 227, 0.08);
   border-radius: clamp(1.1rem, 2.5vw, 1.75rem);
-  background:
-    radial-gradient(
-      circle at 8% 5%,
-      rgba(255, 107, 73, 0.22),
-      transparent 19rem
-    ),
-    linear-gradient(135deg, #102b22 0%, #1f4938 58%, #2f6e52 100%);
+  background: var(--pine-deep);
   color: var(--paper);
   box-shadow: var(--profile-shadow);
 }
@@ -896,10 +890,10 @@ main.login-frame {
 
 .profile-screen .profile-hero__eyebrow {
   margin: 0 0 1.1rem;
-  color: #b9ddc7;
+  color: var(--paper);
   font-family: var(--font-mono);
   font-size: 0.72rem;
-  font-weight: 750;
+  font-weight: 700;
   letter-spacing: 0.11em;
   text-transform: uppercase;
 }
@@ -919,7 +913,7 @@ main.login-frame {
 .profile-screen .profile-hero__copy > p:last-child {
   max-width: 38rem;
   margin: 1.5rem 0 0;
-  color: rgba(241, 238, 227, 0.74);
+  color: var(--paper);
   font-size: clamp(1rem, 1.4vw, 1.15rem);
   line-height: 1.65;
 }
@@ -929,7 +923,7 @@ main.login-frame {
   padding: clamp(1rem, 2vw, 1.5rem);
   border: 1px solid rgba(241, 238, 227, 0.14);
   border-radius: 1.15rem;
-  background: rgba(9, 35, 26, 0.38);
+  background: var(--pine-deep);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
   backdrop-filter: blur(0.75rem);
 }
@@ -941,7 +935,7 @@ main.login-frame {
   gap: 1rem;
   padding: 0.15rem 0.15rem 0.9rem;
   border-bottom: 1px solid rgba(241, 238, 227, 0.12);
-  color: rgba(241, 238, 227, 0.62);
+  color: var(--paper);
   font-family: var(--font-mono);
   font-size: 0.65rem;
   font-weight: 700;
@@ -950,7 +944,7 @@ main.login-frame {
 }
 
 .profile-screen .profile-knowledge-map__heading strong {
-  color: var(--coral);
+  color: var(--paper);
 }
 
 .profile-screen .profile-knowledge-map ol {
@@ -984,23 +978,24 @@ main.login-frame {
   height: 2.15rem;
   border: 1px solid rgba(255, 107, 73, 0.5);
   border-radius: 50%;
-  color: var(--coral);
+  color: var(--paper);
   font-family: var(--font-mono);
   font-size: 0.65rem;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .profile-screen .profile-knowledge-map strong {
   color: var(--paper);
   font-family: var(--font-display);
   font-size: 1rem;
+  font-weight: 650;
   line-height: 1.25;
 }
 
 .profile-screen .profile-knowledge-map small {
   margin-top: 0.2rem;
   overflow-wrap: anywhere;
-  color: rgba(241, 238, 227, 0.58);
+  color: var(--paper);
   font-size: 0.76rem;
   line-height: 1.45;
 }
@@ -1020,7 +1015,7 @@ main.login-frame {
   border: 1px solid transparent;
   border-left-width: 0.3rem;
   border-radius: 0.85rem;
-  color: var(--ink);
+  color: var(--white);
   font-weight: 650;
   line-height: 1.5;
   box-shadow: 0 0.65rem 1.8rem rgba(23, 38, 32, 0.07);
@@ -1029,13 +1024,13 @@ main.login-frame {
 .profile-screen .profile-feedback [role="alert"] {
   border-color: rgba(194, 75, 58, 0.28);
   border-left-color: var(--danger);
-  background: var(--danger-soft);
+  background: var(--danger);
 }
 
 .profile-screen .profile-feedback [role="status"] {
   border-color: rgba(47, 110, 82, 0.28);
-  border-left-color: var(--pine);
-  background: var(--pine-soft);
+  border-left-color: var(--ok);
+  background: var(--ok);
 }
 
 .profile-screen .profile-layout {
@@ -1063,21 +1058,13 @@ main.login-frame {
 }
 
 .profile-screen .profile-section--identity {
-  background:
-    linear-gradient(90deg, rgba(47, 110, 82, 0.08), transparent 22%),
-    var(--surface);
+  background: var(--paper);
   box-shadow: 0 1rem 2.5rem rgba(23, 38, 32, 0.06);
 }
 
 .profile-screen .profile-section--operation {
   border-color: rgba(47, 110, 82, 0.24);
-  background:
-    radial-gradient(
-      circle at 100% 0%,
-      rgba(47, 110, 82, 0.12),
-      transparent 18rem
-    ),
-    #edf2e9;
+  background: var(--paper);
 }
 
 .profile-screen .profile-section--knowledge {
@@ -1106,7 +1093,7 @@ main.login-frame {
   color: var(--pine);
   font-family: var(--font-mono);
   font-size: 0.7rem;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .profile-screen .profile-section--operation .profile-section__number {
@@ -1123,10 +1110,10 @@ main.login-frame {
 
 .profile-screen .profile-section__header p {
   margin: 0 0 0.25rem;
-  color: var(--mid);
+  color: var(--ink-2);
   font-family: var(--font-mono);
   font-size: 0.65rem;
-  font-weight: 750;
+  font-weight: 700;
   letter-spacing: 0.07em;
   text-transform: uppercase;
 }
@@ -1136,6 +1123,7 @@ main.login-frame {
   color: var(--ink);
   font-family: var(--font-display);
   font-size: clamp(1.45rem, 3vw, 2rem);
+  font-weight: 650;
   letter-spacing: -0.04em;
   line-height: 1.08;
 }
@@ -1144,7 +1132,7 @@ main.login-frame {
   display: block;
   max-width: 43rem;
   margin-top: 0.55rem;
-  color: #54645d;
+  color: var(--ink-2);
   font-size: 0.9rem;
   line-height: 1.55;
 }
@@ -1180,7 +1168,7 @@ main.login-frame {
   border: 1px solid #c5c1b4;
   border-radius: 0.75rem;
   outline: none;
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--paper);
   color: var(--ink);
   font-weight: 450;
   line-height: 1.55;
@@ -1206,15 +1194,15 @@ main.login-frame {
 
 .profile-screen .profile-field input:hover,
 .profile-screen .profile-field textarea:hover {
-  border-color: #958f7f;
-  background: var(--white);
+  border-color: var(--pine);
+  background: var(--paper);
 }
 
 .profile-screen .profile-field input:focus-visible,
 .profile-screen .profile-field textarea:focus-visible {
   border-color: var(--pine);
   outline: none;
-  background: var(--white);
+  background: var(--paper);
   box-shadow: 0 0 0 0.25rem rgba(47, 110, 82, 0.18);
 }
 
@@ -1230,9 +1218,9 @@ main.login-frame {
 
 .profile-screen .profile-field__hint {
   max-width: 65ch;
-  color: #68766f;
+  color: var(--ink-2);
   font-size: 0.72rem;
-  font-weight: 500;
+  font-weight: 450;
   line-height: 1.5;
 }
 
@@ -1250,15 +1238,15 @@ main.login-frame {
 .profile-screen .profile-rail__guide {
   padding: 1.3rem;
   border: 1px solid rgba(23, 38, 32, 0.12);
-  background: var(--surface);
+  background: var(--paper);
 }
 
 .profile-screen .profile-rail__eyebrow {
   margin: 0 0 0.45rem;
-  color: var(--danger);
+  color: var(--coral-ink);
   font-family: var(--font-mono);
   font-size: 0.64rem;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.07em;
   text-transform: uppercase;
 }
@@ -1267,6 +1255,7 @@ main.login-frame {
   margin: 0;
   font-family: var(--font-display);
   font-size: 1.3rem;
+  font-weight: 650;
   letter-spacing: -0.035em;
 }
 
@@ -1281,7 +1270,7 @@ main.login-frame {
 .profile-screen .profile-rail li {
   position: relative;
   padding-left: 1.25rem;
-  color: #52635b;
+  color: var(--ink-2);
   font-size: 0.82rem;
   line-height: 1.5;
 }
@@ -1299,14 +1288,14 @@ main.login-frame {
 
 .profile-screen .profile-save-panel {
   padding: 1.1rem;
-  background: var(--ink-secondary);
+  background: var(--pine-deep);
   color: var(--paper);
   box-shadow: 0 1rem 2.5rem rgba(23, 38, 32, 0.16);
 }
 
 .profile-screen .profile-save-panel p {
   margin: 0 0 0.9rem;
-  color: rgba(241, 238, 227, 0.67);
+  color: var(--paper);
   font-size: 0.75rem;
   line-height: 1.5;
 }
@@ -1317,10 +1306,10 @@ main.login-frame {
   padding: 0.8rem 1rem;
   border: 1px solid transparent;
   border-radius: 0.75rem;
-  background: var(--coral);
-  color: var(--ink);
+  background: var(--coral-ink);
+  color: var(--white);
   cursor: pointer;
-  font-weight: 850;
+  font-weight: 650;
   box-shadow: 0 0.75rem 1.6rem rgba(6, 24, 17, 0.25);
   transition:
     background-color 140ms ease,
@@ -1329,7 +1318,7 @@ main.login-frame {
 }
 
 .profile-screen .profile-save-panel button:hover:not(:disabled) {
-  background: #ff8064;
+  background: var(--coral-ink);
   box-shadow: 0 0.9rem 1.9rem rgba(6, 24, 17, 0.34);
   transform: translateY(-1px);
 }
