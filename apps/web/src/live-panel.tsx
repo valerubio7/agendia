@@ -10,6 +10,7 @@ import {
   type Profile,
   type Session,
   type Service,
+  type Resource,
   type WhatsAppStatus,
 } from "./api-client";
 import { renderWhatsAppQrDataUrl } from "./qr-code";
@@ -22,11 +23,12 @@ import { AdminBusinessesScreen } from "./ui/admin-businesses-screen";
 import { AssistantScreen } from "./ui/assistant-screen";
 import { ProfileScreen } from "./ui/profile-screen";
 import { ServicesScreen } from "./ui/services-screen";
+import { ResourcesScreen } from "./ui/resources-screen";
 import { WhatsAppScreen } from "./ui/whatsapp-screen";
 
 export { formatActivityTimestamp } from "./ui/admin-businesses-screen";
 
-type Mode = "login" | "admin" | "profile" | "services" | "assistant" | "whatsapp";
+type Mode = "login" | "admin" | "profile" | "services" | "resources" | "assistant" | "whatsapp";
 type AuthenticatedViewState =
   | "loading"
   | "ready"
@@ -200,6 +202,8 @@ export function LivePanel({ mode }: { mode: Mode }) {
       loaded =
         mode === "admin"
           ? { businesses: await api.businesses(), instructions: await api.platformAiInstructions() }
+          : mode === "resources"
+            ? await Promise.all([api.resources(), api.services()]).then(([resources, services]) => ({ resources, services }))
           : mode === "services"
             ? await api.services()
           : mode === "profile"
@@ -574,6 +578,15 @@ export function LivePanel({ mode }: { mode: Mode }) {
             )
           }
         />
+      </AuthenticatedShell>
+    );
+  }
+  if (mode === "resources") {
+    const catalog = data as { resources: Resource[]; services: Service[] };
+    return (
+      <AuthenticatedShell variant="business" activeHref="/resources"
+        logoutPending={logoutPending} logoutAction={() => void logout()}>
+        <ResourcesScreen resources={catalog.resources} services={catalog.services} />
       </AuthenticatedShell>
     );
   }

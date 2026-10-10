@@ -29,6 +29,14 @@ export type Service = {
   priceArs: number;
   status: "active" | "suspended";
 };
+export type Resource = {
+  id: string;
+  name: string;
+  description: string | null;
+  status: "active" | "suspended";
+  serviceIds: string[];
+  weeklySchedule: Partial<Record<0 | 1 | 2 | 3 | 4 | 5 | 6, { startMinute: number; endMinute: number }[]>>;
+};
 export type ServiceInput = {
   name: string;
   description?: string;
@@ -265,6 +273,7 @@ export class ApiClient {
     this.call(`/admin/businesses/${encodeURIComponent(id)}/user`, "PUT", {
       password,
     });
+  resources = (signal?: AbortSignal) => this.call<Resource[]>("/me/resources", "GET", undefined, undefined, signal);
   services = (signal?: AbortSignal) => this.call<Service[]>("/me/services", "GET", undefined, undefined, signal);
   createService = (body: ServiceInput, signal?: AbortSignal) =>
     this.call<Service>("/me/services", "POST", body, undefined, signal);

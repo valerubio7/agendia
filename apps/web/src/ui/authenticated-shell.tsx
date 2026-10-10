@@ -35,6 +35,7 @@ const navigation: Record<ShellVariant, NavigationConfiguration> = {
     links: [
       { href: "/profile", label: "Perfil" },
       { href: "/services", label: "Servicios" },
+      { href: "/resources", label: "Recursos" },
       { href: "/assistant", label: "Asistente" },
       { href: "/whatsapp", label: "WhatsApp" },
     ],
