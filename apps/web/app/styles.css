@@ -943,8 +943,8 @@ main.login-frame {
   text-transform: uppercase;
 }
 
-.profile-screen .profile-knowledge-map__heading strong {
-  color: var(--paper);
+.profile-screen .profile-knowledge-map__brand {
+  --brand-height: 24px;
 }
 
 .profile-screen .profile-knowledge-map ol {
@@ -3235,11 +3235,11 @@ main.login-frame {
 }
 
 .admin-screen {
-  --admin-navy: #15263a;
-  --admin-blue: #315d78;
-  --admin-sky: #dcebf0;
-  --admin-line: rgba(21, 38, 58, 0.14);
-  --admin-muted: #627079;
+  --admin-navy: var(--ink);
+  --admin-blue: var(--pine);
+  --admin-sky: var(--paper);
+  --admin-line: var(--line);
+  --admin-muted: var(--ink-2);
   color: var(--admin-navy);
 }
 
@@ -3259,8 +3259,8 @@ main.login-frame {
       rgba(111, 179, 193, 0.2),
       transparent 18rem
     ),
-    var(--admin-navy);
-  color: #f8f5ec;
+    var(--pine-deep);
+  color: var(--paper);
   box-shadow: 0 1.5rem 3.5rem rgba(21, 38, 58, 0.14);
 }
 
@@ -3303,19 +3303,19 @@ main.login-frame {
   margin: 0 0 0.65rem;
   font-family: var(--font-mono);
   font-size: 0.68rem;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.11em;
   text-transform: uppercase;
 }
 
 .admin-screen .admin-hero__eyebrow {
-  color: #ff9a7f;
+  color: var(--paper);
 }
 
 .admin-screen .admin-hero h1 {
   max-width: 11ch;
   margin: 0;
-  color: #f8f5ec;
+  color: var(--paper);
   font-family: var(--font-display);
   font-size: clamp(2.65rem, 6vw, 5.15rem);
   font-weight: 650;
@@ -3326,7 +3326,7 @@ main.login-frame {
 .admin-screen .admin-hero__copy > p:last-child {
   max-width: 42rem;
   margin: 1.25rem 0 0;
-  color: #cbd6d9;
+  color: var(--paper);
   font-size: clamp(0.94rem, 1.8vw, 1.08rem);
   line-height: 1.65;
 }
@@ -3336,7 +3336,7 @@ main.login-frame {
   padding: 1.1rem;
   border: 1px solid rgba(220, 235, 240, 0.2);
   border-radius: 1rem;
-  background: rgba(8, 23, 36, 0.55);
+  background: var(--pine-deep);
   backdrop-filter: blur(0.8rem);
 }
 
@@ -3347,16 +3347,16 @@ main.login-frame {
   gap: 1rem;
   padding-bottom: 0.9rem;
   border-bottom: 1px solid rgba(220, 235, 240, 0.14);
-  color: #b6cbd1;
+  color: var(--paper);
   font-family: var(--font-mono);
   font-size: 0.62rem;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.09em;
   text-transform: uppercase;
 }
 
-.admin-screen .admin-registry-map header span:last-child {
-  color: #ff8a6d;
+.admin-screen .admin-registry-map__brand {
+  --brand-height: 24px;
 }
 
 .admin-screen .admin-registry-map__track {
@@ -3372,7 +3372,7 @@ main.login-frame {
   right: 0;
   left: 0;
   height: 1px;
-  background: linear-gradient(90deg, #ff8a6d, #7ab5c2);
+  background: linear-gradient(90deg, var(--coral), var(--pine));
   content: "";
 }
 
@@ -3382,19 +3382,19 @@ main.login-frame {
   width: 0.65rem;
   height: 0.65rem;
   justify-self: center;
-  border: 2px solid #182b3d;
+  border: 2px solid var(--pine-deep);
   border-radius: 50%;
-  background: #ff8a6d;
+  background: var(--coral);
   box-shadow: 0 0 0 0.2rem rgba(255, 138, 109, 0.16);
 }
 
 .admin-screen .admin-registry-map__track span:nth-child(2) {
-  background: #e8d49d;
+  background: var(--honey);
   box-shadow: 0 0 0 0.2rem rgba(232, 212, 157, 0.13);
 }
 
 .admin-screen .admin-registry-map__track span:last-child {
-  background: #7ab5c2;
+  background: var(--pine);
   box-shadow: 0 0 0 0.2rem rgba(122, 181, 194, 0.14);
 }
 
@@ -3415,20 +3415,21 @@ main.login-frame {
 }
 
 .admin-screen .admin-registry-map li > span {
-  color: #7f979f;
+  color: var(--paper);
   font-family: var(--font-mono);
   font-size: 0.55rem;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .admin-screen .admin-registry-map strong {
-  color: #f8f5ec;
+  color: var(--paper);
   font-family: var(--font-display);
   font-size: 0.9rem;
+  font-weight: 650;
 }
 
 .admin-screen .admin-registry-map small {
-  color: #9eb1b7;
+  color: var(--paper);
   font-size: 0.63rem;
   line-height: 1.4;
 }
@@ -3446,8 +3447,9 @@ main.login-frame {
 }
 
 .admin-screen .admin-feedback [role="status"] {
-  border-left: 0.25rem solid var(--pine);
-  background: var(--pine-soft);
+  border-left: 0.25rem solid var(--ok);
+  background: var(--ok);
+  color: var(--white);
 }
 
 .admin-screen .admin-context-error {
@@ -3459,15 +3461,16 @@ main.login-frame {
   border: 1px solid rgba(176, 63, 49, 0.3);
   border-left: 0.25rem solid var(--danger);
   border-radius: 0.68rem;
-  background: var(--danger-soft);
-  color: var(--ink);
+  background: var(--danger);
+  color: var(--white);
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
 
 .admin-screen .admin-context-error strong {
-  color: #86362d;
+  color: var(--white);
   font-size: 0.78rem;
+  font-weight: 650;
 }
 
 .admin-screen .admin-context-error span {
@@ -3483,14 +3486,14 @@ main.login-frame {
   min-width: 0;
   border: 1px solid var(--admin-line);
   border-radius: 1.15rem;
-  background: var(--surface);
+  background: var(--paper);
 }
 
 .admin-screen .admin-create {
   padding: clamp(1.2rem, 3vw, 2rem);
   background:
     linear-gradient(100deg, rgba(220, 235, 240, 0.58), transparent 60%),
-    var(--surface);
+    var(--paper);
   box-shadow: 0 0.9rem 2.5rem rgba(21, 38, 58, 0.07);
 }
 
@@ -3517,10 +3520,10 @@ main.login-frame {
 
 .admin-screen .admin-section-heading > span {
   flex: 0 0 auto;
-  color: #7b888e;
+  color: var(--ink-2);
   font-family: var(--font-mono);
   font-size: 0.62rem;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.08em;
 }
 
@@ -3540,7 +3543,7 @@ main.login-frame {
   margin: 0;
   color: var(--admin-navy);
   font-size: 0.74rem;
-  font-weight: 800;
+  font-weight: 650;
 }
 
 .admin-screen .admin-create input,
@@ -3548,11 +3551,13 @@ main.login-frame {
   width: 100%;
   min-height: 3rem;
   padding: 0.72rem 0.8rem;
-  border: 1px solid #bdc9cc;
+  border: 1px solid var(--sand);
   border-radius: 0.68rem;
-  outline: none;
-  background: var(--white);
+  background: var(--paper);
   color: var(--admin-navy);
+  font-family: var(--font-mono);
+  font-weight: 450;
+  font-variant-numeric: tabular-nums;
   transition:
     border-color 140ms ease,
     box-shadow 140ms ease;
@@ -3565,9 +3570,9 @@ main.login-frame {
 
 .admin-screen .admin-create input:focus-visible,
 .admin-screen .admin-management input:focus-visible {
-  border-color: var(--admin-blue);
-  outline: none;
-  box-shadow: 0 0 0 0.22rem rgba(49, 93, 120, 0.2);
+  border-color: var(--focus);
+  outline: 0.2rem solid var(--focus);
+  outline-offset: 0.18rem;
 }
 
 .admin-screen .admin-create button,
@@ -3583,7 +3588,7 @@ main.login-frame {
 
 .admin-screen .admin-create button {
   padding-inline: 1.25rem;
-  background: var(--admin-navy);
+  background: var(--coral-ink);
   white-space: nowrap;
 }
 
@@ -3613,7 +3618,7 @@ main.login-frame {
   min-width: 70rem;
   border-collapse: separate;
   border-spacing: 0;
-  background: var(--surface);
+  background: var(--paper);
   color: var(--admin-navy);
 }
 
@@ -3625,11 +3630,11 @@ main.login-frame {
 }
 
 .admin-screen th {
-  background: #e8eff0;
-  color: #53656e;
+  background: var(--paper);
+  color: var(--ink-2);
   font-family: var(--font-mono);
   font-size: 0.61rem;
-  font-weight: 850;
+  font-weight: 700;
   letter-spacing: 0.06em;
   line-height: 1.35;
   text-transform: uppercase;
@@ -3640,7 +3645,7 @@ main.login-frame {
 }
 
 .admin-screen tbody tr:hover {
-  background: rgba(220, 235, 240, 0.28);
+  background: var(--paper);
 }
 
 .admin-screen tbody tr:last-child td {
@@ -3648,6 +3653,7 @@ main.login-frame {
 }
 
 .admin-screen .admin-business-name {
+  font-weight: 650;
   display: block;
   max-width: 13rem;
   overflow-wrap: anywhere;
@@ -3666,7 +3672,7 @@ main.login-frame {
   border: 1px solid transparent;
   border-radius: 999px;
   font-size: 0.67rem;
-  font-weight: 800;
+  font-weight: 650;
   line-height: 1.2;
 }
 
@@ -3683,32 +3689,32 @@ main.login-frame {
 .admin-screen .admin-status--assistant-active,
 .admin-screen .admin-status--whatsapp-connected {
   border-color: rgba(37, 121, 76, 0.2);
-  background: #e1f0e5;
-  color: #236c46;
+  background: var(--ok);
+  color: var(--white);
 }
 
 .admin-screen .admin-status--business-suspended,
 .admin-screen .admin-status--whatsapp-error {
   border-color: rgba(176, 63, 49, 0.2);
-  background: #f7e5e1;
-  color: #a13c31;
+  background: var(--danger);
+  color: var(--white);
 }
 
 .admin-screen .admin-status--assistant-inactive,
 .admin-screen .admin-status--whatsapp-disconnected {
   border-color: rgba(98, 112, 121, 0.2);
-  background: #e9edef;
-  color: #596870;
+  background: var(--paper);
+  color: var(--ink-2);
 }
 
 .admin-screen .admin-status--whatsapp-link_required {
   border-color: rgba(156, 112, 29, 0.2);
-  background: #f5ecd2;
-  color: #8a6116;
+  background: var(--honey);
+  color: var(--ink);
 }
 
 .admin-screen .admin-timestamp {
-  color: #5c6971;
+  color: var(--ink-2);
   font-family: var(--font-mono);
   font-weight: 450;
   font-variant-numeric: tabular-nums;
@@ -3731,13 +3737,13 @@ main.login-frame {
   justify-content: space-between;
   gap: 0.8rem;
   padding: 0.65rem 0.8rem;
-  border: 1px solid #9eafb5;
+  border: 1px solid var(--sand);
   border-radius: 0.68rem;
-  background: var(--white);
+  background: var(--paper);
   color: var(--admin-navy);
   cursor: pointer;
   font-size: 0.74rem;
-  font-weight: 850;
+  font-weight: 650;
   list-style: none;
 }
 
@@ -3746,7 +3752,7 @@ main.login-frame {
 }
 
 .admin-screen .admin-management summary::after {
-  color: var(--coral);
+  color: inherit;
   font-size: 1rem;
   content: "+";
 }
@@ -3754,7 +3760,7 @@ main.login-frame {
 .admin-screen .admin-management[open] summary {
   border-color: var(--admin-blue);
   border-radius: 0.68rem 0.68rem 0 0;
-  background: var(--admin-navy);
+  background: var(--pine);
   color: var(--white);
 }
 
@@ -3769,7 +3775,7 @@ main.login-frame {
   border: 1px solid var(--admin-blue);
   border-top: 0;
   border-radius: 0 0 0.68rem 0.68rem;
-  background: #eef3f3;
+  background: var(--paper);
 }
 
 .admin-screen .admin-management form {
@@ -3789,19 +3795,20 @@ main.login-frame {
 }
 
 .admin-screen .admin-management button:hover:not(:disabled) {
-  background: var(--admin-navy);
+  background: var(--pine-deep);
+  color: var(--paper);
 }
 
 .admin-screen .admin-management .admin-management__status-action {
-  border-color: #b76758;
-  background: transparent;
-  color: #9e3f34;
+  border-color: var(--coral-ink);
+  background: var(--paper);
+  color: var(--coral-ink);
 }
 
 .admin-screen
   .admin-management
   .admin-management__status-action:hover:not(:disabled) {
-  background: #a9493d;
+  background: var(--coral-ink);
   color: var(--white);
 }
 
@@ -3915,7 +3922,7 @@ main.login-frame {
     overflow: hidden;
     border: 1px solid var(--admin-line);
     border-radius: 0.85rem;
-    background: var(--white);
+    background: var(--paper);
     box-shadow: 0 0.45rem 1.2rem rgba(21, 38, 58, 0.05);
   }
 
@@ -3936,10 +3943,10 @@ main.login-frame {
   }
 
   .admin-screen td::before {
-    color: #65747b;
+    color: var(--ink-2);
     font-family: var(--font-mono);
     font-size: 0.58rem;
-    font-weight: 850;
+    font-weight: 700;
     letter-spacing: 0.05em;
     line-height: 1.45;
     text-transform: uppercase;

@@ -92,8 +92,12 @@ export function ProfileScreen({
         >
           <div className="profile-knowledge-map__heading">
             <span>Mapa de información</span>
-            <span aria-hidden="true">
-              agend<strong>IA</strong>
+            <span className="brand profile-knowledge-map__brand" aria-hidden="true">
+              <img
+                className="brand__image"
+                src="/brand/logo-symbol-inverse.svg"
+                alt=""
+              />
             </span>
           </div>
           <ol>

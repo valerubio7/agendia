@@ -115,6 +115,14 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
         exact: true,
       }),
     ).toBeVisible();
+    const profileBrand = hero.locator(".profile-knowledge-map__brand");
+    await expect(profileBrand).toHaveCount(1);
+    await expect(profileBrand).toHaveAttribute("aria-hidden", "true");
+    const profileBrandImage = profileBrand.locator('img.brand__image[src="/brand/logo-symbol-inverse.svg"]');
+    await expect(profileBrandImage).toHaveAttribute("alt", "");
+    await expect(profileBrandImage).toHaveCSS("width", "24px");
+    await expect(profileBrandImage).toHaveCSS("height", "24px");
+    await expect(hero.locator(".profile-knowledge-map__heading")).not.toContainText(/agendIA/i);
 
     const sectionHeadings = [
       "Identidad del negocio",
