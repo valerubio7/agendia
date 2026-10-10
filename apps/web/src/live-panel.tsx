@@ -585,7 +585,32 @@ export function LivePanel({ mode }: { mode: Mode }) {
         logoutPending={logoutPending}
         logoutAction={() => void logout()}
       >
-        <ServicesScreen services={data as Service[]} />
+        <ServicesScreen
+          services={data as Service[]}
+          onSave={async (id, body, signal) => {
+            const attempt = loadAttemptRef.current;
+            const saved = id ? await api.updateService(id, body, signal) : await api.createService(body, signal);
+            if (signal.aborted || loadAttemptRef.current !== attempt) return false;
+            setData((current: unknown) => {
+              const services = current as Service[];
+              return services.some(service => service.id === saved.id)
+                ? services.map(service => service.id === saved.id ? saved : service)
+                : [...services, saved];
+            });
+            try {
+              const services = await api.services(signal);
+              if (!signal.aborted && loadAttemptRef.current === attempt) setData(services);
+              return true;
+            } catch {
+              return false; // The mutation committed; only its catalog refresh failed.
+            }
+          }}
+          onRefresh={async signal => {
+            const attempt = loadAttemptRef.current;
+            const services = await api.services(signal);
+            if (!signal.aborted && loadAttemptRef.current === attempt) setData(services);
+          }}
+        />
         {feedback}
       </AuthenticatedShell>
     );

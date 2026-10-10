@@ -29,6 +29,12 @@ export type Service = {
   priceArs: number;
   status: "active" | "suspended";
 };
+export type ServiceInput = {
+  name: string;
+  description?: string;
+  durationMinutes: number;
+  priceArs: number;
+};
 export type Assistant = {
   style: string;
   businessInstructions: string;
@@ -259,7 +265,11 @@ export class ApiClient {
     this.call(`/admin/businesses/${encodeURIComponent(id)}/user`, "PUT", {
       password,
     });
-  services = () => this.call<Service[]>("/me/services");
+  services = (signal?: AbortSignal) => this.call<Service[]>("/me/services", "GET", undefined, undefined, signal);
+  createService = (body: ServiceInput, signal?: AbortSignal) =>
+    this.call<Service>("/me/services", "POST", body, undefined, signal);
+  updateService = (id: string, body: ServiceInput, signal?: AbortSignal) =>
+    this.call<Service>(`/me/services/${encodeURIComponent(id)}`, "PUT", body, undefined, signal);
   profile = () => this.call<Partial<Profile>>("/me/business-profile");
   saveProfile = (body: Profile) =>
     this.call<Profile>("/me/business-profile", "PUT", {
