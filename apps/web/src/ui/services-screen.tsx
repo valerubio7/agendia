@@ -9,11 +9,22 @@ const priceFormatter = new Intl.NumberFormat("es-AR", {
   maximumFractionDigits: 20,
 });
 
-export function ServicesScreen({ services, onSave, onRefresh }: {
+type LifecycleAction = Service["status"] | "retire";
+
+export function ServicesScreen({ services, onSave, onRefresh, onLifecycle }: {
   services: readonly Service[];
   onSave: (id: string | null, body: ServiceInput, signal: AbortSignal) => Promise<boolean>;
   onRefresh: (signal: AbortSignal) => Promise<void>;
+  onLifecycle: (id: string, action: LifecycleAction, signal: AbortSignal) => Promise<boolean>;
 }) {
+  const [confirmation, setConfirmation] = useState<{ service: Service; action: "suspended" | "retire" } | null>(null);
+  const [lifecycleError, setLifecycleError] = useState("");
+  const cancelButton = useRef<HTMLButtonElement>(null);
+  const actionButton = useRef<HTMLButtonElement | null>(null);
+  const lifecycleButtons = useRef(new Map<string, HTMLButtonElement>());
+  const servicesHeading = useRef<HTMLHeadingElement>(null);
+  const focusReturn = useRef<{ opener?: HTMLButtonElement; key?: string } | null>(null);
+  useEffect(() => { if (confirmation) cancelButton.current?.focus(); }, [confirmation]);
   const [editing, setEditing] = useState<Service | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -24,6 +35,38 @@ export function ServicesScreen({ services, onSave, onRefresh }: {
   const request = useRef<AbortController | null>(null);
   const nameInput = useRef<HTMLInputElement>(null);
   useEffect(() => () => { request.current?.abort(); }, []);
+  const lifecycle = async (service: Service, action: LifecycleAction) => {
+    if (request.current || !services.some(owned => owned.id === service.id)) return;
+    const controller = new AbortController();
+    request.current = controller;
+    setPending(true);
+    setLifecycleError("");
+    setError("");
+    setNotice("");
+    try {
+      const refreshed = await onLifecycle(service.id, action, controller.signal);
+      if (controller.signal.aborted || request.current !== controller) return;
+      setRefreshWarning(!refreshed);
+      setNotice(action === "retire" ? "Servicio retirado" : action === "active" ? "Servicio reactivado" : "Servicio suspendido");
+      focusReturn.current = action === "retire" ? {} : { key: `${service.id}:${action === "active" ? "suspended" : "active"}` };
+      setConfirmation(null);
+      setEditing(null);
+      setRevision(value => value + 1);
+    } catch (cause) {
+      if (!controller.signal.aborted && request.current === controller) setLifecycleError(api.errorMessage(cause));
+    } finally {
+      if (!controller.signal.aborted && request.current === controller) {
+        request.current = null;
+        setPending(false);
+      }
+    }
+  };
+  const cancelLifecycle = () => {
+    if (request.current) return;
+    focusReturn.current = actionButton.current ? { opener: actionButton.current } : {};
+    setConfirmation(null);
+    setLifecycleError("");
+  };
   const selectService = (service: Service | null) => {
     if (request.current) return;
     setEditing(service);
@@ -32,8 +75,16 @@ export function ServicesScreen({ services, onSave, onRefresh }: {
     setRevision(value => value + 1);
   };
   useEffect(() => {
-    if (revision > 0) nameInput.current?.focus();
+    if (revision > 0 && !focusReturn.current) nameInput.current?.focus();
   }, [revision]);
+  useEffect(() => {
+    if (pending || refreshPending || confirmation || !focusReturn.current) return;
+    const target = focusReturn.current;
+    const button = target.opener ?? (target.key ? lifecycleButtons.current.get(target.key) : undefined);
+    if (button?.isConnected && !button.disabled) button.focus();
+    else servicesHeading.current?.focus();
+    focusReturn.current = null;
+  }, [pending, refreshPending, confirmation, revision]);
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (request.current) return;
@@ -91,13 +142,13 @@ export function ServicesScreen({ services, onSave, onRefresh }: {
   return (
     <main className="services-screen" aria-labelledby="services-title">
       <header className="services-header">
-        <h1 id="services-title">Servicios</h1>
+        <h1 ref={servicesHeading} tabIndex={-1} id="services-title">Servicios</h1>
         <p>Consultá los servicios de tu negocio, sus tiempos y precios.</p>
       </header>
       <form className="services-form" key={`${editing?.id ?? "create"}-${revision}`}
         aria-labelledby="service-form-title" aria-busy={pending} onSubmit={submit}>
         <h2 id="service-form-title">{editing ? "Editar servicio" : "Crear servicio"}</h2>
-        <fieldset disabled={pending || refreshPending}>
+        <fieldset disabled={pending || refreshPending || !!confirmation}>
           <label htmlFor="service-name">Nombre</label>
           <input ref={nameInput} id="service-name" name="name" required defaultValue={editing?.name ?? ""} />
           <label htmlFor="service-description">Descripción (opcional)</label>
@@ -123,8 +174,24 @@ export function ServicesScreen({ services, onSave, onRefresh }: {
         {error && <p role="alert">{error}</p>}
         {notice && <p role="status">{notice}</p>}
       </form>
+      {confirmation && <section className="services-confirmation" aria-label="Confirmar acción" aria-busy={pending}>
+        <h2>{confirmation.action === "retire" ? "Retirar" : "Suspender"} {confirmation.service.name}</h2>
+        <p>{confirmation.action === "retire"
+          ? "Quedará oculto del catálogo. El historial se conserva. El retiro puede estar bloqueado por turnos futuros."
+          : "No se ofrecerá para nuevos turnos. No cancela los turnos existentes."}</p>
+        <div className="services-form-actions">
+          <button ref={cancelButton} type="button" disabled={pending} onClick={cancelLifecycle}>Cancelar</button>
+          <button type="button" disabled={pending} onClick={() => void lifecycle(confirmation.service, confirmation.action)}>
+            {confirmation.action === "retire" ? "Confirmar retiro" : "Confirmar suspensión"}
+          </button>
+        </div>
+        {lifecycleError && <p role="alert">{lifecycleError}</p>}
+      </section>}
+      {!confirmation && lifecycleError && <p role="alert">{lifecycleError}</p>}
       {refreshWarning && <section aria-label="Actualización del catálogo" aria-busy={refreshPending}>
-        <p role="alert">El servicio se guardó, pero no pudimos actualizar el catálogo. Reintentá la actualización.</p>
+        <p role="alert">{notice === "Servicio retirado"
+          ? "El servicio se retiró, pero no pudimos actualizar el catálogo. Reintentá la actualización."
+          : "El servicio se guardó, pero no pudimos actualizar el catálogo. Reintentá la actualización."}</p>
         <button type="button" disabled={pending || refreshPending} onClick={() => void refresh()}>
           {refreshPending ? "Actualizando catálogo…" : "Actualizar catálogo"}
         </button>
@@ -149,8 +216,24 @@ export function ServicesScreen({ services, onSave, onRefresh }: {
                 <div><dt>Duración</dt><dd>{service.durationMinutes} min</dd></div>
                 <div><dt>Precio</dt><dd>{priceFormatter.format(service.priceArs)}</dd></div>
               </dl>
-              <button type="button" disabled={pending || refreshPending} aria-label={`Editar ${service.name}`}
-                onClick={() => selectService(service)}>Editar</button>
+              <div className="services-item-actions">
+                <button type="button" disabled={pending || refreshPending || !!confirmation} aria-label={`Editar ${service.name}`}
+                  onClick={() => selectService(service)}>Editar</button>
+                {([service.status === "active" ? "suspended" : "active", "retire"] as const).map(action => {
+                  const label = action === "retire" ? "Retirar" : action === "active" ? "Reactivar" : "Suspender";
+                  return <button key={action} type="button" ref={button => {
+                    const key = `${service.id}:${action}`;
+                    if (button) lifecycleButtons.current.set(key, button);
+                    else lifecycleButtons.current.delete(key);
+                  }} disabled={pending || refreshPending || !!confirmation}
+                    aria-label={`${label} ${service.name}`} onClick={event => {
+                      actionButton.current = event.currentTarget;
+                      setLifecycleError("");
+                      if (action === "active") void lifecycle(service, action);
+                      else setConfirmation({ service, action });
+                    }}>{label}</button>;
+                })}
+              </div>
             </li>
           ))}
         </ul>

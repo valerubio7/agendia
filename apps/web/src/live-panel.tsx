@@ -605,6 +605,24 @@ export function LivePanel({ mode }: { mode: Mode }) {
               return false; // The mutation committed; only its catalog refresh failed.
             }
           }}
+          onLifecycle={async (id, action, signal) => {
+            const attempt = loadAttemptRef.current;
+            if (!(data as Service[]).some(service => service.id === id)) throw new Error("Unknown service");
+            const saved = action === "retire"
+              ? await api.retireService(id, signal)
+              : await api.setServiceStatus(id, action, signal);
+            if (signal.aborted || loadAttemptRef.current !== attempt) return false;
+            if (saved.id !== id) throw new Error("Unexpected service response");
+            setData((current: unknown) => (current as Service[]).flatMap(service =>
+              service.id !== saved.id ? [service] : action === "retire" ? [] : [saved as Service]));
+            try {
+              const services = await api.services(signal);
+              if (!signal.aborted && loadAttemptRef.current === attempt) setData(services);
+              return true;
+            } catch {
+              return false; // Committed mutation; recovery must only repeat GET.
+            }
+          }}
           onRefresh={async signal => {
             const attempt = loadAttemptRef.current;
             const services = await api.services(signal);

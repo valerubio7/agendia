@@ -211,3 +211,113 @@ test("Servicios creates and edits persisted owned services with safe validation 
     await otherContext.close();
   }
 });
+
+test("Servicios confirms lifecycle actions, persists changes and recovers without repeating mutations", async ({ page, system }, testInfo) => {
+  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await page.getByLabel("Nombre", { exact: true }).fill("Lifecycle Studio");
+  await page.getByLabel("Correo del usuario").fill("lifecycle@example.test");
+  await page.getByLabel("Contraseña inicial").fill("lifecycle safe password");
+  await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
+  await expect(page.getByRole("cell", { name: "Lifecycle Studio", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
+  await login(page, system.webUrl, "lifecycle@example.test", "lifecycle safe password");
+  await expect(page).toHaveURL(/\/profile$/);
+  const service = await seedService(page, "Consulta lifecycle", 0);
+  await page.goto(`${system.webUrl}/services`);
+  const screen = page.getByRole("main");
+  const row = screen.getByRole("listitem").filter({ hasText: "Consulta lifecycle" });
+  await expect(row).toBeVisible();
+  const confirmation = screen.getByRole("region", { name: "Confirmar acción" });
+  const counts = { PUT: 0, DELETE: 0, GET: 0 };
+  page.on("request", request => {
+    if (/\/api\/me\/services(?:\/[^/]+(?:\/status)?)?$/.test(request.url())) {
+      const method = request.method() as keyof typeof counts;
+      if (method in counts) counts[method]++;
+    }
+  });
+  const action = async (name: "Suspender" | "Retirar") => {
+    await row.getByRole("button", { name: `${name} Consulta lifecycle`, exact: true }).click();
+    await expect(confirmation.getByRole("button", { name: "Cancelar", exact: true })).toBeFocused();
+  };
+  for (const name of ["Suspender", "Retirar"] as const) {
+    await action(name);
+    await confirmation.getByRole("button", { name: "Cancelar", exact: true }).click();
+    await expect(row.getByRole("button", { name: `${name} Consulta lifecycle`, exact: true })).toBeEnabled();
+    await expect(row.getByRole("button", { name: `${name} Consulta lifecycle`, exact: true })).toBeFocused();
+    expect(counts).toEqual({ PUT: 0, DELETE: 0, GET: 0 });
+  }
+  await action("Suspender");
+  await expect(confirmation).toContainText("No cancela los turnos existentes");
+  const statusUrl = `**/api/me/services/${service.id}/status`;
+  await page.route(statusUrl, route => route.fulfill({ status: 500, contentType: "application/json", body: '{"code":"INTERNAL_ERROR"}' }));
+  await confirmation.getByRole("button", { name: "Confirmar suspensión" }).click();
+  await expect(confirmation.getByRole("alert")).toHaveText("No se pudo completar la operación.");
+  await expect(row.getByText("Activo", { exact: true })).toBeVisible();
+  expect(counts.PUT).toBe(1);
+  await page.unroute(statusUrl);
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route(statusUrl, async route => { await held; await route.continue(); });
+  const suspended = page.waitForResponse(response => response.url().endsWith(`/services/${service.id}/status`) && response.status() === 200);
+  await confirmation.getByRole("button", { name: "Confirmar suspensión" }).click();
+  await expect(confirmation).toHaveAttribute("aria-busy", "true");
+  await expect(row.getByRole("button", { name: /Editar/ })).toBeDisabled();
+  await expect(screen.getByLabel("Nombre", { exact: true })).toBeDisabled();
+  await expect(confirmation.getByRole("button", { name: "Cancelar", exact: true })).toBeDisabled();
+  await page.screenshot({ path: testInfo.outputPath("lifecycle-pending.png"), fullPage: true });
+  release();
+  expect((await suspended).status()).toBe(200);
+  await expect(row.getByText("Suspendido", { exact: true })).toBeVisible();
+  await expect(row.getByRole("button", { name: "Reactivar Consulta lifecycle", exact: true })).toBeEnabled();
+  await expect(row.getByRole("button", { name: "Reactivar Consulta lifecycle", exact: true })).toBeFocused();
+  await page.unroute(statusUrl);
+  await page.reload();
+  await expect(row.getByText("Suspendido", { exact: true })).toBeVisible();
+  const reactivated = page.waitForResponse(response => response.url().endsWith(`/services/${service.id}/status`) && response.status() === 200);
+  await row.getByRole("button", { name: "Reactivar Consulta lifecycle", exact: true }).click();
+  expect((await reactivated).status()).toBe(200);
+  await expect(row.getByText("Activo", { exact: true })).toBeVisible();
+  await expect(row.getByRole("button", { name: "Suspender Consulta lifecycle", exact: true })).toBeEnabled();
+  await expect(row.getByRole("button", { name: "Suspender Consulta lifecycle", exact: true })).toBeFocused();
+  await page.reload();
+  await expect(row.getByText("Activo", { exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 360, height: 900 });
+  await action("Retirar");
+  await expect(confirmation).toContainText("oculto del catálogo");
+  await expect(confirmation).toContainText("historial se conserva");
+  await expect(confirmation).toContainText("turnos futuros");
+  const retireUrl = `**/api/me/services/${service.id}`;
+  // UI MOCKED 409 only: real future-assignment enforcement is covered in
+  // service-catalog-api.integration.test.ts (ALL future states DELETE test).
+  await page.route(retireUrl, route => route.fulfill({ status: 409, contentType: "application/json", body: '{"code":"CONFLICT"}' }));
+  await confirmation.getByRole("button", { name: "Confirmar retiro" }).click();
+  await expect(confirmation.getByRole("alert")).toHaveText("Los datos cambiaron. Recargá y volvé a intentar.");
+  await expect(row.getByText("Activo", { exact: true })).toBeVisible();
+  expect(counts.DELETE).toBe(1);
+  await page.screenshot({ path: testInfo.outputPath("lifecycle-mocked-conflict-mobile.png"), fullPage: true });
+  await confirmation.getByRole("button", { name: "Cancelar", exact: true }).click();
+  await expect(row.getByRole("button", { name: "Retirar Consulta lifecycle", exact: true })).toBeFocused();
+  expect(counts.DELETE).toBe(1);
+  await page.unroute(retireUrl);
+  await action("Retirar");
+  await page.route("**/api/me/services", route => route.fulfill({ status: 500, contentType: "application/json", body: '{"code":"INTERNAL_ERROR"}' }));
+  const retired = page.waitForResponse(response => response.request().method() === "DELETE" && response.url().endsWith(`/services/${service.id}`));
+  await confirmation.getByRole("button", { name: "Confirmar retiro" }).click();
+  expect((await retired).status()).toBe(200);
+  await expect(row).toHaveCount(0);
+  await expect(screen.getByRole("heading", { name: "Servicios", exact: true })).toBeFocused();
+  await expect(screen.getByRole("status")).toHaveText("Servicio retirado");
+  await expect(screen.getByRole("region", { name: "Actualización del catálogo" })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("lifecycle-retired-warning-mobile.png"), fullPage: true });
+  const before = { ...counts };
+  await page.unroute("**/api/me/services");
+  await screen.getByRole("button", { name: "Actualizar catálogo", exact: true }).click();
+  await expect(screen.getByRole("region", { name: "Actualización del catálogo" })).toHaveCount(0);
+  expect(counts).toEqual({ ...before, GET: before.GET + 1 });
+  console.log("lifecycle real status200 x2; mocked status500/DELETE409; real DELETE200 then GET500; recovery counts", counts);
+  await page.reload();
+  await expect(screen.getByRole("heading", { name: "Todavía no hay servicios" })).toBeVisible();
+  expect(counts.PUT).toBe(3);
+  expect(counts.DELETE).toBe(2);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+});

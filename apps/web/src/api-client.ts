@@ -270,6 +270,10 @@ export class ApiClient {
     this.call<Service>("/me/services", "POST", body, undefined, signal);
   updateService = (id: string, body: ServiceInput, signal?: AbortSignal) =>
     this.call<Service>(`/me/services/${encodeURIComponent(id)}`, "PUT", body, undefined, signal);
+  setServiceStatus = (id: string, status: Service["status"], signal?: AbortSignal) =>
+    this.call<Service>(`/me/services/${encodeURIComponent(id)}/status`, "PUT", { status }, undefined, signal);
+  retireService = (id: string, signal?: AbortSignal) =>
+    this.call<{ id: string }>(`/me/services/${encodeURIComponent(id)}`, "DELETE", undefined, undefined, signal);
   profile = () => this.call<Partial<Profile>>("/me/business-profile");
   saveProfile = (body: Profile) =>
     this.call<Profile>("/me/business-profile", "PUT", {

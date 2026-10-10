@@ -4122,7 +4122,11 @@ main.login-frame {
 .services-form-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; }
 .services-form [role="alert"] { color: var(--coral-ink); }
 .services-form [role="status"] { color: var(--pine); }
-.services-item > button { justify-self: start; }
+.services-item-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; grid-column: 1 / -1; }
+.services-confirmation { margin-block: 2rem; padding-block: 1.5rem; border-block: 1px solid var(--line); }
+.services-confirmation h2 { overflow-wrap: anywhere; }
+.services-confirmation p { max-width: 68ch; }
+.services-confirmation [role="alert"] { color: var(--coral-ink); }
 .services-screen button:hover:not(:disabled) { background: var(--pine-deep); }
 .services-screen button:disabled { opacity: 0.65; }
 
