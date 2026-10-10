@@ -37,6 +37,12 @@ export type Resource = {
   serviceIds: string[];
   weeklySchedule: Partial<Record<0 | 1 | 2 | 3 | 4 | 5 | 6, { startMinute: number; endMinute: number }[]>>;
 };
+export type ResourceInput = {
+  name: string;
+  description?: string;
+  serviceIds: string[];
+  weeklySchedule: Resource["weeklySchedule"];
+};
 export type ServiceInput = {
   name: string;
   description?: string;
@@ -274,6 +280,10 @@ export class ApiClient {
       password,
     });
   resources = (signal?: AbortSignal) => this.call<Resource[]>("/me/resources", "GET", undefined, undefined, signal);
+  createResource = (body: ResourceInput, signal?: AbortSignal) =>
+    this.call<Resource>("/me/resources", "POST", body, undefined, signal);
+  updateResource = (id: string, body: ResourceInput, signal?: AbortSignal) =>
+    this.call<Resource>(`/me/resources/${encodeURIComponent(id)}`, "PUT", body, undefined, signal);
   services = (signal?: AbortSignal) => this.call<Service[]>("/me/services", "GET", undefined, undefined, signal);
   createService = (body: ServiceInput, signal?: AbortSignal) =>
     this.call<Service>("/me/services", "POST", body, undefined, signal);

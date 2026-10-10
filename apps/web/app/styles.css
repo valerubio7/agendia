@@ -4022,6 +4022,17 @@ main.login-frame {
 .resources-screen p { max-width: 68ch; margin: 0; line-height: 1.6; color: var(--ink-2); }
 .resources-screen h2 { margin: 0 0 0.5rem; font-size: 1.35rem; }
 .resources-screen h3 { margin: 1.25rem 0 0.5rem; font-size: 1rem; }
+.resources-form { margin-top: 2rem; padding-block: 1.5rem; border-block: 1px solid var(--line); }
+.resources-form fieldset { display: grid; gap: 0.75rem; min-width: 0; margin: 0; padding: 0; border: 0; }
+.resources-form input:not([type="checkbox"]), .resources-form textarea { width: 100%; min-width: 0; }
+.resources-form .resources-picker { margin-block: 0.75rem; }
+.resources-picker legend { margin-bottom: 0.5rem; font-weight: 650; }
+.resources-picker label { display: flex; align-items: baseline; gap: 0.65rem; }
+.resources-picker input { flex-shrink: 0; accent-color: var(--pine); }
+.resources-form-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+.resources-form [role="alert"] { color: var(--coral-ink); }
+.resources-form [role="status"] { color: var(--pine); }
+.resources-summary button { margin-block: 0.5rem; }
 .resources-empty { margin-top: 2rem; padding-block: 2rem; border-top: 1px solid var(--line); }
 .resources-screen .resources-schedule-note { margin-top: 1.5rem; }
 .resources-list { list-style: none; padding: 0; margin: 1.5rem 0 0; }

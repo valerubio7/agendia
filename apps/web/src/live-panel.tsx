@@ -586,7 +586,33 @@ export function LivePanel({ mode }: { mode: Mode }) {
     return (
       <AuthenticatedShell variant="business" activeHref="/resources"
         logoutPending={logoutPending} logoutAction={() => void logout()}>
-        <ResourcesScreen resources={catalog.resources} services={catalog.services} />
+        <ResourcesScreen resources={catalog.resources} services={catalog.services}
+          onSave={async (id, body, signal) => {
+            const attempt = loadAttemptRef.current;
+            if (id && !catalog.resources.some(resource => resource.id === id)) throw new Error("Unknown resource");
+            const saved = id ? await api.updateResource(id, body, signal) : await api.createResource(body, signal);
+            if (signal.aborted || loadAttemptRef.current !== attempt) return false;
+            setData((current: unknown) => {
+              const owned = current as typeof catalog;
+              return { ...owned, resources: owned.resources.some(resource => resource.id === saved.id)
+                ? owned.resources.map(resource => resource.id === saved.id ? saved : resource)
+                : [...owned.resources, saved] };
+            });
+            try {
+              const resources = await api.resources(signal);
+              if (!signal.aborted && loadAttemptRef.current === attempt)
+                setData((current: unknown) => ({ ...(current as typeof catalog), resources }));
+              return true;
+            } catch {
+              return false; // Confirmed save; recovery repeats GET only.
+            }
+          }}
+          onRefresh={async signal => {
+            const attempt = loadAttemptRef.current;
+            const resources = await api.resources(signal);
+            if (!signal.aborted && loadAttemptRef.current === attempt)
+              setData((current: unknown) => ({ ...(current as typeof catalog), resources }));
+          }} />
       </AuthenticatedShell>
     );
   }
