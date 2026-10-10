@@ -587,6 +587,26 @@ export function LivePanel({ mode }: { mode: Mode }) {
       <AuthenticatedShell variant="business" activeHref="/resources"
         logoutPending={logoutPending} logoutAction={() => void logout()}>
         <ResourcesScreen resources={catalog.resources} services={catalog.services}
+          onLifecycle={async (id, action, signal) => {
+            const attempt = loadAttemptRef.current;
+            if (!catalog.resources.some(resource => resource.id === id)) throw new Error("Unknown resource");
+            const saved = action === "retire" ? await api.retireResource(id, signal)
+              : await api.setResourceStatus(id, action, signal);
+            if (signal.aborted || loadAttemptRef.current !== attempt) return false;
+            if (saved.id !== id) throw new Error("Unexpected resource response");
+            setData((current: unknown) => ({ ...(current as typeof catalog),
+              resources: (current as typeof catalog).resources.flatMap(resource =>
+                resource.id !== saved.id ? [resource] : action === "retire" ? [] : [saved as Resource]),
+            }));
+            try {
+              const resources = await api.resources(signal);
+              if (!signal.aborted && loadAttemptRef.current === attempt)
+                setData((current: unknown) => ({ ...(current as typeof catalog), resources }));
+              return true;
+            } catch {
+              return false; // Committed mutation; retry GET only.
+            }
+          }}
           onSave={async (id, body, signal) => {
             const attempt = loadAttemptRef.current;
             if (id && !catalog.resources.some(resource => resource.id === id)) throw new Error("Unknown resource");

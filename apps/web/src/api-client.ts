@@ -284,6 +284,10 @@ export class ApiClient {
     this.call<Resource>("/me/resources", "POST", body, undefined, signal);
   updateResource = (id: string, body: ResourceInput, signal?: AbortSignal) =>
     this.call<Resource>(`/me/resources/${encodeURIComponent(id)}`, "PUT", body, undefined, signal);
+  setResourceStatus = (id: string, status: Resource["status"], signal?: AbortSignal) =>
+    this.call<Resource>(`/me/resources/${encodeURIComponent(id)}/status`, "PUT", { status }, undefined, signal);
+  retireResource = (id: string, signal?: AbortSignal) =>
+    this.call<{ id: string }>(`/me/resources/${encodeURIComponent(id)}`, "DELETE", undefined, undefined, signal);
   services = (signal?: AbortSignal) => this.call<Service[]>("/me/services", "GET", undefined, undefined, signal);
   createService = (body: ServiceInput, signal?: AbortSignal) =>
     this.call<Service>("/me/services", "POST", body, undefined, signal);

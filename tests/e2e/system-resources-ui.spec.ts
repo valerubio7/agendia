@@ -83,6 +83,7 @@ test("Recursos manages owned assignments while preserving weekly spans", async (
     await expect(catalog.getByRole("listitem")).toHaveCount(2);
     const active = catalog.getByRole("listitem").filter({ hasText: "Profesional de acompañamiento" });
     await expect(active.getByText("Activo", { exact: true })).toBeVisible();
+    await expect(active.getByRole("button", { name: "Suspender", exact: true })).toBeVisible();
     await expect(active.getByText("Atención personalizada.", { exact: true })).toBeVisible();
     await expect(active.getByText("Consulta propia", { exact: true })).toBeVisible();
     await expect(active.getByText("Seguimiento propio (suspendido)", { exact: true })).toBeVisible();
@@ -98,7 +99,7 @@ test("Recursos manages owned assignments while preserving weekly spans", async (
     await expect(suspended.locator(".resources-week dd")).toHaveText(Array(7).fill("Sin franjas"));
     await expect(screen.getByText("Recurso ajeno", { exact: true })).toHaveCount(0);
     await expect(screen.getByText("Servicio ajeno", { exact: true })).toHaveCount(0);
-    await expect(screen.getByRole("button", { name: /Suspender|Reactivar|Retirar|horarios/i })).toHaveCount(0);
+    await expect(screen.getByRole("button", { name: "Retirar", exact: true })).toHaveCount(2);
     await expect(screen.locator('input[name="status"], input[name="id"], input[name="weeklySchedule"]')).toHaveCount(0);
     await other.goto(`${system.webUrl}/resources`);
     await expect(other.getByRole("heading", { name: "Recurso ajeno", exact: true })).toBeVisible();
@@ -353,7 +354,7 @@ test("Recursos manages owned assignments while preserving weekly spans", async (
     expect(available.status()).toBe(200);
     const slots = await available.json() as Array<{ start: string; resourceId: string; terms: object }>;
     expect(slots.length).toBeGreaterThan(0);
-    await seed(business, "post", "appointments", { serviceId: ownService.id, resourceId: hoursResource.id,
+    const booking = await seed(business, "post", "appointments", { serviceId: ownService.id, resourceId: hoursResource.id,
       startRaw: slots[0]!.start, date, expectedTerms: slots[0]!.terms, confirmed: true,
       newClient: { firstName: "Cliente", lastName: "Horario", phone: "+5491123456789" },
     }, 201);
@@ -370,6 +371,116 @@ test("Recursos manages owned assignments while preserving weekly spans", async (
     await expect(editor.getByRole("button", { name: /Quitar franja/ })).toHaveCount(0);
     expect(await readHours()).toEqual(bookedRecord);
     await business.screenshot({ path: testInfo.outputPath("resources-real-booking-conflict-360.png"), fullPage: true });
+    // Lifecycle uses real status/retirement APIs; only catalog GET failure is mocked.
+    await form.getByRole("button", { name: "Cancelar edición", exact: true }).click();
+    await expect(hoursRow).toBeVisible();
+    const lifecycleCounts = { PUT: 0, DELETE: 0, GET: 0 };
+    business.on("request", request => {
+      if (!/\/api\/me\/resources(?:\/|$)/.test(new URL(request.url()).pathname)) return;
+      const method = request.method() as keyof typeof lifecycleCounts;
+      if (method in lifecycleCounts) lifecycleCounts[method]++;
+    });
+    const confirmation = screen.getByRole("region", { name: "Confirmar acción sobre recurso", exact: true });
+    for (const action of ["Suspender", "Retirar"]) {
+      const opener = hoursRow.getByRole("button", { name: action, exact: true });
+      await opener.focus();
+      await business.keyboard.press("Enter");
+      await expect(confirmation.getByRole("button", { name: "Cancelar", exact: true })).toBeFocused();
+      await business.screenshot({ path: testInfo.outputPath(`resources-${action}-confirm-360.png`), fullPage: true });
+      await business.keyboard.press("Enter");
+      await expect(opener).toBeEnabled();
+      await expect(opener).toBeFocused();
+      expect(lifecycleCounts).toEqual({ PUT: 0, DELETE: 0, GET: 0 });
+    }
+    const readBooking = async () => {
+      const response = await business.request.get(`${system.webUrl}/api/me/appointments/${booking.id}`);
+      expect(response.status()).toBe(200);
+      return await response.json();
+    };
+    const originalBooking = await readBooking();
+    let releaseStatus: (() => void) | undefined;
+    const heldStatus = new Promise<void>(resolve => { releaseStatus = resolve; });
+    await business.route(`**/api/me/resources/${hoursResource.id}/status`, async route => {
+      await heldStatus;
+      await route.continue();
+    });
+    await business.route("**/api/me/resources", route => route.fulfill({ status: 500,
+      contentType: "application/json", body: '{"code":"INTERNAL_ERROR"}' }));
+    await hoursRow.getByRole("button", { name: "Suspender", exact: true }).click();
+    await expect(confirmation).toContainText("Los turnos existentes no se cancelan.");
+    const suspendButton = confirmation.getByRole("button", { name: "Confirmar suspensión", exact: true });
+    await suspendButton.click();
+    await expect(confirmation).toHaveAttribute("aria-busy", "true");
+    await expect(hoursRow.getByRole("button", { name: "Suspender", exact: true })).toBeDisabled();
+    await expect(form.getByRole("button", { name: "Guardando…", exact: true })).toBeDisabled();
+    await business.evaluate(() => {
+      const button = document.querySelector<HTMLButtonElement>('.resources-confirmation button:last-child');
+      button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(lifecycleCounts.PUT).toBe(1);
+    await business.screenshot({ path: testInfo.outputPath("resources-status-pending-360.png"), fullPage: true });
+    const statusResponse = business.waitForResponse(response => response.url().endsWith(`/resources/${hoursResource.id}/status`)
+      && response.request().method() === "PUT" && response.status() === 200);
+    releaseStatus!();
+    await statusResponse;
+    await expect(hoursRow.getByText("Suspendido", { exact: true })).toBeVisible();
+    await expect(hoursRow.getByRole("button", { name: "Reactivar", exact: true })).toBeFocused();
+    await expect(warning.getByRole("alert")).toBeVisible();
+    expect(lifecycleCounts).toEqual({ PUT: 1, DELETE: 0, GET: 1 });
+    expect(await readBooking()).toEqual(originalBooking);
+    expect(await readHours()).toEqual({ ...bookedRecord, status: "suspended" });
+    await business.screenshot({ path: testInfo.outputPath("resources-status-saved-warning-360.png"), fullPage: true });
+    await business.unroute(`**/api/me/resources/${hoursResource.id}/status`);
+    await business.unroute("**/api/me/resources");
+    await warning.getByRole("button", { name: "Actualizar catálogo", exact: true }).click();
+    await expect(warning).toHaveCount(0);
+    expect(lifecycleCounts).toEqual({ PUT: 1, DELETE: 0, GET: 2 });
+    await business.reload();
+    await expect(hoursRow.getByText("Suspendido", { exact: true })).toBeVisible();
+    const reactivateResponse = business.waitForResponse(response => response.url().endsWith(`/resources/${hoursResource.id}/status`)
+      && response.request().method() === "PUT" && response.status() === 200);
+    await hoursRow.getByRole("button", { name: "Reactivar", exact: true }).click();
+    await reactivateResponse;
+    await expect(hoursRow.getByRole("button", { name: "Suspender", exact: true })).toBeFocused();
+    await business.reload();
+    await expect(hoursRow.getByText("Activo", { exact: true })).toBeVisible();
+    expect(await readHours()).toEqual(bookedRecord);
+    expect(await readBooking()).toEqual(originalBooking);
+    await hoursRow.getByRole("button", { name: "Retirar", exact: true }).click();
+    const retireConflict = business.waitForResponse(response => response.url().endsWith(`/resources/${hoursResource.id}`)
+      && response.request().method() === "DELETE" && response.status() === 409);
+    await confirmation.getByRole("button", { name: "Confirmar retiro", exact: true }).click();
+    await retireConflict;
+    await expect(screen.locator(':scope > [role="alert"]')).toBeVisible();
+    await expect(hoursRow).toBeVisible();
+    expect(await readHours()).toEqual(bookedRecord);
+    expect(await readBooking()).toEqual(originalBooking);
+    await business.screenshot({ path: testInfo.outputPath("resources-real-retire-409-360.png"), fullPage: true });
+    await confirmation.getByRole("button", { name: "Cancelar", exact: true }).click();
+    await expect(hoursRow.getByRole("button", { name: "Retirar", exact: true })).toBeFocused();
+    const retiredRow = catalog.getByRole("listitem").filter({ hasText: "Sala renombrada" });
+    await business.route("**/api/me/resources", route => route.fulfill({ status: 500,
+      contentType: "application/json", body: '{"code":"INTERNAL_ERROR"}' }));
+    await retiredRow.getByRole("button", { name: "Retirar", exact: true }).click();
+    await expect(confirmation).toContainText("se conservará el historial");
+    const beforeRetire = { ...lifecycleCounts };
+    const retiredResponse = business.waitForResponse(response => response.url().endsWith(`/resources/${inactive.id}`)
+      && response.request().method() === "DELETE" && response.status() === 200);
+    await confirmation.getByRole("button", { name: "Confirmar retiro", exact: true }).click();
+    expect(await (await retiredResponse).json()).toEqual({ id: inactive.id });
+    await expect(retiredRow).toHaveCount(0);
+    await expect(screen.getByRole("heading", { name: "Recursos", exact: true })).toBeFocused();
+    await expect(warning.getByRole("alert")).toBeVisible();
+    expect(lifecycleCounts).toEqual({ ...beforeRetire, DELETE: beforeRetire.DELETE + 1, GET: beforeRetire.GET + 1 });
+    expect(await readBooking()).toEqual(originalBooking);
+    expect(await business.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    await business.screenshot({ path: testInfo.outputPath("resources-retired-warning-360.png"), fullPage: true });
+    await business.unroute("**/api/me/resources");
+    await warning.getByRole("button", { name: "Actualizar catálogo", exact: true }).click();
+    await expect(warning).toHaveCount(0);
+    expect(lifecycleCounts).toEqual({ ...beforeRetire, DELETE: beforeRetire.DELETE + 1, GET: beforeRetire.GET + 2 });
+    await business.reload();
+    await expect(retiredRow).toHaveCount(0);
     const adminReads: string[] = [];
     page.on("request", request => { if (/\/api\/me\/(resources|services)$/.test(request.url())) adminReads.push(request.url()); });
     await page.goto(`${system.webUrl}/resources`);

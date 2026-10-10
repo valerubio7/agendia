@@ -13,12 +13,23 @@ const parseClock = (value: string, end: boolean) => {
   return Number(value.slice(0, 2)) * 60 + Number(value.slice(3));
 };
 
-export function ResourcesScreen({ resources, services, onSave, onRefresh }: {
+type LifecycleAction = Resource["status"] | "retire";
+
+export function ResourcesScreen({ resources, services, onSave, onRefresh, onLifecycle }: {
   resources: readonly Resource[];
   services: readonly Service[];
   onSave: (id: string | null, body: ResourceInput, signal: AbortSignal) => Promise<boolean>;
   onRefresh: (signal: AbortSignal) => Promise<void>;
+  onLifecycle: (id: string, action: LifecycleAction, signal: AbortSignal) => Promise<boolean>;
 }) {
+  const [confirmation, setConfirmation] = useState<{ resource: Resource; action: "suspended" | "retire" } | null>(null);
+  const [lifecycleError, setLifecycleError] = useState("");
+  const cancelButton = useRef<HTMLButtonElement>(null);
+  const opener = useRef<HTMLButtonElement | null>(null);
+  const lifecycleButtons = useRef(new Map<string, HTMLButtonElement>());
+  const heading = useRef<HTMLHeadingElement>(null);
+  const focusReturn = useRef<{ opener?: HTMLButtonElement; key?: string } | null>(null);
+  useEffect(() => { if (confirmation) cancelButton.current?.focus(); }, [confirmation]);
   const [editing, setEditing] = useState<Resource | null>(null);
   const [schedule, setSchedule] = useState<Record<number, DraftSpan[]>>({});
   const spanId = useRef(0);
@@ -37,7 +48,49 @@ export function ResourcesScreen({ resources, services, onSave, onRefresh }: {
   const request = useRef<AbortController | null>(null);
   const nameInput = useRef<HTMLInputElement>(null);
   useEffect(() => () => { request.current?.abort(); }, []);
-  useEffect(() => { if (revision > 0) nameInput.current?.focus(); }, [revision]);
+  useEffect(() => { if (revision > 0 && !focusReturn.current) nameInput.current?.focus(); }, [revision]);
+  useEffect(() => {
+    if (pending || refreshPending || confirmation || !focusReturn.current) return;
+    const target = focusReturn.current;
+    const button = target.opener ?? (target.key ? lifecycleButtons.current.get(target.key) : undefined);
+    if (button?.isConnected && !button.disabled) button.focus();
+    else heading.current?.focus();
+    focusReturn.current = null;
+  }, [pending, refreshPending, confirmation, revision]);
+  const lifecycle = async (resource: Resource, action: LifecycleAction) => {
+    if (request.current || !resources.some(owned => owned.id === resource.id)) return;
+    const controller = new AbortController();
+    request.current = controller;
+    setPending(true);
+    setLifecycleError("");
+    setError("");
+    setNotice("");
+    try {
+      const refreshed = await onLifecycle(resource.id, action, controller.signal);
+      if (controller.signal.aborted || request.current !== controller) return;
+      setRefreshWarning(!refreshed);
+      setNotice(action === "retire" ? "Recurso retirado" : action === "active" ? "Recurso reactivado" : "Recurso suspendido");
+      focusReturn.current = action === "retire" ? {} : { key: `${resource.id}:${action === "active" ? "suspended" : "active"}` };
+      setConfirmation(null);
+      setEditing(null);
+      setSchedule({});
+      setScheduleEdited(false);
+      setRevision(value => value + 1);
+    } catch (cause) {
+      if (!controller.signal.aborted && request.current === controller) setLifecycleError(api.errorMessage(cause));
+    } finally {
+      if (!controller.signal.aborted && request.current === controller) {
+        request.current = null;
+        setPending(false);
+      }
+    }
+  };
+  const cancelLifecycle = () => {
+    if (request.current) return;
+    focusReturn.current = opener.current ? { opener: opener.current } : {};
+    setConfirmation(null);
+    setLifecycleError("");
+  };
   const selectResource = (resource: Resource | null) => {
     if (request.current) return;
     setEditing(resource);
@@ -125,13 +178,13 @@ export function ResourcesScreen({ resources, services, onSave, onRefresh }: {
   return (
     <main className="resources-screen" aria-labelledby="resources-title">
       <header className="resources-header">
-        <h1 id="resources-title">Recursos</h1>
+        <h1 id="resources-title" ref={heading} tabIndex={-1}>Recursos</h1>
         <p>Consultá los recursos de tu negocio, sus servicios asignados y horarios semanales.</p>
       </header>
       <form className="resources-form" key={`${editing?.id ?? "create"}-${revision}`}
         aria-labelledby="resource-form-title" aria-busy={pending} onSubmit={submit}>
         <h2 id="resource-form-title">{editing ? "Editar recurso" : "Crear recurso"}</h2>
-        <fieldset disabled={pending || refreshPending}>
+        <fieldset disabled={pending || refreshPending || !!confirmation}>
           <label htmlFor="resource-name">Nombre</label>
           <input ref={nameInput} id="resource-name" name="name" required defaultValue={editing?.name ?? ""} />
           <label htmlFor="resource-description">Descripción (opcional)</label>
@@ -184,9 +237,22 @@ export function ResourcesScreen({ resources, services, onSave, onRefresh }: {
         {error && <p role="alert">{error}</p>}
         {notice && <p role="status">{notice}</p>}
       </form>
+      {confirmation && <section className="resources-confirmation" role="region" aria-label="Confirmar acción sobre recurso" aria-busy={pending}>
+        <h2>{confirmation.action === "retire" ? "Retirar" : "Suspender"} {confirmation.resource.name}</h2>
+        <p>{confirmation.action === "retire"
+          ? "Se quitará del catálogo y se conservará el historial. Puede rechazarse si tiene asignaciones futuras."
+          : "No será elegible para nuevas reservas. Los turnos existentes no se cancelan."}</p>
+        <div className="resources-form-actions">
+          <button ref={cancelButton} type="button" disabled={pending} onClick={cancelLifecycle}>Cancelar</button>
+          <button type="button" disabled={pending} onClick={() => void lifecycle(confirmation.resource, confirmation.action)}>
+            {pending ? "Procesando…" : confirmation.action === "retire" ? "Confirmar retiro" : "Confirmar suspensión"}
+          </button>
+        </div>
+      </section>}
+      {lifecycleError && <p role="alert">{lifecycleError}</p>}
       {refreshWarning && <section aria-label="Actualización del catálogo" aria-busy={refreshPending}>
-        <p role="alert">El recurso se guardó, pero no pudimos actualizar el catálogo. Reintentá la actualización.</p>
-        <button type="button" disabled={pending || refreshPending} onClick={() => void refresh()}>
+        <p role="alert">El cambio se guardó, pero no pudimos actualizar el catálogo. Reintentá la actualización.</p>
+        <button type="button" disabled={pending || refreshPending || !!confirmation} onClick={() => void refresh()}>
           {refreshPending ? "Actualizando catálogo…" : "Actualizar catálogo"}
         </button>
       </section>}
@@ -208,8 +274,25 @@ export function ResourcesScreen({ resources, services, onSave, onRefresh }: {
                     {resource.status === "active" ? "Activo" : "Suspendido"}
                   </span>
                   {resource.description && <p className="resources-description">{resource.description}</p>}
-                  <button type="button" disabled={pending || refreshPending} onClick={() => selectResource(resource)}
-                    aria-label={`Editar ${resource.name}`}>Editar</button>
+                  <div className="resources-form-actions">
+                    <button type="button" disabled={pending || refreshPending || !!confirmation} onClick={() => selectResource(resource)}
+                      aria-label={`Editar ${resource.name}`}>Editar</button>
+                    <button type="button" disabled={pending || refreshPending || !!confirmation}
+                      ref={node => {
+                        const key = `${resource.id}:${resource.status === "active" ? "suspended" : "active"}`;
+                        if (node) lifecycleButtons.current.set(key, node); else lifecycleButtons.current.delete(key);
+                      }} onClick={event => {
+                        if (request.current) return;
+                        if (resource.status === "suspended") void lifecycle(resource, "active");
+                        else { opener.current = event.currentTarget; setLifecycleError(""); setConfirmation({ resource, action: "suspended" }); }
+                      }}>{resource.status === "active" ? "Suspender" : "Reactivar"}</button>
+                    <button type="button" disabled={pending || refreshPending || !!confirmation} onClick={event => {
+                      if (request.current) return;
+                      opener.current = event.currentTarget;
+                      setLifecycleError("");
+                      setConfirmation({ resource, action: "retire" });
+                    }}>Retirar</button>
+                  </div>
                   <h3>Servicios asignados</h3>
                   {resource.serviceIds.length === 0 ? <p>Sin servicios asignados</p> : (
                     <div className="resources-services">

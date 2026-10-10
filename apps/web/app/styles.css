@@ -4030,7 +4030,10 @@ main.login-frame {
 .resources-picker label { display: flex; align-items: baseline; gap: 0.65rem; }
 .resources-picker input { flex-shrink: 0; accent-color: var(--pine); }
 .resources-form-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; }
-.resources-form [role="alert"] { color: var(--coral-ink); }
+.resources-screen [role="alert"] { color: var(--coral-ink); }
+.resources-confirmation { margin-block: 1.5rem; padding-block: 1.5rem; border-block: 1px solid var(--line); }
+.resources-confirmation .resources-form-actions { margin-top: 1rem; }
+.resources-header h1:focus { outline: 2px solid var(--pine); outline-offset: 0.25rem; }
 .resources-form [role="status"] { color: var(--pine); }
 .resources-summary button { display: block; margin-block: 0.5rem; }
 .resources-form .resources-hours { margin-block: 1rem; gap: 1.25rem; }
