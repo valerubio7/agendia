@@ -4032,7 +4032,18 @@ main.login-frame {
 .resources-form-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; }
 .resources-form [role="alert"] { color: var(--coral-ink); }
 .resources-form [role="status"] { color: var(--pine); }
-.resources-summary button { margin-block: 0.5rem; }
+.resources-summary button { display: block; margin-block: 0.5rem; }
+.resources-form .resources-hours { margin-block: 1rem; gap: 1.25rem; }
+.resources-hours legend { margin-bottom: 0.5rem; font-weight: 650; }
+.resources-form .resources-hours-day { padding-top: 0.75rem; border-top: 1px solid var(--line); }
+.resources-hours-day > button { justify-self: start; }
+.resources-hours-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)) auto; gap: 0.75rem; align-items: end; }
+.resources-hours-row label { display: grid; gap: 0.35rem; }
+.resources-hours-row input { font-variant-numeric: tabular-nums; }
+@media (max-width: 48rem) {
+  .resources-hours-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .resources-hours-row button { grid-column: 1 / -1; justify-self: start; }
+}
 .resources-empty { margin-top: 2rem; padding-block: 2rem; border-top: 1px solid var(--line); }
 .resources-screen .resources-schedule-note { margin-top: 1.5rem; }
 .resources-list { list-style: none; padding: 0; margin: 1.5rem 0 0; }

@@ -53,6 +53,11 @@ test("Recursos manages owned assignments while preserving weekly spans", async (
     await expect(screen.getByRole("heading", { name: "Todavía no hay recursos", exact: true })).toBeVisible();
     await expect(navigation.getByRole("link", { name: "Recursos", exact: true })).toHaveAttribute("aria-current", "page");
     await expect(screen.getByRole("form", { name: "Crear recurso", exact: true })).toBeVisible();
+    const weeklyEditor = screen.getByRole("form", { name: "Crear recurso", exact: true })
+      .getByRole("group", { name: "Horario semanal", exact: true });
+    await expect(weeklyEditor).toBeVisible();
+    await expect(weeklyEditor.getByRole("group", { name: "Lunes", exact: true })).toBeVisible();
+    await expect(weeklyEditor.getByRole("button", { name: "Agregar franja Lunes", exact: true })).toBeVisible();
     await business.screenshot({ path: testInfo.outputPath("resources-empty.png"), fullPage: true });
     await login(other, system.webUrl, tenants[1]!.email, password);
     await expect(other).toHaveURL(/\/profile$/);
@@ -126,7 +131,7 @@ test("Recursos manages owned assignments while preserving weekly spans", async (
     const form = screen.getByRole("form");
     await expect(form.getByRole("checkbox")).toHaveCount(2);
     await expect(form.getByRole("checkbox", { name: "Seguimiento propio (suspendido)", exact: true })).toBeVisible();
-    await expect(form.getByText(/No podrá recibir reservas/)).toBeVisible();
+    await expect(form.getByText(/Sin franjas no podrá recibir reservas/)).toBeVisible();
     const counts = { POST: 0, PUT: 0, GET: 0 };
     const bodies: Record<string, unknown>[] = [];
     business.on("request", request => {
@@ -219,6 +224,152 @@ test("Recursos manages owned assignments while preserving weekly spans", async (
     await expect(other.getByText("Profesional actualizado", { exact: true })).toHaveCount(0);
     expect(await business.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     await business.screenshot({ path: testInfo.outputPath("resources-edited-360.png"), fullPage: true });
+    // Weekly editor: real mutations/conflicts; only the committed-save GET500 is mocked.
+    const hoursResource = await seed(business, "post", "resources", {
+      name: "Recurso con franjas", description: "  descripción sin recortar  ",
+      serviceIds: [ownService.id, suspendedService.id],
+      weeklySchedule: { 1: [{ startMinute: 541, endMinute: 602 }], 2: [] },
+    }, 201);
+    await seed(business, "put", `resources/${hoursResource.id}/status`, { status: "suspended" }, 200);
+    await business.reload();
+    const hoursRow = catalog.getByRole("listitem").filter({ hasText: "Recurso con franjas" });
+    const readHours = async () => {
+      const response = await business.request.get(`${system.webUrl}/api/me/resources`);
+      expect(response.status()).toBe(200);
+      return (await response.json() as Array<Record<string, unknown>>).find(record => record.id === hoursResource.id)!;
+    };
+    const initialHours = await readHours();
+    await hoursRow.getByRole("button", { name: "Editar Recurso con franjas", exact: true }).click();
+    const editor = form.getByRole("group", { name: "Horario semanal", exact: true });
+    await expect(editor.getByLabel("Inicio Lunes 1", { exact: true })).toHaveValue("09:01");
+    await expect(editor.getByLabel("Fin Lunes 1", { exact: true })).toHaveValue("10:02");
+    await form.getByLabel("Nombre", { exact: true }).fill("Recurso con franjas renombrado");
+    await form.getByRole("button", { name: "Guardar cambios", exact: true }).click();
+    await expect(form.getByRole("status")).toHaveText("Recurso actualizado");
+    expect(await readHours()).toEqual({ ...initialHours, name: "Recurso con franjas renombrado" });
+    await hoursRow.getByRole("button", { name: /Editar Recurso con franjas/ }).click();
+    const beforeInvalid = counts.PUT;
+    for (const [start, end] of [["09:01", "09:01"], ["9:01", "10:02"], ["24:00", "10:02"], ["09:01", "24:01"], ["09:01:00", "10:02"]]) {
+      await editor.getByLabel("Inicio Lunes 1", { exact: true }).fill(start!);
+      await editor.getByLabel("Fin Lunes 1", { exact: true }).fill(end!);
+      await form.getByRole("button", { name: "Guardar cambios", exact: true }).click();
+      await expect(form.getByRole("alert")).toContainText("HH:mm distintas");
+      expect(counts.PUT).toBe(beforeInvalid);
+    }
+    await editor.getByLabel("Inicio Lunes 1", { exact: true }).fill("09:01");
+    await editor.getByLabel("Fin Lunes 1", { exact: true }).fill("10:02");
+    const addSpan = async (day: string, index: number, start: string, end: string) => {
+      await editor.getByRole("button", { name: `Agregar franja ${day}`, exact: true }).click();
+      await expect(editor.getByLabel(`Inicio ${day} ${index}`, { exact: true })).toHaveValue("");
+      await expect(editor.getByLabel(`Fin ${day} ${index}`, { exact: true })).toHaveValue("");
+      await editor.getByLabel(`Inicio ${day} ${index}`, { exact: true }).fill(start);
+      await editor.getByLabel(`Fin ${day} ${index}`, { exact: true }).fill(end);
+    };
+    await addSpan("Martes", 1, "08:00", "09:00");
+    const envelopeConflict = business.waitForResponse(response => response.url().endsWith(`/resources/${hoursResource.id}`)
+      && response.request().method() === "PUT" && response.status() === 409);
+    await form.getByRole("button", { name: "Guardar cambios", exact: true }).click();
+    await envelopeConflict;
+    await expect(form.getByRole("alert")).toBeVisible();
+    await expect(editor.getByLabel("Inicio Martes 1", { exact: true })).toHaveValue("08:00");
+    expect(await readHours()).toEqual({ ...initialHours, name: "Recurso con franjas renombrado" });
+    await business.screenshot({ path: testInfo.outputPath("resources-real-envelope-conflict-360.png"), fullPage: true });
+    await editor.getByRole("button", { name: "Quitar franja Martes 1", exact: true }).click();
+    const fullWeek = Object.fromEntries(Array.from({ length: 7 }, (_, day) =>
+      [day, [{ startMinute: 0, endMinute: 1440 }]]));
+    await seed(business, "put", "business-calendar", { weeklySchedule: fullWeek }, 200);
+    await addSpan("Lunes", 2, "09:30", "11:01"); // overlap is valid; preserve raw rows
+    await addSpan("Lunes", 3, "11:01", "12:00"); // adjacent is valid too
+    await addSpan("Jueves", 1, "22:01", "01:02");
+    await addSpan("Domingo", 1, "23:01", "00:02"); // wraps into Monday
+    await addSpan("Sábado", 1, "00:00", "24:00");
+    const rawSchedule = {
+      1: [{ startMinute: 541, endMinute: 602 }, { startMinute: 570, endMinute: 661 }, { startMinute: 661, endMinute: 720 }],
+      4: [{ startMinute: 1321, endMinute: 62 }], 0: [{ startMinute: 1381, endMinute: 2 }],
+      6: [{ startMinute: 0, endMinute: 1440 }],
+    };
+    let releaseHours: (() => void) | undefined;
+    const heldHours = new Promise<void>(resolve => { releaseHours = resolve; });
+    await business.route(`**/api/me/resources/${hoursResource.id}`, async route => {
+      await heldHours;
+      await route.continue();
+    });
+    await business.route("**/api/me/resources", route => route.fulfill({ status: 500,
+      contentType: "application/json", body: '{"code":"INTERNAL_ERROR"}' }));
+    const beforeHoursSave = { ...counts };
+    await form.getByRole("button", { name: "Guardar cambios", exact: true }).click();
+    await expect(form).toHaveAttribute("aria-busy", "true");
+    await expect(editor.getByRole("button", { name: "Agregar franja Lunes", exact: true })).toBeDisabled();
+    await expect(editor.getByLabel("Inicio Lunes 1", { exact: true })).toBeDisabled();
+    await expect(editor.getByRole("button", { name: "Quitar franja Lunes 1", exact: true })).toBeDisabled();
+    expect(await business.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    await business.screenshot({ path: testInfo.outputPath("resources-hours-pending-360.png"), fullPage: true });
+    releaseHours!();
+    await expect(form.getByRole("status")).toHaveText("Recurso actualizado");
+    await expect(warning.getByRole("alert")).toBeVisible();
+    expect(bodies.at(-1)).toEqual({ name: "Recurso con franjas renombrado", description: "  descripción sin recortar  ",
+      serviceIds: initialHours.serviceIds, weeklySchedule: rawSchedule });
+    expect(counts).toEqual({ ...beforeHoursSave, PUT: beforeHoursSave.PUT + 1, GET: beforeHoursSave.GET + 1 });
+    await business.unroute(`**/api/me/resources/${hoursResource.id}`);
+    await business.unroute("**/api/me/resources");
+    await warning.getByRole("button", { name: "Actualizar catálogo", exact: true }).click();
+    await expect(warning).toHaveCount(0);
+    expect(counts).toEqual({ ...beforeHoursSave, PUT: beforeHoursSave.PUT + 1, GET: beforeHoursSave.GET + 2 });
+    await business.reload();
+    expect(await readHours()).toEqual({ ...initialHours, name: "Recurso con franjas renombrado", weeklySchedule: rawSchedule });
+    await hoursRow.getByRole("button", { name: /Editar Recurso con franjas/ }).click();
+    await expect(editor.getByLabel("Fin Sábado 1", { exact: true })).toHaveValue("24:00");
+    await expect(editor.getByLabel("Fin Domingo 1", { exact: true })).toHaveValue("00:02");
+    await business.screenshot({ path: testInfo.outputPath("resources-hours-draft-360.png"), fullPage: true });
+    for (const day of ["Lunes", "Jueves", "Domingo", "Sábado"]) {
+      while (await editor.getByRole("button", { name: `Quitar franja ${day} 1`, exact: true }).count())
+        await editor.getByRole("button", { name: `Quitar franja ${day} 1`, exact: true }).click();
+    }
+    await form.getByRole("button", { name: "Guardar cambios", exact: true }).click();
+    await expect(form.getByRole("status")).toHaveText("Recurso actualizado");
+    await business.reload();
+    expect(await readHours()).toEqual({ ...initialHours, name: "Recurso con franjas renombrado", weeklySchedule: {} });
+    await seed(business, "put", `resources/${inactive.id}`, {
+      name: "Sala de consulta", description: "", serviceIds: [], weeklySchedule: {},
+    }, 200);
+    await business.reload();
+    await suspended.getByRole("button", { name: "Editar Sala de consulta", exact: true }).click();
+    await form.getByLabel("Nombre", { exact: true }).fill("Sala renombrada");
+    await form.getByRole("button", { name: "Guardar cambios", exact: true }).click();
+    await expect(form.getByRole("status")).toHaveText("Recurso actualizado");
+    expect(bodies.at(-1)).toEqual({ name: "Sala renombrada", description: "", serviceIds: [], weeklySchedule: {} });
+    await business.reload();
+    const emptyDescriptionRecords = await business.request.get(`${system.webUrl}/api/me/resources`);
+    expect((await emptyDescriptionRecords.json() as Array<Record<string, unknown>>).find(record => record.id === inactive.id))
+      .toMatchObject({ name: "Sala renombrada", description: "", status: "suspended", serviceIds: [], weeklySchedule: {} });
+    // Seed a real offered future booking; shrinking the assigned resource must produce a real 409.
+    await seed(business, "put", `resources/${hoursResource.id}`, {
+      name: "Recurso con franjas renombrado", description: "  descripción sin recortar  ",
+      serviceIds: [ownService.id, suspendedService.id], weeklySchedule: fullWeek,
+    }, 200);
+    await seed(business, "put", `resources/${hoursResource.id}/status`, { status: "active" }, 200);
+    const date = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+    const available = await business.request.get(`${system.webUrl}/api/me/appointments/availability?serviceId=${ownService.id}&resourceId=${hoursResource.id}&date=${date}`);
+    expect(available.status()).toBe(200);
+    const slots = await available.json() as Array<{ start: string; resourceId: string; terms: object }>;
+    expect(slots.length).toBeGreaterThan(0);
+    await seed(business, "post", "appointments", { serviceId: ownService.id, resourceId: hoursResource.id,
+      startRaw: slots[0]!.start, date, expectedTerms: slots[0]!.terms, confirmed: true,
+      newClient: { firstName: "Cliente", lastName: "Horario", phone: "+5491123456789" },
+    }, 201);
+    await business.reload();
+    const bookedRecord = await readHours();
+    await hoursRow.getByRole("button", { name: /Editar Recurso con franjas/ }).click();
+    for (const day of ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"])
+      await editor.getByRole("button", { name: `Quitar franja ${day} 1`, exact: true }).click();
+    const bookingConflict = business.waitForResponse(response => response.url().endsWith(`/resources/${hoursResource.id}`)
+      && response.request().method() === "PUT" && response.status() === 409);
+    await form.getByRole("button", { name: "Guardar cambios", exact: true }).click();
+    await bookingConflict;
+    await expect(form.getByRole("alert")).toBeVisible();
+    await expect(editor.getByRole("button", { name: /Quitar franja/ })).toHaveCount(0);
+    expect(await readHours()).toEqual(bookedRecord);
+    await business.screenshot({ path: testInfo.outputPath("resources-real-booking-conflict-360.png"), fullPage: true });
     const adminReads: string[] = [];
     page.on("request", request => { if (/\/api\/me\/(resources|services)$/.test(request.url())) adminReads.push(request.url()); });
     await page.goto(`${system.webUrl}/resources`);
