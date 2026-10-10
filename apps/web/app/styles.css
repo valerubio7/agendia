@@ -4006,3 +4006,93 @@ main.login-frame {
     animation-iteration-count: 1;
   }
 }
+
+.services-screen {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 68rem;
+  padding: clamp(1rem, 3vw, 2.5rem);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+}
+
+.services-header h1 {
+  margin: 0 0 0.5rem;
+  font-size: clamp(2rem, 4vw, 3rem);
+}
+
+.services-header p,
+.services-empty p,
+.services-description {
+  max-width: 68ch;
+  margin: 0;
+  color: var(--ink-2);
+  line-height: 1.6;
+}
+
+.services-empty {
+  margin-top: 2rem;
+  padding-block: 2rem;
+  border-top: 1px solid var(--line);
+}
+
+.services-empty h2,
+.services-summary h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.35rem;
+  overflow-wrap: anywhere;
+}
+
+.services-list {
+  list-style: none;
+  padding: 0;
+  margin: 2rem 0 0;
+}
+
+.services-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(16rem, auto);
+  gap: 1.5rem;
+  padding-block: 1.5rem;
+  border-top: 1px solid var(--line);
+}
+
+.services-status {
+  display: inline-block;
+  margin-bottom: 0.5rem;
+  color: var(--pine);
+  font-weight: 650;
+}
+
+.services-status[data-status="suspended"] {
+  color: var(--ink-2);
+}
+
+.services-terms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.services-terms dt {
+  margin-bottom: 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.services-terms dd {
+  margin: 0;
+  font-weight: 450;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 48rem) {
+  .services-item {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
+  }
+}

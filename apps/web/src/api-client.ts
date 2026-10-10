@@ -21,6 +21,14 @@ export type Profile = {
   businessHours: string;
   offerings: string;
 };
+export type Service = {
+  id: string;
+  name: string;
+  description: string | null;
+  durationMinutes: number;
+  priceArs: number;
+  status: "active" | "suspended";
+};
 export type Assistant = {
   style: string;
   businessInstructions: string;
@@ -251,6 +259,7 @@ export class ApiClient {
     this.call(`/admin/businesses/${encodeURIComponent(id)}/user`, "PUT", {
       password,
     });
+  services = () => this.call<Service[]>("/me/services");
   profile = () => this.call<Partial<Profile>>("/me/business-profile");
   saveProfile = (body: Profile) =>
     this.call<Profile>("/me/business-profile", "PUT", {

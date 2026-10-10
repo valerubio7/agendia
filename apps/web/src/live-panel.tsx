@@ -9,6 +9,7 @@ import {
   type Business,
   type Profile,
   type Session,
+  type Service,
   type WhatsAppStatus,
 } from "./api-client";
 import { renderWhatsAppQrDataUrl } from "./qr-code";
@@ -20,11 +21,12 @@ import {
 import { AdminBusinessesScreen } from "./ui/admin-businesses-screen";
 import { AssistantScreen } from "./ui/assistant-screen";
 import { ProfileScreen } from "./ui/profile-screen";
+import { ServicesScreen } from "./ui/services-screen";
 import { WhatsAppScreen } from "./ui/whatsapp-screen";
 
 export { formatActivityTimestamp } from "./ui/admin-businesses-screen";
 
-type Mode = "login" | "admin" | "profile" | "assistant" | "whatsapp";
+type Mode = "login" | "admin" | "profile" | "services" | "assistant" | "whatsapp";
 type AuthenticatedViewState =
   | "loading"
   | "ready"
@@ -198,6 +200,8 @@ export function LivePanel({ mode }: { mode: Mode }) {
       loaded =
         mode === "admin"
           ? { businesses: await api.businesses(), instructions: await api.platformAiInstructions() }
+          : mode === "services"
+            ? await api.services()
           : mode === "profile"
             ? await api.profile()
             : mode === "assistant"
@@ -570,6 +574,19 @@ export function LivePanel({ mode }: { mode: Mode }) {
             )
           }
         />
+      </AuthenticatedShell>
+    );
+  }
+  if (mode === "services") {
+    return (
+      <AuthenticatedShell
+        variant="business"
+        activeHref="/services"
+        logoutPending={logoutPending}
+        logoutAction={() => void logout()}
+      >
+        <ServicesScreen services={data as Service[]} />
+        {feedback}
       </AuthenticatedShell>
     );
   }
