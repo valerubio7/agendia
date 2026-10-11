@@ -580,3 +580,226 @@ test("Horario rejects exclusion of a real future confirmed booking independently
     await context.close();
   }
 });
+
+test("Closures read independently in Argentina time without calendar writes", async ({ browser, page, system }, testInfo) => {
+  const password = "closures read password safe";
+  const emails = ["closures-read@example.test", "other-closures-read@example.test"];
+  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await expect(page).toHaveURL(/\/businesses$/);
+  for (const [index, email] of emails.entries()) {
+    await page.getByLabel("Nombre", { exact: true }).fill(`Cierres Lectura ${index}`);
+    await page.getByLabel("Correo del usuario", { exact: true }).fill(email);
+    await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
+    await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
+    await expect(page.getByRole("cell", { name: `Cierres Lectura ${index}`, exact: true })).toBeVisible();
+  }
+  const adminReads: string[] = [];
+  page.on("request", request => {
+    if (new URL(request.url()).pathname === "/api/me/business-calendar/closures") adminReads.push(request.method());
+  });
+  await page.goto(`${system.webUrl}/business-calendar`);
+  await expect(page.locator('main[data-state="denied"]')).toBeVisible();
+  expect(adminReads).toEqual([]);
+  const context = await browser.newContext({ timezoneId: "UTC", viewport: { width: 1280, height: 900 } });
+  const otherContext = await browser.newContext({ timezoneId: "UTC" });
+  const business = await context.newPage(), other = await otherContext.newPage();
+  try {
+    await login(business, system.webUrl, emails[0]!, password);
+    await expect(business).toHaveURL(/\/profile$/);
+    await login(other, system.webUrl, emails[1]!, password);
+    await expect(other).toHaveURL(/\/profile$/);
+    const counts = { closureGET: 0, weeklyGET: 0, mutations: 0 };
+    business.on("request", request => {
+      const path = new URL(request.url()).pathname;
+      if (path !== "/api/me/business-calendar/closures" && path !== "/api/me/business-calendar") return;
+      if (request.method() !== "GET") counts.mutations++;
+      else if (path.endsWith("/closures")) counts.closureGET++;
+      else counts.weeklyGET++;
+    });
+    await business.goto(`${system.webUrl}/business-calendar`);
+    const region = business.getByRole("region", { name: "Cierres del negocio", exact: true });
+    await expect(region).toBeVisible();
+    await expect(region.getByText("No hay cierres guardados. El horario semanal sigue siendo la referencia de atención.", { exact: true })).toBeVisible();
+    await business.screenshot({ path: testInfo.outputPath("closures-empty.png"), fullPage: true });
+    const csrf = await business.evaluate(() => sessionStorage.getItem("agendia.csrf"));
+    expect(csrf).toBeTruthy();
+    const headers = { Origin: system.webUrl, "x-csrf-token": csrf! };
+    const endpoint = `${system.webUrl}/api/me/business-calendar/closures`;
+    const dates: Array<{ id: string; kind: "date"; date: string }> = [];
+    for (let index = 0; index < 2; index++) {
+      const response = await business.request.post(endpoint, { headers, data: { kind: "date", date: "2035-02-02" } });
+      expect(response.status()).toBe(201);
+      dates.push(await response.json());
+    }
+    dates.sort((a, b) => a.id.localeCompare(b.id));
+    for (const [index, record] of dates.entries()) {
+      const response = await business.request.put(`${endpoint}/${record.id}`, {
+        headers, data: { kind: "date", date: index === 0 ? "2035-02-02" : "2035-01-01" },
+      });
+      expect(response.status()).toBe(200);
+    }
+    const raw = [
+      ["2035-01-02T02:04:05.006+02:00", "2035-01-02T03:04:05.006+02:00"],
+      ["2035-01-02T02:04:05.006+02:00", "2035-01-02T03:04:05.006+02:00"],
+      ["2035-01-02T02:34:05.006+02:00", "2035-01-02T03:34:05.006+02:00"],
+      ["2035-01-02T03:04:05.006+02:00", "2035-01-02T04:04:05.006+02:00"],
+    ];
+    for (const [start, end] of raw) {
+      const response = await business.request.post(endpoint, { headers, data: { kind: "interval", start, end } });
+      expect(response.status()).toBe(201);
+    }
+    const response = await business.request.get(endpoint);
+    expect(response.status()).toBe(200);
+    const records = await response.json() as Array<{ id: string; kind: "date" | "interval"; date?: string; start?: string; end?: string }>;
+    expect(records).toHaveLength(6);
+    expect(records.map(record => record.id)).toEqual(records.map(record => record.id).sort());
+    expect(records.filter(record => record.kind === "date").map(record => record.date)).toEqual(["2035-02-02", "2035-01-01"]);
+    expect(records.filter(record => record.kind === "interval").map(record => [record.start, record.end]).sort()).toEqual([...raw].sort());
+    await business.reload();
+    const rows = region.locator("li");
+    await expect(rows).toHaveCount(6);
+    expect(await rows.evaluateAll(elements => elements.map(element => element.getAttribute("data-closure-id")))).toEqual(records.map(record => record.id));
+    const local: Record<string, string> = {
+      "2035-01-02T02:04:05.006+02:00": "01/01/2035, 21:04:05.006 (Argentina, GMT-03:00)",
+      "2035-01-02T03:04:05.006+02:00": "01/01/2035, 22:04:05.006 (Argentina, GMT-03:00)",
+      "2035-01-02T02:34:05.006+02:00": "01/01/2035, 21:34:05.006 (Argentina, GMT-03:00)",
+      "2035-01-02T03:34:05.006+02:00": "01/01/2035, 22:34:05.006 (Argentina, GMT-03:00)",
+      "2035-01-02T04:04:05.006+02:00": "01/01/2035, 23:04:05.006 (Argentina, GMT-03:00)",
+    };
+    for (const [index, record] of records.entries()) {
+      await expect(rows.nth(index).locator("p")).toHaveText(record.kind === "date" ?
+        [`Día completo: ${record.date === "2035-02-02" ? "02/02/2035" : "01/01/2035"}`] :
+        [`Desde: ${local[record.start!]}`, `Hasta: ${local[record.end!]}`]);
+    }
+    await other.goto(`${system.webUrl}/business-calendar`);
+    await expect(other.getByRole("region", { name: "Cierres del negocio" }).getByText("No hay cierres guardados. El horario semanal sigue siendo la referencia de atención.", { exact: true })).toBeVisible();
+    for (const width of [1280, 360]) {
+      await business.setViewportSize({ width, height: 900 });
+      expect(await business.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await business.screenshot({ path: testInfo.outputPath(`closures-list-${width}.png`), fullPage: true });
+    }
+    let fail = true, hold = false;
+    let release = () => {};
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    await business.route("**/api/me/business-calendar/closures", async route => {
+      expect(route.request().method()).toBe("GET");
+      if (hold) await gate;
+      if (fail) await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: { code: "INTERNAL_ERROR", message: "PRIVATE diagnostic" } }) });
+      else await route.continue();
+    });
+    await business.reload();
+    await expect(region.getByRole("alert")).toHaveText("No se pudo completar la operación.");
+    await expect(business.getByText(/PRIVATE/)).toHaveCount(0);
+    await expect(business.getByRole("heading", { name: "Horario sin configurar", exact: true })).toBeVisible();
+    await business.getByRole("button", { name: "Editar horario", exact: true }).click();
+    await expect(business.getByRole("form", { name: "Editar horario", exact: true })).toBeVisible();
+    await business.getByRole("button", { name: "Cancelar", exact: true }).click();
+    await business.screenshot({ path: testInfo.outputPath("closures-error.png"), fullPage: true });
+    const retry = region.getByRole("button", { name: "Volver a cargar cierres", exact: true });
+    const before = { ...counts };
+    await retry.click();
+    await expect(retry).toBeEnabled();
+    await expect(retry).toBeFocused();
+    expect(counts).toEqual({ ...before, closureGET: before.closureGET + 1 });
+    fail = false;
+    hold = true;
+    await retry.evaluate(button => { button.dispatchEvent(new MouseEvent("click", { bubbles: true })); button.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await expect(region).toHaveAttribute("aria-busy", "true");
+    await expect(retry).toBeDisabled();
+    await expect.poll(() => counts.closureGET).toBe(before.closureGET + 2);
+    expect(counts).toEqual({ ...before, closureGET: before.closureGET + 2 });
+    await business.screenshot({ path: testInfo.outputPath("closures-retry-pending.png"), fullPage: true });
+    release();
+    await expect(rows).toHaveCount(6);
+    await expect(region).toHaveAttribute("aria-busy", "false");
+    await expect(region.getByRole("heading", { name: "Cierres del negocio", exact: true })).toBeFocused();
+    expect(counts).toEqual({ ...before, closureGET: before.closureGET + 2 });
+    expect(counts.mutations).toBe(0);
+  } finally {
+    await context.close();
+    await otherContext.close();
+  }
+});
+
+for (const interruption of ["initial", "retry"] as const) {
+  test(`Closures recover after failed logout interrupts ${interruption} GET`, async ({ browser, page, system }, testInfo) => {
+    const email = `closures-logout-${interruption}@example.test`, password = "closure logout safe password";
+    await login(page, system.webUrl, system.admin.email, system.admin.password);
+    await expect(page).toHaveURL(/\/businesses$/);
+    await page.getByLabel("Nombre", { exact: true }).fill(`Cierres Logout ${interruption}`);
+    await page.getByLabel("Correo del usuario", { exact: true }).fill(email);
+    await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
+    await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
+    await expect(page.getByRole("cell", { name: `Cierres Logout ${interruption}`, exact: true })).toBeVisible();
+    const context = await browser.newContext({ timezoneId: "UTC", viewport: { width: 1280, height: 900 } });
+    const business = await context.newPage();
+    let release = () => {};
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    try {
+      await login(business, system.webUrl, email, password);
+      await expect(business).toHaveURL(/\/profile$/);
+      const csrf = await business.evaluate(() => sessionStorage.getItem("agendia.csrf"));
+      expect(csrf).toBeTruthy();
+      const endpoint = `${system.webUrl}/api/me/business-calendar/closures`;
+      const seeded = await business.request.post(endpoint, {
+        headers: { Origin: system.webUrl, "x-csrf-token": csrf! }, data: { kind: "date", date: "2035-01-01" },
+      });
+      expect(seeded.status()).toBe(201);
+      const record = await seeded.json();
+      const counts = { closureGET: 0, weeklyGET: 0, mutations: 0, logoutPOST: 0 };
+      business.on("request", request => {
+        const path = new URL(request.url()).pathname;
+        if (path === "/api/auth/logout" && request.method() === "POST") counts.logoutPOST++;
+        if (path !== "/api/me/business-calendar/closures" && path !== "/api/me/business-calendar") return;
+        if (request.method() !== "GET") counts.mutations++;
+        else if (path.endsWith("/closures")) counts.closureGET++;
+        else counts.weeklyGET++;
+      });
+      let hold = interruption === "initial", fail = interruption === "retry";
+      await business.route("**/api/me/business-calendar/closures", async route => {
+        expect(route.request().method()).toBe("GET");
+        if (hold) await gate;
+        if (fail) await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: { code: "INTERNAL_ERROR", message: "PRIVATE closure" } }) });
+        else {
+          try { await route.continue(); } catch (cause) {
+            if (route.request().failure()?.errorText !== "net::ERR_ABORTED") throw cause;
+          }
+        }
+      });
+      await business.route("**/api/auth/logout", route => route.fulfill({ status: 500, contentType: "application/json",
+        body: JSON.stringify({ error: { code: "INTERNAL_ERROR", message: "PRIVATE logout" } }) }));
+      await business.goto(`${system.webUrl}/business-calendar`);
+      const region = business.getByRole("region", { name: "Cierres del negocio", exact: true });
+      const retry = region.getByRole("button", { name: "Volver a cargar cierres", exact: true });
+      if (interruption === "retry") {
+        await expect(region.getByRole("alert")).toHaveText("No se pudo completar la operación.");
+        fail = false;
+        hold = true;
+        await retry.click();
+      }
+      await expect(region).toHaveAttribute("aria-busy", "true");
+      await expect(retry).toBeDisabled();
+      const before = { ...counts };
+      const logout = business.getByRole("button", { name: "Cerrar sesión", exact: true });
+      await logout.click();
+      await expect(logout).toBeEnabled();
+      await expect(retry).toBeEnabled();
+      await expect(region).toHaveAttribute("aria-busy", "false");
+      await expect(region.getByRole("alert")).toHaveText("No se pudo completar la operación.");
+      await expect(business.getByText(/PRIVATE/)).toHaveCount(0);
+      await expect(business.getByRole("heading", { name: "Horario sin configurar", exact: true })).toBeVisible();
+      await business.screenshot({ path: testInfo.outputPath(`closures-${interruption}-logout-recovery.png`), fullPage: true });
+      hold = false;
+      release();
+      await retry.click();
+      await expect(region.locator("li")).toHaveAttribute("data-closure-id", record.id);
+      await expect(region.getByText("Día completo: 01/01/2035", { exact: true })).toBeVisible();
+      await business.getByRole("button", { name: "Editar horario", exact: true }).click();
+      await business.getByRole("button", { name: "Cancelar", exact: true }).click();
+      expect(counts).toEqual({ ...before, closureGET: before.closureGET + 1, logoutPOST: 1 });
+    } finally {
+      release();
+      await context.close();
+    }
+  });
+}

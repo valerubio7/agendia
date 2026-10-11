@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { BusinessCalendar, WeeklySchedule } from "../api-client";
+import { BusinessClosuresSection, type ClosureReadState } from "./business-closures-section";
 import { ControlledWeeklyScheduleEditor, formatScheduleClock, scheduleDays,
   serializeScheduleDraft, type WeeklyScheduleDraft } from "./weekly-schedule-editor";
 
@@ -11,8 +12,9 @@ const time = (minute: number) =>
   `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
 
 export function BusinessCalendarScreen({ weeklySchedule, pending, error, notice, warning,
-  saveAction, retryAction, clearFeedback,
+  saveAction, retryAction, clearFeedback, closures, retryClosures,
 }: BusinessCalendar & {
+  closures: ClosureReadState; retryClosures: () => Promise<void>;
   pending: boolean; error: string; notice: string; warning: boolean;
   saveAction: (schedule: WeeklySchedule) => Promise<boolean>;
   retryAction: () => Promise<boolean>;
@@ -156,6 +158,7 @@ export function BusinessCalendarScreen({ weeklySchedule, pending, error, notice,
           </dl>
         </>}
       </section>
+      <BusinessClosuresSection state={closures} retryAction={retryClosures} />
     </main>
   );
 }

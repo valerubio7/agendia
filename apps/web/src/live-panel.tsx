@@ -27,6 +27,7 @@ import { ProfileScreen } from "./ui/profile-screen";
 import { ServicesScreen } from "./ui/services-screen";
 import { ResourcesScreen } from "./ui/resources-screen";
 import { BusinessCalendarScreen } from "./ui/business-calendar-screen";
+import type { ClosureReadState } from "./ui/business-closures-section";
 import { WhatsAppScreen } from "./ui/whatsapp-screen";
 
 export { formatActivityTimestamp } from "./ui/admin-businesses-screen";
@@ -166,6 +167,26 @@ export function LivePanel({ mode }: { mode: Mode }) {
   const assistantPendingRef = useRef(false);
   const assistantSaveAttemptRef = useRef(0);
   const loadAttemptRef = useRef(0);
+  const closureOwnerRef = useRef<{ businessId: string; generation: number } | null>(null);
+  const closureRequestRef = useRef<AbortController | null>(null);
+  const [closures, setClosures] = useState<ClosureReadState>({ status: "loading" });
+  const loadClosures = async (): Promise<void> => {
+    const owner = closureOwnerRef.current;
+    if (!owner || mode !== "business-calendar" || logoutPendingRef.current || closureRequestRef.current) return;
+    const controller = new AbortController();
+    closureRequestRef.current = controller;
+    const current = () => closureOwnerRef.current === owner && loadAttemptRef.current === owner.generation &&
+      closureRequestRef.current === controller && !controller.signal.aborted && !logoutPendingRef.current;
+    setClosures({ status: "loading" });
+    try {
+      const records = await api.businessClosures(controller.signal);
+      if (current()) setClosures({ status: "ready", closures: records });
+    } catch (cause) {
+      if (current()) setClosures({ status: "error", message: api.errorMessage(cause) });
+    } finally {
+      if (closureRequestRef.current === controller) closureRequestRef.current = null;
+    }
+  };
   const calendarLoadRef = useRef<AbortController | null>(null);
   const calendarRequestRef = useRef<AbortController | null>(null);
   const [calendarPending, setCalendarPending] = useState(false);
@@ -212,6 +233,10 @@ export function LivePanel({ mode }: { mode: Mode }) {
   const load = async () => {
     if (mode === "login") return;
     const attempt = ++loadAttemptRef.current;
+    closureOwnerRef.current = null;
+    closureRequestRef.current?.abort();
+    closureRequestRef.current = null;
+    setClosures({ status: "loading" });
     calendarLoadRef.current?.abort();
     const calendarController = mode === "business-calendar" ? new AbortController() : null;
     calendarLoadRef.current = calendarController;
@@ -246,6 +271,10 @@ export function LivePanel({ mode }: { mode: Mode }) {
       return;
     }
 
+    if (mode === "business-calendar" && session.businessId) {
+      closureOwnerRef.current = { businessId: session.businessId, generation: attempt };
+      void loadClosures();
+    }
     let loaded: unknown;
     try {
       loaded =
@@ -311,6 +340,9 @@ export function LivePanel({ mode }: { mode: Mode }) {
     } else void load();
     return () => {
       loadAttemptRef.current += 1;
+      closureOwnerRef.current = null;
+      closureRequestRef.current?.abort();
+      closureRequestRef.current = null;
       calendarLoadRef.current?.abort();
       calendarRequestRef.current?.abort();
       calendarRequestRef.current = null;
@@ -497,6 +529,10 @@ export function LivePanel({ mode }: { mode: Mode }) {
   const logout = async () => {
     if (logoutPendingRef.current) return;
     logoutPendingRef.current = true;
+    const interruptedClosure = closureRequestRef.current;
+    const closureOwner = closureOwnerRef.current;
+    interruptedClosure?.abort();
+    closureRequestRef.current = null;
     setLogoutPending(true);
     setError("");
 
@@ -507,6 +543,11 @@ export function LivePanel({ mode }: { mode: Mode }) {
       setError(await api.errorMessage(cause));
       logoutPendingRef.current = false;
       setLogoutPending(false);
+      // Only the aborted request's still-mounted session may regain manual GET recovery.
+      if (interruptedClosure && closureOwner) setClosures(state =>
+        closureOwnerRef.current === closureOwner && loadAttemptRef.current === closureOwner.generation &&
+        !closureRequestRef.current && state.status === "loading"
+          ? { status: "error", message: api.errorMessage(cause) } : state);
     }
   };
   const feedback = (
@@ -753,6 +794,7 @@ export function LivePanel({ mode }: { mode: Mode }) {
       <AuthenticatedShell variant="business" activeHref="/business-calendar"
         logoutPending={logoutPending} logoutAction={() => void logout()}>
         <BusinessCalendarScreen {...data as BusinessCalendar}
+          closures={closures} retryClosures={loadClosures}
           pending={calendarPending} error={error} notice={notice} warning={calendarWarning}
           saveAction={calendarAction} retryAction={() => calendarAction()}
           clearFeedback={() => {

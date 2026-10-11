@@ -9,12 +9,14 @@ import {
   createBrowserApiTransport,
   formValues,
   type ApiTransport,
+  type BusinessClosure,
 } from "../../apps/web/src/api-client.ts";
 import {
   formatActivityTimestamp,
   runWhatsAppLinkMonitor,
 } from "../../apps/web/src/live-panel.tsx";
 import { renderWhatsAppQrDataUrl } from "../../apps/web/src/qr-code.ts";
+import { formatArgentinaClosureDate, formatArgentinaClosureInstant } from "../../apps/web/src/ui/argentina-closure-time.ts";
 import { createRuntimePools } from "@agendia/db";
 import {
   createWhatsAppManager,
@@ -38,6 +40,32 @@ test("business calendar GET preserves nullable raw schedules and forwards cancel
     });
     expect(await client.businessCalendar(signal)).toEqual({ weeklySchedule });
   }
+});
+
+test("business closures GET preserves ordered raw union DTOs and cancellation", async () => {
+  const signal = new AbortController().signal;
+  const closures: BusinessClosure[] = [
+    { id: "b", kind: "date", date: "2035-02-02" },
+    { id: "c", kind: "date", date: "2035-01-01" },
+    { id: "d", kind: "interval", start: "2035-01-02T02:04:05.006+02:00", end: "2035-01-02T03:04:05.006+02:00" },
+    { id: "e", kind: "interval", start: "2035-01-02T02:04:05.006+02:00", end: "2035-01-02T03:04:05.006+02:00" },
+  ];
+  const client = new ApiClient(async (path, init) => {
+    expect(path).toBe("/api/me/business-calendar/closures");
+    expect(init?.method).toBe("GET");
+    expect(init?.signal).toBe(signal);
+    expect(init?.body).toBeUndefined();
+    return Response.json(closures);
+  });
+  expect(await client.businessClosures(signal)).toEqual(closures);
+});
+
+test("Argentina closure display retains local days, precision and per-instant offsets", () => {
+  expect(formatArgentinaClosureDate("2035-01-01")).toBe("01/01/2035");
+  expect(formatArgentinaClosureInstant("2035-01-02T02:04:05.006+02:00"))
+    .toBe("01/01/2035, 21:04:05.006 (Argentina, GMT-03:00)");
+  expect(formatArgentinaClosureInstant("2009-01-02T00:00:00.007Z"))
+    .toBe("01/01/2009, 22:00:00.007 (Argentina, GMT-02:00)");
 });
 
 const ORIGIN = "https://panel.agendia.test";

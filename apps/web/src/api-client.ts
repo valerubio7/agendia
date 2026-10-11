@@ -39,6 +39,10 @@ export type Resource = {
 };
 export type WeeklySchedule = Resource["weeklySchedule"];
 export type BusinessCalendar = { weeklySchedule: WeeklySchedule | null };
+export type BusinessClosure = { id: string } & (
+  | { kind: "date"; date: string; start?: never; end?: never }
+  | { kind: "interval"; start: string; end: string; date?: never }
+);
 export type ResourceInput = {
   name: string;
   description?: string;
@@ -281,6 +285,8 @@ export class ApiClient {
     this.call(`/admin/businesses/${encodeURIComponent(id)}/user`, "PUT", {
       password,
     });
+  businessClosures = (signal?: AbortSignal) =>
+    this.call<BusinessClosure[]>("/me/business-calendar/closures", "GET", undefined, undefined, signal);
   businessCalendar = (signal?: AbortSignal) =>
     this.call<BusinessCalendar>("/me/business-calendar", "GET", undefined, undefined, signal);
   saveBusinessCalendar = (weeklySchedule: WeeklySchedule, signal?: AbortSignal) =>
