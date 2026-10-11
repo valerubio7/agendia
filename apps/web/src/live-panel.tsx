@@ -8,6 +8,7 @@ import {
   type Assistant,
   type Business,
   type BusinessCalendar,
+  type WeeklySchedule,
   type Profile,
   type Session,
   type Service,
@@ -166,6 +167,48 @@ export function LivePanel({ mode }: { mode: Mode }) {
   const assistantSaveAttemptRef = useRef(0);
   const loadAttemptRef = useRef(0);
   const calendarLoadRef = useRef<AbortController | null>(null);
+  const calendarRequestRef = useRef<AbortController | null>(null);
+  const [calendarPending, setCalendarPending] = useState(false);
+  const [calendarWarning, setCalendarWarning] = useState(false);
+  const calendarAction = async (weeklySchedule?: WeeklySchedule): Promise<boolean> => {
+    if (calendarRequestRef.current) return false;
+    const controller = new AbortController();
+    calendarRequestRef.current = controller;
+    const generation = loadAttemptRef.current;
+    const current = () => calendarRequestRef.current === controller &&
+      !controller.signal.aborted && loadAttemptRef.current === generation;
+    setCalendarPending(true);
+    setError("");
+    setNotice("");
+    try {
+      if (weeklySchedule !== undefined) {
+        try {
+          const confirmed = await api.saveBusinessCalendar(weeklySchedule, controller.signal);
+          if (!current()) return false;
+          setData(confirmed);
+          setNotice("Horario guardado");
+        } catch (cause) {
+          if (current()) setError(api.errorMessage(cause));
+          return false;
+        }
+      }
+      try {
+        const refreshed = await api.businessCalendar(controller.signal);
+        if (!current()) return false;
+        setData(refreshed);
+        setCalendarWarning(false);
+      } catch {
+        if (!current()) return false;
+        setCalendarWarning(true);
+      }
+      return true;
+    } finally {
+      if (current()) {
+        calendarRequestRef.current = null;
+        setCalendarPending(false);
+      }
+    }
+  };
   const load = async () => {
     if (mode === "login") return;
     const attempt = ++loadAttemptRef.current;
@@ -249,6 +292,8 @@ export function LivePanel({ mode }: { mode: Mode }) {
   useEffect(() => {
     monitorRef.current?.abort();
     monitorRef.current = null;
+    setCalendarPending(false);
+    setCalendarWarning(false);
     profileSaveAttemptRef.current += 1;
     profilePendingRef.current = false;
     setProfilePending(false);
@@ -267,6 +312,8 @@ export function LivePanel({ mode }: { mode: Mode }) {
     return () => {
       loadAttemptRef.current += 1;
       calendarLoadRef.current?.abort();
+      calendarRequestRef.current?.abort();
+      calendarRequestRef.current = null;
       profileSaveAttemptRef.current += 1;
       profilePendingRef.current = false;
       assistantSaveAttemptRef.current += 1;
@@ -705,8 +752,12 @@ export function LivePanel({ mode }: { mode: Mode }) {
     return (
       <AuthenticatedShell variant="business" activeHref="/business-calendar"
         logoutPending={logoutPending} logoutAction={() => void logout()}>
-        <BusinessCalendarScreen {...data as BusinessCalendar} />
-        {feedback}
+        <BusinessCalendarScreen {...data as BusinessCalendar}
+          pending={calendarPending} error={error} notice={notice} warning={calendarWarning}
+          saveAction={calendarAction} retryAction={() => calendarAction()}
+          clearFeedback={() => {
+            if (!calendarRequestRef.current) { setError(""); setNotice(""); }
+          }} />
       </AuthenticatedShell>
     );
   }

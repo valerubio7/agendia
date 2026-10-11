@@ -283,6 +283,8 @@ export class ApiClient {
     });
   businessCalendar = (signal?: AbortSignal) =>
     this.call<BusinessCalendar>("/me/business-calendar", "GET", undefined, undefined, signal);
+  saveBusinessCalendar = (weeklySchedule: WeeklySchedule, signal?: AbortSignal) =>
+    this.call<BusinessCalendar>("/me/business-calendar", "PUT", { weeklySchedule }, undefined, signal);
   resources = (signal?: AbortSignal) => this.call<Resource[]>("/me/resources", "GET", undefined, undefined, signal);
   createResource = (body: ResourceInput, signal?: AbortSignal) =>
     this.call<Resource>("/me/resources", "POST", body, undefined, signal);

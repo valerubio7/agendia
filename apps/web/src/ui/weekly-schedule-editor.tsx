@@ -28,11 +28,14 @@ export function serializeScheduleDraft(draft: WeeklyScheduleDraft): WeeklySchedu
   return weeklySchedule;
 }
 
-export function ControlledWeeklyScheduleEditor({ value, onChange, disabled }: {
+export function ControlledWeeklyScheduleEditor({ value, onChange, disabled, helpText =
+  "Sin franjas no podrá recibir reservas. Usá HH:mm; 24:00 solo para el fin. Si el fin es anterior al inicio, continúa al día siguiente. El estado se conserva.",
+}: {
   value: WeeklyScheduleDraft;
   // The owner allocates stable IDs for newly added rows (id -1).
   onChange: (value: WeeklyScheduleDraft) => void;
   disabled: boolean;
+  helpText?: string;
 }) {
   const changeSpan = (day: ScheduleDay, id: number, field: "start" | "end", text: string) => {
     onChange({ ...value, [day]: (value[day] ?? []).map(span =>
@@ -41,8 +44,7 @@ export function ControlledWeeklyScheduleEditor({ value, onChange, disabled }: {
   return (
     <fieldset className="resources-hours" disabled={disabled}>
       <legend>Horario semanal</legend>
-      <p>Sin franjas no podrá recibir reservas. Usá HH:mm; 24:00 solo para el fin.
-        Si el fin es anterior al inicio, continúa al día siguiente. El estado se conserva.</p>
+      <p>{helpText}</p>
       {scheduleDays.map(([day, label]) => <fieldset key={day} className="resources-hours-day">
         <legend>{label}</legend>
         {(value[day] ?? []).length === 0 && <p>Sin franjas</p>}
