@@ -26,6 +26,20 @@ import {
   type TestPostgres,
 } from "../support/index.ts";
 
+test("business calendar GET preserves nullable raw schedules and forwards cancellation", async () => {
+  const signal = new AbortController().signal;
+  for (const weeklySchedule of [null, {}, { 1: [{ startMinute: 547, endMinute: 123 }] }]) {
+    const client = new ApiClient(async (path, init) => {
+      expect(path).toBe("/api/me/business-calendar");
+      expect(init?.method).toBe("GET");
+      expect(init?.signal).toBe(signal);
+      expect(init?.body).toBeUndefined();
+      return Response.json({ weeklySchedule });
+    });
+    expect(await client.businessCalendar(signal)).toEqual({ weeklySchedule });
+  }
+});
+
 const ORIGIN = "https://panel.agendia.test";
 const LINK_KEY = Buffer.alloc(32, 6);
 let database: TestPostgres,

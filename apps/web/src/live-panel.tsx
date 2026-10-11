@@ -7,6 +7,7 @@ import {
   formValues,
   type Assistant,
   type Business,
+  type BusinessCalendar,
   type Profile,
   type Session,
   type Service,
@@ -24,11 +25,12 @@ import { AssistantScreen } from "./ui/assistant-screen";
 import { ProfileScreen } from "./ui/profile-screen";
 import { ServicesScreen } from "./ui/services-screen";
 import { ResourcesScreen } from "./ui/resources-screen";
+import { BusinessCalendarScreen } from "./ui/business-calendar-screen";
 import { WhatsAppScreen } from "./ui/whatsapp-screen";
 
 export { formatActivityTimestamp } from "./ui/admin-businesses-screen";
 
-type Mode = "login" | "admin" | "profile" | "services" | "resources" | "assistant" | "whatsapp";
+type Mode = "login" | "admin" | "profile" | "services" | "resources" | "business-calendar" | "assistant" | "whatsapp";
 type AuthenticatedViewState =
   | "loading"
   | "ready"
@@ -163,10 +165,14 @@ export function LivePanel({ mode }: { mode: Mode }) {
   const assistantPendingRef = useRef(false);
   const assistantSaveAttemptRef = useRef(0);
   const loadAttemptRef = useRef(0);
+  const calendarLoadRef = useRef<AbortController | null>(null);
   const load = async () => {
     if (mode === "login") return;
     const attempt = ++loadAttemptRef.current;
-    const isCurrent = () => loadAttemptRef.current === attempt;
+    calendarLoadRef.current?.abort();
+    const calendarController = mode === "business-calendar" ? new AbortController() : null;
+    calendarLoadRef.current = calendarController;
+    const isCurrent = () => loadAttemptRef.current === attempt && !calendarController?.signal.aborted;
 
     setData(null);
     setNotice("");
@@ -202,6 +208,8 @@ export function LivePanel({ mode }: { mode: Mode }) {
       loaded =
         mode === "admin"
           ? { businesses: await api.businesses(), instructions: await api.platformAiInstructions() }
+          : mode === "business-calendar"
+            ? await api.businessCalendar(calendarController!.signal)
           : mode === "resources"
             ? await Promise.all([api.resources(), api.services()]).then(([resources, services]) => ({ resources, services }))
           : mode === "services"
@@ -258,6 +266,7 @@ export function LivePanel({ mode }: { mode: Mode }) {
     } else void load();
     return () => {
       loadAttemptRef.current += 1;
+      calendarLoadRef.current?.abort();
       profileSaveAttemptRef.current += 1;
       profilePendingRef.current = false;
       assistantSaveAttemptRef.current += 1;
@@ -688,6 +697,15 @@ export function LivePanel({ mode }: { mode: Mode }) {
             if (!signal.aborted && loadAttemptRef.current === attempt) setData(services);
           }}
         />
+        {feedback}
+      </AuthenticatedShell>
+    );
+  }
+  if (mode === "business-calendar") {
+    return (
+      <AuthenticatedShell variant="business" activeHref="/business-calendar"
+        logoutPending={logoutPending} logoutAction={() => void logout()}>
+        <BusinessCalendarScreen {...data as BusinessCalendar} />
         {feedback}
       </AuthenticatedShell>
     );
