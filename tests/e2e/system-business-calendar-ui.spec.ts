@@ -244,3 +244,213 @@ test("Horario edits raw tenant schedules without defaults or cancel writes", asy
     await otherContext.close();
   }
 });
+
+test("Horario serializes pending saves, guards suspended hours and recovers confirmed saves by GET only", async ({ browser, page, system }, testInfo) => {
+  const email = "calendar-safety@example.test", password = "calendar safety password safe";
+  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await expect(page).toHaveURL(/\/businesses$/);
+  await page.getByLabel("Nombre", { exact: true }).fill("Horario Seguro");
+  await page.getByLabel("Correo del usuario", { exact: true }).fill(email);
+  await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
+  await expect(page.getByRole("cell", { name: "Horario Seguro", exact: true })).toBeVisible();
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const business = await context.newPage();
+  let releasePut: (() => void) | undefined;
+  let releaseGet: (() => void) | undefined;
+  try {
+    await login(business, system.webUrl, email, password);
+    await expect(business).toHaveURL(/\/profile$/);
+    const csrf = await business.evaluate(() => sessionStorage.getItem("agendia.csrf"));
+    expect(csrf).toBeTruthy();
+    const headers = { Origin: system.webUrl, "x-csrf-token": csrf! };
+    const initialSchedule = { 1: [{ startMinute: 540, endMinute: 1080 }] };
+    // Direct API setup is not a UI save and occurs before the page request listener.
+    const seededCalendar = await business.request.put(`${system.webUrl}/api/me/business-calendar`, {
+      headers, data: { weeklySchedule: initialSchedule },
+    });
+    expect(seededCalendar.status()).toBe(200);
+    const createdResource = await business.request.post(`${system.webUrl}/api/me/resources`, {
+      headers, data: { name: "Recurso suspendido con horario", serviceIds: [],
+        weeklySchedule: { 1: [{ startMinute: 600, endMinute: 660 }] } },
+    });
+    expect(createdResource.status()).toBe(201);
+    const resource = await createdResource.json();
+    expect(resource.status).toBe("active");
+    const suspended = await business.request.put(`${system.webUrl}/api/me/resources/${resource.id}/status`, {
+      headers, data: { status: "suspended" },
+    });
+    expect(suspended.status()).toBe(200);
+    const originalResource = await suspended.json();
+    expect(originalResource).toEqual({ ...resource, status: "suspended" });
+    const readCalendar = async () => {
+      const response = await business.request.get(`${system.webUrl}/api/me/business-calendar`);
+      expect(response.status()).toBe(200);
+      return response.json();
+    };
+    const readResource = async () => {
+      const response = await business.request.get(`${system.webUrl}/api/me/resources`);
+      expect(response.status()).toBe(200);
+      const records = await response.json() as Array<{ id: string }>;
+      return records.find(record => record.id === resource.id);
+    };
+    await business.goto(`${system.webUrl}/business-calendar`);
+    const screen = business.getByRole("main");
+    const summary = screen.getByRole("region", { name: "Horario semanal", exact: true });
+    await expect(summary).toContainText("09:00 – 18:00");
+    expect(await readResource()).toEqual(originalResource);
+    const counts = { PUT: 0, GET: 0 };
+    const bodies: unknown[] = [];
+    // Page events exclude APIRequestContext readbacks and all resolved setup/load traffic.
+    business.on("request", request => {
+      if (new URL(request.url()).pathname !== "/api/me/business-calendar") return;
+      if (request.method() === "PUT") { counts.PUT++; bodies.push(request.postDataJSON()); }
+      if (request.method() === "GET") counts.GET++;
+    });
+    const opener = screen.getByRole("button", { name: "Editar horario", exact: true });
+    const form = screen.getByRole("form", { name: "Editar horario", exact: true });
+    const start = form.getByLabel("Inicio Lunes 1", { exact: true });
+    const end = form.getByLabel("Fin Lunes 1", { exact: true });
+    const save = form.getByRole("button", { name: "Guardar horario", exact: true });
+    const warning = screen.getByRole("region", { name: "Actualizar horario", exact: true });
+    const capture = async (state: string) => {
+      for (const width of [1280, 360]) {
+        await business.setViewportSize({ width, height: 900 });
+        expect(await business.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        await business.screenshot({ path: testInfo.outputPath(`calendar-safety-${state}-${width}.png`), fullPage: true });
+      }
+    };
+    const heldPut = new Promise<void>(resolve => { releasePut = resolve; });
+    let holdPut = true, failGet = false, holdGet = false;
+    const heldGet = new Promise<void>(resolve => { releaseGet = resolve; });
+    await business.route("**/api/me/business-calendar", async route => {
+      const method = route.request().method();
+      if (method === "PUT" && holdPut) await heldPut;
+      if (method === "GET" && holdGet) await heldGet;
+      if (method === "GET" && failGet) {
+        await route.fulfill({ status: 500, contentType: "application/json",
+          body: '{"code":"INTERNAL_ERROR","message":"PRIVATE refresh diagnostic"}' });
+      } else await route.continue(); // Every PUT, including 409, reaches the actual server.
+    });
+    await opener.click();
+    await expect(start).toBeFocused();
+    await start.fill("08:07");
+    const firstSchedule = { 1: [{ startMinute: 487, endMinute: 1080 }] };
+    // Two synchronous submit events exercise request ownership before a React rerender.
+    await form.evaluate(node => {
+      node.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      node.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    await expect(form).toHaveAttribute("aria-busy", "true");
+    await expect(opener).toBeDisabled();
+    await expect(save).toBeDisabled();
+    await expect(form.getByRole("button", { name: "Cancelar", exact: true })).toBeDisabled();
+    await expect(start).toBeDisabled();
+    await expect(end).toBeDisabled();
+    for (const button of await form.getByRole("button").all()) await expect(button).toBeDisabled();
+    await expect(warning).toHaveCount(0);
+    // Also dispatch a normal submit-button click while the request is held.
+    await save.dispatchEvent("click");
+    await expect.poll(() => counts.PUT).toBe(1);
+    expect(counts).toEqual({ PUT: 1, GET: 0 });
+    expect(bodies).toEqual([{ weeklySchedule: firstSchedule }]);
+    expect(await readCalendar()).toEqual({ weeklySchedule: initialSchedule });
+    await capture("pending");
+    const firstResponse = business.waitForResponse(response => response.url().endsWith("/api/me/business-calendar")
+      && response.request().method() === "PUT");
+    holdPut = false;
+    releasePut!();
+    const confirmedFirst = await firstResponse;
+    expect(confirmedFirst.status()).toBe(200);
+    expect(await confirmedFirst.json()).toEqual({ weeklySchedule: firstSchedule });
+    await expect(form).toHaveCount(0);
+    await expect(opener).toBeFocused();
+    await expect(summary).toContainText("08:07 – 18:00");
+    expect(counts).toEqual({ PUT: 1, GET: 1 });
+    expect(await readCalendar()).toEqual({ weeklySchedule: firstSchedule });
+    expect(await readResource()).toEqual(originalResource);
+
+    await opener.click();
+    await start.fill("11:01");
+    await end.fill("17:03");
+    const conflictResponse = business.waitForResponse(response => response.url().endsWith("/api/me/business-calendar")
+      && response.request().method() === "PUT");
+    await save.click();
+    const conflict = await conflictResponse;
+    expect(conflict.status()).toBe(409);
+    expect(await conflict.json()).toMatchObject({ code: "CONFLICT" });
+    await expect(screen.getByRole("alert")).toHaveText("Los datos cambiaron. Recargá y volvé a intentar.");
+    await expect(form).toBeVisible();
+    await expect(form).toHaveAttribute("aria-busy", "false");
+    await expect(start).toHaveValue("11:01");
+    await expect(end).toHaveValue("17:03");
+    await expect(save).toBeEnabled();
+    await expect(save).toBeFocused();
+    expect(counts).toEqual({ PUT: 2, GET: 1 });
+    expect(bodies).toEqual([{ weeklySchedule: firstSchedule },
+      { weeklySchedule: { 1: [{ startMinute: 661, endMinute: 1023 }] } }]);
+    expect(await readCalendar()).toEqual({ weeklySchedule: firstSchedule });
+    expect(await readResource()).toEqual(originalResource);
+    await capture("real-conflict");
+    // Cancel consumes failed-save focus; a fresh edit focuses its first input, not Save.
+    await form.getByRole("button", { name: "Cancelar", exact: true }).click();
+    await expect(form).toHaveCount(0);
+    await expect(opener).toBeFocused();
+    expect(counts).toEqual({ PUT: 2, GET: 1 });
+    await opener.click();
+    await expect(start).toBeFocused();
+    await expect(start).toHaveValue("08:07");
+    await expect(end).toHaveValue("18:00");
+    await expect(save).not.toBeFocused();
+    expect(counts).toEqual({ PUT: 2, GET: 1 });
+
+    await start.fill("07:03");
+    await end.fill("19:11");
+    const expandedSchedule = { 1: [{ startMinute: 423, endMinute: 1151 }] };
+    failGet = true; // Only the GET after the real successful mutation is mocked.
+    const savedResponse = business.waitForResponse(response => response.url().endsWith("/api/me/business-calendar")
+      && response.request().method() === "PUT");
+    await save.click();
+    const saved = await savedResponse;
+    expect(saved.status()).toBe(200);
+    expect(await saved.json()).toEqual({ weeklySchedule: expandedSchedule });
+    await expect(form).toHaveCount(0);
+    await expect(opener).toBeFocused();
+    await expect(screen.getByRole("status")).toHaveText("Horario guardado");
+    await expect(summary).toContainText("07:03 – 19:11");
+    await expect(warning.getByRole("alert")).toHaveText("El horario está guardado, pero no se pudo actualizar la vista.");
+    await expect(screen.locator(':scope > [role="alert"]')).toHaveCount(0);
+    await expect(screen.getByText(/PRIVATE/)).toHaveCount(0);
+    expect(counts).toEqual({ PUT: 3, GET: 2 });
+    expect(bodies).toEqual([{ weeklySchedule: firstSchedule },
+      { weeklySchedule: { 1: [{ startMinute: 661, endMinute: 1023 }] } }, { weeklySchedule: expandedSchedule }]);
+    // Readback and summary are asserted before allowing any GET recovery.
+    expect(await readCalendar()).toEqual({ weeklySchedule: expandedSchedule });
+    expect(await readResource()).toEqual(originalResource);
+    await capture("saved-warning");
+    failGet = false;
+    holdGet = true;
+    const retry = warning.getByRole("button", { name: "Actualizar horario", exact: true });
+    await retry.click();
+    await expect(retry).toBeDisabled();
+    await expect(opener).toBeDisabled();
+    await expect(form).toHaveCount(0);
+    expect(counts).toEqual({ PUT: 3, GET: 3 });
+    releaseGet!();
+    await expect(warning).toHaveCount(0);
+    await expect(opener).toBeEnabled();
+    await expect(summary).toContainText("07:03 – 19:11");
+    expect(counts).toEqual({ PUT: 3, GET: 3 });
+    await business.reload();
+    await expect(summary).toContainText("07:03 – 19:11");
+    await expect(form).toHaveCount(0);
+    await expect(warning).toHaveCount(0);
+    expect(counts).toEqual({ PUT: 3, GET: 4 });
+    expect(await readCalendar()).toEqual({ weeklySchedule: expandedSchedule });
+    expect(await readResource()).toEqual(originalResource);
+  } finally {
+    releasePut?.();
+    releaseGet?.();
+    await context.close();
+  }
+});

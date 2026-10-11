@@ -26,11 +26,21 @@ export function BusinessCalendarScreen({ weeklySchedule, pending, error, notice,
   const requestPending = useRef(false);
   const opener = useRef<HTMLButtonElement>(null);
   const form = useRef<HTMLFormElement>(null);
+  const saveButton = useRef<HTMLButtonElement>(null);
+  const focusGeneration = useRef(0);
+  const [failedSaveFocus, setFailedSaveFocus] = useState<{ generation: number; form: HTMLFormElement } | null>(null);
+  const invalidateSaveFocus = () => {
+    focusGeneration.current++;
+    setFailedSaveFocus(null);
+  };
   const restoreFocus = useRef(false);
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
-    return () => { alive.current = false; };
+    return () => {
+      alive.current = false;
+      focusGeneration.current++;
+    };
   }, []);
   useEffect(() => {
     if (editing) form.current?.querySelector<HTMLElement>("input, button")?.focus();
@@ -39,8 +49,17 @@ export function BusinessCalendarScreen({ weeklySchedule, pending, error, notice,
       opener.current?.focus();
     }
   }, [editing]);
+  useEffect(() => {
+    if (!failedSaveFocus || pending) return;
+    setFailedSaveFocus(null);
+    const target = saveButton.current;
+    if (alive.current && editing && error && !requestPending.current &&
+      failedSaveFocus.generation === focusGeneration.current && failedSaveFocus.form === form.current &&
+      target?.isConnected && !target.disabled && failedSaveFocus.form.contains(target)) target.focus();
+  }, [failedSaveFocus, pending, editing, error]);
   const begin = () => {
     if (pending || requestPending.current) return;
+    invalidateSaveFocus();
     const hydrated: WeeklyScheduleDraft = {};
     for (const [day] of scheduleDays) hydrated[day] = (weeklySchedule?.[day] ?? []).map(span => ({
       id: nextId.current++, start: formatScheduleClock(span.startMinute), end: formatScheduleClock(span.endMinute),
@@ -52,6 +71,7 @@ export function BusinessCalendarScreen({ weeklySchedule, pending, error, notice,
     setEditing(true);
   };
   const close = () => {
+    invalidateSaveFocus();
     restoreFocus.current = true;
     setEditing(false);
     setDraft({});
@@ -60,6 +80,9 @@ export function BusinessCalendarScreen({ weeklySchedule, pending, error, notice,
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (pending || requestPending.current) return;
+    invalidateSaveFocus();
+    const submittedForm = event.currentTarget;
+    const generation = focusGeneration.current;
     const serialized = serializeScheduleDraft(draft);
     if ("invalidDay" in serialized) {
       setValidationError(`Usá horas HH:mm distintas para ${scheduleDays.find(([day]) => day === serialized.invalidDay)![1]}.`);
@@ -70,11 +93,16 @@ export function BusinessCalendarScreen({ weeklySchedule, pending, error, notice,
     try {
       if (await saveAction(edited ? serialized : weeklySchedule ?? {})) {
         if (alive.current) close();
+      } else if (alive.current && requestPending.current && generation === focusGeneration.current &&
+        submittedForm === form.current && submittedForm.isConnected) {
+        // Failure keeps the form open; focus only after React enables the submitted Save.
+        setFailedSaveFocus({ generation, form: submittedForm });
       }
     } finally { requestPending.current = false; }
   };
   const retry = async () => {
     if (pending || requestPending.current) return;
+    invalidateSaveFocus();
     requestPending.current = true;
     try { await retryAction(); } finally { requestPending.current = false; }
   };
@@ -99,7 +127,7 @@ export function BusinessCalendarScreen({ weeklySchedule, pending, error, notice,
             setValidationError("");
           }} />
         <div className="services-form-actions">
-          <button type="submit" disabled={pending}>Guardar horario</button>
+          <button ref={saveButton} type="submit" disabled={pending}>Guardar horario</button>
           <button type="button" disabled={pending} onClick={() => {
             if (!requestPending.current) { clearFeedback(); close(); }
           }}>Cancelar</button>
