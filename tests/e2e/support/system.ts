@@ -109,6 +109,8 @@ export interface SystemHarness {
     outcome: string;
   }>;
   receiveUnknown(): Promise<{ outcome: string }>;
+  // Fixture-only isolation of the calendar appointment guard, not a resource API operation.
+  relaxResourceHoursForCalendarGuardFixture(businessId: string, resourceId: string): Promise<void>;
   expireSessions(email: string): Promise<void>;
   expireLinkCode(email: string): Promise<void>;
   restartManager(): Promise<void>;
@@ -444,6 +446,11 @@ export async function startSystem(): Promise<SystemHarness> {
             ? "unexpected"
             : "unknown_session",
         };
+      },
+      relaxResourceHoursForCalendarGuardFixture: async (businessId, resourceId) => {
+        const rows = await database.sql`UPDATE resources SET weekly_schedule='{}'::jsonb
+          WHERE business_id=${businessId} AND id=${resourceId} RETURNING id`;
+        expect(rows).toEqual([{ id: resourceId }]);
       },
       expireSessions: async (email) => {
         await database.sql`update web_sessions set absolute_expires_at=now()-interval '1 second' where identity_id in(select id from auth_identities where normalized_email=${email})`;

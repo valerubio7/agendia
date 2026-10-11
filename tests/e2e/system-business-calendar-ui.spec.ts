@@ -454,3 +454,129 @@ test("Horario serializes pending saves, guards suspended hours and recovers conf
     await context.close();
   }
 });
+
+
+test("Horario rejects exclusion of a real future confirmed booking independently of resource hours", async ({ browser, page, system }, testInfo) => {
+  const email = "calendar-future-c2@example.test", password = "calendar future proof password";
+  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await expect(page).toHaveURL(/\/businesses$/);
+  await page.getByLabel("Nombre", { exact: true }).fill("Horario Futuro C2");
+  await page.getByLabel("Correo del usuario", { exact: true }).fill(email);
+  await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
+  await expect(page.getByRole("cell", { name: "Horario Futuro C2", exact: true })).toBeVisible();
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const business = await context.newPage();
+  try {
+    await login(business, system.webUrl, email, password);
+    await expect(business).toHaveURL(/\/profile$/);
+    const sessionResponse = await business.request.get(`${system.webUrl}/api/auth/session`);
+    expect(sessionResponse.status()).toBe(200);
+    const session = await sessionResponse.json();
+    expect(session.role).toBe("business_user");
+    expect(session.businessId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    const csrf = await business.evaluate(() => sessionStorage.getItem("agendia.csrf"));
+    expect(csrf).toBeTruthy();
+    const headers = { Origin: system.webUrl, "x-csrf-token": csrf! };
+    const full = Object.fromEntries(Array.from({ length: 7 }, (_, day) => [day, [{ startMinute: 0, endMinute: 1440 }]]));
+    const calendarResponse = await business.request.put(`${system.webUrl}/api/me/business-calendar`, {
+      headers, data: { weeklySchedule: full },
+    });
+    expect(calendarResponse.status()).toBe(200);
+    const calendarBefore = await calendarResponse.json();
+    expect(calendarBefore).toEqual({ weeklySchedule: full });
+    const serviceResponse = await business.request.post(`${system.webUrl}/api/me/services`, {
+      headers, data: { name: "Servicio futuro C2", durationMinutes: 45, priceArs: 10 },
+    });
+    expect(serviceResponse.status()).toBe(201);
+    const service = await serviceResponse.json();
+    const resourceResponse = await business.request.post(`${system.webUrl}/api/me/resources`, {
+      headers, data: { name: "Recurso futuro C2", serviceIds: [service.id], weeklySchedule: full },
+    });
+    expect(resourceResponse.status()).toBe(201);
+    const resource = await resourceResponse.json();
+    expect(resource.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    const date = new Date(Date.now() + 7 * 86400000 - 3 * 3600000).toISOString().slice(0, 10);
+    const target = Date.parse(`${date}T10:00:00-03:00`);
+    const available = await business.request.get(`${system.webUrl}/api/me/appointments/availability?serviceId=${service.id}&resourceId=${resource.id}&date=${date}`);
+    expect(available.status()).toBe(200);
+    const slots = await available.json() as Array<{ start: string; startMs: number; endMs: number; resourceId: string; terms: object }>;
+    const slot = slots.find(offer => offer.startMs === target);
+    expect(slot).toBeDefined();
+    expect(slot!.resourceId).toBe(resource.id);
+    const bookingResponse = await business.request.post(`${system.webUrl}/api/me/appointments`, {
+      headers, data: { date, serviceId: service.id, resourceId: resource.id, startRaw: slot!.start,
+        expectedTerms: slot!.terms, confirmed: true,
+        newClient: { firstName: "Cliente", lastName: "Futuro C2", phone: "+5491123456787" } },
+    });
+    expect(bookingResponse.status()).toBe(201);
+    const appointment = await bookingResponse.json();
+    expect(appointment).toMatchObject({ state: "confirmed", origin: "manual", startMs: slot!.startMs,
+      endMs: slot!.endMs, terms: slot!.terms });
+    expect(appointment.terms).toMatchObject({ serviceId: service.id, resourceId: resource.id });
+    expect(appointment.startMs).toBeGreaterThan(Date.now());
+    expect(appointment.endMs - appointment.startMs).toBe(45 * 60000);
+    const read = async (path: string) => {
+      const response = await business.request.get(`${system.webUrl}/api/${path}`);
+      expect(response.status()).toBe(200);
+      return response.json();
+    };
+    expect(await read(`me/appointments/${appointment.id}`)).toEqual(appointment);
+    // Resource API correctly blocks this after booking: owned fixture SQL isolates only the calendar guard.
+    await system.relaxResourceHoursForCalendarGuardFixture(session.businessId, resource.id);
+    const resourcesBefore = [{ ...resource, weeklySchedule: {} }];
+    expect(await read("me/resources")).toEqual(resourcesBefore); // Exactly one live owned resource; no other envelope cause.
+    expect(await read("me/business-calendar")).toEqual(calendarBefore);
+    expect(await read(`me/appointments/${appointment.id}`)).toEqual(appointment);
+
+    const counts = { PUT: 0, GET: 0 };
+    const bodies: unknown[] = [];
+    business.on("request", request => {
+      if (new URL(request.url()).pathname !== "/api/me/business-calendar") return;
+      if (request.method() === "PUT") { counts.PUT++; bodies.push(request.postDataJSON()); }
+      if (request.method() === "GET") counts.GET++;
+    });
+    await business.goto(`${system.webUrl}/business-calendar`);
+    const screen = business.getByRole("main");
+    const opener = screen.getByRole("button", { name: "Editar horario", exact: true });
+    await expect(opener).toBeEnabled();
+    expect(counts).toEqual({ PUT: 0, GET: 1 });
+    await opener.click();
+    const form = screen.getByRole("form", { name: "Editar horario", exact: true });
+    const day = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"][new Date(`${date}T12:00:00-03:00`).getUTCDay()]!;
+    const start = form.getByLabel(`Inicio ${day} 1`, { exact: true });
+    const end = form.getByLabel(`Fin ${day} 1`, { exact: true });
+    await start.fill("11:01");
+    await end.fill("17:03");
+    const draft = { ...full, [new Date(`${date}T12:00:00-03:00`).getUTCDay()]: [{ startMinute: 661, endMinute: 1023 }] };
+    expect(appointment.endMs).toBeLessThan(Date.parse(`${date}T11:01:00-03:00`));
+    const save = form.getByRole("button", { name: "Guardar horario", exact: true });
+    const pendingResponse = business.waitForResponse(response => response.url().endsWith("/api/me/business-calendar")
+      && response.request().method() === "PUT");
+    await save.click();
+    const conflict = await pendingResponse;
+    expect(conflict.status()).toBe(409);
+    expect(await conflict.json()).toMatchObject({ code: "CONFLICT" });
+    await expect(screen.getByRole("alert")).toHaveText("Los datos cambiaron. Recargá y volvé a intentar.");
+    await expect(form).toBeVisible();
+    await expect(form).toHaveAttribute("aria-busy", "false");
+    await expect(start).toHaveValue("11:01");
+    await expect(end).toHaveValue("17:03");
+    await expect(save).toBeEnabled();
+    await expect(save).toBeFocused();
+    expect(counts).toEqual({ PUT: 1, GET: 1 });
+    expect(bodies).toEqual([{ weeklySchedule: draft }]);
+    // APIRequestContext readbacks are separate from page-only GET/PUT measurements.
+    expect(await read("me/business-calendar")).toEqual(calendarBefore);
+    expect(await read(`me/appointments/${appointment.id}`)).toEqual(appointment);
+    expect(await read("me/resources")).toEqual(resourcesBefore);
+    expect(counts).toEqual({ PUT: 1, GET: 1 });
+    for (const width of [1280, 360]) {
+      await business.setViewportSize({ width, height: 900 });
+      expect(await business.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await business.screenshot({ path: testInfo.outputPath(`calendar-future-conflict-${width}.png`), fullPage: true });
+    }
+  } finally {
+    await context.close();
+  }
+});
