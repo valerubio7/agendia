@@ -1,17 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, type Resource, type ResourceInput, type Service } from "../api-client";
 
-const days = [
-  [1, "Lunes"], [2, "Martes"], [3, "Miércoles"], [4, "Jueves"],
-  [5, "Viernes"], [6, "Sábado"], [0, "Domingo"],
-] as const;
-const clock = (minute: number) => `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
-type DraftSpan = { id: number; start: string; end: string };
-const parseClock = (value: string, end: boolean) => {
-  if (end && value === "24:00") return 1440;
-  if (value.length !== 5 || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)) return -1;
-  return Number(value.slice(0, 2)) * 60 + Number(value.slice(3));
-};
+import {
+  ControlledWeeklyScheduleEditor, scheduleDays, formatScheduleClock, serializeScheduleDraft,
+  type WeeklyScheduleDraft,
+} from "./weekly-schedule-editor";
 
 type LifecycleAction = Resource["status"] | "retire";
 
@@ -31,13 +24,14 @@ export function ResourcesScreen({ resources, services, onSave, onRefresh, onLife
   const focusReturn = useRef<{ opener?: HTMLButtonElement; key?: string } | null>(null);
   useEffect(() => { if (confirmation) cancelButton.current?.focus(); }, [confirmation]);
   const [editing, setEditing] = useState<Resource | null>(null);
-  const [schedule, setSchedule] = useState<Record<number, DraftSpan[]>>({});
+  const [schedule, setSchedule] = useState<WeeklyScheduleDraft>({});
   const spanId = useRef(0);
   const [scheduleEdited, setScheduleEdited] = useState(false);
-  const changeSpan = (day: number, id: number, field: "start" | "end", value: string) => {
+  const changeSchedule = (value: WeeklyScheduleDraft) => {
     setScheduleEdited(true);
-    setSchedule(current => ({ ...current, [day]: (current[day] ?? []).map(span =>
-      span.id === id ? { ...span, [field]: value } : span) }));
+    setSchedule(Object.fromEntries(scheduleDays.map(([day]) => [day,
+      (value[day] ?? []).map(span => span.id === -1 ? { ...span, id: spanId.current++ } : span),
+    ])));
   };
   const [pending, setPending] = useState(false);
   const [refreshPending, setRefreshPending] = useState(false);
@@ -95,9 +89,9 @@ export function ResourcesScreen({ resources, services, onSave, onRefresh, onLife
     if (request.current) return;
     setEditing(resource);
     setScheduleEdited(false);
-    setSchedule(Object.fromEntries(days.map(([day]) => [day,
+    setSchedule(Object.fromEntries(scheduleDays.map(([day]) => [day,
       (resource?.weeklySchedule[day] ?? []).map(span => ({
-        id: spanId.current++, start: clock(span.startMinute), end: clock(span.endMinute),
+        id: spanId.current++, start: formatScheduleClock(span.startMinute), end: formatScheduleClock(span.endMinute),
       })),
     ])));
     setError("");
@@ -114,18 +108,11 @@ export function ResourcesScreen({ resources, services, onSave, onRefresh, onLife
       ? rawDescription : rawDescription.trim();
     const preserveDescription = editing !== null && rawDescription === editing.description;
     if (!name) { setError("Ingresá un nombre para el recurso."); return; }
-    const weeklySchedule: ResourceInput["weeklySchedule"] = {};
-    for (const [day, label] of days) {
-      const spans = [];
-      for (const span of schedule[day] ?? []) {
-        const startMinute = parseClock(span.start, false), endMinute = parseClock(span.end, true);
-        if (startMinute < 0 || endMinute < 0 || startMinute === endMinute) {
-          setError(`${label}: ingresá horas HH:mm distintas; 24:00 solo puede ser el fin.`);
-          return;
-        }
-        spans.push({ startMinute, endMinute });
-      }
-      if (spans.length) weeklySchedule[day] = spans;
+    const weeklySchedule = serializeScheduleDraft(schedule);
+    if ("invalidDay" in weeklySchedule) {
+      const label = scheduleDays.find(([day]) => day === weeklySchedule.invalidDay)![1];
+      setError(`${label}: ingresá horas HH:mm distintas; 24:00 solo puede ser el fin.`);
+      return;
     }
     const selectedServices = fields.getAll("serviceIds").map(String);
     const serviceIds = editing && selectedServices.length === editing.serviceIds.length
@@ -198,37 +185,8 @@ export function ResourcesScreen({ resources, services, onSave, onRefresh, onLife
               {service.name}{service.status === "suspended" ? " (suspendido)" : ""}
             </label>)}
           </fieldset>
-          <fieldset className="resources-hours">
-            <legend>Horario semanal</legend>
-            <p>Sin franjas no podrá recibir reservas. Usá HH:mm; 24:00 solo para el fin.
-              Si el fin es anterior al inicio, continúa al día siguiente. El estado se conserva.</p>
-            {days.map(([day, label]) => <fieldset key={day} className="resources-hours-day">
-              <legend>{label}</legend>
-              {(schedule[day] ?? []).length === 0 && <p>Sin franjas</p>}
-              {(schedule[day] ?? []).map((span, index) => <div key={span.id} className="resources-hours-row">
-                <label>Inicio {label} {index + 1}
-                  <input type="text" inputMode="text" placeholder="HH:mm" value={span.start}
-                    onChange={event => changeSpan(day, span.id, "start", event.target.value)} />
-                </label>
-                <label>Fin {label} {index + 1}
-                  <input type="text" inputMode="text" placeholder="HH:mm" value={span.end}
-                    onChange={event => changeSpan(day, span.id, "end", event.target.value)} />
-                </label>
-                <button type="button" aria-label={`Quitar franja ${label} ${index + 1}`}
-                  onClick={() => {
-                    setScheduleEdited(true);
-                    setSchedule(current => ({ ...current,
-                      [day]: (current[day] ?? []).filter(row => row.id !== span.id) }));
-                  }}>Quitar franja</button>
-              </div>)}
-              <button type="button" aria-label={`Agregar franja ${label}`}
-                onClick={() => {
-                  const row = { id: spanId.current++, start: "", end: "" };
-                  setScheduleEdited(true);
-                  setSchedule(current => ({ ...current, [day]: [...(current[day] ?? []), row] }));
-                }}>Agregar franja</button>
-            </fieldset>)}
-          </fieldset>
+          <ControlledWeeklyScheduleEditor value={schedule} onChange={changeSchedule}
+            disabled={pending || refreshPending || !!confirmation} />
           <div className="resources-form-actions">
             <button type="submit">{pending ? "Guardando…" : editing ? "Guardar cambios" : "Crear recurso"}</button>
             {editing && <button type="button" onClick={() => selectResource(null)}>Cancelar edición</button>}
@@ -308,11 +266,11 @@ export function ResourcesScreen({ resources, services, onSave, onRefresh, onLife
                 <section className="resources-schedule" aria-label={`Horario semanal de ${resource.name}`}>
                   <h3>Horario semanal</h3>
                   <dl className="resources-week">
-                    {days.map(([day, label]) => (
+                    {scheduleDays.map(([day, label]) => (
                       <div key={day}>
                         <dt>{label}</dt>
                         <dd>{resource.weeklySchedule[day]?.map(span =>
-                          `${clock(span.startMinute)}–${clock(span.endMinute)}${span.endMinute < span.startMinute ? " (día siguiente)" : ""}`
+                          `${formatScheduleClock(span.startMinute)}–${formatScheduleClock(span.endMinute)}${span.endMinute < span.startMinute ? " (día siguiente)" : ""}`
                         ).join(" · ") || "Sin franjas"}</dd>
                       </div>
                     ))}
