@@ -78,6 +78,33 @@ test("business closure POST returns confirmed raw DTOs and forwards cancellation
   }
 });
 
+test("closure PUT and DELETE encode identity, preserve raw bodies and use shared CSRF and cancellation", async () => {
+  const signal = new AbortController().signal;
+  const input: BusinessClosureRequest = { kind: "interval",
+    start: "2008-01-07T13:00:05.123+02:00", end: "2008-01-07T14:00:06.789+02:00" };
+  const saved = { id: "row/id", ...input };
+  const calls: string[] = [];
+  const client = new ApiClient(async (path, init) => {
+    if (path === "/api/auth/login") return Response.json({ csrfToken: "closure-csrf" });
+    if (path === "/api/auth/session") return Response.json({ role: "business_user", businessId: "tenant" });
+    expect(path).toBe("/api/me/business-calendar/closures/row%2Fid");
+    expect(init?.signal).toBe(signal);
+    expect(new Headers(init?.headers).get("x-csrf-token")).toBe("closure-csrf");
+    calls.push(init!.method!);
+    if (init?.method === "PUT") {
+      expect(JSON.parse(init.body as string)).toEqual(input);
+      return Response.json(saved);
+    }
+    expect(init?.method).toBe("DELETE");
+    expect(init?.body).toBeUndefined();
+    return new Response(null, { status: 204 });
+  });
+  await client.login("closures@example.test", "safe test password");
+  expect(await client.updateBusinessClosure(saved.id, input, signal)).toEqual(saved);
+  expect(await client.deleteBusinessClosure(saved.id, signal)).toBeUndefined();
+  expect(calls).toEqual(["PUT", "DELETE"]);
+});
+
 test("Argentina closure display retains local days, precision and per-instant offsets", () => {
   expect(formatArgentinaClosureDate("2035-01-01")).toBe("01/01/2035");
   expect(formatArgentinaClosureInstant("2035-01-02T02:04:05.006+02:00"))

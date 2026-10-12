@@ -289,6 +289,10 @@ export class ApiClient {
     this.call<BusinessClosure[]>("/me/business-calendar/closures", "GET", undefined, undefined, signal);
   createBusinessClosure = (body: BusinessClosureRequest, signal?: AbortSignal) =>
     this.call<BusinessClosure>("/me/business-calendar/closures", "POST", body, undefined, signal);
+  updateBusinessClosure = (id: string, body: BusinessClosureRequest, signal?: AbortSignal) =>
+    this.call<BusinessClosure>(`/me/business-calendar/closures/${encodeURIComponent(id)}`, "PUT", body, undefined, signal);
+  deleteBusinessClosure = (id: string, signal?: AbortSignal) =>
+    this.call<void>(`/me/business-calendar/closures/${encodeURIComponent(id)}`, "DELETE", undefined, undefined, signal);
   businessCalendar = (signal?: AbortSignal) =>
     this.call<BusinessCalendar>("/me/business-calendar", "GET", undefined, undefined, signal);
   saveBusinessCalendar = (weeklySchedule: WeeklySchedule, signal?: AbortSignal) =>

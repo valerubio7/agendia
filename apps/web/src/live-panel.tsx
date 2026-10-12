@@ -191,7 +191,10 @@ export function LivePanel({ mode }: { mode: Mode }) {
       if (closureRequestRef.current === controller) closureRequestRef.current = null;
     }
   };
-  const createClosure = async (input: BusinessClosureRequest, signal: AbortSignal): Promise<boolean> => {
+  const mutateClosure = async (operation:
+    | { kind: "create"; input: BusinessClosureRequest }
+    | { kind: "update"; id: string; input: BusinessClosureRequest }
+    | { kind: "delete"; id: string }, signal: AbortSignal): Promise<boolean> => {
     const owner = closureOwnerRef.current;
     if (!owner || mode !== "business-calendar" || logoutPendingRef.current || closureRequestRef.current || signal.aborted) return false;
     const controller = new AbortController();
@@ -202,20 +205,31 @@ export function LivePanel({ mode }: { mode: Mode }) {
       closureRequestRef.current === controller && !controller.signal.aborted && !logoutPendingRef.current;
     setClosures(state => state.status === "ready" ? { ...state, pending: true } : state);
     try {
-      const saved = await api.createBusinessClosure(input, controller.signal);
+      const saved = operation.kind === "create"
+        ? await api.createBusinessClosure(operation.input, controller.signal)
+        : operation.kind === "update"
+          ? await api.updateBusinessClosure(operation.id, operation.input, controller.signal)
+          : await api.deleteBusinessClosure(operation.id, controller.signal);
       if (!current()) return false;
-      // Install the confirmed DTO before best-effort GET; never reconstruct or reorder existing rows.
-      setClosures(state => state.status === "ready" ? { ...state,
-        closures: state.closures.some(row => row.id === saved.id)
-          ? state.closures.map(row => row.id === saved.id ? saved : row) : [...state.closures, saved],
-        warning: false } : state);
+      // Reconcile confirmed mutations before best-effort GET. Never invent a DTO or repeat a mutation.
+      setClosures(state => {
+        if (state.status !== "ready") return state;
+        if (operation.kind === "delete") return { ...state,
+          closures: state.closures.filter(row => row.id !== operation.id), warning: false };
+        if (!saved) return state;
+        return { ...state, closures: operation.kind === "update"
+          ? state.closures.map(row => row.id === operation.id ? saved : row)
+          : state.closures.some(row => row.id === saved.id)
+            ? state.closures.map(row => row.id === saved.id ? saved : row) : [...state.closures, saved],
+          warning: false };
+      });
       try {
         const records = await api.businessClosures(controller.signal);
         if (current()) setClosures({ status: "ready", closures: records, pending: false, warning: false });
       } catch {
         if (current()) setClosures(state => state.status === "ready" ? { ...state, pending: false, warning: true } : state);
       }
-      return current(); // A failed refresh does not undo a confirmed POST or request a mutation retry.
+      return current(); // A failed refresh does not undo a confirmed mutation.
     } catch (cause) {
       if (!current()) return false;
       setClosures(state => state.status === "ready" ? { ...state, pending: false } : state);
@@ -838,7 +852,10 @@ export function LivePanel({ mode }: { mode: Mode }) {
       <AuthenticatedShell variant="business" activeHref="/business-calendar"
         logoutPending={logoutPending} logoutAction={() => void logout()}>
         <BusinessCalendarScreen {...data as BusinessCalendar}
-          closures={closures} retryClosures={loadClosures} createClosure={createClosure}
+          closures={closures} retryClosures={loadClosures}
+          createClosure={(input, signal) => mutateClosure({ kind: "create", input }, signal)}
+          updateClosure={(id, input, signal) => mutateClosure({ kind: "update", id, input }, signal)}
+          deleteClosure={(id, signal) => mutateClosure({ kind: "delete", id }, signal)}
           pending={calendarPending} error={error} notice={notice} warning={calendarWarning}
           saveAction={calendarAction} retryAction={() => calendarAction()}
           clearFeedback={() => {

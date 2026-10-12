@@ -12,10 +12,12 @@ const time = (minute: number) =>
   `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
 
 export function BusinessCalendarScreen({ weeklySchedule, pending, error, notice, warning,
-  saveAction, retryAction, clearFeedback, closures, retryClosures, createClosure,
+  saveAction, retryAction, clearFeedback, closures, retryClosures, createClosure, updateClosure, deleteClosure,
 }: BusinessCalendar & {
   closures: ClosureReadState; retryClosures: () => Promise<void>;
   createClosure: (input: BusinessClosureRequest, signal: AbortSignal) => Promise<boolean>;
+  updateClosure: (id: string, input: BusinessClosureRequest, signal: AbortSignal) => Promise<boolean>;
+  deleteClosure: (id: string, signal: AbortSignal) => Promise<boolean>;
   pending: boolean; error: string; notice: string; warning: boolean;
   saveAction: (schedule: WeeklySchedule) => Promise<boolean>;
   retryAction: () => Promise<boolean>;
@@ -159,7 +161,8 @@ export function BusinessCalendarScreen({ weeklySchedule, pending, error, notice,
           </dl>
         </>}
       </section>
-      <BusinessClosuresSection state={closures} retryAction={retryClosures} createAction={createClosure} />
+      <BusinessClosuresSection state={closures} retryAction={retryClosures} createAction={createClosure}
+        updateAction={updateClosure} deleteAction={deleteClosure} />
     </main>
   );
 }

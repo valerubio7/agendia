@@ -1233,3 +1233,310 @@ test("Cierres rejects a date containing a real future confirmed booking and pres
     await context.close();
   }
 });
+
+test("Closures edit and delete retain identity and recover committed mutations", async ({ browser, page, system }, testInfo) => {
+  const email = "closures-edit-delete@example.test", password = "closure edits safe password";
+  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await expect(page).toHaveURL(/\/businesses$/);
+  await page.getByLabel("Nombre", { exact: true }).fill("Cierres Editar Eliminar");
+  await page.getByLabel("Correo del usuario", { exact: true }).fill(email);
+  await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
+  await expect(page.getByRole("cell", { name: "Cierres Editar Eliminar", exact: true })).toBeVisible();
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const business = await context.newPage();
+  let release = () => {};
+  try {
+    await login(business, system.webUrl, email, password);
+    await expect(business).toHaveURL(/\/profile$/);
+    const csrf = await business.evaluate(() => sessionStorage.getItem("agendia.csrf"));
+    expect(csrf).toBeTruthy();
+    const headers = { Origin: system.webUrl, "x-csrf-token": csrf! };
+    const endpoint = `${system.webUrl}/api/me/business-calendar/closures`;
+    const raw = { kind: "interval", start: "2008-01-07T13:00:05.123+02:00", end: "2008-01-07T14:00:06.789+02:00" };
+    const seeded = await business.request.post(endpoint, { headers, data: raw });
+    expect(seeded.status()).toBe(201);
+    const original = await seeded.json();
+    const dateSeed = await business.request.post(endpoint, { headers, data: { kind: "date", date: "2035-02-02" } });
+    expect(dateSeed.status()).toBe(201);
+    const survivor = await dateSeed.json();
+    await business.goto(`${system.webUrl}/business-calendar`);
+    const region = business.getByRole("region", { name: "Cierres del negocio", exact: true });
+    const row = region.locator(`[data-closure-id="${original.id}"]`);
+    const edit = row.getByRole("button", { name: "Editar cierre", exact: true });
+    await expect(row).toBeVisible();
+    await expect(edit).toBeVisible(); // Meaningful RED: the base has no row Edit control.
+    const counts = { GET: 0, PUT: 0, DELETE: 0, POST: 0, weeklyPUT: 0 };
+    const payloads: unknown[] = [];
+    business.on("request", request => {
+      const path = new URL(request.url()).pathname;
+      const method = request.method();
+      if (path === "/api/me/business-calendar" && method === "PUT") counts.weeklyPUT++;
+      if (!path.startsWith("/api/me/business-calendar/closures")) return;
+      if (method === "GET" || method === "PUT" || method === "DELETE" || method === "POST") counts[method]++;
+      if (method === "PUT") payloads.push(request.postDataJSON());
+    });
+    let failGet = false, failMutation = false, hold = false;
+    let gate = Promise.resolve();
+    let settledMutations = 0;
+    await business.route("**/api/me/business-calendar/closures**", async route => {
+      const method = route.request().method();
+      if ((method === "PUT" || method === "DELETE") && hold) await gate;
+      if ((method === "PUT" || method === "DELETE") && failMutation) {
+        await route.fulfill({ status: 500, contentType: "application/json",
+          body: JSON.stringify({ code: "INTERNAL_ERROR", message: "PRIVATE mutation" }) });
+      } else if (method === "GET" && failGet) {
+        await route.fulfill({ status: 500, contentType: "application/json",
+          body: JSON.stringify({ code: "INTERNAL_ERROR", message: "PRIVATE refresh" }) });
+      } else await route.continue();
+      if (method === "PUT" || method === "DELETE") settledMutations++;
+    });
+    const form = region.getByRole("form", { name: "Editar cierre", exact: true });
+    const save = form.getByRole("button", { name: "Guardar cierre", exact: true });
+    const start = form.getByLabel("Desde (Argentina)", { exact: true });
+    const end = form.getByLabel("Hasta (Argentina)", { exact: true });
+    await edit.click();
+    await expect(start).toHaveValue("2008-01-07T09:00:05.123");
+    await expect(end).toHaveValue("2008-01-07T10:00:06.789");
+    await expect(form.getByLabel("Tipo de cierre", { exact: true })).toBeFocused();
+    await form.getByRole("button", { name: "Cancelar cierre", exact: true }).click();
+    await expect(edit).toBeEnabled();
+    await expect(edit).toBeFocused();
+    expect(counts).toEqual({ GET: 0, PUT: 0, DELETE: 0, POST: 0, weeklyPUT: 0 });
+    await edit.click();
+    const unchanged = business.waitForResponse(response => response.url() === `${endpoint}/${original.id}` && response.request().method() === "PUT");
+    await save.click();
+    expect((await unchanged).status()).toBe(200);
+    await expect(form).toHaveCount(0);
+    await expect(edit).toBeFocused();
+    expect(payloads).toEqual([raw]); // Both untouched endpoints are sent verbatim, not reserialized.
+    const read = async () => {
+      const response = await business.request.get(endpoint);
+      expect(response.status()).toBe(200);
+      return response.json();
+    };
+    expect((await read()).find((value: { id: string }) => value.id === original.id)).toEqual(original);
+    await edit.click();
+    await start.fill("2008-01-07T09:01:05.124");
+    hold = true;
+    gate = new Promise<void>(resolve => { release = resolve; });
+    failGet = true;
+    const committed = business.waitForResponse(response => response.url() === `${endpoint}/${original.id}` && response.request().method() === "PUT");
+    await save.evaluate(button => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await expect.poll(() => counts.PUT).toBe(2);
+    await expect(save).toBeDisabled();
+    await expect(form.getByRole("button", { name: "Cancelar cierre", exact: true })).toBeDisabled();
+    await expect(region.getByRole("button", { name: "Actualizar cierres", exact: true })).toBeDisabled();
+    await expect(region.getByRole("button", { name: "Eliminar cierre", exact: true }).first()).toBeDisabled();
+    await expect(business.getByRole("button", { name: "Editar horario", exact: true })).toBeEnabled();
+    release(); hold = false;
+    const savedResponse = await committed;
+    expect(savedResponse.status()).toBe(200);
+    const saved = await savedResponse.json();
+    expect(saved).toMatchObject({ id: original.id, kind: "interval", start: "2008-01-07T11:01:05.124Z", end: raw.end });
+    await expect(form).toHaveCount(0);
+    await expect(edit).toBeFocused();
+    await expect(row).toContainText("09:01:05.124");
+    await expect(region.getByRole("alert")).toContainText("desactualizados");
+    expect(payloads[1]).toEqual({ ...raw, start: saved.start });
+    await business.screenshot({ path: testInfo.outputPath("closures-edit-committed-warning.png"), fullPage: true });
+    const beforeRetry = { ...counts };
+    failGet = false;
+    await region.getByRole("button", { name: "Volver a cargar cierres", exact: true }).click();
+    await expect(region.getByRole("alert")).toHaveCount(0);
+    expect(counts).toEqual({ ...beforeRetry, GET: beforeRetry.GET + 1 });
+    await business.reload();
+    await expect(row).toContainText("09:01:05.124");
+    expect((await read()).find((value: { id: string }) => value.id === original.id)).toEqual(saved);
+    // Switching kind discards interval-origin metadata; switching back requires fresh conversion.
+    await edit.click();
+    await form.getByLabel("Tipo de cierre", { exact: true }).selectOption("date");
+    await form.getByLabel("Fecha", { exact: true }).fill("2035-03-03");
+    await save.click();
+    await expect(form).toHaveCount(0);
+    await expect(row).toContainText("03/03/2035");
+    expect(payloads[2]).toEqual({ kind: "date", date: "2035-03-03" });
+    await edit.click();
+    await form.getByLabel("Tipo de cierre", { exact: true }).selectOption("interval");
+    await start.fill("2007-12-30T00:30");
+    await end.fill("2007-12-30T02:30");
+    await save.click();
+    await expect(form.getByRole("alert")).toContainText("no existe");
+    expect(counts.PUT).toBe(3);
+    await start.fill("2008-03-15T23:30:05.123");
+    await end.fill("2008-03-16T01:30:06.789");
+    await expect(form.getByRole("radio")).toHaveCount(2);
+    await save.click();
+    expect(counts.PUT).toBe(3);
+    await form.getByRole("radio").last().check();
+    await end.fill("2008-03-15T22:00");
+    await save.click();
+    await expect(form.getByRole("alert")).toContainText("posterior");
+    expect(counts.PUT).toBe(3);
+    await end.fill("2008-03-16T01:30:06.789");
+    await save.click();
+    await expect(form).toHaveCount(0);
+    expect(payloads[3]).toEqual({ kind: "interval", start: "2008-03-16T02:30:05.123Z", end: "2008-03-16T04:30:06.789Z" });
+    await edit.click();
+    await expect(form.getByRole("radio")).toHaveCount(0); // Untouched fold already has an unambiguous stored instant.
+    await end.fill("2008-03-16T02:30:06.79");
+    await save.click();
+    await expect(form).toHaveCount(0);
+    expect(payloads[4]).toEqual({ kind: "interval", start: "2008-03-16T02:30:05.123Z", end: "2008-03-16T05:30:06.790Z" });
+
+    // Real PUT409 against a future confirmed booking, using the existing availability fixture API.
+    const full = Object.fromEntries(Array.from({ length: 7 }, (_, day) => [day, [{ startMinute: 0, endMinute: 1440 }]]));
+    const calendarResponse = await business.request.put(`${system.webUrl}/api/me/business-calendar`, {
+      headers, data: { weeklySchedule: full },
+    });
+    expect(calendarResponse.status()).toBe(200);
+    const calendarBefore = await calendarResponse.json();
+    const serviceResponse = await business.request.post(`${system.webUrl}/api/me/services`, {
+      headers, data: { name: "Servicio edición cierre", durationMinutes: 45, priceArs: 10 },
+    });
+    expect(serviceResponse.status()).toBe(201);
+    const service = await serviceResponse.json();
+    const resourceResponse = await business.request.post(`${system.webUrl}/api/me/resources`, {
+      headers, data: { name: "Recurso edición cierre", serviceIds: [service.id], weeklySchedule: full },
+    });
+    expect(resourceResponse.status()).toBe(201);
+    const resource = await resourceResponse.json();
+    const bookingDate = new Date(Date.now() + 7 * 86400000 - 3 * 3600000).toISOString().slice(0, 10);
+    const target = Date.parse(`${bookingDate}T10:00:00-03:00`);
+    const offersResponse = await business.request.get(`${system.webUrl}/api/me/appointments/availability?serviceId=${service.id}&resourceId=${resource.id}&date=${bookingDate}`);
+    expect(offersResponse.status()).toBe(200);
+    const offers = await offersResponse.json() as Array<{ start: string; startMs: number; endMs: number; terms: object }>;
+    const offer = offers.find(value => value.startMs === target);
+    expect(offer).toBeDefined();
+    const booked = await business.request.post(`${system.webUrl}/api/me/appointments`, {
+      headers, data: { date: bookingDate, serviceId: service.id, resourceId: resource.id, startRaw: offer!.start,
+        expectedTerms: offer!.terms, confirmed: true,
+        newClient: { firstName: "Cliente", lastName: "Edición", phone: "+5491123456787" } },
+    });
+    expect(booked.status()).toBe(201);
+    const appointment = await booked.json();
+    expect(appointment).toMatchObject({ state: "confirmed", origin: "manual", startMs: target, endMs: offer!.endMs });
+    expect(appointment.startMs).toBeGreaterThan(Date.now());
+    const closuresBefore = await read();
+    const readOwned = async (path: string) => {
+      const response = await business.request.get(`${system.webUrl}/api/me/${path}`);
+      expect(response.status()).toBe(200);
+      return response.json();
+    };
+    const resourcesBefore = await readOwned("resources");
+    await edit.click();
+    await form.getByLabel("Tipo de cierre", { exact: true }).selectOption("date");
+    await form.getByLabel("Fecha", { exact: true }).fill(bookingDate);
+    const beforeConflict = { ...counts };
+    const conflictResponse = business.waitForResponse(response => response.url() === `${endpoint}/${original.id}` && response.request().method() === "PUT");
+    await save.click();
+    expect((await conflictResponse).status()).toBe(409);
+    await expect(form.getByRole("alert")).toHaveText("Los datos cambiaron. Recargá y volvé a intentar.");
+    await expect(form.getByLabel("Fecha", { exact: true })).toHaveValue(bookingDate);
+    await expect(save).toBeEnabled();
+    await expect(save).toBeFocused();
+    expect(counts).toEqual({ ...beforeConflict, PUT: beforeConflict.PUT + 1 });
+    expect(await read()).toEqual(closuresBefore);
+    expect(await readOwned("business-calendar")).toEqual(calendarBefore);
+    expect(await readOwned(`appointments/${appointment.id}`)).toEqual(appointment);
+    expect(await readOwned("resources")).toEqual(resourcesBefore);
+    await business.screenshot({ path: testInfo.outputPath("closures-edit-real-conflict.png"), fullPage: true });
+    await form.getByRole("button", { name: "Cancelar cierre", exact: true }).click();
+    await expect(edit).toBeFocused();
+    await edit.click();
+    await end.fill("2008-03-16T03:30:06.791");
+    failMutation = true;
+    const beforeError = { ...counts };
+    await save.click();
+    await expect(form.getByRole("alert")).toHaveText("No se pudo completar la operación.");
+    await expect(save).toBeEnabled();
+    await expect(save).toBeFocused();
+    await expect(end).toHaveValue("2008-03-16T03:30:06.791");
+    expect(counts).toEqual({ ...beforeError, PUT: beforeError.PUT + 1 });
+    await form.getByRole("button", { name: "Cancelar cierre", exact: true }).click();
+    await expect(edit).toBeFocused();
+    const remove = row.getByRole("button", { name: "Eliminar cierre", exact: true });
+    await remove.click();
+    const confirmation = row.getByRole("group", { name: "Confirmar eliminación del cierre", exact: true });
+    const cancel = confirmation.getByRole("button", { name: "Cancelar eliminación", exact: true });
+    const confirm = confirmation.getByRole("button", { name: "Confirmar eliminación", exact: true });
+    await expect(cancel).toBeFocused();
+    const beforeCancel = { ...counts };
+    await cancel.click();
+    await expect(remove).toBeEnabled();
+    await expect(remove).toBeFocused();
+    expect(counts).toEqual(beforeCancel);
+    await remove.click();
+    await confirm.click();
+    await expect(confirmation.getByRole("alert")).toHaveText("No se pudo completar la operación.");
+    await expect(confirm).toBeFocused();
+    await expect(row).toBeVisible();
+    await cancel.click();
+    await expect(remove).toBeFocused();
+    failMutation = false; failGet = true; hold = true;
+    gate = new Promise<void>(resolve => { release = resolve; });
+    await remove.click();
+    const deleted = business.waitForResponse(response => response.url() === `${endpoint}/${original.id}` && response.request().method() === "DELETE");
+    const beforeDelete = { ...counts };
+    await confirm.evaluate(button => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await expect.poll(() => counts.DELETE).toBe(beforeDelete.DELETE + 1);
+    await expect(cancel).toBeDisabled();
+    await expect(confirm).toBeDisabled();
+    release(); hold = false;
+    expect((await deleted).status()).toBe(204);
+    await expect(row).toHaveCount(0);
+    const remaining = region.locator(`[data-closure-id="${survivor.id}"]`);
+    await expect(remaining.getByRole("button", { name: "Editar cierre", exact: true })).toBeFocused();
+    await expect(region.getByRole("alert")).toContainText("desactualizados");
+    await business.setViewportSize({ width: 360, height: 900 });
+    expect(await business.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await business.screenshot({ path: testInfo.outputPath("closures-delete-committed-warning-360.png"), fullPage: true });
+    const beforeDeleteRetry = { ...counts };
+    failGet = false;
+    await region.getByRole("button", { name: "Volver a cargar cierres", exact: true }).click();
+    await expect(region.getByRole("alert")).toHaveCount(0);
+    expect(counts).toEqual({ ...beforeDeleteRetry, GET: beforeDeleteRetry.GET + 1 });
+    expect(await read()).toEqual([survivor]);
+    await business.reload();
+    await expect(region.locator("li")).toHaveCount(1);
+    // A delayed source failure after logout must not paint errors or move focus in a new session.
+    hold = true; failMutation = true;
+    gate = new Promise<void>(resolve => { release = resolve; });
+    await remaining.getByRole("button", { name: "Editar cierre", exact: true }).click();
+    await form.getByLabel("Fecha", { exact: true }).fill("2035-02-03");
+    const beforeStale = { ...counts };
+    const beforeSettled = settledMutations;
+    await save.click();
+    await expect.poll(() => counts.PUT).toBe(beforeStale.PUT + 1);
+    await business.locator('[data-ui="mobile-navigation"] summary').click();
+    await business.locator('[data-ui="mobile-navigation"]')
+      .getByRole("button", { name: "Cerrar sesión", exact: true }).click();
+    await expect(business.getByLabel("Correo", { exact: true })).toBeVisible();
+    await login(business, system.webUrl, email, password);
+    await expect(business).toHaveURL(/\/profile$/);
+    const profileInput = business.getByLabel("Nombre comercial", { exact: true });
+    await profileInput.focus();
+    release(); hold = false;
+    await expect.poll(() => settledMutations).toBe(beforeSettled + 1);
+    await expect(profileInput).toBeFocused();
+    await expect(business.getByText("No se pudo completar la operación.", { exact: true })).toHaveCount(0);
+    expect(counts.weeklyPUT).toBe(0);
+    expect(counts.POST).toBe(0);
+    expect(await read()).toEqual([survivor]);
+    failMutation = false;
+    await business.goto(`${system.webUrl}/business-calendar`);
+    await remaining.getByRole("button", { name: "Eliminar cierre", exact: true }).click();
+    await remaining.getByRole("button", { name: "Confirmar eliminación", exact: true }).click();
+    await expect(region.locator("li")).toHaveCount(0);
+    await expect(region.getByRole("heading", { name: "Cierres del negocio", exact: true })).toBeFocused();
+    expect(await read()).toEqual([]);
+    // Deleting a closure does not alter the future booking it previously failed to cover.
+    expect(await readOwned(`appointments/${appointment.id}`)).toEqual(appointment);
+  } finally { release(); await context.close(); }
+});

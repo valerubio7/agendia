@@ -71,6 +71,13 @@ export function convertArgentinaClosureTime(value: string): ArgentinaClosureTime
     : { ok: false, error: "nonexistent_wall_time", candidates: [] };
 }
 
+/** Project a stored instant for datetime-local without ambient timezone or precision loss. */
+export function projectArgentinaClosureTime(raw: string): string {
+  const instant = new Date(raw).getTime();
+  const wall = new Date(instant + argentinaOffsetMs(instant));
+  return wall.toISOString().slice(0, -1);
+}
+
 // Stored date closures already name an Argentina day, not a UTC instant.
 export function formatArgentinaClosureDate(date: string): string {
   const [year, month, day] = date.split("-");

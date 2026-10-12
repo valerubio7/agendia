@@ -2,6 +2,23 @@ import { describe, expect, test } from "bun:test";
 import { parseInstantMs } from "../../packages/domain/src/calendar-values";
 import * as argentina from "../../apps/web/src/ui/argentina-closure-time";
 
+test("projects stored instants to exact Argentina datetime-local values", () => {
+  for (const [raw, wall] of [
+    ["2035-01-02T02:04:05.006+02:00", "2035-01-01T21:04:05.006"],
+    ["2008-01-07T13:00:05.123+02:00", "2008-01-07T09:00:05.123"],
+    ["0001-01-01T03:53:48.123Z", "0001-01-01T00:00:00.123"],
+    ["2008-03-16T01:45:00.123Z", "2008-03-15T23:45:00.123"],
+    ["2008-03-16T02:45:00.123Z", "2008-03-15T23:45:00.123"],
+    ["9999-12-31T23:59:59.999-03:00", "9999-12-31T23:59:59.999"],
+  ]) {
+    expect(argentina.projectArgentinaClosureTime(raw!)).toBe(wall!);
+    const converted = argentina.convertArgentinaClosureTime(wall!);
+    expect(converted.ok).toBe(true);
+    if (converted.ok) expect(converted.candidates.some(value =>
+      new Date(value.instant).getTime() === new Date(raw!).getTime())).toBe(true);
+  }
+});
+
 const convert = (value: string) => argentina.convertArgentinaClosureTime(value);
 const candidate = (instant: string, offsetSeconds: number) => ({ instant, offsetSeconds });
 
