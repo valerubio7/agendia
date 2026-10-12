@@ -1061,3 +1061,175 @@ test("Closure CREATE persists Argentina dates and milliseconds, retaining confir
     await expect(create).toBeFocused();
   } finally { release(); await context.close(); }
 });
+
+
+test("Cierres rejects a date containing a real future confirmed booking and preserves the draft", async ({ browser, page, system }, testInfo) => {
+  const email = "closures-future-conflict@example.test";
+  const password = "closures future proof password";
+  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await expect(page).toHaveURL(/\/businesses$/);
+  await page.getByLabel("Nombre", { exact: true }).fill("Cierres Futuro Conflicto");
+  await page.getByLabel("Correo del usuario", { exact: true }).fill(email);
+  await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
+  await expect(page.getByRole("cell", { name: "Cierres Futuro Conflicto", exact: true })).toBeVisible();
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const business = await context.newPage();
+  try {
+    await login(business, system.webUrl, email, password);
+    await expect(business).toHaveURL(/\/profile$/);
+    const csrf = await business.evaluate(() => sessionStorage.getItem("agendia.csrf"));
+    expect(csrf).toBeTruthy();
+    const headers = { Origin: system.webUrl, "x-csrf-token": csrf! };
+    const full = Object.fromEntries(Array.from({ length: 7 }, (_, day) => [day, [{ startMinute: 0, endMinute: 1440 }]]));
+    const calendarResponse = await business.request.put(`${system.webUrl}/api/me/business-calendar`, {
+      headers, data: { weeklySchedule: full },
+    });
+    expect(calendarResponse.status()).toBe(200);
+    const calendarBefore = await calendarResponse.json();
+    expect(calendarBefore).toEqual({ weeklySchedule: full });
+    const serviceResponse = await business.request.post(`${system.webUrl}/api/me/services`, {
+      headers, data: { name: "Servicio cierre futuro", durationMinutes: 45, priceArs: 10 },
+    });
+    expect(serviceResponse.status()).toBe(201);
+    const service = await serviceResponse.json();
+    const resourceResponse = await business.request.post(`${system.webUrl}/api/me/resources`, {
+      headers, data: { name: "Recurso cierre futuro", serviceIds: [service.id], weeklySchedule: full },
+    });
+    expect(resourceResponse.status()).toBe(201);
+    const resource = await resourceResponse.json();
+    const date = new Date(Date.now() + 7 * 86400000 - 3 * 3600000).toISOString().slice(0, 10);
+    const target = Date.parse(`${date}T10:00:00-03:00`);
+    const available = await business.request.get(`${system.webUrl}/api/me/appointments/availability?serviceId=${service.id}&resourceId=${resource.id}&date=${date}`);
+    expect(available.status()).toBe(200);
+    const slots = await available.json() as Array<{ start: string; startMs: number; endMs: number; resourceId: string; terms: object }>;
+    const slot = slots.find(offer => offer.startMs === target);
+    expect(slot).toBeDefined();
+    expect(slot!.resourceId).toBe(resource.id);
+    expect(slot!.endMs - slot!.startMs).toBe(45 * 60000);
+    const bookingResponse = await business.request.post(`${system.webUrl}/api/me/appointments`, {
+      headers, data: {
+        date, serviceId: service.id, resourceId: resource.id, startRaw: slot!.start,
+        expectedTerms: slot!.terms, confirmed: true,
+        newClient: { firstName: "Cliente", lastName: "Cierre Futuro", phone: "+5491123456787" },
+      },
+    });
+    expect(bookingResponse.status()).toBe(201);
+    const appointment = await bookingResponse.json();
+    expect(appointment).toMatchObject({
+      state: "confirmed", origin: "manual", startMs: target, endMs: slot!.endMs, terms: slot!.terms,
+    });
+    expect(appointment.terms).toMatchObject({ serviceId: service.id, resourceId: resource.id });
+    expect(appointment.startMs).toBeGreaterThan(Date.now());
+    expect(appointment.endMs - appointment.startMs).toBe(45 * 60000);
+
+    // Keep a nonempty owned closure array: this next-day seed cannot overlap the booking.
+    const nextDate = new Date(target + 86400000).toISOString().slice(0, 10);
+    const endpoint = `${system.webUrl}/api/me/business-calendar/closures`;
+    const seeded = await business.request.post(endpoint, {
+      headers, data: { kind: "date", date: nextDate },
+    });
+    expect(seeded.status()).toBe(201);
+    const seed = await seeded.json();
+    expect(seed).toMatchObject({ kind: "date", date: nextDate });
+    const read = async (path: string) => {
+      const response = await business.request.get(`${system.webUrl}/api/${path}`);
+      expect(response.status()).toBe(200);
+      return response.json();
+    };
+    const closuresBefore = await read("me/business-calendar/closures");
+    expect(closuresBefore).toEqual([seed]);
+    const resourcesBefore = await read("me/resources");
+    expect(resourcesBefore).toEqual([resource]);
+    expect(await read("me/business-calendar")).toEqual(calendarBefore);
+    expect(await read(`me/appointments/${appointment.id}`)).toEqual(appointment);
+
+    // Only actual page traffic enters these counters; API setup/readbacks never do.
+    const weekly = { GET: 0, PUT: 0 };
+    const closures = { GET: 0, POST: 0 };
+    const payloads: unknown[] = [];
+    business.on("request", request => {
+      const path = new URL(request.url()).pathname;
+      if (path === "/api/me/business-calendar") {
+        if (request.method() === "GET") weekly.GET++;
+        if (request.method() === "PUT") weekly.PUT++;
+      }
+      if (path === "/api/me/business-calendar/closures") {
+        if (request.method() === "GET") closures.GET++;
+        if (request.method() === "POST") {
+          closures.POST++;
+          payloads.push(request.postDataJSON());
+        }
+      }
+    });
+    await business.goto(`${system.webUrl}/business-calendar`);
+    const screen = business.getByRole("main");
+    const region = screen.getByRole("region", { name: "Cierres del negocio", exact: true });
+    const create = region.getByRole("button", { name: "Crear cierre", exact: true });
+    await expect(screen.getByRole("button", { name: "Editar horario", exact: true })).toBeEnabled();
+    await expect(region.locator(`[data-closure-id="${seed.id}"]`)).toBeVisible();
+    await expect(create).toBeEnabled();
+    expect(weekly).toEqual({ GET: 1, PUT: 0 });
+    expect(closures).toEqual({ GET: 1, POST: 0 });
+    const weeklyBaseline = { ...weekly };
+    const closureBaseline = { ...closures };
+    await create.click();
+    const form = region.getByRole("form", { name: "Crear cierre", exact: true });
+    const type = form.getByLabel("Tipo de cierre", { exact: true });
+    const dateInput = form.getByLabel("Fecha", { exact: true });
+    const save = form.getByRole("button", { name: "Guardar cierre", exact: true });
+    await expect(type).toHaveValue("date");
+    await dateInput.fill(date);
+    const posted = business.waitForResponse(response => response.url() === endpoint
+      && response.request().method() === "POST");
+    await save.click();
+    const conflict = await posted;
+    expect(conflict.status()).toBe(409);
+    expect(await conflict.json()).toMatchObject({ code: "CONFLICT" });
+    await expect(form.getByRole("alert")).toHaveText("Los datos cambiaron. Recargá y volvé a intentar.");
+    await expect(form).toBeVisible();
+    await expect(form).toHaveAttribute("aria-busy", "false");
+    await expect(type).toHaveValue("date");
+    await expect(dateInput).toHaveValue(date);
+    await expect(save).toBeEnabled();
+    await expect(save).toBeFocused();
+    expect(payloads).toEqual([{ kind: "date", date }]);
+    expect(weekly).toEqual(weeklyBaseline);
+    expect(closures).toEqual({ ...closureBaseline, POST: 1 });
+    await expect(region.locator("li")).toHaveCount(closuresBefore.length);
+    await expect(region.locator(`[data-closure-id="${seed.id}"]`)).toBeVisible();
+
+    // The real rejected POST must preserve every complete DTO, not merely row counts.
+    expect(await read("me/business-calendar/closures")).toEqual(closuresBefore);
+    expect(await read("me/business-calendar")).toEqual(calendarBefore);
+    expect(await read(`me/appointments/${appointment.id}`)).toEqual(appointment);
+    expect(await read("me/resources")).toEqual(resourcesBefore);
+    expect(weekly).toEqual(weeklyBaseline);
+    expect(closures).toEqual({ ...closureBaseline, POST: 1 });
+    for (const width of [1280, 360]) {
+      await business.setViewportSize({ width, height: 900 });
+      await expect(save).toBeFocused();
+      expect(await business.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await business.screenshot({ path: testInfo.outputPath(`closures-create-real-conflict-${width}.png`), fullPage: true });
+    }
+    await form.getByRole("button", { name: "Cancelar cierre", exact: true }).click();
+    await expect(form).toHaveCount(0);
+    await expect(create).toBeEnabled();
+    await expect(create).toBeFocused();
+    await business.screenshot({ path: testInfo.outputPath("closures-create-conflict-cancel-focus-360.png"), fullPage: true });
+    await create.click();
+    await expect(form).toBeVisible();
+    await expect(type).toHaveValue("date");
+    await expect(type).toBeFocused();
+    await expect(dateInput).toHaveValue("");
+    await expect(form.getByRole("alert")).toHaveCount(0);
+    await expect(form).toHaveAttribute("aria-busy", "false");
+    await expect(save).toBeEnabled();
+    expect(weekly).toEqual(weeklyBaseline);
+    expect(closures).toEqual({ ...closureBaseline, POST: 1 });
+    expect(payloads).toEqual([{ kind: "date", date }]);
+    await business.screenshot({ path: testInfo.outputPath("closures-create-conflict-reopen-focus-360.png"), fullPage: true });
+  } finally {
+    await context.close();
+  }
+});
