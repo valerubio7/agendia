@@ -26,6 +26,7 @@ import { AdminBusinessesScreen } from "./ui/admin-businesses-screen";
 import { AssistantScreen } from "./ui/assistant-screen";
 import { ProfileScreen } from "./ui/profile-screen";
 import { ServicesScreen } from "./ui/services-screen";
+import { ClientsScreen } from "./ui/clients-screen";
 import { ResourcesScreen } from "./ui/resources-screen";
 import { BusinessCalendarScreen } from "./ui/business-calendar-screen";
 import type { ClosureReadState } from "./ui/business-closures-section";
@@ -33,7 +34,7 @@ import { WhatsAppScreen } from "./ui/whatsapp-screen";
 
 export { formatActivityTimestamp } from "./ui/admin-businesses-screen";
 
-type Mode = "login" | "admin" | "profile" | "services" | "resources" | "business-calendar" | "assistant" | "whatsapp";
+type Mode = "login" | "admin" | "profile" | "services" | "resources" | "business-calendar" | "clients" | "assistant" | "whatsapp";
 type AuthenticatedViewState =
   | "loading"
   | "ready"
@@ -335,6 +336,8 @@ export function LivePanel({ mode }: { mode: Mode }) {
       loaded =
         mode === "admin"
           ? { businesses: await api.businesses(), instructions: await api.platformAiInstructions() }
+          : mode === "clients"
+            ? session
           : mode === "business-calendar"
             ? await api.businessCalendar(calendarController!.signal)
           : mode === "resources"
@@ -736,6 +739,17 @@ export function LivePanel({ mode }: { mode: Mode }) {
       </AuthenticatedShell>
     );
   }
+  if (mode === "clients") {
+    const session = data as Session;
+    const generation = loadAttemptRef.current;
+    return <AuthenticatedShell variant="business" activeHref="/clients"
+      logoutPending={logoutPending} logoutAction={() => void logout()}>
+      {feedback}
+      <ClientsScreen key={`${session.businessId}:${generation}`} disabled={logoutPending}
+        sessionActive={() => !logoutPendingRef.current && loadAttemptRef.current === generation} />
+    </AuthenticatedShell>;
+  }
+
   if (mode === "resources") {
     const catalog = data as { resources: Resource[]; services: Service[] };
     return (

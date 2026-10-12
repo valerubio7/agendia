@@ -113,6 +113,48 @@ test("Argentina closure display retains local days, precision and per-instant of
     .toBe("01/01/2009, 22:00:00.007 (Argentina, GMT-02:00)");
 });
 
+test("client query encoding preserves literal search and history identity without admitting unsafe paths", async () => {
+  const signal = new AbortController().signal;
+  const paths: string[] = [];
+  const transport = createBrowserApiTransport("https://panel.agendia.test", async (path, init) => {
+    paths.push(path);
+    expect(init?.signal).toBe(signal);
+    expect(init?.method).toBe("GET");
+    return Response.json([]);
+  });
+  const client = new ApiClient(transport);
+  for (const q of ["  Ana  María  ", "%_\\\\", "../?q=#&+", "https://evil.test/path"]) {
+    await client.clients(q, signal);
+    const destination = new URL(paths.at(-1)!, "https://panel.agendia.test");
+    expect(destination.pathname).toBe("/api/me/clients");
+    expect(destination.searchParams.get("q")).toBe(q.trim());
+    expect([...destination.searchParams.keys()]).toEqual(["q"]);
+  }
+  await client.clients("  ", signal);
+  expect(paths.at(-1)).toBe("/api/me/clients");
+  await client.clientAppointments("row/id?x=#", signal);
+  expect(paths.at(-1)).toBe("/api/me/appointments?clientId=row%2Fid%3Fx%3D%23");
+  const calls: RequestInit[] = [];
+  const saved = { id: "stable-id", firstName: "Ana", lastName: "María", phone: "+5491123456789" };
+  const writer = new ApiClient(async (path, init) => {
+    if (path === "/api/auth/login") return Response.json({ csrfToken: "client-csrf" });
+    if (path === "/api/auth/session") return Response.json({ role: "business_user", businessId: "tenant" });
+    expect(path).toBe("/api/me/clients/stable-id");
+    calls.push(init!);
+    return Response.json(saved);
+  });
+  await writer.login("clients@example.test", "safe test password");
+  expect(await writer.updateClient(saved.id, { ...saved }, signal)).toEqual(saved);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.method).toBe("PUT");
+  expect(calls[0]?.signal).toBe(signal);
+  expect(new Headers(calls[0]?.headers).get("x-csrf-token")).toBe("client-csrf");
+  expect(JSON.parse(calls[0]!.body as string)).toEqual({ firstName: saved.firstName, lastName: saved.lastName, phone: saved.phone });
+  for (const id of ["..", "."]) {
+    await expect(writer.updateClient(id, saved, signal)).rejects.toBeInstanceOf(TypeError);
+  }
+});
+
 const ORIGIN = "https://panel.agendia.test";
 const LINK_KEY = Buffer.alloc(32, 6);
 let database: TestPostgres,

@@ -177,6 +177,7 @@ test("role-aware authenticated shells recover safely and expose only valid navig
       "Servicios",
       "Recursos",
       "Horario",
+      "Clientes",
       "Asistente",
       "WhatsApp",
     ]);
@@ -249,7 +250,7 @@ test("role-aware authenticated shells recover safely and expose only valid navig
     await expect(mobileNavigation).toHaveAttribute("open", "");
 
     const mobileLinks = mobileNavigation.getByRole("link");
-    await expect(mobileLinks).toHaveText(["Perfil", "Servicios", "Recursos", "Horario", "Asistente", "WhatsApp"]);
+    await expect(mobileLinks).toHaveText(["Perfil", "Servicios", "Recursos", "Horario", "Clientes", "Asistente", "WhatsApp"]);
     await primaryPair(mobileNavigation.locator('[aria-current="page"]'));
     await expect(businessShell.locator(".authenticated-shell__mobile-menu")).toHaveCSS("background-color", "rgb(243, 238, 225)");
     for (const name of ["Perfil", "Asistente", "WhatsApp"] as const) {

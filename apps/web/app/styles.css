@@ -4193,6 +4193,20 @@ main.login-frame {
 .services-screen button:hover:not(:disabled) { background: var(--pine-deep); }
 .services-screen button:disabled { opacity: 0.65; }
 
+.clients-screen { max-width: 70rem; }
+.clients-screen h2, .clients-screen strong, .clients-screen p { overflow-wrap: anywhere; }
+.clients-screen form { display: grid; gap: 0.75rem; max-width: 36rem; margin-block: 1.5rem; }
+.clients-screen label { display: grid; gap: 0.5rem; }
+.clients-screen input { width: 100%; box-sizing: border-box; }
+.clients-list, .clients-appointments { list-style: none; padding: 0; display: grid; gap: 0.75rem; }
+.clients-list button { width: 100%; text-align: left; display: grid; gap: 0.35rem; }
+.clients-list button[aria-pressed="true"] { background: var(--pine-deep); }
+.clients-detail { border-top: 1px solid var(--line); margin-top: 2rem; padding-top: 1.5rem; }
+.clients-appointments li { padding: 1rem; border: 1px solid var(--sand); border-radius: 0.75rem; background: var(--surface); }
+.clients-screen [role="alert"] { color: var(--coral-ink); }
+.clients-warning { padding: 1rem; background: var(--honey-soft); border-radius: 0.75rem; }
+.clients-screen button:disabled { opacity: 0.65; }
+
 @media (max-width: 48rem) {
   .services-form-terms { grid-template-columns: minmax(0, 1fr); }
   .services-item {

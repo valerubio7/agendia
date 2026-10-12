@@ -1,4 +1,7 @@
-import type { PlatformAiInstructions } from "@agendia/contracts";
+import type { AppointmentRecord, PlatformAiInstructions } from "@agendia/contracts";
+export type { AppointmentRecord } from "@agendia/contracts";
+export type Client = { id: string; firstName: string; lastName: string; phone: string };
+export type ClientInput = Pick<Client, "firstName" | "lastName" | "phone">;
 export type { PlatformAiInstructions } from "@agendia/contracts";
 
 export type Session = {
@@ -208,8 +211,11 @@ export class ApiClient {
     body?: unknown,
     cache?: RequestCache,
     signal?: AbortSignal,
+    query?: URLSearchParams,
   ): Promise<T> {
-    const requestPath = composeApiPath(this.base, path);
+    // Validate the path unchanged; only separately encoded parameters may add a query.
+    const safePath = composeApiPath(this.base, path);
+    const requestPath = query?.size ? `${safePath}?${query.toString()}` : safePath;
     const csrf =
       this.csrf ||
       (typeof sessionStorage === "undefined"
@@ -285,6 +291,15 @@ export class ApiClient {
     this.call(`/admin/businesses/${encodeURIComponent(id)}/user`, "PUT", {
       password,
     });
+  clients = (q = "", signal?: AbortSignal) =>
+    this.call<Client[]>("/me/clients", "GET", undefined, undefined, signal,
+      q.trim() ? new URLSearchParams({ q: q.trim() }) : undefined);
+  updateClient = (id: string, body: ClientInput, signal?: AbortSignal) =>
+    this.call<Client>(`/me/clients/${encodeURIComponent(id)}`, "PUT",
+      { firstName: body.firstName, lastName: body.lastName, phone: body.phone }, undefined, signal);
+  clientAppointments = (clientId: string, signal?: AbortSignal) =>
+    this.call<AppointmentRecord[]>("/me/appointments", "GET", undefined, undefined, signal,
+      new URLSearchParams({ clientId }));
   businessClosures = (signal?: AbortSignal) =>
     this.call<BusinessClosure[]>("/me/business-calendar/closures", "GET", undefined, undefined, signal);
   createBusinessClosure = (body: BusinessClosureRequest, signal?: AbortSignal) =>
