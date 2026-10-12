@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import type { BusinessCalendar, WeeklySchedule } from "../api-client";
+import type { BusinessCalendar, BusinessClosureRequest, WeeklySchedule } from "../api-client";
 import { BusinessClosuresSection, type ClosureReadState } from "./business-closures-section";
 import { ControlledWeeklyScheduleEditor, formatScheduleClock, scheduleDays,
   serializeScheduleDraft, type WeeklyScheduleDraft } from "./weekly-schedule-editor";
@@ -12,9 +12,10 @@ const time = (minute: number) =>
   `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
 
 export function BusinessCalendarScreen({ weeklySchedule, pending, error, notice, warning,
-  saveAction, retryAction, clearFeedback, closures, retryClosures,
+  saveAction, retryAction, clearFeedback, closures, retryClosures, createClosure,
 }: BusinessCalendar & {
   closures: ClosureReadState; retryClosures: () => Promise<void>;
+  createClosure: (input: BusinessClosureRequest, signal: AbortSignal) => Promise<boolean>;
   pending: boolean; error: string; notice: string; warning: boolean;
   saveAction: (schedule: WeeklySchedule) => Promise<boolean>;
   retryAction: () => Promise<boolean>;
@@ -158,7 +159,7 @@ export function BusinessCalendarScreen({ weeklySchedule, pending, error, notice,
           </dl>
         </>}
       </section>
-      <BusinessClosuresSection state={closures} retryAction={retryClosures} />
+      <BusinessClosuresSection state={closures} retryAction={retryClosures} createAction={createClosure} />
     </main>
   );
 }

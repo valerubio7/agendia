@@ -109,8 +109,9 @@ test("Horario reads only the tenant calendar and retries safely", async ({ brows
     expect(methods.length).toBe(beforeRetry + 1);
     expect(methods.every(method => method === "GET")).toBe(true);
     await expect(screen.getByRole("button", { name: "Editar horario", exact: true })).toHaveCount(1);
-    await expect(screen.getByRole("button")).toHaveCount(2);
+    await expect(screen.getByRole("button")).toHaveCount(3);
     await expect(screen.getByRole("button", { name: "Actualizar cierres", exact: true })).toHaveCount(1);
+    await expect(screen.getByRole("button", { name: "Crear cierre", exact: true })).toHaveCount(1);
     await expect(screen.getByRole("form")).toHaveCount(0);
   } finally {
     await context.close();
@@ -920,4 +921,143 @@ test("Closures retain ordered records through refresh failure and interrupted lo
     release();
     await context.close();
   }
+});
+
+test("Closure CREATE persists Argentina dates and milliseconds, retaining confirmed rows after GET failure", async ({ browser, page, system }, testInfo) => {
+  const email = "closures-create@example.test", password = "closure create safe password";
+  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await expect(page).toHaveURL(/\/businesses$/);
+  await page.getByLabel("Nombre", { exact: true }).fill("Cierres Crear");
+  await page.getByLabel("Correo del usuario", { exact: true }).fill(email);
+  await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
+  await expect(page.getByRole("cell", { name: "Cierres Crear", exact: true })).toBeVisible();
+  const context = await browser.newContext({ timezoneId: "UTC", viewport: { width: 1280, height: 900 } });
+  const business = await context.newPage();
+  let release = () => {};
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  try {
+    await login(business, system.webUrl, email, password);
+    await expect(business).toHaveURL(/\/profile$/);
+    await business.goto(`${system.webUrl}/business-calendar`);
+    const region = business.getByRole("region", { name: "Cierres del negocio", exact: true });
+    await expect(region.getByText("No hay cierres guardados.", { exact: false })).toBeVisible();
+    const create = region.getByRole("button", { name: "Crear cierre", exact: true });
+    await expect(create).toBeVisible(); // RED: no CREATE control exists on the base.
+    const payloads: unknown[] = [];
+    let gets = 0, hold = true, failGet = false, failPost = false;
+    business.on("request", request => {
+      if (new URL(request.url()).pathname !== "/api/me/business-calendar/closures") return;
+      if (request.method() === "POST") payloads.push(request.postDataJSON());
+      else { expect(request.method()).toBe("GET"); gets++; }
+    });
+    await business.route("**/api/me/business-calendar/closures", async route => {
+      if (route.request().method() === "POST" && hold) await gate;
+      if (route.request().method() === "POST" && failPost) {
+        await route.fulfill({ status: 500, contentType: "application/json",
+          body: JSON.stringify({ error: { code: "INTERNAL_ERROR", message: "PRIVATE mutation" } }) });
+        return;
+      }
+      if (route.request().method() === "GET" && failGet) await route.fulfill({ status: 500,
+        contentType: "application/json", body: JSON.stringify({ error: { code: "INTERNAL_ERROR", message: "PRIVATE refresh" } }) });
+      else await route.continue();
+    });
+    await create.click();
+    const form = region.getByRole("form", { name: "Crear cierre", exact: true });
+    const save = form.getByRole("button", { name: "Guardar cierre", exact: true });
+    await save.click();
+    expect(payloads).toHaveLength(0); // Native required validation must prevent an empty POST.
+    await form.getByLabel("Fecha", { exact: true }).fill("2035-02-02");
+    await save.evaluate(button => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await expect(form).toHaveAttribute("aria-busy", "true");
+    await expect(save).toBeDisabled();
+    await expect(region.getByRole("button", { name: "Actualizar cierres", exact: true })).toBeDisabled();
+    await expect.poll(() => payloads.length).toBe(1);
+    await business.screenshot({ path: testInfo.outputPath("closures-create-pending.png"), fullPage: true });
+    release();
+    await expect(form).toHaveCount(0);
+    await expect(create).toBeEnabled();
+    await expect(create).toBeFocused();
+    expect(payloads[0]).toEqual({ kind: "date", date: "2035-02-02" });
+    const endpoint = `${system.webUrl}/api/me/business-calendar/closures`;
+    const dateRead = await business.request.get(endpoint);
+    expect(dateRead.status()).toBe(200);
+    const dateRecords = await dateRead.json();
+    expect(dateRecords).toHaveLength(1);
+    expect(dateRecords[0]).toMatchObject({ kind: "date", date: "2035-02-02" });
+    hold = false;
+    await create.click();
+    await form.getByLabel("Tipo de cierre", { exact: true }).selectOption("interval");
+    const start = form.getByLabel("Desde (Argentina)", { exact: true });
+    const end = form.getByLabel("Hasta (Argentina)", { exact: true });
+    await start.fill("2007-12-30T00:30"); // Buenos Aires gap: no instant exists.
+    await end.fill("2007-12-30T02:30");
+    await save.click();
+    await expect(form.getByRole("alert")).toContainText("no existe");
+    expect(payloads).toHaveLength(1);
+    await start.fill("2008-03-15T23:30"); // Fold must require an explicit choice.
+    await end.fill("2008-03-16T01:30");
+    await save.click();
+    expect(await form.evaluate(element => (element as HTMLFormElement).checkValidity())).toBe(false);
+    expect(payloads).toHaveLength(1);
+    await expect(form.getByRole("radio")).toHaveCount(2);
+    await expect(form.getByText(/desplazamiento -7200 segundos/)).toBeVisible();
+    await expect(form.getByText(/desplazamiento -10800 segundos/)).toBeVisible();
+    await form.getByRole("radio").first().check();
+    await start.fill("2008-03-15T23:31");
+    await expect(form.getByRole("radio").first()).not.toBeChecked();
+    await expect(form.getByRole("radio").last()).not.toBeChecked();
+    await start.fill("2035-01-02T00:04:05.006");
+    await end.fill("2035-01-02T00:04:05.005");
+    await save.click();
+    await expect(form.getByRole("alert")).toContainText("posterior");
+    expect(payloads).toHaveLength(1);
+    await end.fill("2035-01-02T01:04:05.007");
+    failGet = true;
+    const posted = business.waitForResponse(response => response.url() === endpoint && response.request().method() === "POST");
+    await save.click();
+    const response = await posted;
+    expect(response.status()).toBe(201);
+    const confirmed = await response.json();
+    await expect(form).toHaveCount(0);
+    await expect(region.getByRole("alert")).toContainText("desactualizados");
+    await expect(region.locator(`[data-closure-id="${confirmed.id}"]`)).toContainText("00:04:05.006");
+    expect(payloads).toEqual([{ kind: "date", date: "2035-02-02" },
+      { kind: "interval", start: "2035-01-02T03:04:05.006Z", end: "2035-01-02T04:04:05.007Z" }]);
+    await expect(business.getByText(/PRIVATE/)).toHaveCount(0);
+    await business.setViewportSize({ width: 360, height: 900 });
+    await business.screenshot({ path: testInfo.outputPath("closures-create-saved-warning-360.png"), fullPage: true });
+    const beforeRetry = gets;
+    failGet = false;
+    await region.getByRole("button", { name: "Volver a cargar cierres", exact: true }).click();
+    await expect(region.getByRole("alert")).toHaveCount(0);
+    expect(gets).toBe(beforeRetry + 1);
+    expect(payloads).toHaveLength(2);
+    const readback = await business.request.get(endpoint);
+    expect(readback.status()).toBe(200);
+    const records = await readback.json();
+    expect(records).toHaveLength(2);
+    expect(records.find((record: { id: string }) => record.id === confirmed.id)).toEqual(confirmed);
+    await expect(region.locator("li")).toHaveCount(2);
+    await business.screenshot({ path: testInfo.outputPath("closures-create-recovered-360.png"), fullPage: true });
+    await create.click();
+    await form.getByLabel("Fecha", { exact: true }).fill("2035-02-03");
+    failPost = true;
+    const beforeFailure = gets;
+    await save.click();
+    await expect(form.getByRole("alert")).toHaveText("No se pudo completar la operación.");
+    await expect(form.getByLabel("Fecha", { exact: true })).toHaveValue("2035-02-03");
+    await expect(save).toBeEnabled();
+    await expect(save).toBeFocused();
+    await expect(business.getByText(/PRIVATE/)).toHaveCount(0);
+    expect(payloads).toHaveLength(3);
+    expect(gets).toBe(beforeFailure);
+    await expect(region.locator("li")).toHaveCount(2);
+    await business.screenshot({ path: testInfo.outputPath("closures-create-error-360.png"), fullPage: true });
+    await form.getByRole("button", { name: "Cancelar cierre", exact: true }).click();
+    await expect(create).toBeFocused();
+  } finally { release(); await context.close(); }
 });

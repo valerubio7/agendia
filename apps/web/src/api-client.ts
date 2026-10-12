@@ -39,10 +39,10 @@ export type Resource = {
 };
 export type WeeklySchedule = Resource["weeklySchedule"];
 export type BusinessCalendar = { weeklySchedule: WeeklySchedule | null };
-export type BusinessClosure = { id: string } & (
+export type BusinessClosureRequest =
   | { kind: "date"; date: string; start?: never; end?: never }
-  | { kind: "interval"; start: string; end: string; date?: never }
-);
+  | { kind: "interval"; start: string; end: string; date?: never };
+export type BusinessClosure = { id: string } & BusinessClosureRequest;
 export type ResourceInput = {
   name: string;
   description?: string;
@@ -287,6 +287,8 @@ export class ApiClient {
     });
   businessClosures = (signal?: AbortSignal) =>
     this.call<BusinessClosure[]>("/me/business-calendar/closures", "GET", undefined, undefined, signal);
+  createBusinessClosure = (body: BusinessClosureRequest, signal?: AbortSignal) =>
+    this.call<BusinessClosure>("/me/business-calendar/closures", "POST", body, undefined, signal);
   businessCalendar = (signal?: AbortSignal) =>
     this.call<BusinessCalendar>("/me/business-calendar", "GET", undefined, undefined, signal);
   saveBusinessCalendar = (weeklySchedule: WeeklySchedule, signal?: AbortSignal) =>

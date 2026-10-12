@@ -10,6 +10,7 @@ import {
   formValues,
   type ApiTransport,
   type BusinessClosure,
+  type BusinessClosureRequest,
 } from "../../apps/web/src/api-client.ts";
 import {
   formatActivityTimestamp,
@@ -58,6 +59,23 @@ test("business closures GET preserves ordered raw union DTOs and cancellation", 
     return Response.json(closures);
   });
   expect(await client.businessClosures(signal)).toEqual(closures);
+});
+
+test("business closure POST returns confirmed raw DTOs and forwards cancellation", async () => {
+  const signal = new AbortController().signal;
+  const inputs: BusinessClosureRequest[] = [{ kind: "date", date: "2035-02-02" },
+    { kind: "interval", start: "2035-01-02T03:04:05.006Z", end: "2035-01-02T04:04:05.007Z" }];
+  for (const body of inputs) {
+    const saved = { id: "confirmed", ...body };
+    const client = new ApiClient(async (path, init) => {
+      expect(path).toBe("/api/me/business-calendar/closures");
+      expect(init?.method).toBe("POST");
+      expect(init?.signal).toBe(signal);
+      expect(JSON.parse(init!.body as string)).toEqual(body);
+      return Response.json(saved, { status: 201 });
+    });
+    expect(await client.createBusinessClosure(body, signal)).toEqual(saved);
+  }
 });
 
 test("Argentina closure display retains local days, precision and per-instant offsets", () => {

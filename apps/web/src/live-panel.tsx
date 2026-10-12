@@ -8,6 +8,7 @@ import {
   type Assistant,
   type Business,
   type BusinessCalendar,
+  type BusinessClosureRequest,
   type WeeklySchedule,
   type Profile,
   type Session,
@@ -168,7 +169,7 @@ export function LivePanel({ mode }: { mode: Mode }) {
   const assistantSaveAttemptRef = useRef(0);
   const loadAttemptRef = useRef(0);
   const closureOwnerRef = useRef<{ businessId: string; generation: number } | null>(null);
-  // Shared synchronous ownership boundary: future closure mutations must also exclude active reads.
+  // Reads and mutations share synchronous session/request ownership.
   const closureRequestRef = useRef<AbortController | null>(null);
   const [closures, setClosures] = useState<ClosureReadState>({ status: "loading" });
   const loadClosures = async (): Promise<void> => {
@@ -188,6 +189,43 @@ export function LivePanel({ mode }: { mode: Mode }) {
         : { status: "error", message: api.errorMessage(cause) });
     } finally {
       if (closureRequestRef.current === controller) closureRequestRef.current = null;
+    }
+  };
+  const createClosure = async (input: BusinessClosureRequest, signal: AbortSignal): Promise<boolean> => {
+    const owner = closureOwnerRef.current;
+    if (!owner || mode !== "business-calendar" || logoutPendingRef.current || closureRequestRef.current || signal.aborted) return false;
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal.addEventListener("abort", abort, { once: true });
+    closureRequestRef.current = controller;
+    const current = () => closureOwnerRef.current === owner && loadAttemptRef.current === owner.generation &&
+      closureRequestRef.current === controller && !controller.signal.aborted && !logoutPendingRef.current;
+    setClosures(state => state.status === "ready" ? { ...state, pending: true } : state);
+    try {
+      const saved = await api.createBusinessClosure(input, controller.signal);
+      if (!current()) return false;
+      // Install the confirmed DTO before best-effort GET; never reconstruct or reorder existing rows.
+      setClosures(state => state.status === "ready" ? { ...state,
+        closures: state.closures.some(row => row.id === saved.id)
+          ? state.closures.map(row => row.id === saved.id ? saved : row) : [...state.closures, saved],
+        warning: false } : state);
+      try {
+        const records = await api.businessClosures(controller.signal);
+        if (current()) setClosures({ status: "ready", closures: records, pending: false, warning: false });
+      } catch {
+        if (current()) setClosures(state => state.status === "ready" ? { ...state, pending: false, warning: true } : state);
+      }
+      return current(); // A failed refresh does not undo a confirmed POST or request a mutation retry.
+    } catch (cause) {
+      if (!current()) return false;
+      setClosures(state => state.status === "ready" ? { ...state, pending: false } : state);
+      throw cause;
+    } finally {
+      signal.removeEventListener("abort", abort);
+      if (closureRequestRef.current === controller) {
+        closureRequestRef.current = null;
+        setClosures(state => state.status === "ready" ? { ...state, pending: false } : state);
+      }
     }
   };
   const calendarLoadRef = useRef<AbortController | null>(null);
@@ -800,7 +838,7 @@ export function LivePanel({ mode }: { mode: Mode }) {
       <AuthenticatedShell variant="business" activeHref="/business-calendar"
         logoutPending={logoutPending} logoutAction={() => void logout()}>
         <BusinessCalendarScreen {...data as BusinessCalendar}
-          closures={closures} retryClosures={loadClosures}
+          closures={closures} retryClosures={loadClosures} createClosure={createClosure}
           pending={calendarPending} error={error} notice={notice} warning={calendarWarning}
           saveAction={calendarAction} retryAction={() => calendarAction()}
           clearFeedback={() => {
