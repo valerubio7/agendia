@@ -168,6 +168,7 @@ export function LivePanel({ mode }: { mode: Mode }) {
   const assistantSaveAttemptRef = useRef(0);
   const loadAttemptRef = useRef(0);
   const closureOwnerRef = useRef<{ businessId: string; generation: number } | null>(null);
+  // Shared synchronous ownership boundary: future closure mutations must also exclude active reads.
   const closureRequestRef = useRef<AbortController | null>(null);
   const [closures, setClosures] = useState<ClosureReadState>({ status: "loading" });
   const loadClosures = async (): Promise<void> => {
@@ -177,12 +178,14 @@ export function LivePanel({ mode }: { mode: Mode }) {
     closureRequestRef.current = controller;
     const current = () => closureOwnerRef.current === owner && loadAttemptRef.current === owner.generation &&
       closureRequestRef.current === controller && !controller.signal.aborted && !logoutPendingRef.current;
-    setClosures({ status: "loading" });
+    setClosures(state => state.status === "ready" ? { ...state, pending: true } : { status: "loading" });
     try {
       const records = await api.businessClosures(controller.signal);
-      if (current()) setClosures({ status: "ready", closures: records });
+      if (current()) setClosures({ status: "ready", closures: records, pending: false, warning: false });
     } catch (cause) {
-      if (current()) setClosures({ status: "error", message: api.errorMessage(cause) });
+      if (current()) setClosures(state => state.status === "ready"
+        ? { ...state, pending: false, warning: true }
+        : { status: "error", message: api.errorMessage(cause) });
     } finally {
       if (closureRequestRef.current === controller) closureRequestRef.current = null;
     }
@@ -546,8 +549,11 @@ export function LivePanel({ mode }: { mode: Mode }) {
       // Only the aborted request's still-mounted session may regain manual GET recovery.
       if (interruptedClosure && closureOwner) setClosures(state =>
         closureOwnerRef.current === closureOwner && loadAttemptRef.current === closureOwner.generation &&
-        !closureRequestRef.current && state.status === "loading"
-          ? { status: "error", message: api.errorMessage(cause) } : state);
+        !closureRequestRef.current
+          ? state.status === "ready" && state.pending
+            ? { ...state, pending: false, warning: true }
+            : state.status === "loading" ? { status: "error", message: api.errorMessage(cause) } : state
+          : state);
     }
   };
   const feedback = (

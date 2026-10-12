@@ -109,7 +109,8 @@ test("Horario reads only the tenant calendar and retries safely", async ({ brows
     expect(methods.length).toBe(beforeRetry + 1);
     expect(methods.every(method => method === "GET")).toBe(true);
     await expect(screen.getByRole("button", { name: "Editar horario", exact: true })).toHaveCount(1);
-    await expect(screen.getByRole("button")).toHaveCount(1);
+    await expect(screen.getByRole("button")).toHaveCount(2);
+    await expect(screen.getByRole("button", { name: "Actualizar cierres", exact: true })).toHaveCount(1);
     await expect(screen.getByRole("form")).toHaveCount(0);
   } finally {
     await context.close();
@@ -803,3 +804,120 @@ for (const interruption of ["initial", "retry"] as const) {
     }
   });
 }
+
+test("Closures retain ordered records through refresh failure and interrupted logout", async ({ browser, page, system }, testInfo) => {
+  const email = "closures-refresh@example.test", password = "closure refresh safe password";
+  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await expect(page).toHaveURL(/\/businesses$/);
+  await page.getByLabel("Nombre", { exact: true }).fill("Cierres Actualizar");
+  await page.getByLabel("Correo del usuario", { exact: true }).fill(email);
+  await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
+  await expect(page.getByRole("cell", { name: "Cierres Actualizar", exact: true })).toBeVisible();
+  const context = await browser.newContext({ timezoneId: "UTC", viewport: { width: 1280, height: 900 } });
+  const business = await context.newPage();
+  let release = () => {};
+  let gate = new Promise<void>(resolve => { release = resolve; });
+  try {
+    await login(business, system.webUrl, email, password);
+    await expect(business).toHaveURL(/\/profile$/);
+    const csrf = await business.evaluate(() => sessionStorage.getItem("agendia.csrf"));
+    expect(csrf).toBeTruthy();
+    const endpoint = `${system.webUrl}/api/me/business-calendar/closures`;
+    const inputs = [
+      { kind: "date", date: "2035-02-02" },
+      { kind: "interval", start: "2035-01-02T02:04:05.006+02:00", end: "2035-01-02T03:04:05.006+02:00" },
+      { kind: "date", date: "2035-02-02" },
+    ];
+    for (const data of inputs) {
+      const response = await business.request.post(endpoint, { headers: { Origin: system.webUrl, "x-csrf-token": csrf! }, data });
+      expect(response.status()).toBe(201);
+    }
+    const readback = await business.request.get(endpoint);
+    expect(readback.status()).toBe(200);
+    const records = await readback.json() as Array<{ id: string }>;
+    await business.goto(`${system.webUrl}/business-calendar`);
+    const region = business.getByRole("region", { name: "Cierres del negocio", exact: true });
+    const rows = region.locator("li");
+    await expect(rows).toHaveCount(3);
+    const original = await rows.allTextContents();
+    const counts = { GET: 0, mutations: 0, weeklyGET: 0 };
+    business.on("request", request => {
+      const path = new URL(request.url()).pathname;
+      if (path === "/api/me/business-calendar/closures") {
+        if (request.method() === "GET") counts.GET++; else counts.mutations++;
+      } else if (path === "/api/me/business-calendar") {
+        if (request.method() === "GET") counts.weeklyGET++; else counts.mutations++;
+      }
+    });
+    const refresh = region.getByRole("button", { name: "Actualizar cierres", exact: true });
+    await expect(refresh).toBeVisible(); // RED: the ready list has no refresh control on the base.
+    let hold = true, fail = true;
+    await business.route("**/api/me/business-calendar/closures", async route => {
+      expect(route.request().method()).toBe("GET");
+      if (hold) await gate;
+      if (fail) await route.fulfill({ status: 500, contentType: "application/json",
+        body: JSON.stringify({ error: { code: "INTERNAL_ERROR", message: "PRIVATE refresh" } }) });
+      else await route.continue();
+    });
+    await refresh.evaluate(button => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await expect(region).toHaveAttribute("aria-busy", "true");
+    await expect(refresh).toBeDisabled();
+    await expect(rows).toHaveText(original);
+    await expect.poll(() => counts.GET).toBe(1);
+    await business.screenshot({ path: testInfo.outputPath("closures-refresh-pending.png"), fullPage: true });
+    release();
+    await expect(region).toHaveAttribute("aria-busy", "false");
+    await expect(region.getByRole("alert")).toHaveText("No se pudo actualizar la lista de cierres. Los datos visibles pueden estar desactualizados.");
+    await expect(rows).toHaveText(original);
+    await expect(business.getByText(/PRIVATE/)).toHaveCount(0);
+    const retry = region.getByRole("button", { name: "Volver a cargar cierres", exact: true });
+    await expect(retry).toBeEnabled();
+    await expect(retry).toBeFocused();
+    await expect(business.getByRole("heading", { name: "Horario sin configurar", exact: true })).toBeVisible();
+    await business.getByRole("button", { name: "Editar horario", exact: true }).click();
+    await business.getByRole("button", { name: "Cancelar", exact: true }).click();
+    await business.screenshot({ path: testInfo.outputPath("closures-refresh-warning.png"), fullPage: true });
+    hold = false;
+    fail = false;
+    await retry.click();
+    await expect(region.getByRole("alert")).toHaveCount(0);
+    await expect(refresh).toBeEnabled();
+    await expect(region.getByRole("heading", { name: "Cierres del negocio", exact: true })).toBeFocused();
+    await expect(rows).toHaveText(original);
+    expect(await rows.evaluateAll(elements => elements.map(element => element.getAttribute("data-closure-id")))).toEqual(records.map(record => record.id));
+    expect(counts).toEqual({ GET: 2, mutations: 0, weeklyGET: 0 });
+    await business.screenshot({ path: testInfo.outputPath("closures-refresh-recovered.png"), fullPage: true });
+    gate = new Promise<void>(resolve => { release = resolve; });
+    hold = true;
+    await business.route("**/api/auth/logout", route => route.fulfill({ status: 500, contentType: "application/json",
+      body: JSON.stringify({ error: { code: "INTERNAL_ERROR", message: "PRIVATE logout" } }) }));
+    await refresh.click();
+    await expect(region).toHaveAttribute("aria-busy", "true");
+    const logout = business.getByRole("button", { name: "Cerrar sesión", exact: true });
+    await logout.click();
+    await expect(logout).toBeEnabled();
+    await expect(region).toHaveAttribute("aria-busy", "false");
+    await expect(retry).toBeEnabled();
+    await expect(rows).toHaveText(original);
+    await expect(region.getByRole("alert")).toHaveText("No se pudo actualizar la lista de cierres. Los datos visibles pueden estar desactualizados.");
+    await business.screenshot({ path: testInfo.outputPath("closures-refresh-logout-warning.png"), fullPage: true });
+    // Settle the old aborted route without issuing a late real GET.
+    fail = true;
+    release();
+    await expect.poll(() => counts.GET).toBe(3);
+    hold = false;
+    fail = false;
+    await retry.click();
+    await expect(region.getByRole("alert")).toHaveCount(0);
+    await expect(rows).toHaveText(original);
+    await expect(region.getByRole("heading", { name: "Cierres del negocio", exact: true })).toBeFocused();
+    expect(counts).toEqual({ GET: 4, mutations: 0, weeklyGET: 0 });
+  } finally {
+    release();
+    await context.close();
+  }
+});

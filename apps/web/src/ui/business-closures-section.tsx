@@ -5,7 +5,7 @@ import { formatArgentinaClosureDate, formatArgentinaClosureInstant } from "./arg
 export type ClosureReadState =
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "ready"; closures: BusinessClosure[] };
+  | { status: "ready"; closures: BusinessClosure[]; pending: boolean; warning: boolean };
 
 export function BusinessClosuresSection({ state, retryAction }: {
   state: ClosureReadState; retryAction: () => Promise<void>;
@@ -13,23 +13,34 @@ export function BusinessClosuresSection({ state, retryAction }: {
   const retryButton = useRef<HTMLButtonElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const restoreFocus = useRef(false);
+  const section = useRef<HTMLElement>(null);
+  const pending = state.status === "loading" || (state.status === "ready" && state.pending);
   useEffect(() => {
-    if (state.status === "loading" || !restoreFocus.current) return;
+    if (pending || !restoreFocus.current) return;
     restoreFocus.current = false;
     const target = retryButton.current ?? heading.current;
-    if (target?.isConnected) target.focus();
-  }, [state]);
-  return <section className="services-empty" aria-labelledby="business-closures-title" aria-busy={state.status === "loading"}>
+    if (target?.isConnected && section.current?.contains(target) &&
+      !(target instanceof HTMLButtonElement && target.disabled)) target.focus();
+  }, [state, pending]);
+  const retry = () => {
+    if (pending) return;
+    restoreFocus.current = true;
+    void retryAction();
+  };
+  return <section ref={section} className="services-empty" aria-labelledby="business-closures-title" aria-busy={pending}>
     <h2 ref={heading} id="business-closures-title" tabIndex={-1}>Cierres del negocio</h2>
     <p>Se aplican a todo el negocio. Las fechas y horas se muestran en Argentina.</p>
     {state.status === "loading" && <p role="status">Cargando cierres…</p>}
-    {(state.status === "error" || state.status === "loading") && <>
+    {state.status === "ready" && state.pending && <p role="status">Actualizando cierres…</p>}
+    {state.status === "ready" && state.warning && <p role="alert">
+      No se pudo actualizar la lista de cierres. Los datos visibles pueden estar desactualizados.
+    </p>}
+    {(state.status === "error" || state.status === "loading" || state.warning) && <>
       {state.status === "error" && <p role="alert">{state.message}</p>}
-      <button ref={retryButton} type="button" disabled={state.status === "loading"} onClick={() => {
-        restoreFocus.current = true;
-        void retryAction();
-      }}>Volver a cargar cierres</button>
+      <button ref={retryButton} type="button" disabled={pending} onClick={retry}>Volver a cargar cierres</button>
     </>}
+    {state.status === "ready" && !state.warning &&
+      <button type="button" disabled={pending} onClick={retry}>Actualizar cierres</button>}
     {state.status === "ready" && (state.closures.length === 0 ?
       <p>No hay cierres guardados. El horario semanal sigue siendo la referencia de atención.</p> :
       <ul className="services-list">
