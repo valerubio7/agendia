@@ -65,6 +65,20 @@ export const ManualAppointmentCreateSchema = z.object({
 export type ManualAppointmentCreateRequest = z.infer<typeof ManualAppointmentCreateSchema>;
 export type ManualAppointmentCreateResponse = AppointmentRecord;
 export type AvailabilitySlot = z.infer<typeof AvailabilitySlotSchema>;
+export const AppointmentOperationKeySchema = z.string().uuid().transform(value => value.toLowerCase());
+export const AppointmentOperationContextSchema = z.object({
+  key: AppointmentOperationKeySchema,
+  kind: z.enum(["create", "change", "notes", "state"]), target: appointmentId.nullable(),
+}).strict().refine(value => (value.kind === "create") === (value.target === null));
+export type AppointmentOperationContext = z.infer<typeof AppointmentOperationContextSchema>;
+export const AppointmentOperationReceiptSchema = z.object({
+  key: AppointmentOperationKeySchema, businessId: appointmentId, identityId: appointmentId,
+  state: z.enum(["not_found", "pending", "completed", "failed", "cancelled"]),
+  kind: z.enum(["create", "change", "notes", "state"]).nullable(), target: appointmentId.nullable(),
+  httpStatus: z.number().int().nullable(), appointment: AppointmentRecordSchema.nullable(),
+  error: z.object({ code: z.string(), message: z.string() }).nullable(),
+}).strict();
+export type AppointmentOperationReceipt = z.infer<typeof AppointmentOperationReceiptSchema>;
 export type AppointmentAvailabilityQuery = z.infer<typeof AppointmentAvailabilityQuerySchema>;
 export type ResourceRequest = ResourceInput;
 export type ResourceDto = Omit<ResourceInput, "description"> & {

@@ -9,7 +9,7 @@ import {
   sessionCookie,
   validateMutationRequest,
 } from "@agendia/auth";
-import { makeSafeError, PlatformAiInstructionsInputSchema, AppointmentListQuerySchema, AppointmentRecordSchema, AppointmentAvailabilityQuerySchema, AvailabilitySlotSchema, ManualAppointmentCreateSchema, ManualAppointmentChangeSchema, ManualAppointmentNotesSchema, ManualAppointmentStateSchema } from "@agendia/contracts";
+import { makeSafeError, PlatformAiInstructionsInputSchema, AppointmentListQuerySchema, AppointmentRecordSchema, AppointmentAvailabilityQuerySchema, AvailabilitySlotSchema, ManualAppointmentCreateSchema, ManualAppointmentChangeSchema, ManualAppointmentNotesSchema, ManualAppointmentStateSchema, AppointmentOperationKeySchema, AppointmentOperationContextSchema, AppointmentOperationReceiptSchema } from "@agendia/contracts";
 import {
   parseInstantMs,
   AI_SYSTEM_INSTRUCTIONS,
@@ -27,6 +27,8 @@ import {
   TenantUnitOfWork,
   ResourceCatalogError,
   AppointmentError,
+  AppointmentOperationError,
+  type AppointmentOperationRow,
   type createRuntimePools,
 } from "@agendia/db";
 
@@ -157,12 +159,32 @@ export function buildApi(input: AuthService | ApiOptions) {
     type: string,
     work: Parameters<TenantUnitOfWork["execute"]>[2],
     payload: object = {},
-  ) =>
-    new TenantUnitOfWork(pools.api).execute(
-      context(auth, request),
-      events(type, request, undefined, payload),
-      work,
-    ) as Promise<T>;
+  ) => {
+    const header = request.headers["x-appointment-operation-key"];
+    const route = request.routeOptions.url ?? "";
+    let operation;
+    if (header !== undefined && route.startsWith("/me/appointments") && request.method !== "GET") {
+      const key = AppointmentOperationKeySchema.safeParse(header);
+      if (!key.success) throw new AppointmentOperationError(400, makeSafeError("VALIDATION_FAILED", "Invalid operation key", request.id));
+      const kind = request.method === "POST" ? "create" : route.endsWith("/notes") ? "notes" : route.endsWith("/state") ? "state" : "change";
+      const schema = kind === "create" ? ManualAppointmentCreateSchema : kind === "change" ? ManualAppointmentChangeSchema
+        : kind === "notes" ? ManualAppointmentNotesSchema : ManualAppointmentStateSchema;
+      const target = kind === "create" ? null : String((request.params as { appointmentId: string }).appointmentId).toLowerCase();
+      const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical)
+        : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))
+          .map(([name, item]) => [name, canonical(typeof item === "string" && /Id$/.test(name) ? item.toLowerCase() : item)])) : value;
+      operation = { key: key.data, kind: kind as AppointmentOperationRow["kind"], target, status: kind === "create" ? 201 : 200,
+        fingerprint: createHash("sha256").update(JSON.stringify(canonical({ kind, target, payload: schema.parse(request.body) }))).digest("hex"),
+        failure: (cause: unknown) => {
+          if (!(cause instanceof AppointmentError) || ["INVALID_ACTION_CONTEXT", "INVALID_ATTENDANCE_TIME"].includes(cause.code)) return null;
+          const status = cause.code === "INVALID_INPUT" ? 400 : cause.code === "UNKNOWN_OWNED_ID" ? 404 : 409;
+          const code = status === 400 ? "VALIDATION_FAILED" : status === 404 ? "NOT_FOUND" : "CONFLICT";
+          return { status, body: makeSafeError(code, "Appointment operation was rejected", request.id) };
+        },
+      };
+    }
+    return new TenantUnitOfWork(pools.api).execute(context(auth, request), events(type, request, undefined, payload), work, operation) as Promise<T>;
+  };
   const adminWrite = <T>(
     auth: Session,
     request: FastifyRequest,
@@ -474,6 +496,44 @@ export function buildApi(input: AuthService | ApiOptions) {
       : error instanceof ResourceCatalogError && error.code === "FUTURE_APPOINTMENT_CONFLICT"
         ? fail(reply, request, 409, "CONFLICT", "Calendar change conflicts with future appointments")
         : fail(reply, request, 500, "INTERNAL_ERROR", "Calendar operation failed");
+  const operationDto = (auth: Session, key: string, row: AppointmentOperationRow | null, absent = "not_found") =>
+    AppointmentOperationReceiptSchema.parse({ key, businessId: auth.business_id, identityId: auth.identity_id,
+      state: row?.state ?? absent, kind: row?.kind ?? null, target: row?.target ?? null, httpStatus: row?.result?.status ?? null,
+      appointment: row?.state === "completed" ? row.result!.body : null,
+      error: row?.state === "failed" ? z.object({ code: z.string(), message: z.string() }).parse(row.result!.body) : null });
+  app.get("/me/appointment-operations/:key", async (request, reply) => {
+    reply.header("cache-control", "no-store");
+    const auth = await requireTenant(request, reply);
+    if (!auth) return;
+    const key = AppointmentOperationKeySchema.safeParse((request.params as { key: string }).key);
+    if (!key.success || !z.object({}).strict().safeParse(request.query).success)
+      return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid operation key");
+    return pools.api.run(context(auth, request), async repo => {
+      if (!await repo.lockAppointmentOperation(context(auth, request), key.data, false)) return operationDto(auth, key.data, null, "pending");
+      return operationDto(auth, key.data, await repo.appointmentOperation(context(auth, request), key.data));
+    });
+  });
+  app.post("/me/appointment-operations/:key/cancel", async (request, reply) => {
+    const auth = await requireTenant(request, reply, true);
+    if (!auth) return;
+    const parsed = AppointmentOperationContextSchema.safeParse(request.body);
+    const key = AppointmentOperationKeySchema.safeParse((request.params as { key: string }).key);
+    if (!parsed.success || !key.success || parsed.data.key !== key.data || !z.object({}).strict().safeParse(request.query).success)
+      return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid cancellation context");
+    const row = await pools.api.run(context(auth, request), async repo => {
+      await repo.lockAppointmentOperation(context(auth, request), key.data);
+      const previous = await repo.appointmentOperation(context(auth, request), key.data);
+      if (previous) return previous;
+      if (parsed.data.target && !await repo.getAppointment(auth.business_id!, parsed.data.target)) return null;
+      const cancelled: AppointmentOperationRow = { kind: parsed.data.kind, target: parsed.data.target, fingerprint: null, state: "cancelled", result: null };
+      await repo.recordAppointmentOperation(context(auth, request), key.data, cancelled);
+      return cancelled;
+    });
+    if (!row) return fail(reply, request, 404, "NOT_FOUND", "Appointment context not found");
+    if (row.kind !== parsed.data.kind || row.target !== parsed.data.target)
+      return fail(reply, request, 409, "CONFLICT", "Operation context differs");
+    return operationDto(auth, key.data, row);
+  });
   app.get("/me/appointments", async (request, reply) => {
     const auth = await requireTenant(request, reply);
     if (!auth) return;
@@ -511,6 +571,7 @@ export function buildApi(input: AuthService | ApiOptions) {
       });
       return reply.code(201).send(saved);
     } catch (error) {
+      if (error instanceof AppointmentOperationError) return reply.code(error.status).send(error.body);
       if (error instanceof AppointmentError) {
         if (error.code === "INVALID_INPUT") return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid manual appointment request");
         if (error.code === "UNKNOWN_OWNED_ID") return fail(reply, request, 404, "NOT_FOUND", "Appointment context not found");
@@ -553,6 +614,7 @@ export function buildApi(input: AuthService | ApiOptions) {
           { serviceId, resourceId, startRaw }, { now }));
       });
     } catch (error) {
+      if (error instanceof AppointmentOperationError) return reply.code(error.status).send(error.body);
       if (error instanceof AppointmentError) {
         if (error.code === "INVALID_INPUT") return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid manual appointment change");
         if (error.code === "UNKNOWN_OWNED_ID") return fail(reply, request, 404, "NOT_FOUND", "Appointment context not found");
@@ -584,6 +646,7 @@ export function buildApi(input: AuthService | ApiOptions) {
           return AppointmentRecordSchema.parse(saved);
         });
       } catch (error) {
+        if (error instanceof AppointmentOperationError) return reply.code(error.status).send(error.body);
         if (error instanceof AppointmentError) {
           if (error.code === "INVALID_INPUT") return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid manual appointment action");
           if (error.code === "UNKNOWN_OWNED_ID") return fail(reply, request, 404, "NOT_FOUND", "Appointment not found");

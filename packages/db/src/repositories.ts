@@ -215,8 +215,34 @@ export type SafeRuntimeEvent = {
   severity?: "info" | "warning" | "error" | "critical";
 };
 
+export type AppointmentOperationRow = {
+  kind: "create" | "change" | "notes" | "state"; target: string | null;
+  fingerprint: string | null; state: "completed" | "failed" | "cancelled";
+  result: { status: number; body: unknown } | null;
+};
 export class PostgresRepositories {
   constructor(private readonly db: Db) {}
+  async lockAppointmentOperation(context: TenantContext, key: string, wait = true): Promise<boolean> {
+    if ("begin" in this.db) throw new Error("Operation lock requires a transaction");
+    const lock = `appointment-operation:${context.businessId}:${context.actorId}:${key}`;
+    if (wait) { await this.db`select pg_advisory_xact_lock(hashtextextended(${lock},0))`; return true; }
+    const [row] = await this.db`select pg_try_advisory_xact_lock(hashtextextended(${lock},0)) acquired`;
+    return row!.acquired;
+  }
+  async appointmentOperation(context: TenantContext, key: string): Promise<AppointmentOperationRow | null> {
+    const [row] = await this.db<AppointmentOperationRow[]>`select kind,target_id target,fingerprint,state,result
+      from appointment_operation_receipts where business_id=${context.businessId} and actor_id=${context.actorId} and operation_key=${key}`;
+    return row ?? null;
+  }
+  async recordAppointmentOperation(context: TenantContext, key: string, row: AppointmentOperationRow) {
+    await this.db`insert into appointment_operation_receipts(business_id,actor_id,operation_key,kind,target_id,fingerprint,state,result)
+      values(${context.businessId},${context.actorId},${key},${row.kind},${row.target},${row.fingerprint},${row.state},
+        ${row.result === null ? null : this.db.json(asDbJson(row.result))})`;
+  }
+  appointmentOperationSavepoint<T>(work: (repo: PostgresRepositories) => Promise<T>): Promise<T> {
+    if ("begin" in this.db) throw new Error("Operation savepoint requires a transaction");
+    return (this.db as TransactionSql).savepoint(tx => work(new PostgresRepositories(tx))) as Promise<T>;
+  }
   acquireBusinessCalendarLock(context: Pick<TenantContext, "businessId">) {
     if ("begin" in this.db) throw new Error("Calendar lock requires a transaction");
     return acquireBusinessCalendarLock(this.db as TransactionSql, context);

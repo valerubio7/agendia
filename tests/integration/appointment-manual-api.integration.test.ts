@@ -54,6 +54,124 @@ beforeAll(async () => {
 }, 120_000);
 afterAll(async () => { await app?.close(); await pools?.end(); await database?.stop(); });
 
+test("operation status admits authenticated recovery without interpreting absence as rollback", async () => {
+  const o = await fixture(), key = randomUUID();
+  const response = await app.inject({ method: "GET", url: `/me/appointment-operations/${key}`, headers: { cookie: o.cookie } });
+  expect(response.statusCode).toBe(200);
+  expect(response.json()).toMatchObject({ key, businessId: o.business, identityId: o.actor, state: "not_found", appointment: null });
+});
+
+const receipt = (o: Owner, key: string) => app.inject({ method: "GET", url: `/me/appointment-operations/${key}`, headers: { cookie: o.cookie } });
+const fenced = (o: Owner, key: string, kind = "create", target: string | null = null) => app.inject({
+  method: "POST", url: `/me/appointment-operations/${key}/cancel`, headers: headers(o), payload: { key, kind, target },
+});
+const keyedPost = (o: Owner, key: string, payload: Record<string, unknown>) => app.inject({
+  method: "POST", url: "/me/appointments", headers: { ...headers(o), "x-appointment-operation-key": key }, payload,
+});
+
+test("same operation concurrently commits exactly once and canonical replay rejects payload changes", async () => {
+  const o = await fixture(), key = randomUUID(), payload = body(o, await offer(o)), before = await effects(o);
+  const responses = await Promise.all([keyedPost(o, key, payload), keyedPost(o, key, payload)]);
+  expect(responses.map(response => response.statusCode)).toEqual([201, 201]);
+  expect(responses[0]!.json()).toEqual(responses[1]!.json());
+  const saved = responses[0]!.json(), after = await effects(o);
+  expect(after.appointments).toHaveLength(1); expect(after.clients).toHaveLength(2);
+  expect(after.audit_events).toHaveLength((before.audit_events as unknown[]).length + 1); expect(after.outbox_events).toHaveLength(1);
+  expect((await receipt(o, key)).json()).toMatchObject({ state: "completed", httpStatus: 201, appointment: saved });
+  const replay = await keyedPost(o, key, { ...payload, serviceId: o.service.toUpperCase() });
+  expect(replay.statusCode).toBe(201); expect(replay.json()).toEqual(saved);
+  expect((await keyedPost(o, key, { ...payload, notes: "different" })).statusCode).toBe(409);
+  expect(await effects(o)).toEqual(after);
+  expect((await fenced(o, key)).json()).toMatchObject({ state: "completed", appointment: saved });
+});
+
+test("terminal conflict uses a savepoint, replays safely, and pre-arrival fence prevents every late effect", async () => {
+  const o = await fixture(), payload = body(o, await offer(o)), before = await effects(o), key = randomUUID();
+  const conflict = { ...payload, newClient: { ...payload.newClient, phone: "+5491123456789" } };
+  const first = await keyedPost(o, key, conflict);
+  expect(first.statusCode).toBe(409);
+  expect((await receipt(o, key)).json()).toMatchObject({ state: "failed", httpStatus: 409, appointment: null });
+  expect((await keyedPost(o, key, conflict)).body).toBe(first.body);
+  expect(await effects(o)).toEqual(before);
+  const cancelledKey = randomUUID();
+  expect((await fenced(o, cancelledKey)).json().state).toBe("cancelled");
+  expect((await receipt(o, cancelledKey)).json().state).toBe("cancelled");
+  expect((await keyedPost(o, cancelledKey, payload)).statusCode).toBe(409);
+  expect((await keyedPost(o, cancelledKey, { ...payload, notes: "late change" })).statusCode).toBe(409);
+  expect(await effects(o)).toEqual(before);
+});
+
+test("execution and fence serialize; pending is observed without a crash-stuck admission row", async () => {
+  const o = await fixture(), key = randomUUID(), payload = body(o, await offer(o));
+  let release!: () => void, acquired!: () => void;
+  const ready = new Promise<void>(resolve => { acquired = resolve; }), gate = new Promise<void>(resolve => { release = resolve; });
+  const holder = database.sql.begin(async tx => {
+    await tx`select pg_advisory_xact_lock(hashtextextended(${"business-calendar:" + o.business},0))`;
+    acquired(); await gate;
+  });
+  await ready;
+  const executing = keyedPost(o, key, payload);
+  let cancellation: ReturnType<typeof fenced> | null = null;
+  try {
+    let waiting = false;
+    for (let attempt = 0; attempt < 100 && !waiting; attempt++) {
+      const [row] = await database.sql`select exists(select 1 from pg_locks where locktype='advisory' and not granted) waiting`;
+      waiting = row!.waiting; if (!waiting) await Bun.sleep(10);
+    }
+    expect(waiting).toBe(true);
+    expect((await receipt(o, key)).json().state).toBe("pending");
+    cancellation = fenced(o, key);
+  } finally { release(); await holder; }
+  const result = await executing;
+  expect(result.statusCode).toBe(201);
+  expect((await cancellation!).json()).toMatchObject({ state: "completed", appointment: result.json() });
+  expect((await effects(o)).appointments).toHaveLength(1);
+});
+
+test("physical rollback cannot record completion; a restarted API can fence abandoned admission", async () => {
+  const o = await fixture(), key = randomUUID(), payload = body(o, await offer(o)), before = await effects(o);
+  await database.sql`create function fail_receipt_write() returns trigger language plpgsql as $$ begin raise exception 'receipt rollback fixture'; end $$`;
+  await database.sql`create trigger fail_receipt before insert on outbox_events for each row execute function fail_receipt_write()`;
+  try { expect((await keyedPost(o, key, payload)).statusCode).toBe(500); }
+  finally {
+    await database.sql`drop trigger fail_receipt on outbox_events`;
+    await database.sql`drop function fail_receipt_write()`;
+  }
+  expect(await effects(o)).toEqual(before);
+  expect((await receipt(o, key)).json().state).toBe("not_found");
+  const restarted = buildApi({ pools, expectedOrigin: origin });
+  try {
+    const cancellation = await restarted.inject({ method: "POST", url: `/me/appointment-operations/${key}/cancel`, headers: headers(o), payload: { key, kind: "create", target: null } });
+    expect(cancellation.json().state).toBe("cancelled");
+    expect((await restarted.inject({ method: "POST", url: "/me/appointments", headers: { ...headers(o), "x-appointment-operation-key": key }, payload })).statusCode).toBe(409);
+  } finally { await restarted.close(); }
+  expect(await effects(o)).toEqual(before);
+});
+
+test("receipt/fence scope is tenant AND identity, with original auth/CSRF/role checks and RLS", async () => {
+  const o = await fixture(), foreign = await fixture(), admin = await fixture(true), key = randomUUID();
+  const saved = (await keyedPost(o, key, body(o, await offer(o)))).json();
+  expect((await receipt(foreign, key)).json()).toMatchObject({ state: "not_found", appointment: null });
+  expect((await receipt(admin, key)).statusCode).toBe(403);
+  expect((await fenced(admin, key)).statusCode).toBe(403);
+  expect((await app.inject({ method: "GET", url: `/me/appointment-operations/${key}` })).statusCode).toBe(401);
+  expect((await app.inject({ method: "POST", url: `/me/appointment-operations/${key}/cancel`, headers: { ...headers(o), "x-csrf-token": "wrong" }, payload: { key, kind: "create", target: null } })).statusCode).toBe(403);
+  const actor = randomUUID(), email = `${actor}@example.test`;
+  // Replace the binding, never bypass the one-business-user invariant.
+  await database.sql`update auth_identities set role='platform_admin',business_id=null where id=${o.actor}`;
+  await database.sql`insert into auth_identities(id,normalized_email,password_phc,role,business_id) values(${actor},${email},${phc},'business_user',${o.business})`;
+  const login = await app.inject({ method: "POST", url: "/auth/login", headers: { origin }, payload: { email, password: "correct horse battery staple" } });
+  const cookies = login.headers["set-cookie"]!;
+  const second = { ...o, actor, cookie: (Array.isArray(cookies) ? cookies[0]! : cookies).split(";")[0]!, csrf: login.json().csrfToken };
+  expect((await receipt(second, key)).json()).toMatchObject({ state: "not_found", appointment: null });
+  expect((await fenced(second, key)).json().state).toBe("cancelled");
+  await database.sql`update auth_identities set role='platform_admin',business_id=null where id=${actor}`;
+  await database.sql`update auth_identities set role='business_user',business_id=${o.business} where id=${o.actor}`;
+  expect((await receipt(o, key)).json()).toMatchObject({ state: "completed", appointment: saved });
+  const visible = await pools.api.run({ businessId: o.business, actorId: actor, role: "business_user", requestId: randomUUID() }, repo => repo.appointmentOperation({ businessId: o.business, actorId: o.actor, role: "business_user", requestId: randomUUID() }, key));
+  expect(visible).toBeNull();
+});
+
 test("POST commits server terms, normalized new identity, manual Confirmed and generic events only", async () => {
   const o = await fixture(), slot = await offer(o), payload = body(o, slot), before = await effects(o);
   const response = await post(o, { ...payload, serviceId: o.service.toUpperCase(), resourceId: o.resource.toUpperCase(), startRaw: "2099-06-01T10:00:00-03:00", expectedTerms: { ...slot.terms, serviceId: o.service.toUpperCase(), resourceId: o.resource.toUpperCase() } });

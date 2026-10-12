@@ -29,6 +29,77 @@ import {
   type TestPostgres,
 } from "../support/index.ts";
 
+test("operation dispatch is one-write scoped and receipt/fence wrappers retain transport protections", async () => {
+  const calls: { path: string; init?: RequestInit }[] = [];
+  const signal = new AbortController().signal;
+  const client = new ApiClient(async (path, init) => {
+    calls.push({ path, ...(init ? { init } : {}) });
+    return Response.json(path === "/api/auth/login" ? { csrfToken: "receipt-csrf" } : { id: "saved" });
+  });
+  await client.login("receipt@example.test", "receipt test password");
+  calls.length = 0;
+  const key = "12345678-1234-4234-8234-123456789abc";
+  const captured: object[] = [];
+  await client.withAppointmentOperation(key, operation => captured.push(operation), () =>
+    client.appointmentNotes("record/slash", { notes: "One" }, signal));
+  await client.appointmentNotes("record/slash", { notes: "Legacy" }, signal);
+  await client.appointmentOperation("key/slash", signal);
+  await client.cancelAppointmentOperation({ key, kind: "notes", target: "record", actor: "untrusted" } as { key: string; kind: "notes"; target: string }, signal);
+  expect(captured).toEqual([{ key, kind: "notes", target: "record/slash" }]);
+  expect(new Headers(calls[0]!.init?.headers).get("x-appointment-operation-key")).toBe(key);
+  expect(new Headers(calls[1]!.init?.headers).has("x-appointment-operation-key")).toBe(false);
+  expect(calls[2]!.path).toBe("/api/me/appointment-operations/key%2Fslash");
+  expect(calls[2]!.init?.cache).toBe("no-store");
+  expect(calls[2]!.init?.method).toBe("GET");
+  expect(calls[3]!.path).toBe(`/api/me/appointment-operations/${key}/cancel`);
+  expect(calls[3]!.init?.method).toBe("POST");
+  expect(new Headers(calls[3]!.init?.headers).get("x-csrf-token")).toBe("receipt-csrf");
+  expect(JSON.parse(String(calls[3]!.init?.body))).toEqual({ key, kind: "notes", target: "record" });
+  for (const call of calls) { expect(call.init?.signal).toBe(signal); expect(call.init?.credentials).toBe("include"); }
+  expect(() => client.withAppointmentOperation(key, () => { throw new Error("capture rejected"); }, () => client.appointmentNotes("a", { notes: null }))).toThrow("capture rejected");
+  await client.appointmentOperation(key);
+  expect(new Headers(calls.at(-1)!.init?.headers).has("x-appointment-operation-key")).toBe(false);
+  await expect(client.appointmentOperation("..")).rejects.toThrow(TypeError);
+  await expect(client.cancelAppointmentOperation({ key: "..", kind: "create", target: null })).rejects.toThrow(TypeError);
+});
+
+test("Turnos wrappers allowlist wire bodies, encode queries and forward cancellation", async () => {
+  const signal = new AbortController().signal;
+  const calls: { path: string; init: RequestInit | undefined }[] = [];
+  const client = new ApiClient(async (path, init) => {
+    calls.push({ path, init });
+    return Response.json({ id: "saved" });
+  });
+  const terms = { serviceId: "s", resourceId: "r", serviceName: "Servicio", resourceName: "Recurso", durationMinutes: 30, priceArs: 0 };
+  const structure = { serviceId: "s", resourceId: "r", date: "2026-01-01", startRaw: "2026-01-01T10:00:00-03:00", expectedTerms: terms, confirmed: true as const };
+  await client.appointments({ from: "2026-01-01T00:00:00+03:00", to: "2026-02-01T00:00:00Z" }, signal);
+  await client.appointment("id/slash", signal);
+  await client.appointmentAvailability({ serviceId: "s &?", resourceId: "r", date: "2026-01-01", appointmentId: "a" }, signal);
+  await client.createAppointment({ ...structure, clientId: "c", businessId: "foreign" } as typeof structure & { clientId: string }, signal);
+  await client.createAppointment({ ...structure, newClient: { firstName: "Ana", lastName: "Pérez", phone: "11 23456789", role: "admin" } } as typeof structure & { newClient: { firstName: string; lastName: string; phone: string } }, signal);
+  await client.changeAppointment("id/slash", { ...structure, notes: "not structural" } as typeof structure, signal);
+  await client.appointmentNotes("a", { notes: null, state: "done" } as { notes: null }, signal);
+  await client.appointmentState("a", { state: "cancelled", confirmed: true, actor: "admin" } as { state: "cancelled"; confirmed: true }, signal);
+  expect(calls[0]?.path).toBe("/api/me/appointments?from=2026-01-01T00%3A00%3A00%2B03%3A00&to=2026-02-01T00%3A00%3A00Z");
+  expect(calls[1]?.path).toBe("/api/me/appointments/id%2Fslash");
+  expect(calls[2]?.path).toBe("/api/me/appointments/availability?serviceId=s+%26%3F&date=2026-01-01&resourceId=r&appointmentId=a");
+  expect(calls[5]?.path).toBe("/api/me/appointments/id%2Fslash");
+  expect(calls.map(call => call.init?.method)).toEqual(["GET", "GET", "GET", "POST", "POST", "PATCH", "PATCH", "PATCH"]);
+  expect(JSON.parse(String(calls[3]?.init?.body))).toEqual({ ...structure, clientId: "c" });
+  expect(JSON.parse(String(calls[4]?.init?.body))).toEqual({ ...structure, newClient: { firstName: "Ana", lastName: "Pérez", phone: "11 23456789" } });
+  expect(JSON.parse(String(calls[5]?.init?.body))).toEqual(structure);
+  expect(JSON.parse(String(calls[6]?.init?.body))).toEqual({ notes: null });
+  expect(JSON.parse(String(calls[7]?.init?.body))).toEqual({ state: "cancelled", confirmed: true });
+  for (const call of calls) {
+    expect(call.init?.signal).toBe(signal);
+    expect(call.init?.credentials).toBe("include");
+  }
+  for (const id of [".", ".."]) {
+    await expect(client.appointment(id)).rejects.toThrow(TypeError);
+    await expect(client.changeAppointment(id, structure)).rejects.toThrow(TypeError);
+  }
+});
+
 test("business calendar GET preserves nullable raw schedules and forwards cancellation", async () => {
   const signal = new AbortController().signal;
   for (const weeklySchedule of [null, {}, { 1: [{ startMinute: 547, endMinute: 123 }] }]) {
