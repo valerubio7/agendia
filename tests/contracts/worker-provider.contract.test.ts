@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import type {
   AiProvider,
   AiGenerateRequest,
+  AgendaProposalProvider,
+  AgendaProposal,
   ConversationSummarizer,
 } from "@agendia/domain";
 import {
@@ -35,7 +37,31 @@ describe("worker/provider production contracts", () => {
     });
     expect(double.calls).toHaveLength(1);
   });
-  test("classifies timeout without retry or credential exposure", async () => {
+  test("keeps proposal capability separate from text-only worker providers", async () => {
+    const textOnly: AiProvider = { generate: async () => ({ text: "unchanged", providerId: "text", usageTokens: 0 }) };
+    expect(await textOnly.generate(request)).toMatchObject({ text: "unchanged" });
+    const proposal = { operation: "read_catalog", arguments: {} } satisfies AgendaProposal;
+    const provider: AgendaProposalProvider = new DeepSeekAdapter({
+      apiKey: "secret", fetcher: async () => new Response(JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: JSON.stringify(proposal) } }],
+      })),
+    });
+    expect(await provider.proposeAgenda({
+      message: "Servicios?", context: { summary: "", recent: [] },
+      catalog: { services: [], resources: [] }, correlationId: "p1",
+    })).toEqual(proposal);
+  });
+  test("summary transport rejects malformed JSON and covers hung body", async () => {
+    for (const [fetcher, code] of [
+      [async () => new Response("{"), "invalid_response"],
+      [async () => new Response(new ReadableStream()), "timeout"],
+      [async () => { throw new Error("secret network"); }, "provider_unavailable"],
+    ] as const) {
+      const summarizer = new DeepSeekSummarizer({ apiKey: "secret", fetcher, totalTimeoutMs: 10 });
+      await expect(summarizer.summarize({ prior: null, messages: [], correlationId: "s1" })).rejects.toMatchObject({ code });
+    }
+  });
+  test("classifies transport failure without retry or credential exposure", async () => {
     const double = deepSeekFetchDouble({
         error: new Error("timeout never-log"),
       }),

@@ -299,9 +299,9 @@ describe("PostgreSQL messaging workers", () => {
       pools,
       new DeepSeekAdapter({
         apiKey: "hidden",
-        fetcher: async () => {
-          throw new Error("timeout hidden");
-        },
+        fetcher: async () => new Promise<Response>(() => {}),
+        connectTimeoutMs: 10,
+        totalTimeoutMs: 20,
       }),
       500,
     );
