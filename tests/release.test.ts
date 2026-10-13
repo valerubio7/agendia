@@ -258,8 +258,15 @@ for (const mode of ["pub-id", "pub-id-missing", "pub-id-string", "pub-path", "pu
 test("all eleven manifests and lock workspace versions agree", () => {
   const lock = readFileSync(join(root, "bun.lock"), "utf8");
   const workspaceSection = lock.split('  "packages": {')[0]!;
-  expect(workspaceSection.match(/"version": "0.7.1"/g)).toHaveLength(11);
+  // Bun omits the root version, but not its workspace identity.
+  const workspaces = JSON.parse((workspaceSection + "}").replace(/,\s*([}\]])/g, "$1")).workspaces;
+  expect(Object.keys(workspaces).sort()).toEqual([...paths].sort());
+  expect(workspaceSection.match(/"version": "0.7.1"/g)).toHaveLength(paths.length - 1);
   for (const path of paths) {
-    expect(JSON.parse(readFileSync(join(root, path, "package.json"), "utf8")).version).toBe("0.7.1");
+    const manifest = JSON.parse(readFileSync(join(root, path, "package.json"), "utf8"));
+    expect(manifest.version).toBe("0.7.1");
+    expect(workspaces[path].name).toBe(manifest.name);
+    if (path) expect(workspaces[path].version).toBe(manifest.version);
+    else expect(workspaces[path]).not.toHaveProperty("version");
   }
 });

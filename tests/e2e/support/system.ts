@@ -125,6 +125,10 @@ export interface SystemHarness {
     audit: Array<{ email: string; type: string; metadata: object }>;
     tenants: Array<{ email: string; messages: number }>;
   }>;
+  agendaEvidence(email: string, providerMessageId: string): Promise<{
+    state: string; failureCode: string | null; clients: number; appointments: number;
+    receipts: number; effects: number; outbound: number;
+  }>;
   summaryEvidence(): Promise<
     Array<{ email: string; version: number; coveredThrough: number }>
   >;
@@ -481,6 +485,22 @@ export async function startSystem(): Promise<SystemHarness> {
           workerEnv,
           providers.deepSeek.fetcher as typeof fetch,
         );
+      },
+      agendaEvidence: async (email, providerMessageId) => {
+        const rows = await database.sql<{
+          state: string; failureCode: string | null; clients: number; appointments: number;
+          receipts: number; effects: number; outbound: number;
+        }[]>`select j.state::text state,j.output->>'code' "failureCode",
+          (select count(*)::int from clients where business_id=m.business_id) clients,
+          (select count(*)::int from appointments where business_id=m.business_id) appointments,
+          (select count(*)::int from whatsapp_agenda_receipts where message_id=m.id) receipts,
+          (select count(*)::int from outbox_events where business_id=m.business_id and topic='appointment.changed') effects,
+          (select count(*)::int from outbound_commands where source_message_id=m.id) outbound
+          from messages m join auth_identities i on i.business_id=m.business_id
+          join pgboss.job j on j.data->>'messageId'=m.id::text and j.name='ai-generate'
+          where i.normalized_email=${email} and m.provider_message_id=${providerMessageId}`;
+        expect(rows).toHaveLength(1);
+        return rows[0]!;
       },
       summaryEvidence: () =>
         database.sql`select i.normalized_email email,s.version,s.covered_through::int "coveredThrough" from conversation_summaries s join auth_identities i on i.business_id=s.business_id order by email,s.version`,

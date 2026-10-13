@@ -40,6 +40,32 @@ const resourceWork = <T>(work: (repo: PostgresRepositories) => Promise<T>, busin
   withTenantTransaction(admin, resourceContext(businessId), tx => work(new PostgresRepositories(tx)));
 const resourceInput = { name: "Resource", serviceIds: [] as string[], weeklySchedule: {} };
 
+async function workerCatalogProbe(table: string) {
+  const read = (businessId: string) => admin.begin(async tx => {
+    await tx.unsafe("set local role agendia_worker_runtime");
+    await tx`select set_config('app.tenant_id', ${businessId}, true)`;
+    return tx.unsafe<{ business_id: string }[]>(`select business_id::text from ${table}`);
+  });
+  expect(await read("")).toHaveLength(0);
+  for (const tenant of [tenantA, tenantB]) assertNonEmptyTenantRows(await read(tenant), tenant);
+  // Clients intentionally permit INSERT, but never editing/deleting existing content.
+  for (const operation of ["UPDATE", "DELETE", "TRUNCATE", ...(table === "clients" ? [] : ["INSERT"])]) {
+    const [permission] = await admin`select has_table_privilege('agendia_worker_runtime',${table},${operation}) allowed`;
+    expect(permission!.allowed).toBe(false);
+  }
+  for (const operation of [`update ${table} set business_id='${tenantB}'`, `delete from ${table}`])
+    await expect(admin.begin(async tx => {
+      await tx.unsafe("set local role agendia_worker_runtime");
+      await tx`select set_config('app.tenant_id', ${tenantA}, true)`;
+      return tx.unsafe(operation);
+    })).rejects.toMatchObject({ code: "42501" });
+  if (table === "clients") await expect(admin.begin(async tx => {
+    await tx.unsafe("set local role agendia_worker_runtime");
+    await tx`select set_config('app.tenant_id', ${tenantA}, true)`;
+    return tx`insert into clients(business_id,first_name,last_name,phone) values(${tenantB},'Foreign','Write','+5491198765432')`;
+  })).rejects.toMatchObject({ code: "42501" });
+}
+
 test("resource storage has composite ownership, forced RLS and least privileges", async () => {
   const serviceA = randomUUID(), serviceB = randomUUID(), resourceA = randomUUID(), resourceB = randomUUID();
   await admin`insert into services(id,business_id,name,duration_minutes,price_ars) values
@@ -57,8 +83,9 @@ test("resource storage has composite ownership, forced RLS and least privileges"
     expect(flags).toEqual({ enabled: true, forced: true, catalog: true,
       deletion: table === "resource_services", updating: table === "resources" });
     expect(await admin.begin(async tx => { await tx.unsafe("set local role agendia_runtime"); return tx.unsafe(`select * from ${table}`); })).toHaveLength(0);
-    for (const role of ["agendia_admin_runtime", "agendia_whatsapp_runtime", "agendia_worker_runtime"])
+    for (const role of ["agendia_admin_runtime", "agendia_whatsapp_runtime"])
       await expect(admin.begin(async tx => { await tx.unsafe(`set local role ${role}`); return tx.unsafe(`select * from ${table}`); })).rejects.toThrow(/permission denied/i);
+    await workerCatalogProbe(table);
     const own = await withTenantTransaction(admin, resourceContext(), tx => tx.unsafe<{ business_id: string }[]>(`select business_id::text from ${table}`));
     assertNonEmptyTenantRows(own, tenantA);
     const crossWrite = withTenantTransaction(admin, resourceContext(), tx => table === "resources"
@@ -251,12 +278,13 @@ describe("forced tenant RLS", () => {
       return tx`select id from clients`;
     });
     expect(missing).toHaveLength(0);
-    for (const role of ["agendia_admin_runtime", "agendia_whatsapp_runtime", "agendia_worker_runtime"]) {
+    for (const role of ["agendia_admin_runtime", "agendia_whatsapp_runtime"]) {
       await expect(admin.begin(async tx => {
         await tx.unsafe(`set local role ${role}`);
         return tx`select id from clients`;
       })).rejects.toThrow(/permission denied/i);
     }
+    await workerCatalogProbe("clients");
     await expect(withTenantTransaction(admin, tenantContext({
       businessId: tenantA, actorId: "user-a", role: "business_user", requestId: "clients-delete",
     }), tx => tx`delete from clients`)).rejects.toThrow(/permission denied/i);
@@ -280,12 +308,13 @@ describe("forced tenant RLS", () => {
       has_table_privilege('agendia_runtime','business_calendars','DELETE') deletion
       from pg_class where oid='business_calendars'::regclass`;
     expect(permissions).toEqual({ enabled: true, forced: true, writes: true, deletion: false });
-    for (const role of ["agendia_admin_runtime", "agendia_whatsapp_runtime", "agendia_worker_runtime"]) {
+    for (const role of ["agendia_admin_runtime", "agendia_whatsapp_runtime"]) {
       await expect(admin.begin(async tx => {
         await tx.unsafe(`set local role ${role}`);
         return tx`select * from business_calendars`;
       })).rejects.toThrow(/permission denied/i);
     }
+    await workerCatalogProbe("business_calendars");
     for (const invalid of [null, [], { 7: [] }, { 0: null }, { 1: [{}] },
       ...[{ startMinute: 0, endMinute: 0 }, { startMinute: -1, endMinute: 60 },
         { startMinute: 1440, endMinute: 60 }, { startMinute: 0, endMinute: 1441 },
@@ -310,11 +339,12 @@ describe("forced tenant RLS", () => {
       from pg_class where oid='business_calendar_closures'::regclass`;
     expect(permissions).toEqual({ enabled: true, forced: true, crud: true });
     await expect(withTenantTransaction(admin, context, tx => tx`insert into business_calendar_closures(business_id,kind,closed_date) values(${tenantB},'date','2028-01-04')`)).rejects.toThrow(/row-level security|policy/i);
-    for (const role of ["agendia_admin_runtime", "agendia_whatsapp_runtime", "agendia_worker_runtime"])
+    for (const role of ["agendia_admin_runtime", "agendia_whatsapp_runtime"])
       await expect(admin.begin(async tx => {
         await tx.unsafe(`set local role ${role}`);
         return tx`select * from business_calendar_closures`;
       })).rejects.toThrow(/permission denied/i);
+    await workerCatalogProbe("business_calendar_closures");
     for (const mutation of ["kind='other'", "closed_date=null", "closed_date='10000-01-01'", "start_raw='extra'",
       "kind='interval',closed_date=null,start_raw='s',end_raw='e',start_ms=1,end_ms=1",
       "kind='interval',closed_date=null,start_raw='s',end_raw='e',start_ms=2,end_ms=1",

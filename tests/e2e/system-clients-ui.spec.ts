@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Page, type Request } from "@playwright/test";
 import { test } from "./support/fixtures.ts";
 
 async function login(page: Page, url: string, email: string, password: string) {
@@ -313,13 +313,26 @@ test("Clientes fences an uncertain standalone POST across reload until GET confi
     await expect(form.locator('button[type="submit"]')).toBeDisabled();
     expect(posts).toBe(1);
     const check = screen.getByRole("button", { name: "Comprobar cliente", exact: true });
+    await business.unroute("**/api/me/clients");
+    const recoveryUrl = new URL("/api/me/clients", system.webUrl).href;
     for (const [status, body] of [[500, '{"code":"INTERNAL_ERROR"}'], [200, "[]"],
       [200, JSON.stringify([{ ...saved, firstName: "Otra persona" }])]] as const) {
-      await business.unroute("**/api/me/clients");
-      await business.route("**/api/me/clients", route => route.fulfill({ status, contentType: "application/json", body }));
-      const checked = business.waitForResponse(response => response.request().method() === "GET" && new URL(response.url()).pathname === "/api/me/clients");
+      let intercepted: Request | undefined;
+      let handled = 0;
+      await business.route(recoveryUrl, async route => {
+        intercepted = route.request();
+        expect(intercepted.method()).toBe("GET");
+        handled++;
+        await route.fulfill({ status, contentType: "application/json", body });
+      }, { times: 1 });
+      const checked = business.waitForResponse(response => response.request() === intercepted);
       await check.click();
-      expect((await checked).status()).toBe(status);
+      await expect.poll(() => handled, { message: "The recovery click must hit the one-shot exact-URL handler" }).toBe(1);
+      const response = await checked;
+      expect(response.request()).toBe(intercepted);
+      expect(response.url()).toBe(recoveryUrl);
+      expect(response.status()).toBe(status);
+      expect(handled).toBe(1);
       await expect(check).toBeEnabled();
       await expect(form.getByLabel("Teléfono", { exact: true })).toHaveValue(draft.Teléfono);
       await expect(form.locator('button[type="submit"]')).toBeDisabled();

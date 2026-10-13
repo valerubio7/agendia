@@ -1,4 +1,5 @@
 import type { SocketFactory } from "@agendia/whatsapp-baileys";
+import { AgendaProposalSchema, type AgendaProposal } from "@agendia/domain";
 
 type SendOutcome = "ack" | "rejected" | "crash";
 class DeterministicSocket {
@@ -149,7 +150,7 @@ export class DeterministicBaileysSystemDouble {
       (s) => !s.ended && s.user.id.startsWith(`${linkedNumber}:`),
     );
     if (!socket) throw new Error(`socket unavailable: ${linkedNumber}`);
-    await socket.emit("messages.upsert", { messages: [message] });
+    await socket.emit("messages.upsert", { type: "notify", messages: [message] });
     const id = (message.key as { id?: string } | undefined)?.id;
     if (id) this.ingressIds.push(id);
   }
@@ -170,6 +171,15 @@ export class DeterministicDeepSeekSystemDouble {
   active = false;
   next: "success" | "timeout" | "error" = "success";
   summaryNext: "success" | "timeout" | "error" = "success";
+  agendaProposal: AgendaProposal | null = null;
+  private agendaTransport: "success" | "header-deadline" | "body-deadline" | "error" = "success";
+  private observedFailure?: () => void;
+  agendaAborts = 0;
+  configureAgendaTransport(mode: typeof this.agendaTransport): Promise<void> {
+    this.agendaTransport = mode;
+    if (mode === "success") return Promise.resolve();
+    return new Promise(resolve => { this.observedFailure = resolve; });
+  }
   readonly fetcher = async (
     _input: string | URL | Request,
     init?: RequestInit,
@@ -184,6 +194,40 @@ export class DeterministicDeepSeekSystemDouble {
     if (outcome === "timeout") throw new Error("deterministic timeout");
     if (outcome === "error")
       return new Response("provider unavailable", { status: 503 });
+    const agenda = !summary && JSON.parse(body).response_format?.type === "json_object";
+    if (agenda && this.agendaTransport === "error") {
+      this.observedFailure?.();
+      return new Response("provider unavailable", { status: 503 });
+    }
+    if (agenda && this.agendaTransport !== "success") {
+      const signal = init?.signal;
+      if (!signal) throw new Error("Deadline transport requires an abort signal");
+      if (this.agendaTransport === "header-deadline") return new Promise<Response>((_resolve, reject) => {
+        const abort = () => {
+          signal.removeEventListener("abort", abort);
+          this.agendaAborts++;
+          this.observedFailure?.();
+          reject(new Error("aborted header transport"));
+        };
+        if (signal.aborted) abort();
+        else signal.addEventListener("abort", abort, { once: true });
+      });
+      let abort: () => void;
+      const stream = new ReadableStream<Uint8Array>({
+        start: controller => {
+          abort = () => {
+            signal.removeEventListener("abort", abort);
+            this.agendaAborts++;
+            this.observedFailure?.();
+            controller.error(new Error("aborted body transport"));
+          };
+          if (signal.aborted) abort();
+          else signal.addEventListener("abort", abort, { once: true });
+        },
+        cancel: () => { signal.removeEventListener("abort", abort); },
+      });
+      return new Response(stream, { status: 200 });
+    }
     const content = summary
       ? JSON.stringify({
           facts: ["Resumen determinista"],
@@ -192,11 +236,13 @@ export class DeterministicDeepSeekSystemDouble {
           preferences: [],
           openItems: [],
         })
-      : `Respuesta determinista ${this.calls.length}`;
+      : agenda && this.agendaProposal
+        ? JSON.stringify(AgendaProposalSchema.parse(this.agendaProposal))
+        : `Respuesta determinista ${this.calls.length}`;
     return new Response(
       JSON.stringify({
         id: `deepseek-${this.calls.length}`,
-        choices: [{ message: { content } }],
+        choices: [{ message: { content }, ...(agenda && this.agendaProposal ? { finish_reason: "stop" } : {}) }],
         usage: { total_tokens: 3 },
       }),
       { status: 200 },

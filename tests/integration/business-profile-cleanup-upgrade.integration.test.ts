@@ -160,11 +160,64 @@ test("populated upgrade consolidates every assistant text while preserving profi
     expect(beforeSecurity.grants.filter(row => row.grantee === removedGrant.grantee &&
       row.table_name === removedGrant.table_name && row.privilege_type === removedGrant.privilege_type)).toEqual([removedGrant]);
     const afterSecurity = await security(db);
-    expect({ ...afterSecurity, grants: [...afterSecurity.grants] }).toEqual({
-      ...beforeSecurity,
-      grants: beforeSecurity.grants.filter(row => !(row.grantee === removedGrant.grantee &&
-        row.table_name === removedGrant.table_name && row.privilege_type === removedGrant.privilege_type)),
-    });
+    expect(afterSecurity.rls).toEqual(beforeSecurity.rls);
+    const newTables = ["services", "clients", "business_calendars", "business_calendar_closures",
+      "resources", "resource_services", "appointments", "appointment_operation_receipts",
+      "whatsapp_sender_bindings", "whatsapp_received_senders", "whatsapp_agenda_dialogues", "whatsapp_agenda_receipts"];
+    const owners = await db.sql<{ owner: string }[]>`select current_user owner`;
+    const owner = owners[0]!.owner;
+    const expectedGrants: typeof beforeSecurity.grants[number][] = [];
+    const grant = (grantee: string, tables: string[], privileges: string[], is_grantable = "NO") => {
+      for (const table_name of tables) for (const privilege_type of privileges)
+        expectedGrants.push({ grantee, table_name, privilege_type, is_grantable });
+    };
+    grant(owner, newTables, ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"], "YES");
+    grant("agendia_runtime", newTables.slice(0, 5).concat("appointments"), ["SELECT", "INSERT", "UPDATE"]);
+    grant("agendia_runtime", ["business_calendar_closures"], ["DELETE"]);
+    grant("agendia_runtime", ["resource_services"], ["SELECT", "INSERT", "DELETE"]);
+    grant("agendia_runtime", ["appointment_operation_receipts"], ["SELECT", "INSERT"]);
+    grant("agendia_whatsapp_runtime", ["whatsapp_sender_bindings"], ["SELECT", "INSERT", "UPDATE"]);
+    grant("agendia_whatsapp_runtime", ["whatsapp_received_senders"], ["INSERT"]);
+    grant("agendia_worker_runtime", newTables.slice(0, 7).concat("whatsapp_sender_bindings", "whatsapp_received_senders"), ["SELECT"]);
+    grant("agendia_worker_runtime", ["clients", "appointments", "outbox_events"], ["INSERT"]);
+    grant("agendia_worker_runtime", ["appointments"], ["UPDATE"]);
+    grant("agendia_worker_runtime", ["whatsapp_agenda_dialogues"], ["SELECT", "INSERT", "UPDATE"]);
+    grant("agendia_worker_runtime", ["whatsapp_agenda_receipts"], ["SELECT", "INSERT"]);
+    const key = (row: unknown) => JSON.stringify(row);
+    expect(afterSecurity.grants.filter(row => !beforeSecurity.grants.some(old => key(old) === key(row))).map(key).sort())
+      .toEqual(expectedGrants.map(key).sort());
+    expect(beforeSecurity.grants.filter(row => !afterSecurity.grants.some(next => key(next) === key(row))))
+      .toEqual([removedGrant]);
+    const oldPolicies = new Set(beforeSecurity.policies.map(row => `${row.tablename}:${row.policyname}`));
+    expect(afterSecurity.policies.filter(row => oldPolicies.has(`${row.tablename}:${row.policyname}`)))
+      .toEqual(beforeSecurity.policies);
+    const addedPolicies = afterSecurity.policies.filter(row => !oldPolicies.has(`${row.tablename}:${row.policyname}`));
+    const expectedPolicies = newTables.slice(0, 7).map(table => `${table}:${table}_tenant:ALL:agendia_runtime`);
+    expectedPolicies.push("appointment_operation_receipts:appointment_operation_owner:ALL:agendia_runtime");
+    for (const table of newTables.slice(8)) for (const role of ["manager", "worker"])
+      expectedPolicies.push(`${table}:tenant_${role}:ALL:agendia_${role === "manager" ? "whatsapp" : "worker"}_runtime`);
+    for (const table of newTables.slice(0, 7)) expectedPolicies.push(`${table}:agenda_worker_read:SELECT:agendia_worker_runtime`);
+    expectedPolicies.push("clients:agenda_worker_client_create:INSERT:agendia_worker_runtime",
+      "appointments:agenda_worker_appointment_create:INSERT:agendia_worker_runtime",
+      "appointments:agenda_worker_appointment_change:UPDATE:agendia_worker_runtime",
+      "outbox_events:agenda_worker_outbox:INSERT:agendia_worker_runtime");
+    expect(addedPolicies.map(row => `${row.tablename}:${row.policyname}:${row.cmd}:${row.roles.join(",")}`).sort())
+      .toEqual(expectedPolicies.sort());
+    const normalizePredicate = (value: string) => value.toLowerCase().replace(/::text|[()\s]/g, "");
+    const tenantPredicate = normalizePredicate(beforeSecurity.policies.find(row => row.policyname === "business_profiles_tenant")!.qual);
+    for (const policy of addedPolicies) {
+      expect(policy.permissive).toBe("PERMISSIVE");
+      const predicate = policy.policyname === "appointment_operation_owner"
+        ? tenantPredicate + "andactor_id=nullifcurrent_setting'app.actor_id',true,''::uuidandcurrent_setting'app.actor_role',true='business_user'"
+        : tenantPredicate;
+      expect(policy.qual === null ? null : normalizePredicate(policy.qual))
+        .toBe(policy.cmd === "INSERT" ? null : predicate);
+      expect(policy.with_check === null ? null : normalizePredicate(policy.with_check))
+        .toBe(policy.cmd === "SELECT" ? null : predicate);
+    }
+    const flags = await db.sql`select relname,relrowsecurity,relforcerowsecurity from pg_class where relname=any(${newTables})`;
+    expect(flags).toHaveLength(newTables.length);
+    expect(flags.every(row => row.relrowsecurity && row.relforcerowsecurity)).toBe(true);
   } finally {
     await db.stop();
   }
