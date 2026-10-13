@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { api, type Client, type ClientInput, type AppointmentRecord } from "../api-client";
+import { api, ApiError, type Client, type ClientInput, type AppointmentRecord } from "../api-client";
+import { normalizeClientPhone } from "../../../../packages/domain/src/client-registry";
 import { formatArgentinaClosureInstant } from "./argentina-closure-time";
 
 type ReadState<T> = { rows: T[]; pending: boolean; error: string };
@@ -26,14 +27,39 @@ function Appointments({ title, rows }: { title: string; rows: AppointmentRecord[
   </section>;
 }
 
-export function ClientsScreen({ disabled, sessionActive }: {
-  disabled: boolean; sessionActive: () => boolean;
+const uncertainMessage = "No pudimos confirmar si el cliente se guardó. Comprobá el cliente antes de continuar.";
+const storageMessage = "No pudimos proteger el intento en este navegador. No enviaremos otro cliente.";
+
+export function ClientsScreen({ disabled, sessionActive, businessId, identityId }: {
+  disabled: boolean; sessionActive: () => boolean; businessId: string | null; identityId: string;
 }) {
+  // Local recovery evidence, not a backend receipt or a cross-device guarantee.
+  const journalKey = businessId && identityId ? `agendia.client-create:${businessId}:${identityId}` : null;
+  const fenced = useRef(true);
+  const journalValue = useRef<string | null>(null);
+  const [uncertain, setUncertain] = useState(false);
+  const [storageError, setStorageError] = useState("");
+  const clearJournal = () => {
+    try {
+      if (!journalKey || journalValue.current === null || localStorage.getItem(journalKey) !== journalValue.current)
+        throw new Error("Journal ownership lost");
+      localStorage.removeItem(journalKey);
+      if (localStorage.getItem(journalKey) !== null) throw new Error("Journal retained");
+      fenced.current = false;
+      setUncertain(false);
+      setStorageError("");
+      return true;
+    } catch {
+      setStorageError(storageMessage);
+      return false;
+    }
+  };
   const [list, setList] = useState<ReadState<Client>>(emptyRead);
   const [history, setHistory] = useState<ReadState<AppointmentRecord>>(emptyRead);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Client | null>(null);
   const [draft, setDraft] = useState<ClientInput | null>(null);
+  const [creating, setCreating] = useState(false);
   const [pending, setPending] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [notice, setNotice] = useState("");
@@ -46,7 +72,8 @@ export function ClientsScreen({ disabled, sessionActive }: {
   const mutation = useRef<AbortController | null>(null);
   const mounted = useRef(false);
   const form = useRef<HTMLFormElement>(null);
-  const focusTarget = useRef<"name" | "save" | "edit" | null>(null);
+  const focusTarget = useRef<"name" | "save" | "edit" | "create" | null>(null);
+  const createButton = useRef<HTMLButtonElement>(null);
   const editButton = useRef<HTMLButtonElement>(null);
   const [focusRevision, setFocusRevision] = useState(0);
   const scheduleFocus = (target: typeof focusTarget.current) => {
@@ -57,7 +84,7 @@ export function ClientsScreen({ disabled, sessionActive }: {
     const target = focusTarget.current;
     focusTarget.current = null;
     if (disabled || !sessionActive()) return;
-    const element = target === "edit" ? editButton.current
+    const element = target === "edit" ? editButton.current : target === "create" ? createButton.current
       : form.current?.querySelector<HTMLInputElement | HTMLButtonElement>(target === "name" ? '[name="firstName"]' : '[type="submit"]');
     if (element?.isConnected && !element.disabled) element.focus();
   }, [focusRevision]);
@@ -100,6 +127,25 @@ export function ClientsScreen({ disabled, sessionActive }: {
   };
   useEffect(() => {
     mounted.current = true;
+    fenced.current = true;
+    try {
+      if (!journalKey) throw new Error("Missing authenticated scope");
+      const raw = localStorage.getItem(journalKey);
+      if (raw !== null) {
+        const entry = JSON.parse(raw);
+        if (entry?.version !== 1 || !entry.draft || Object.keys(entry).length !== 2 ||
+            Object.keys(entry.draft).length !== 3 ||
+            !["firstName", "lastName", "phone"].every(key => typeof entry.draft[key] === "string"))
+          throw new Error("Invalid journal");
+        journalValue.current = raw;
+        setDraft(entry.draft);
+        setCreating(true);
+        setUncertain(true);
+        setSaveError(uncertainMessage);
+      } else fenced.current = false;
+    } catch {
+      setStorageError(storageMessage);
+    }
     void loadList();
     const clock = () => setNow(Date.now());
     const timer = setInterval(clock, 30_000);
@@ -127,6 +173,8 @@ export function ClientsScreen({ disabled, sessionActive }: {
     owner.current++;
     listRequest.current?.abort();
     historyRequest.current?.abort();
+    if (mutation.current) setSaveError(creating ? uncertainMessage
+      : "No pudimos confirmar si el cliente se guardó. Actualizá los clientes antes de volver a guardar.");
     mutation.current?.abort();
     mutation.current = null;
     listRequest.current = null;
@@ -136,11 +184,12 @@ export function ClientsScreen({ disabled, sessionActive }: {
     setHistory(state => ({ ...state, pending: false, error: selectedRef.current ? "La lectura se interrumpió. Actualizá los turnos." : "" }));
   }, [disabled]);
   const select = (client: Client | null) => {
-    if (mutation.current || disabled || !sessionActive()) return;
+    if (mutation.current || fenced.current || disabled || !sessionActive()) return;
     historyRequest.current?.abort();
     historyRequest.current = null;
     selectedRef.current = client;
     setSelected(client);
+    setCreating(false);
     setDraft(null);
     setSaveError("");
     setNotice("");
@@ -149,14 +198,41 @@ export function ClientsScreen({ disabled, sessionActive }: {
   };
   const searchClients = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (mutation.current || disabled || !sessionActive()) return;
+    if (mutation.current || fenced.current || disabled || !sessionActive()) return;
     select(null); // Search owns the list; a former selection cannot keep hidden detail alive.
     void loadList(search.trim());
+  };
+  const startCreate = () => {
+    if (mutation.current || fenced.current || disabled || !sessionActive()) return;
+    select(null);
+    setCreating(true);
+    setDraft({ firstName: "", lastName: "", phone: "" });
+    scheduleFocus("name");
+  };
+  const cancelCreate = () => {
+    if (mutation.current || fenced.current || disabled || !sessionActive()) return;
+    setCreating(false);
+    setDraft(null);
+    setSaveError("");
+    scheduleFocus("create");
   };
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const client = selectedRef.current;
-    if (!client || !draft || mutation.current || disabled || !sessionActive()) return;
+    if ((!client && !creating) || !draft || mutation.current || fenced.current || disabled || !sessionActive()) return;
+    if (creating) {
+      fenced.current = true;
+      setUncertain(true);
+      try {
+        if (!journalKey || localStorage.getItem(journalKey) !== null) throw new Error("Journal unavailable");
+        journalValue.current = JSON.stringify({ version: 1, draft });
+        localStorage.setItem(journalKey, journalValue.current);
+        if (localStorage.getItem(journalKey) !== journalValue.current) throw new Error("Journal not durable");
+      } catch {
+        setStorageError(storageMessage);
+        return; // A POST is forbidden without durable local evidence.
+      }
+    }
     const controller = new AbortController(), generation = owner.current;
     mutation.current = controller;
     listRequest.current?.abort();
@@ -166,15 +242,26 @@ export function ClientsScreen({ disabled, sessionActive }: {
     setHistory(state => ({ ...state, pending: false }));
     setSaveError("");
     setNotice("");
-    const owns = () => current(generation, controller) && mutation.current === controller && selectedRef.current?.id === client.id;
+    const owns = () => current(generation, controller) && mutation.current === controller && selectedRef.current?.id === client?.id;
     try {
-      const saved = await api.updateClient(client.id, draft, controller.signal);
+      const saved = creating ? await api.createClient(draft, controller.signal)
+        : await api.updateClient(client!.id, draft, controller.signal);
       if (!owns()) return;
+      if (creating && !clearJournal()) {
+        setPending(false);
+        return;
+      }
       // The confirmed DTO is authoritative even if either subsequent GET fails.
       selectedRef.current = saved;
       setSelected(saved);
-      setList(state => ({ ...state, rows: state.rows.map(row => row.id === saved.id ? saved : row), pending: false }));
-      setHistory(state => ({ ...state, rows: state.rows.map(row => ({ ...row, client: saved })), pending: false }));
+      setList(state => ({ ...state, rows: creating ? [saved, ...state.rows.filter(row => row.id !== saved.id)]
+        : state.rows.map(row => row.id === saved.id ? saved : row), pending: false }));
+      setHistory(state => ({ ...state, rows: creating ? [] : state.rows.map(row => ({ ...row, client: saved })), pending: false }));
+      if (creating) {
+        setSearch("");
+        query.current = "";
+      }
+      setCreating(false);
       setDraft(null);
       setNotice("Cliente guardado");
       mutation.current = null;
@@ -182,25 +269,89 @@ export function ClientsScreen({ disabled, sessionActive }: {
       historyRequest.current = null;
       setPending(false);
       scheduleFocus("edit");
-      // Independent read recovery cannot fall through the PUT failure branch.
+      // Independent GET recovery cannot fall through the mutation failure branch.
       void loadList();
       void loadHistory(saved);
     } catch (cause) {
       if (!owns()) return;
-      setSaveError(api.errorMessage(cause));
+      const rejected = cause instanceof ApiError && [400, 401, 403, 404, 409].includes(cause.status);
+      if (creating && (!rejected || !clearJournal())) setSaveError(uncertainMessage);
+      else setSaveError(cause instanceof ApiError ? api.errorMessage(cause)
+        : "No pudimos confirmar si el cliente se guardó. Actualizá los clientes antes de volver a guardar.");
       setPending(false);
       scheduleFocus("save");
     } finally {
       if (mutation.current === controller) mutation.current = null;
     }
   };
-  const locked = disabled || pending;
+  const checkClient = async () => {
+    if (!uncertain || !draft || mutation.current || disabled || !sessionActive()) return;
+    listRequest.current?.abort();
+    listRequest.current = null;
+    historyRequest.current?.abort();
+    historyRequest.current = null;
+    const controller = new AbortController(), generation = owner.current;
+    mutation.current = controller;
+    setPending(true);
+    setSaveError("");
+    const owns = () => current(generation, controller) && mutation.current === controller;
+    try {
+      const rows = await api.clients("", controller.signal);
+      if (!owns()) return;
+      const phone = normalizeClientPhone(draft.phone);
+      const matches = rows.filter(row => phone && row.phone === phone &&
+        row.firstName === draft.firstName.trim() && row.lastName === draft.lastName.trim());
+      if (matches.length !== 1) {
+        setSaveError(uncertainMessage); // Absence or mismatched names never proves rollback.
+        return;
+      }
+      if (!clearJournal()) return;
+      const saved = matches[0]!;
+      selectedRef.current = saved;
+      setSelected(saved);
+      setList({ rows, pending: false, error: "" });
+      setHistory(emptyRead());
+      setCreating(false);
+      setDraft(null);
+      setSearch("");
+      query.current = "";
+      setNotice("Este cliente existe");
+      setPending(false);
+      mutation.current = null;
+      historyRequest.current = null;
+      scheduleFocus("edit");
+      void loadHistory(saved);
+    } catch (cause) {
+      if (owns()) setSaveError(api.errorMessage(cause));
+    } finally {
+      if (owns()) setPending(false);
+      if (mutation.current === controller) mutation.current = null;
+    }
+  };
+  const locked = disabled || pending || fenced.current || !!storageError;
   return <main className="clients-screen" aria-labelledby="clients-title">
     <h1 id="clients-title">Clientes</h1>
     <p>Buscá por nombre o teléfono. Los turnos conservan las condiciones originales del servicio y recurso.</p>
+    {storageError && <p role="alert">{storageError}</p>}
+    <button ref={createButton} disabled={locked || creating} onClick={startCreate}>Crear cliente</button>
+    {creating && draft && <form ref={form} aria-label="Crear cliente" aria-busy={pending} onSubmit={save}>
+      {([ ["firstName", "Nombre"], ["lastName", "Apellido"], ["phone", "Teléfono"] ] as const).map(([key, label]) =>
+        <label key={key} htmlFor={`create-client-${key}`}>{label}
+          <input id={`create-client-${key}`} name={key} type={key === "phone" ? "tel" : "text"} required disabled={locked}
+            value={draft[key]} onChange={event => {
+              if (!fenced.current && !mutation.current && !disabled && sessionActive()) setDraft({ ...draft, [key]: event.target.value });
+            }} />
+        </label>)}
+      {saveError && <p role="alert">{saveError}</p>}
+      <button disabled={locked} type="submit">{pending ? "Guardando…" : "Crear cliente"}</button>
+      <button disabled={locked} type="button" onClick={cancelCreate}>Cancelar</button>
+      {uncertain && <button disabled={disabled || pending} type="button" onClick={() => void checkClient()}>Comprobar cliente</button>}
+    </form>}
     <form aria-label="Buscar clientes" onSubmit={searchClients}>
       <label htmlFor="clients-search">Nombre o teléfono</label>
-      <input id="clients-search" value={search} disabled={locked} onChange={event => setSearch(event.target.value)} />
+      <input id="clients-search" value={search} disabled={locked} onChange={event => {
+        if (!fenced.current && !mutation.current && !disabled && sessionActive()) setSearch(event.target.value);
+      }} />
       <button disabled={locked} type="submit">Buscar</button>
     </form>
     {list.pending && <p role="status">Cargando clientes…</p>}
@@ -218,17 +369,23 @@ export function ClientsScreen({ disabled, sessionActive }: {
       <h2>{selected.firstName} {selected.lastName}</h2><p>{selected.phone}</p>
       {notice && <p role="status">{notice}</p>}
       {!draft ? <button ref={editButton} disabled={locked} onClick={() => {
+        if (mutation.current || fenced.current || disabled || !sessionActive()) return;
         setDraft({ firstName: selected.firstName, lastName: selected.lastName, phone: selected.phone });
         setSaveError(""); scheduleFocus("name");
       }}>Editar cliente</button> : <form ref={form} aria-label="Editar cliente" aria-busy={pending} onSubmit={save}>
         {([ ["firstName", "Nombre"], ["lastName", "Apellido"], ["phone", "Teléfono"] ] as const).map(([key, label]) =>
           <label key={key} htmlFor={`client-${key}`}>{label}
             <input id={`client-${key}`} name={key} type={key === "phone" ? "tel" : "text"} required disabled={locked}
-              value={draft[key]} onChange={event => setDraft({ ...draft, [key]: event.target.value })} />
+              value={draft[key]} onChange={event => {
+                if (!fenced.current && !mutation.current && !disabled && sessionActive()) setDraft({ ...draft, [key]: event.target.value });
+              }} />
           </label>)}
         {saveError && <p role="alert">{saveError}</p>}
         <button disabled={locked} type="submit">{pending ? "Guardando…" : "Guardar cambios"}</button>
-        <button disabled={locked} type="button" onClick={() => { setDraft(null); setSaveError(""); scheduleFocus("edit"); }}>Cancelar</button>
+        <button disabled={locked} type="button" onClick={() => {
+          if (mutation.current || fenced.current || disabled || !sessionActive()) return;
+          setDraft(null); setSaveError(""); scheduleFocus("edit");
+        }}>Cancelar</button>
       </form>}
       {history.pending && <p role="status">Cargando turnos…</p>}
       {history.error && <div className="clients-warning"><p role="alert">{notice ? "El cliente se guardó, pero no pudimos actualizar los turnos." : history.error}</p>

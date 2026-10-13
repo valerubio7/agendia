@@ -756,7 +756,8 @@ export function LivePanel({ mode }: { mode: Mode }) {
     return <AuthenticatedShell variant="business" activeHref="/clients"
       logoutPending={logoutPending} logoutAction={() => void logout()}>
       {feedback}
-      <ClientsScreen key={`${session.businessId}:${generation}`} disabled={logoutPending}
+      <ClientsScreen key={`${session.businessId}:${session.identityId}:${generation}`} disabled={logoutPending}
+        businessId={session.businessId} identityId={session.identityId}
         sessionActive={() => !logoutPendingRef.current && loadAttemptRef.current === generation} />
     </AuthenticatedShell>;
   }

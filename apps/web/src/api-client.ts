@@ -15,6 +15,7 @@ export type ClientInput = Pick<Client, "firstName" | "lastName" | "phone">;
 export type { PlatformAiInstructions } from "@agendia/contracts";
 
 export type Session = {
+  identityId: string;
   role: "platform_admin" | "business_user";
   businessId: string | null;
 };
@@ -323,6 +324,9 @@ export class ApiClient {
   clients = (q = "", signal?: AbortSignal) =>
     this.call<Client[]>("/me/clients", "GET", undefined, undefined, signal,
       q.trim() ? new URLSearchParams({ q: q.trim() }) : undefined);
+  createClient = (body: ClientInput, signal?: AbortSignal) =>
+    this.call<Client>("/me/clients", "POST",
+      { firstName: body.firstName, lastName: body.lastName, phone: body.phone }, undefined, signal);
   updateClient = (id: string, body: ClientInput, signal?: AbortSignal) =>
     this.call<Client>(`/me/clients/${encodeURIComponent(id)}`, "PUT",
       { firstName: body.firstName, lastName: body.lastName, phone: body.phone }, undefined, signal);

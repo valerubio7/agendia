@@ -184,6 +184,33 @@ test("Argentina closure display retains local days, precision and per-instant of
     .toBe("01/01/2009, 22:00:00.007 (Argentina, GMT-02:00)");
 });
 
+test("standalone client POST allowlists raw input and returns the canonical DTO with transport protections", async () => {
+  const signal = new AbortController().signal;
+  const calls: { path: string; init?: RequestInit }[] = [];
+  const saved = { id: "owned-client", firstName: "Alicia", lastName: "Gómez", phone: "+5491123456789" };
+  const client = new ApiClient(async (path, init) => {
+    if (path === "/api/auth/login") return Response.json({ csrfToken: "create-client-csrf" });
+    if (path === "/api/auth/session") return Response.json({ role: "business_user", businessId: "tenant" });
+    calls.push({ path, ...(init === undefined ? {} : { init }) });
+    return Response.json(saved, { status: 201 });
+  });
+  await client.login("create-client@example.test", "safe test password");
+  const input = { firstName: " Alicia ", lastName: " Gómez ", phone: "11 2345-6789",
+    businessId: "foreign", id: "untrusted", role: "admin" };
+  expect(await client.createClient(input, signal)).toEqual(saved);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.path).toBe("/api/me/clients");
+  expect(calls[0]?.init?.method).toBe("POST");
+  expect(calls[0]?.init?.signal).toBe(signal);
+  expect(calls[0]?.init?.credentials).toBe("include");
+  const headers = new Headers(calls[0]?.init?.headers);
+  expect(headers.get("content-type")).toBe("application/json");
+  expect(headers.get("x-csrf-token")).toBe("create-client-csrf");
+  expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+    firstName: " Alicia ", lastName: " Gómez ", phone: "11 2345-6789",
+  });
+});
+
 test("client query encoding preserves literal search and history identity without admitting unsafe paths", async () => {
   const signal = new AbortController().signal;
   const paths: string[] = [];
@@ -316,12 +343,13 @@ describe("Next web client against Fastify contracts", () => {
     const safeTransport: ApiTransport = async (input) => {
       transportCalls += 1;
       expect(input).toBe("/api/auth/session");
-      return Response.json({ role: "platform_admin", businessId: null });
+      return Response.json({ role: "platform_admin", businessId: null, identityId: "admin-identity" });
     };
 
     await expect(new ApiClient(safeTransport).session()).resolves.toEqual({
       role: "platform_admin",
       businessId: null,
+      identityId: "admin-identity",
     });
     expect(transportCalls).toBe(1);
 
@@ -463,6 +491,12 @@ describe("Next web client against Fastify contracts", () => {
       (await tenant.login("tenant@web.test", "replacement tenant password"))
         .role,
     ).toBe("business_user");
+    const [identity] = await database.sql`select id from auth_identities where normalized_email = ${"tenant@web.test"}`;
+    expect(identity).toBeDefined();
+    if (!identity) throw new Error("Expected the authenticated tenant identity row");
+    expect(await tenant.session()).toEqual({ role: "business_user", businessId: business.id, identityId: identity.id });
+    const repeatedSession = await tenant.login("tenant@web.test", "replacement tenant password");
+    expect(repeatedSession.identityId).toBe(identity.id);
     const profile = {
       displayName: "Tenant",
       description: "",

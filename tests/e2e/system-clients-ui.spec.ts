@@ -230,3 +230,392 @@ test("Clientes searches and edits owned identities with complete appointment his
     await context.close();
   }
 });
+
+test("Clientes fences an uncertain standalone POST across reload until GET confirms the exact identity", async ({ browser, page, system }) => {
+  test.setTimeout(180_000);
+  const password = "uncertain clients tenant password";
+  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await page.waitForURL(/\/businesses$/);
+  for (const [name, email] of [["Cliente incierto", "uncertain@example.test"], ["Cliente separado", "separate@example.test"]] as const) {
+    await page.getByLabel("Nombre", { exact: true }).fill(name);
+    await page.getByLabel("Correo del usuario", { exact: true }).fill(email);
+    await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
+    await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
+    await page.getByRole("cell", { name, exact: true }).waitFor({ state: "visible" });
+  }
+  const context = await browser.newContext();
+  const business = await context.newPage();
+  try {
+    await login(business, system.webUrl, "uncertain@example.test", password);
+    await business.waitForURL(/\/profile$/);
+    await business.goto(`${system.webUrl}/clients`);
+    const screen = business.getByRole("main");
+    const csrf = await business.evaluate(() => sessionStorage.getItem("agendia.csrf"));
+    const seed = await business.request.post(`${system.webUrl}/api/me/clients`, {
+      headers: { Origin: system.webUrl, "x-csrf-token": csrf! },
+      data: { firstName: "Bruno", lastName: "Existente", phone: "+5491123456788" },
+    });
+    expect(seed.status()).toBe(201);
+    await business.reload();
+    await screen.getByRole("list", { name: "Clientes del negocio", exact: true }).getByRole("listitem").waitFor();
+    await screen.getByRole("button", { name: "Crear cliente", exact: true }).click();
+    const form = screen.getByRole("form", { name: "Crear cliente", exact: true });
+    const draft = { Nombre: " Alicia ", Apellido: " Gómez ", Teléfono: "11 2345-6789" };
+    for (const [label, value] of Object.entries(draft)) await form.getByLabel(label, { exact: true }).fill(value);
+    let posts = 0;
+    let saved: { id: string; firstName: string; lastName: string; phone: string } | undefined;
+    const selectedIds: string[] = [];
+    business.on("request", request => {
+      const url = new URL(request.url());
+      if (request.method() === "POST" && url.pathname === "/api/me/clients") posts++;
+      if (url.pathname === "/api/me/appointments" && url.searchParams.has("clientId")) selectedIds.push(url.searchParams.get("clientId")!);
+    });
+    await business.route("**/api/me/clients", async route => {
+      if (route.request().method() !== "POST") return route.continue();
+      const response = await route.fetch(); // Persist for real, then lose only the browser response.
+      expect(response.status()).toBe(201);
+      saved = await response.json();
+      await route.abort("failed");
+    });
+    await form.locator('button[type="submit"]').click();
+    await expect(form.getByRole("alert")).toContainText("No pudimos confirmar");
+    for (const reload of [false, true]) {
+      if (reload) await business.reload();
+      for (const [label, value] of Object.entries(draft)) {
+        await expect(form.getByLabel(label, { exact: true })).toHaveValue(value);
+        await expect(form.getByLabel(label, { exact: true })).toBeDisabled(); // Independent RED: current draft is editable.
+      }
+      await expect(form.locator('button[type="submit"]')).toBeDisabled();
+      await expect(form.getByRole("button", { name: "Cancelar", exact: true })).toBeDisabled();
+      await expect(screen.locator(":scope > button").filter({ hasText: /^Crear cliente$/ })).toBeDisabled();
+      await expect(screen.getByRole("form", { name: "Buscar clientes", exact: true }).getByRole("textbox")).toBeDisabled();
+      await expect(screen.getByRole("form", { name: "Buscar clientes", exact: true }).getByRole("button")).toBeDisabled();
+      await expect(screen.getByRole("list", { name: "Clientes del negocio", exact: true }).getByRole("button").first()).toBeDisabled();
+      expect(posts).toBe(1);
+    }
+    // Switch identities in the same browser storage, then restore the original fence.
+    await business.getByRole("button", { name: "Cerrar sesión", exact: true }).first().click();
+    await business.getByLabel("Correo", { exact: true }).waitFor();
+    await login(business, system.webUrl, "separate@example.test", password);
+    await business.waitForURL(/\/profile$/);
+    await business.goto(`${system.webUrl}/clients`);
+    await expect(screen.getByRole("button", { name: "Crear cliente", exact: true })).toBeEnabled();
+    await expect(form).toHaveCount(0);
+    await expect(screen.getByText("Todavía no hay clientes.", { exact: true })).toBeVisible();
+    await expect(screen.getByText(/Alicia|Gómez|2345-6789/)).toHaveCount(0);
+    await expect(screen.getByRole("button", { name: "Comprobar cliente", exact: true })).toHaveCount(0);
+    await business.getByRole("button", { name: "Cerrar sesión", exact: true }).first().click();
+    await business.getByLabel("Correo", { exact: true }).waitFor();
+    await login(business, system.webUrl, "uncertain@example.test", password);
+    await business.waitForURL(/\/profile$/);
+    await business.goto(`${system.webUrl}/clients`);
+    await expect(form.getByLabel("Teléfono", { exact: true })).toHaveValue(draft.Teléfono);
+    await expect(form.locator('button[type="submit"]')).toBeDisabled();
+    expect(posts).toBe(1);
+    const check = screen.getByRole("button", { name: "Comprobar cliente", exact: true });
+    for (const [status, body] of [[500, '{"code":"INTERNAL_ERROR"}'], [200, "[]"],
+      [200, JSON.stringify([{ ...saved, firstName: "Otra persona" }])]] as const) {
+      await business.unroute("**/api/me/clients");
+      await business.route("**/api/me/clients", route => route.fulfill({ status, contentType: "application/json", body }));
+      const checked = business.waitForResponse(response => response.request().method() === "GET" && new URL(response.url()).pathname === "/api/me/clients");
+      await check.click();
+      expect((await checked).status()).toBe(status);
+      await expect(check).toBeEnabled();
+      await expect(form.getByLabel("Teléfono", { exact: true })).toHaveValue(draft.Teléfono);
+      await expect(form.locator('button[type="submit"]')).toBeDisabled();
+      await expect(form.getByRole("button", { name: "Cancelar", exact: true })).toBeDisabled();
+      expect(posts).toBe(1); // Empty list is not evidence of rollback.
+    }
+    await business.unroute("**/api/me/clients");
+    await check.click(); // Real GET finds the canonical row committed by the lost POST.
+    const detail = screen.getByRole("region", { name: "Cliente seleccionado", exact: true });
+    await expect(detail.getByRole("status").filter({ hasText: /^Este cliente existe$/ })).toHaveText("Este cliente existe");
+    expect(saved).toEqual({ id: expect.any(String), firstName: "Alicia", lastName: "Gómez", phone: "+5491123456789" });
+    await expect(detail.getByRole("heading", { name: "Alicia Gómez", exact: true })).toBeVisible();
+    await expect(detail.getByText(saved!.phone, { exact: true })).toBeVisible();
+    await expect.poll(() => selectedIds).toEqual([saved!.id]);
+    await expect(form).toHaveCount(0);
+    await expect(detail.getByRole("button", { name: "Editar cliente", exact: true })).toBeFocused();
+    expect(posts).toBe(1);
+    await expect(business).toHaveURL(`${system.webUrl}/clients`);
+    await business.evaluate(() => {
+      const original = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (key, value) {
+        if (key.startsWith("agendia.client-create:")) throw new DOMException("Storage denied", "QuotaExceededError");
+        original.call(this, key, value);
+      };
+    });
+    await screen.getByRole("button", { name: "Crear cliente", exact: true }).click();
+    for (const [label, value] of Object.entries(draft)) await form.getByLabel(label, { exact: true }).fill(value);
+    await form.locator('button[type="submit"]').click();
+    await expect(screen.getByRole("alert").filter({ hasText: "No pudimos proteger" })).toBeVisible();
+    await expect(form.getByLabel("Teléfono", { exact: true })).toBeDisabled();
+    await expect(form.locator('button[type="submit"]')).toBeDisabled();
+    await expect(form.getByRole("button", { name: "Cancelar", exact: true })).toBeDisabled();
+    expect(posts).toBe(1); // No durable journal means no new POST.
+  } finally { await context.close(); }
+});
+
+test("Clientes creates standalone owned identities with canonical detail and GET-only recovery", async ({ browser, page, system }, testInfo) => {
+  test.setTimeout(180_000);
+  const password = "standalone clients tenant password";
+  const email = "standalone-clients@example.test";
+  const otherEmail = "standalone-other@example.test";
+  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await page.waitForURL(/\/businesses$/);
+  for (const [name, userEmail] of [["Clientes independientes", email], ["Otros clientes independientes", otherEmail]] as const) {
+    await page.getByLabel("Nombre", { exact: true }).fill(name);
+    await page.getByLabel("Correo del usuario", { exact: true }).fill(userEmail);
+    await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
+    await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
+    await page.getByRole("cell", { name, exact: true }).waitFor({ state: "visible" });
+  }
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const otherContext = await browser.newContext({ viewport: { width: 360, height: 900 } });
+  const business = await context.newPage();
+  const other = await otherContext.newPage();
+  const appointmentMutations: string[] = [];
+  for (const tenantPage of [business, other]) tenantPage.on("request", request => {
+    const path = new URL(request.url()).pathname;
+    if ((path.startsWith("/api/me/appointments") || path.startsWith("/api/me/appointment-operations")) &&
+        !["GET", "HEAD"].includes(request.method())) appointmentMutations.push(`${request.method()} ${path}`);
+  });
+  let releasePost: (() => void) | undefined;
+  try {
+    await login(business, system.webUrl, email, password);
+    await business.waitForURL(/\/profile$/);
+    await business.goto(`${system.webUrl}/clients`);
+    const screen = business.getByRole("main");
+    const create = screen.getByRole("button", { name: "Crear cliente", exact: true });
+    // This is the first assertion: the base screen lacks standalone creation.
+    await expect(create).toBeVisible();
+    await expect(business).toHaveURL(`${system.webUrl}/clients`);
+    await expect(screen.getByText("Todavía no hay clientes.", { exact: true })).toBeVisible();
+    const counts = { POST: 0, GET: 0, otherMutations: 0 };
+    const historyIds: string[] = [];
+    business.on("request", request => {
+      const url = new URL(request.url());
+      if (url.pathname.startsWith("/api/me/clients")) {
+        if (request.method() === "POST") counts.POST++;
+        else if (request.method() === "GET") counts.GET++;
+        else counts.otherMutations++;
+      }
+      if (url.pathname === "/api/me/appointments" && url.searchParams.has("clientId"))
+        historyIds.push(url.searchParams.get("clientId")!);
+    });
+    const csrf = await business.evaluate(() => sessionStorage.getItem("agendia.csrf"));
+    expect(csrf).toBeTruthy();
+    const seedResponse = await business.request.post(`${system.webUrl}/api/me/clients`, {
+      headers: { Origin: system.webUrl, "x-csrf-token": csrf! },
+      data: { firstName: "Bruno", lastName: "Existente", phone: "+5491123456788" },
+    });
+    expect(seedResponse.status()).toBe(201);
+    const seed = await seedResponse.json();
+    await business.reload();
+    const list = screen.getByRole("list", { name: "Clientes del negocio", exact: true });
+    await expect(list.getByRole("listitem")).toHaveCount(1);
+    await create.click();
+    const form = screen.getByRole("form", { name: "Crear cliente", exact: true });
+    const firstName = form.getByLabel("Nombre", { exact: true });
+    const lastName = form.getByLabel("Apellido", { exact: true });
+    const phone = form.getByLabel("Teléfono", { exact: true });
+    const submit = form.locator('button[type="submit"]');
+    const cancel = form.getByRole("button", { name: "Cancelar", exact: true });
+    await expect(firstName).toBeFocused();
+    await firstName.fill("Borrador cancelado");
+    await cancel.click();
+    await expect(form).toHaveCount(0);
+    await expect(create).toBeFocused();
+    expect(counts.POST).toBe(0);
+    await expect(list.getByRole("listitem")).toHaveCount(1);
+    await create.click();
+    for (const input of [firstName, lastName, phone]) {
+      await expect(input).toHaveValue("");
+      await expect(input).toHaveAttribute("required", "");
+    }
+    for (const width of [1280, 360]) {
+      await business.setViewportSize({ width, height: 900 });
+      await expect(firstName).toBeFocused();
+      expect(await business.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await business.screenshot({ path: testInfo.outputPath(`clients-create-blank-${width}.png`), fullPage: true });
+    }
+    await submit.click();
+    await expect(firstName).toBeFocused();
+    expect(await firstName.evaluate((input: HTMLInputElement) => input.validity.valueMissing)).toBe(true);
+    expect(counts.POST).toBe(0);
+    await firstName.fill(" Alicia ");
+    await submit.click();
+    await expect(lastName).toBeFocused();
+    expect(counts.POST).toBe(0);
+    await lastName.fill(" Gómez ");
+    await submit.click();
+    await expect(phone).toBeFocused();
+    expect(counts.POST).toBe(0);
+    await phone.fill("not-a-phone");
+    const invalid = business.waitForResponse(response => response.request().method() === "POST" &&
+      new URL(response.url()).pathname === "/api/me/clients");
+    await submit.click();
+    expect((await invalid).status()).toBe(400); // Real API validation, not a mocked rejection.
+    await expect(form.getByRole("alert")).toHaveText("Revisá los campos indicados.");
+    await expect(firstName).toHaveValue(" Alicia ");
+    await expect(lastName).toHaveValue(" Gómez ");
+    await expect(phone).toHaveValue("not-a-phone");
+    await expect(submit).toBeEnabled();
+    await expect(submit).toBeFocused();
+    expect(counts.POST).toBe(1);
+    await phone.fill("11 2345-6788");
+    const duplicate = business.waitForResponse(response => response.request().method() === "POST" &&
+      new URL(response.url()).pathname === "/api/me/clients");
+    await submit.click();
+    expect((await duplicate).status()).toBe(409); // Existing phone in this tenant only.
+    await expect(form.getByRole("alert")).toHaveText("Los datos cambiaron. Recargá y volvé a intentar.");
+    await expect(firstName).toHaveValue(" Alicia ");
+    await expect(lastName).toHaveValue(" Gómez ");
+    await expect(phone).toHaveValue("11 2345-6788");
+    await expect(submit).toBeEnabled();
+    await expect(submit).toBeFocused();
+    expect(counts.POST).toBe(2);
+    for (const width of [1280, 360]) {
+      await business.setViewportSize({ width, height: 900 });
+      await expect(submit).toBeFocused();
+      expect(await business.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await business.screenshot({ path: testInfo.outputPath(`clients-create-conflict-${width}.png`), fullPage: true });
+    }
+    await phone.fill("11 2345-6789");
+    const heldPost = new Promise<void>(resolve => { releasePost = resolve; });
+    await business.route("**/api/me/clients", async route => {
+      if (route.request().method() === "POST") {
+        await heldPost;
+        await route.continue(); // The held submission still reaches real persistence.
+      } else if (route.request().method() === "GET") {
+        await route.fulfill({ status: 500, contentType: "application/json", body: '{"code":"INTERNAL_ERROR"}' });
+      } else await route.continue();
+    });
+    await business.route("**/api/me/appointments?*", route => route.fulfill({
+      status: 500, contentType: "application/json", body: '{"code":"INTERNAL_ERROR"}',
+    }));
+    const createdResponse = business.waitForResponse(response => response.request().method() === "POST" &&
+      new URL(response.url()).pathname === "/api/me/clients");
+    await submit.click();
+    await expect(form).toHaveAttribute("aria-busy", "true");
+    for (const control of [firstName, lastName, phone, submit, cancel]) await expect(control).toBeDisabled();
+    await expect(screen.getByRole("form", { name: "Buscar clientes", exact: true }).getByRole("button")).toBeDisabled();
+    await form.evaluate(element => { element.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    await expect.poll(() => counts.POST).toBe(3); // Two failures plus exactly one pending real POST.
+    for (const width of [1280, 360]) {
+      await business.setViewportSize({ width, height: 900 });
+      await expect(form).toHaveAttribute("aria-busy", "true");
+      expect(await business.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await business.screenshot({ path: testInfo.outputPath(`clients-create-pending-${width}.png`), fullPage: true });
+    }
+    expect(counts.POST).toBe(3);
+    releasePost!();
+    const response = await createdResponse;
+    expect(response.status()).toBe(201);
+    const saved = await response.json();
+    expect(saved.id).toEqual(expect.any(String));
+    expect(saved.id.length).toBeGreaterThan(0);
+    expect(saved.id).not.toBe(seed.id);
+    expect(saved).toEqual({ id: saved.id, firstName: "Alicia", lastName: "Gómez", phone: "+5491123456789" });
+    const detail = screen.getByRole("region", { name: "Cliente seleccionado", exact: true });
+    const edit = detail.getByRole("button", { name: "Editar cliente", exact: true });
+    await expect(form).toHaveCount(0);
+    await expect(detail.getByRole("heading", { name: "Alicia Gómez", exact: true })).toBeVisible();
+    await expect(detail.getByText(saved.phone, { exact: true })).toBeVisible();
+    await expect(detail.getByRole("status").filter({ hasText: /^Cliente guardado$/ })).toBeVisible();
+    await expect(edit).toBeFocused();
+    await expect(screen.getByText("El cliente se guardó, pero no pudimos actualizar la lista.", { exact: true })).toBeVisible();
+    await expect(detail.getByText("El cliente se guardó, pero no pudimos actualizar los turnos.", { exact: true })).toBeVisible();
+    expect(historyIds).toEqual([saved.id]);
+    expect(counts.POST).toBe(3);
+    await expect(business).toHaveURL(`${system.webUrl}/clients`);
+    await business.screenshot({ path: testInfo.outputPath("clients-created-read-warnings-360.png"), fullPage: true });
+    const retryList = screen.getByRole("button", { name: "Actualizar clientes", exact: true });
+    const retryHistory = detail.getByRole("button", { name: "Actualizar turnos", exact: true });
+    const beforeFailedRetry = { ...counts };
+    await retryList.click();
+    await expect(retryList).toBeEnabled();
+    await retryHistory.click();
+    await expect(retryHistory).toBeEnabled();
+    expect(counts).toEqual({ ...beforeFailedRetry, GET: beforeFailedRetry.GET + 1 });
+    expect(historyIds).toEqual([saved.id, saved.id]);
+    await expect(detail.getByRole("heading", { name: "Alicia Gómez", exact: true })).toBeVisible();
+    await expect(detail.getByText(saved.phone, { exact: true })).toBeVisible();
+    await expect(screen.getByText("El cliente se guardó, pero no pudimos actualizar la lista.", { exact: true })).toBeVisible();
+    await expect(detail.getByText("El cliente se guardó, pero no pudimos actualizar los turnos.", { exact: true })).toBeVisible();
+    await business.unroute("**/api/me/clients");
+    await business.unroute("**/api/me/appointments?*");
+    const beforeRecovery = { ...counts };
+    await retryList.click();
+    await expect(screen.getByText("El cliente se guardó, pero no pudimos actualizar la lista.", { exact: true })).toHaveCount(0);
+    await retryHistory.click();
+    await expect(detail.getByRole("alert")).toHaveCount(0);
+    expect(counts).toEqual({ ...beforeRecovery, GET: beforeRecovery.GET + 1 });
+    expect(historyIds).toEqual([saved.id, saved.id, saved.id]);
+    await expect(list.getByRole("listitem")).toHaveCount(2);
+    await expect(list.getByRole("button", { name: /Alicia Gómez/ })).toHaveAttribute("aria-pressed", "true");
+    for (const title of ["Próximos turnos", "Historial completo"]) {
+      await expect(detail.getByRole("region", { name: title, exact: true }).getByText("No hay turnos en esta sección.", { exact: true })).toBeVisible();
+    }
+    const persistedResponse = await business.request.get(`${system.webUrl}/api/me/clients`);
+    expect(persistedResponse.status()).toBe(200);
+    expect(await persistedResponse.json()).toEqual(expect.arrayContaining([seed, saved]));
+    const ownAppointments = await business.request.get(`${system.webUrl}/api/me/appointments`);
+    expect(ownAppointments.status()).toBe(200);
+    expect(await ownAppointments.json()).toEqual([]);
+    await business.reload();
+    await expect(business).toHaveURL(`${system.webUrl}/clients`);
+    await expect(list.getByRole("listitem")).toHaveCount(2);
+    await list.getByRole("button", { name: /Alicia Gómez/ }).click();
+    await expect(detail.getByRole("heading", { name: "Alicia Gómez", exact: true })).toBeVisible();
+    await expect(detail.getByText(saved.phone, { exact: true })).toBeVisible();
+    await expect(detail.getByText("Cargando turnos…", { exact: true })).toHaveCount(0);
+    for (const width of [1280, 360]) {
+      await business.setViewportSize({ width, height: 900 });
+      await edit.click();
+      const editForm = detail.getByRole("form", { name: "Editar cliente", exact: true });
+      await expect(editForm.getByLabel("Nombre", { exact: true })).toBeFocused();
+      await editForm.getByRole("button", { name: "Cancelar", exact: true }).click();
+      await expect(edit).toBeFocused();
+      expect(await business.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await business.screenshot({ path: testInfo.outputPath(`clients-created-persisted-${width}.png`), fullPage: true });
+    }
+    await login(other, system.webUrl, otherEmail, password);
+    await other.waitForURL(/\/profile$/);
+    await other.goto(`${system.webUrl}/clients`);
+    await expect(other.getByText("Todavía no hay clientes.", { exact: true })).toBeVisible();
+    await expect(other.getByRole("list", { name: "Clientes del negocio", exact: true }).getByRole("listitem")).toHaveCount(0);
+    await other.getByRole("button", { name: "Crear cliente", exact: true }).click();
+    const otherForm = other.getByRole("form", { name: "Crear cliente", exact: true });
+    await otherForm.getByLabel("Nombre", { exact: true }).fill("Otra");
+    await otherForm.getByLabel("Apellido", { exact: true }).fill("Identidad");
+    await otherForm.getByLabel("Teléfono", { exact: true }).fill(saved.phone);
+    const otherCreated = other.waitForResponse(result => result.request().method() === "POST" &&
+      new URL(result.url()).pathname === "/api/me/clients");
+    await otherForm.locator('button[type="submit"]').click();
+    const otherResponse = await otherCreated;
+    expect(otherResponse.status()).toBe(201); // Same phone is legal in a different tenant.
+    const otherSaved = await otherResponse.json();
+    expect(otherSaved).toEqual({ id: expect.any(String), firstName: "Otra", lastName: "Identidad", phone: saved.phone });
+    expect(otherSaved.id).not.toBe(saved.id);
+    await expect(other).toHaveURL(`${system.webUrl}/clients`);
+    await expect(other.getByRole("region", { name: "Cliente seleccionado", exact: true }).getByRole("heading", { name: "Otra Identidad", exact: true })).toBeVisible();
+    const otherRows = await other.request.get(`${system.webUrl}/api/me/clients`);
+    expect(otherRows.status()).toBe(200);
+    expect(await otherRows.json()).toEqual([otherSaved]);
+    const foreignHistory = await other.request.get(`${system.webUrl}/api/me/appointments?clientId=${saved.id}`);
+    expect(foreignHistory.status()).toBe(200);
+    expect(await foreignHistory.json()).toEqual([]);
+    const ownRowsAfter = await business.request.get(`${system.webUrl}/api/me/clients`);
+    expect(ownRowsAfter.status()).toBe(200);
+    expect(await ownRowsAfter.json()).toEqual(expect.arrayContaining([seed, saved]));
+    expect(await ownRowsAfter.json()).toHaveLength(2);
+    expect(counts.POST).toBe(3);
+    expect(counts.otherMutations).toBe(0);
+    expect(appointmentMutations).toEqual([]);
+  } finally {
+    releasePost?.();
+    await otherContext.close();
+    await context.close();
+  }
+});

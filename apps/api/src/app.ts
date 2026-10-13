@@ -288,7 +288,7 @@ export function buildApi(input: AuthService | ApiOptions) {
   app.get("/auth/session", async (request, reply) => {
     const auth = await session(request);
     return auth
-      ? { role: auth.role, businessId: auth.business_id }
+      ? { role: auth.role, businessId: auth.business_id, identityId: auth.identity_id }
       : fail(reply, request, 401, "UNAUTHENTICATED", "Authentication required");
   });
   app.post("/auth/logout", async (request, reply) => {
