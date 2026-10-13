@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import postgres, { type Sql, type TransactionSql } from "postgres";
 import type { TenantContext } from "./tenant-context.ts";
 import { replyDeadline } from "./reply-pacing.ts";
+import { validSenderEvidence, emptyAgendaDialogue, type SenderEvidence, type AgendaDialogue } from "../../domain/src/whatsapp-agenda.ts";
 import { z } from "zod";
 import { ClientInputSchema, InstantSchema, AppointmentOriginSchema, captureAppointmentTerms,
   isNewStartAllowed, isResourceEligibleForService, type AppointmentTermsSnapshot,
@@ -1043,6 +1044,68 @@ export class PostgresRepositories {
     return this
       .db`update whatsapp_connections set state=${state},linked_number=coalesce(${number ?? null},linked_number),linked_at=case when ${state}='CONNECTED' then coalesce(linked_at,${now}) else linked_at end,last_connected_at=case when ${state}='CONNECTED' then ${now} else last_connected_at end,version=version+1 where id=${id}`;
   }
+  /** Serialize collisions across PN and LID within this specific business connection. */
+  async bindReceivedSender(businessId: string, connectionId: string, remoteJid: string, evidence: SenderEvidence): Promise<string | null> {
+    if (!validSenderEvidence(remoteJid, evidence)) return null;
+    await this.db`select pg_advisory_xact_lock(hashtextextended(${`sender:${businessId}:${connectionId}`},0))`;
+    const rows = await this.db<{ phone: string; pn_jid: string; lid_jid: string | null }[]>`
+      select phone,pn_jid,lid_jid from whatsapp_sender_bindings
+      where business_id=${businessId} and connection_id=${connectionId}
+        and (phone=${evidence.phone} or pn_jid=${evidence.pnJid} or lid_jid=${evidence.lidJid})`;
+    if (rows.some(row => row.phone !== evidence.phone || row.pn_jid !== evidence.pnJid
+      || (evidence.lidJid !== null && row.lid_jid !== null && row.lid_jid !== evidence.lidJid))) return null;
+    await this.db`insert into whatsapp_sender_bindings(business_id,connection_id,phone,pn_jid,lid_jid)
+      values(${businessId},${connectionId},${evidence.phone},${evidence.pnJid},${evidence.lidJid})
+      on conflict(business_id,connection_id,phone) do update
+      set lid_jid=coalesce(whatsapp_sender_bindings.lid_jid,excluded.lid_jid)`;
+    return evidence.phone;
+  }
+  async agendaSender(messageId: string): Promise<string | null> {
+    const [row] = await this.db<{ phone: string }[]>`select s.phone from whatsapp_received_senders s
+      join messages m on (m.business_id,m.id,m.connection_id)=(s.business_id,s.message_id,s.connection_id)
+      join whatsapp_sender_bindings b on (b.business_id,b.connection_id,b.phone)=(s.business_id,s.connection_id,s.phone)
+      where s.message_id=${messageId} and m.direction='inbound'`;
+    return row?.phone ?? null;
+  }
+  async lockAgendaDialogue(businessId: string, connectionId: string, phone: string): Promise<AgendaDialogue> {
+    await this.db`select pg_advisory_xact_lock(hashtextextended(${`agenda:${businessId}:${connectionId}:${phone}`},0))`;
+    const [row] = await this.db<{ dialogue: AgendaDialogue }[]>`select dialogue from whatsapp_agenda_dialogues
+      where business_id=${businessId} and connection_id=${connectionId} and phone=${phone}`;
+    return row?.dialogue ?? emptyAgendaDialogue();
+  }
+  async saveAgendaDialogue(businessId: string, connectionId: string, phone: string, dialogue: AgendaDialogue) {
+    await this.db`insert into whatsapp_agenda_dialogues(business_id,connection_id,phone,dialogue)
+      values(${businessId},${connectionId},${phone},${this.db.json(asDbJson(dialogue))})
+      on conflict(business_id,connection_id,phone) do update set dialogue=excluded.dialogue,updated_at=now()`;
+  }
+  async lockAgendaSource(messageId: string) {
+    await this.db`select c.id from conversations c join messages m on m.conversation_id=c.id
+      where m.id=${messageId} for update of c`;
+    return this.loadAiMessage(messageId, true);
+  }
+  async agendaQuoteDelivered(outboundId: string | null, connectionId: string, phone: string): Promise<boolean> {
+    if (!outboundId) return false;
+    const [row] = await this.db`select o.outbound_id from outbound_commands o
+      join whatsapp_received_senders s on s.message_id=o.source_message_id and s.business_id=o.business_id
+      where o.outbound_id=${outboundId} and o.connection_id=${connectionId} and s.phone=${phone} and o.state='sent'`;
+    return !!row;
+  }
+  async recordAgendaReceipt(businessId: string, messageId: string, outboundId: string, operation: string) {
+    await this.db`insert into whatsapp_agenda_receipts(business_id,message_id,outbound_id,operation)
+      values(${businessId},${messageId},${outboundId},${operation})`;
+  }
+  /** Metadata-only expression does not need an active catalog or reserve capacity. */
+  async setAgendaPreference(businessId: string, id: string, resourceId: string | null, now: string) {
+    await this.acquireBusinessCalendarLock({ businessId });
+    const current = await this.getAppointment(businessId, id);
+    if (!current) throw new AppointmentError("UNKNOWN_OWNED_ID");
+    if (current.state !== "confirmed") throw new AppointmentError("STATE_LOCKED");
+    if (Date.parse(now) >= current.startMs) throw new AppointmentError("STARTED_STRUCTURE_LOCKED");
+    if (resourceId !== null && !(await this.getResource(businessId, resourceId))) throw new AppointmentError("UNKNOWN_OWNED_ID");
+    await this.db`update appointments set customer_resource_preference_id=${resourceId},updated_at=now()
+      where business_id=${businessId} and id=${id} and state='confirmed'`;
+    return { ...current, customerResourcePreference: resourceId };
+  }
   async routeSession(session: string) {
     return (
       (
@@ -1065,10 +1128,13 @@ export class PostgresRepositories {
     text: string | null;
     receivedAt: Date;
     classification: string;
+    senderEvidence?: SenderEvidence;
   }) {
     const seen = await this
       .db`insert into inbox_events(business_id,source,stable_key) values(${input.businessId},'baileys',${input.providerId}) on conflict do nothing returning id`;
     if (!seen.length) return null;
+    const senderPhone = input.classification === "accepted" && input.senderEvidence
+      ? await this.bindReceivedSender(input.businessId, input.connectionId, input.remoteJid, input.senderEvidence) : null;
     const businessText = input.classification === "accepted_business";
     if (input.classification !== "accepted" && !businessText) {
       await this
@@ -1109,6 +1175,8 @@ export class PostgresRepositories {
         { id: string }[]
       >`insert into messages(business_id,conversation_id,connection_id,provider_message_id,sequence,direction,raw_text,received_at) values(${input.businessId},${conversation.id},${input.connectionId},${input.providerId},${sequence},'inbound',${input.text!},${input.receivedAt}) returning id`
     )[0]!;
+    if (senderPhone) await this.db`insert into whatsapp_received_senders(business_id,message_id,connection_id,phone)
+      values(${input.businessId},${message.id},${input.connectionId},${senderPhone})`;
     const due = replyDeadline(conversation.accepted_at, conversation.last_reply_at, conversation.last_exchange_at, conversation.reply_due_at);
     await this.db`update conversations set latest_inbound_id=${message.id},reply_due_at=${due},last_exchange_at=${conversation.accepted_at} where id=${conversation.id}`;
     await this.db`update messages set processing_state='superseded' where conversation_id=${conversation.id} and direction='inbound' and id<>${message.id} and processing_state in ('pending','generated')`;

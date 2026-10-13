@@ -1,12 +1,12 @@
 import {
-  ConversationContextBuilder,
-  InMemoryConversationHistory,
   type AiProvider,
+  hasAgendaProposalProvider,
   type ConversationSummarizer,
   type ConversationSummaryContent,
 } from "@agendia/domain";
 import { tenantContext, type createRuntimePools } from "@agendia/db";
 import { AiProviderError } from "@agendia/ai-deepseek";
+import { PostgresWhatsAppAgenda, factualQuestion, renderFactualReply } from "./whatsapp-agenda.ts";
 
 type Pools = ReturnType<typeof createRuntimePools>;
 export interface PostgresAiJob {
@@ -34,11 +34,14 @@ const validSummary = <T extends { structured_summary: any }>(rows: T[]) =>
 const visible = (turn: { direction: string; processing_state: string }) =>
   turn.direction === "inbound" || turn.processing_state === "sent";
 export class PostgresAiJobProcessor {
+  private readonly agenda: PostgresWhatsAppAgenda | null;
   constructor(
     private pools: Pools,
-    private provider: AiProvider,
+    provider: AiProvider,
     private budget = 8_000,
-  ) {}
+  ) {
+    this.agenda = hasAgendaProposalProvider(provider) ? new PostgresWhatsAppAgenda(pools, provider) : null;
+  }
   private context(businessId: string, correlationId: string) {
     return tenantContext({
       businessId,
@@ -78,72 +81,28 @@ export class PostgresAiJobProcessor {
       true,
     );
     if (!release) return;
+    let agendaAttempt = false;
     try {
+      if (this.agenda) {
+        agendaAttempt = true;
+        if (await this.agenda.process(job)) return;
+        agendaAttempt = false;
+      }
       const data = await this.pools.worker.run(context, (r) =>
         r.loadAiMessage(job.messageId, true),
       );
       if (!data) return;
-      const history = new InMemoryConversationHistory();
-      history.append(
-        job.businessId,
-        data.conversation_id,
-        data.turns.map((t) => ({
-          id: t.id,
-          sequence: Number(t.sequence),
-          role:
-            t.direction === "inbound"
-              ? ("customer" as const)
-              : ("assistant" as const),
-          text: t.raw_text,
-          ...(t.direction === "outbound"
-            ? {
-                delivery:
-                  t.processing_state === "sent"
-                    ? ("sent" as const)
-                    : ("failed" as const),
-              }
-            : {}),
-        })),
-      );
-      const summary = validSummary(data.summaries);
-      if (summary) {
-        const content = summaryContent(summary.structured_summary)!;
-        history.saveSummary(job.businessId, data.conversation_id, {
-          version: summary.version,
-          coveredThrough: Number(summary.covered_through),
-          ...content,
-        });
-      }
-      const built = new ConversationContextBuilder(history).build({
-        businessId: job.businessId,
-        conversationId: data.conversation_id,
-        currentGroupIds: data.currentGroup.map((turn) => turn.id),
-      });
-      if (built.status === "blocked") {
-        await this.pools.worker.run(context, (r) =>
-          r.failAi(job.messageId, job.businessId, "ai.context_unavailable"),
-        );
-        return;
-      }
-      const { additionalInstructions } = await this.pools.worker.run(
-        undefined, (r) => r.platformAiInstructions(),
-      );
-      const result = await this.provider.generate({
-        additionalInstructions,
-        business: data.profile,
-        assistant: data.assistant,
-        context: {
-          summary: JSON.stringify(built.context.summary),
-          recent: built.context.recent.map((t) => t.text),
-        },
-        message: data.currentGroup.map((turn) => turn.raw_text).join("\n"),
-        maxOutputCharacters: 2_000,
-        correlationId: job.correlationId,
-      });
+      const kind = factualQuestion(data.raw_text) ?? "unsupported";
+      const calendar = kind === "hours" ? await this.pools.worker.run(context,
+        r => r.getBusinessCalendar(job.businessId)) : null;
+      const reply = renderFactualReply(kind, data.profile.address ?? "", calendar?.weeklySchedule);
       await this.pools.worker.run(context, (r) =>
-        r.saveGenerated(job.messageId, job.businessId, result.text),
+        r.saveGenerated(job.messageId, job.businessId, reply),
       );
     } catch (error) {
+      // Agenda infrastructure/unknown outcome must remain retryable. Its atomic receipt,
+      // response and domain effects either all committed or all rolled back.
+      if (agendaAttempt) throw error;
       const code =
         error instanceof AiProviderError ? error.code : "provider_unavailable";
       await this.pools.worker.run(context, (r) =>

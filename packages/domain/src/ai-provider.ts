@@ -76,6 +76,11 @@ export interface AgendaProposalProvider {
   proposeAgenda(request: AgendaProposalRequest): Promise<AgendaProposal>;
 }
 
+/** Runtime capability detection, not a test-only provider port. */
+export function hasAgendaProposalProvider(provider: AiProvider): provider is AiProvider & AgendaProposalProvider {
+  return "proposeAgenda" in provider && typeof provider.proposeAgenda === "function";
+}
+
 export interface ConversationSummaryContent {
   facts: string[];
   requests: string[];

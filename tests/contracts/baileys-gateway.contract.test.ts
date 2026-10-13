@@ -78,6 +78,61 @@ async function linkContract(gateway: WhatsAppGateway) {
   expect(() => h.manager.requestLink("tenant-a")).toThrow("already linked");
 }
 
+describe("received address evidence at the actual socket boundary", () => {
+  test("only successful live notify pairs bind PN/LID, never mapping events or history", async () => {
+    const fake = fakeGateway([]);
+    const events: Array<{ providerMessageId: string; senderEvidence?: unknown }> = [];
+    await fake.gateway.connect("connection-a", () => undefined, event => events.push(event));
+    const key = { remoteJid: "123456789@lid", remoteJidAlt: "5491123456789@s.whatsapp.net" };
+    await fake.socket.emit("lid-mapping.update", { lid: key.remoteJid, pn: key.remoteJidAlt });
+    expect(events).toHaveLength(0);
+    await fake.socket.emit("messages.upsert", {
+      type: "append", messages: [{ key: { ...key, id: "history" }, message: { conversation: "hola" } }],
+    });
+    expect(events[0]?.senderEvidence).toBeUndefined();
+    await fake.socket.emit("messages.upsert", {
+      type: "notify", messages: [
+        { key: { ...key, id: "decryption-stub" }, messageStubType: 2, message: { conversation: "not plaintext authority" } },
+        { key: { ...key, id: "live" }, message: { conversation: "reservar" } },
+      ],
+    });
+    expect(events).toHaveLength(2);
+    expect(events[1]).toMatchObject({ providerMessageId: "live", senderEvidence: { phone: "+5491123456789", lidJid: key.remoteJid } });
+  });
+  test("fromMe, group, malformed alternates and participant fields never establish a customer", async () => {
+    const fake = fakeGateway([]);
+    const events: Array<{ senderEvidence?: unknown }> = [];
+    await fake.gateway.connect("connection-a", () => undefined, event => events.push(event));
+    for (const key of [
+      { remoteJid: "5491123456789@s.whatsapp.net", fromMe: true },
+      { remoteJid: "123@g.us", remoteJidAlt: "5491123456789@s.whatsapp.net" },
+      { remoteJid: "123456789@lid", remoteJidAlt: "customer typed +5491123456789" },
+      { remoteJid: "123456789@lid", participantAlt: "5491123456789@s.whatsapp.net" },
+      { remoteJid: "5491123456789@s.whatsapp.net", remoteJidAlt: "14155552671@s.whatsapp.net" },
+    ]) {
+      await fake.socket.emit("messages.upsert", { type: "notify", messages: [{ key: { ...key, id: "negative" }, message: { conversation: "hola" } }] });
+    }
+    expect(events).toHaveLength(5);
+    expect(events.every(event => event.senderEvidence === undefined)).toBe(true);
+  });
+  test("reconnects still require evidence on each live message", async () => {
+    const fake = fakeGateway([]);
+    const events: Array<{ senderEvidence?: unknown }> = [];
+    const lease = await fake.gateway.connect("connection-a", () => undefined, event => events.push(event));
+    await fake.socket.emit("messages.upsert", { type: "notify", messages: [{
+      key: { id: "before", remoteJid: "123456789@lid", remoteJidAlt: "5491123456789@s.whatsapp.net" },
+      message: { conversation: "hola" },
+    }] });
+    lease.close();
+    await fake.gateway.connect("connection-a", () => undefined, event => events.push(event));
+    await fake.socket.emit("messages.upsert", { type: "notify", messages: [{
+      key: { id: "after", remoteJid: "123456789@lid" }, message: { conversation: "hola" },
+    }] });
+    expect(events[0]?.senderEvidence).toBeDefined();
+    expect(events[1]?.senderEvidence).toBeUndefined();
+  });
+});
+
 describe("WhatsAppGateway contract", () => {
   test("provides an executable production manager bootstrap", () => {
     expect(managerPackage.scripts?.start).toBe(

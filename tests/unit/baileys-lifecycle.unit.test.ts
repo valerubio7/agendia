@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import Fastify from "fastify";
+import { normalizeBaileysMessage } from "../../packages/whatsapp-baileys/src/baileys-gateway.ts";
+import { classifyInbound } from "../../apps/whatsapp-manager/src/inbound-handler.ts";
 import {
   InMemoryWhatsAppConnections,
   WhatsAppConnectionService,
@@ -34,6 +36,28 @@ function harness(events: Parameters<DeterministicBaileysDouble["script"]>[0]) {
     ),
   };
 }
+
+describe("live customer identity classification", () => {
+  test("only the customer branch can hand provider evidence to agenda ingestion", () => {
+    const base = { key: { id: "received", remoteJid: "123456789@lid", remoteJidAlt: "5491123456789@s.whatsapp.net" }, message: { conversation: "reservar" } };
+    const customer = normalizeBaileysMessage("session", base)!;
+    expect(classifyInbound(customer)).toBe("accepted");
+    expect(customer.senderEvidence?.phone).toBe("+5491123456789");
+    const manual = normalizeBaileysMessage("session", { ...base, key: { ...base.key, fromMe: true } })!;
+    expect(classifyInbound(manual)).toBe("accepted_business");
+    expect(manual.senderEvidence).toBeUndefined();
+    const group = normalizeBaileysMessage("session", { ...base, key: { ...base.key, remoteJid: "123@g.us" } })!;
+    expect(classifyInbound(group)).toBe("ignored_group");
+    expect(group.senderEvidence).toBeUndefined();
+  });
+  test("a stored mapping cannot manufacture evidence for a subsequent unresolved LID", () => {
+    const unbound = normalizeBaileysMessage("session", {
+      key: { id: "received", remoteJid: "123456789@lid" }, message: { conversation: "Mi teléfono es +5491123456789" },
+    })!;
+    expect(classifyInbound(unbound)).toBe("accepted");
+    expect(unbound.senderEvidence).toBeUndefined();
+  });
+});
 
 describe("persistent Baileys linking lifecycle", () => {
   test("processes a durable link command, exposes an expiring QR only to its tenant and opens", async () => {
