@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PgBoss } from "pg-boss";
+import type { AiProvider, ToolConversationProvider } from '@agendia/domain';
 import { createRuntimePools, tenantContext, PostgresRepositories } from "@agendia/db";
 import {
   BaileysAuthStateAdapter,
@@ -109,10 +110,10 @@ describe("PostgreSQL messaging workers", () => {
     const after = (await db.sql`select next_attempt_at,payload from outbox_events where stable_key='ai:pace-2'`)[0]!;
     expect(after.next_attempt_at).toEqual(before.next_attempt_at);
     let earlyCalls = 0;
-    await new PostgresAiJobProcessor(pools, { generate: async () => {
+    await new PostgresAiJobProcessor(pools, { generate: async () => { throw new Error('Unexpected generate'); }, converse: async () => {
       earlyCalls++;
-      return { text: 'early', providerId: 'test', usageTokens: 1 };
-    } }).process({ businessId: A, messageId: after.payload.messageId, correlationId: 'early' });
+      return { message: { role: 'assistant', content: 'early', toolCalls: [] }, providerId: 'test', usageTokens: 1 };
+    } } as AiProvider & ToolConversationProvider).process({ businessId: A, messageId: after.payload.messageId, correlationId: 'early' });
     expect(earlyCalls).toBe(0);
     const dispatcher = new AiOutboxDispatcher(pools, boss, immediateOutboxRecovery);
     expect(await dispatcher.dispatchBatch()).toBe(0);
@@ -225,72 +226,57 @@ describe("PostgreSQL messaging workers", () => {
     });
   });
 
-  test("legacy provider port renders tenant facts without generation, instructions, summaries or timeout dependence", async () => {
+  test("fails closed on oversized required settings, then grounds native facts and retries without tenant leakage", async () => {
     const conversation = (
       await db.sql<
         { id: string }[]
-      >`select id from conversations where business_id=${A}`
+      >`select conversation_id as id from messages where provider_message_id='m1' and business_id=${A}`
     )[0]!;
     await db.sql`insert into conversation_summaries(business_id,conversation_id,version,covered_through,structured_summary) values(${A},${conversation.id},1,0,${db.sql.json({ facts: ["cliente nuevo"], requests: [], commitments: [], preferences: [], openItems: [] })})`;
     const calls: string[] = [];
-    // Explicit legacy-only mock: no native converse capability. Production DeepSeek
-    // routing is exercised by receptionist-conversation.integration.test.ts.
-    const provider = { generate: async (request: unknown) => {
+    const provider = { generate: async () => { throw new Error('Unexpected generate'); }, converse: async (request: unknown) => {
       calls.push(JSON.stringify(request));
-      return { text: "Llega mañana", providerId: "legacy-mock", usageTokens: 0 };
+      return { message: { role: 'assistant' as const, content: 'Estamos en RETAINED_ADDRESS.', toolCalls: [] }, providerId: 'native-mock', usageTokens: 1 };
     } };
     const worker = new PostgresAiJobProcessor(pools, provider, 500);
     await db.sql`update messages set raw_text='¿Dónde están ubicados?' where provider_message_id='m1'`;
-    await worker.process({
-      businessId: A,
-      messageId: (
-        await db.sql<
-          { id: string }[]
-        >`select id from messages where provider_message_id='m1'`
-      )[0]!.id,
-      correlationId: "job-1",
-    });
-    expect(calls).toHaveLength(0);
-    const [reply] = await db.sql`select text from outbound_commands`;
-    expect(reply!.text).toBe('Dirección registrada: "RETAINED_ADDRESS".');
-    for (const excluded of ["RETAINED_DESCRIPTION", "cliente nuevo", "LEGACY_CONTACT", "LEGACY_FAQ", "LEGACY_POLICIES", "LEGACY_INFO", "STYLE-B", "SECRETO-B", maximumStyle, maximumBusinessInstructions])
-      expect(reply!.text).not.toContain(excluded);
+    const messageId = (await db.sql`select id from messages where provider_message_id='m1'`)[0]!.id;
+    const job = { businessId: A, messageId, correlationId: 'job-1' };
     expect(maximumStyle.length).toBe(32022);
     expect(maximumBusinessInstructions.length).toBe(64058);
+    expect(Buffer.byteLength(maximumStyle + maximumBusinessInstructions, 'utf8')).toBe(192080);
+    expect(Buffer.byteLength(maximumStyle + maximumBusinessInstructions, 'utf8')).toBeGreaterThan(128 * 1024);
+    await expect(worker.process(job)).rejects.toThrow('Receptionist infrastructure failure');
+    expect(calls).toHaveLength(0);
+    expect(await db.sql`select outbound_id from outbound_commands`).toHaveLength(0);
+    expect((await db.sql`select processing_state from messages where id=${messageId}`)[0]!.processing_state).toBe('pending');
+    // Malformed optional summary cannot rescue oversized required settings or invoke a provider.
+    await db.sql`insert into conversation_summaries(business_id,conversation_id,version,covered_through,structured_summary) values(${A},${conversation.id},2,0,${db.sql.json({ facts: [] })})`;
+    await expect(worker.process({ ...job, correlationId: 'invalid-oversized' })).rejects.toThrow('Receptionist infrastructure failure');
+    expect(calls).toHaveLength(0);
+    await db.sql`update messages set raw_text=repeat('x',800) where id=${messageId}`;
+    await expect(worker.process({ ...job, correlationId: 'oversized-800-retry' })).rejects.toThrow('Receptionist infrastructure failure');
+    expect(calls).toHaveLength(0);
+    expect(await db.sql`select outbound_id from outbound_commands`).toHaveLength(0);
+    expect((await db.sql`select style,business_instructions from assistant_configs where business_id=${A}`)[0]).toMatchObject({ style: maximumStyle, business_instructions: maximumBusinessInstructions });
+    expect((await db.sql`select processing_state from messages where id=${messageId}`)[0]!.processing_state).toBe('pending');
+    await db.sql`update messages set raw_text='¿Dónde están ubicados?' where id=${messageId}`;
+    await db.sql`delete from conversation_summaries where business_id=${A} and version=2`;
+    await db.sql`update assistant_configs set style='Estilo A',business_instructions='Instrucciones A' where business_id=${A}`;
+    await worker.process(job);
+    expect(calls).toHaveLength(1);
+    for (const included of ['¿Dónde están ubicados?', 'RETAINED_ADDRESS', 'RETAINED_DESCRIPTION', 'cliente nuevo', 'Estilo A', 'Instrucciones A'])
+      expect(calls[0]).toContain(included);
+    for (const excluded of ['STYLE-B', 'SECRETO-B', 'no usar']) expect(calls[0]).not.toContain(excluded);
+    const [reply] = await db.sql`select text from outbound_commands`;
+    expect(reply!.text).toBe('Estamos en RETAINED_ADDRESS.');
+    expect(reply!.text).not.toMatch(/STYLE-B|SECRETO-B|cliente nuevo|Instrucciones A/);
     expect(
       await db.sql`select outbound_id from outbound_commands`,
     ).toHaveLength(1);
-    await db.sql`delete from conversation_summaries where business_id=${A}`;
-    await db.sql`update messages set raw_text=repeat('x',800),processing_state='pending' where provider_message_id='m1'`;
-    await worker.process({
-      businessId: A,
-      messageId: (
-        await db.sql<
-          { id: string }[]
-        >`select id from messages where provider_message_id='m1'`
-      )[0]!.id,
-      correlationId: "job-2",
-    });
-    expect(calls).toHaveLength(0);
     expect(
       await db.sql`select id from technical_events where code='ai.context_unavailable'`,
     ).toHaveLength(0);
-    await db.sql`insert into conversation_summaries(business_id,conversation_id,version,covered_through,structured_summary) values(${A},${conversation.id},2,0,${db.sql.json({ facts: [] })})`;
-    await db.sql`update messages set raw_text='retry',processing_state='pending' where provider_message_id='m1'`;
-    const timeout = new PostgresAiJobProcessor(
-      pools,
-      { generate: async () => new Promise<never>(() => {}) },
-      500,
-    );
-    await timeout.process({
-      businessId: A,
-      messageId: (
-        await db.sql<
-          { id: string }[]
-        >`select id from messages where provider_message_id='m1'`
-      )[0]!.id,
-      correlationId: "job-timeout",
-    });
     expect(
       await db.sql`select id from technical_events where code='ai.timeout'`,
     ).toHaveLength(0);
@@ -397,6 +383,29 @@ describe("PostgreSQL messaging workers", () => {
     ).not.toMatch(/rechazada|ambigua|secret|@s\.whatsapp/);
   });
 
+  test("native replies preserve an 800-character pending input and suppress duplicate generation", async () => {
+    const inbound = new PostgresInboundHandler(pools);
+    await inbound.handle(event({ providerMessageId: 'native-800', remoteJid: 'native-800@s.whatsapp.net', text: 'x'.repeat(800) }));
+    await makeEligible();
+    const row = (await db.sql`select id from messages where provider_message_id='native-800'`)[0]!;
+    const requests: any[] = [];
+    const worker = new PostgresAiJobProcessor(pools, {
+      generate: async () => { throw new Error('Unexpected generate'); },
+      converse: async request => {
+        requests.push(request);
+        return { message: { role: 'assistant', content: 'Respuesta al texto completo.', toolCalls: [] }, providerId: 'test', usageTokens: 1 };
+      },
+    } as AiProvider & ToolConversationProvider, 500);
+    const job = { businessId: A, messageId: row.id, correlationId: 'native-800' };
+    await worker.process(job);
+    await worker.process(job);
+    expect(requests).toHaveLength(1);
+    expect(requests[0].messages.at(-1).content).toBe('x'.repeat(800));
+    expect((await db.sql`select text from outbound_commands where source_message_id=${row.id}`).map(r => r.text)).toEqual(['Respuesta al texto completo.']);
+    expect((await db.sql`select processing_state from messages where id=${row.id}`)[0]!.processing_state).toBe('generated');
+    await db.sql`update outbox_events set published_at=now() where stable_key='ai:native-800'`;
+  });
+
   test("reclaims crashes, deduplicates publication and isolates two tenants", async () => {
     await db.sql`update businesses set status='active' where id=${B}`;
     await db.sql`update assistant_configs set active=true where business_id=${B}`;
@@ -464,11 +473,12 @@ describe("PostgreSQL messaging workers", () => {
     const worker = new PostgresAiJobProcessor(
         pools,
         {
-          generate: async () => {
+          generate: async () => { throw new Error('Unexpected generate'); },
+          converse: async () => {
             calls.push("called");
-            return { text: "ok", providerId: "id", usageTokens: 1 };
+            return { message: { role: 'assistant', content: 'ok', toolCalls: [] }, providerId: "id", usageTokens: 1 };
           },
-        },
+        } as AiProvider & ToolConversationProvider,
         500,
       ),
       job = {
@@ -478,7 +488,7 @@ describe("PostgreSQL messaging workers", () => {
       };
     await worker.process(job);
     await worker.process(job);
-    expect(calls).toHaveLength(0);
+    expect(calls).toHaveLength(1);
     expect(
       await db.sql`select outbound_id from outbound_commands where source_message_id=${job.messageId}`,
     ).toHaveLength(1);
@@ -490,11 +500,12 @@ describe("PostgreSQL messaging workers", () => {
       ai = new PostgresAiJobProcessor(
         pools,
         {
-          generate: async (request) => {
+          generate: async () => { throw new Error('Unexpected generate'); },
+          converse: async (request) => {
             aiCalls.push(request);
-            return { text: "ok", providerId: "id", usageTokens: 1 };
+            return { message: { role: 'assistant', content: 'ok', toolCalls: [] }, providerId: "id", usageTokens: 1 };
           },
-        },
+        } as AiProvider & ToolConversationProvider,
         300,
       );
     await inbound.handle(
@@ -522,7 +533,7 @@ describe("PostgreSQL messaging workers", () => {
     });
     await makeEligible();
     await ai.process(job);
-    expect(aiCalls).toHaveLength(0);
+    expect(aiCalls).toHaveLength(1);
     const requests: any[] = [],
       summaries = new PostgresSummaryJobProcessor(pools, {
         summarize: async (request) => {
@@ -561,7 +572,7 @@ describe("PostgreSQL messaging workers", () => {
       messageId: second.id,
       correlationId: "ai:summary-2",
     });
-    expect(aiCalls).toHaveLength(0);
+    expect(aiCalls).toHaveLength(2);
     expect(await db.sql`select outbound_id from outbound_commands where source_message_id in (${first.id},${second.id})`).toHaveLength(2);
     expect(await summaries.process(plan2!)).toBe("updated");
     expect(requests[1]).toMatchObject({
@@ -598,12 +609,9 @@ describe("PostgreSQL messaging workers", () => {
       ai = new PostgresAiJobProcessor(
         pools,
         {
-          generate: async () => ({
-            text: "fallback",
-            providerId: "id",
-            usageTokens: 1,
-          }),
-        },
+          generate: async () => { throw new Error('Unexpected generate'); },
+          converse: async () => ({ message: { role: 'assistant', content: 'fallback', toolCalls: [] }, providerId: 'id', usageTokens: 1 }),
+        } as AiProvider & ToolConversationProvider,
         40,
       ),
       plan = await ai.planSummary({
@@ -629,11 +637,12 @@ describe("PostgreSQL messaging workers", () => {
       current = new PostgresAiJobProcessor(
         pools,
         {
-          generate: async (request) => {
-            contexts.push(request.context);
-            return { text: "fallback", providerId: "id", usageTokens: 1 };
+          generate: async () => { throw new Error('Unexpected generate'); },
+          converse: async (request) => {
+            contexts.push(JSON.parse(request.messages[1]!.content!));
+            return { message: { role: 'assistant', content: 'fallback', toolCalls: [] }, providerId: "id", usageTokens: 1 };
           },
-        },
+        } as AiProvider & ToolConversationProvider,
         500,
       );
     await makeEligible();
@@ -642,7 +651,8 @@ describe("PostgreSQL messaging workers", () => {
       messageId: row.id,
       correlationId: "current-response",
     });
-    expect(contexts).toHaveLength(0);
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0].summary.facts).toEqual(['estado previo']);
     expect((await db.sql`select structured_summary from conversation_summaries where conversation_id=${row.conversation_id} and version=1`)[0]!.structured_summary.facts).toEqual(["estado previo"]);
     expect(
       await db.sql`select outbound_id from outbound_commands where source_message_id=${row.id}`,
@@ -671,7 +681,7 @@ describe("PostgreSQL messaging workers", () => {
     ]);
   });
 
-  test("legacy provider port retains complete long groups and manual suffix boundaries without forwarding history or instructions", async () => {
+  test("native context retains complete long groups, instructions and manual suffix boundaries", async () => {
     const inbound = new PostgresInboundHandler(pools);
     const remoteJid = 'full-group@s.whatsapp.net';
     const texts = Array.from({ length: 55 }, (_, index) => index === 0 ? ' \t' + '😀'.repeat(9000) + '\n ' : `input-${index}`);
@@ -683,22 +693,27 @@ describe("PostgreSQL messaging workers", () => {
     const additionalInstructions = ' \n\tGlobal Atención 😀  ';
     await pools.admin.run(undefined, r => r.updatePlatformAiInstructions(additionalInstructions));
     const payloads: any[] = [];
-    // Opt into legacy-port compatibility without converse, not a live provider gate.
-    const worker = new PostgresAiJobProcessor(pools, { generate: async request => {
+    const worker = new PostgresAiJobProcessor(pools, { generate: async () => { throw new Error('Unexpected generate'); }, converse: async request => {
       payloads.push(request);
-      return { text: 'ok', providerId: 'legacy-mock', usageTokens: 0 };
-    } });
+      return { message: { role: 'assistant', content: 'ok', toolCalls: [] }, providerId: 'native-mock', usageTokens: 1 };
+    } } as AiProvider & ToolConversationProvider);
     await makeEligible();
     const context = tenantContext({ businessId: A, actorId: 'test', role: 'internal_worker', requestId: 'full-source' });
     const source = await pools.worker.run(context, r => r.loadAiMessage(row.id, true));
     expect(source!.currentGroup.map(turn => turn.raw_text)).toEqual(texts);
     expect(source!.summaries.find(summary => summary.version === 1)!.structured_summary).toEqual(content);
     await worker.process({ businessId: A, messageId: row.id, correlationId: 'full' });
-    expect(payloads).toHaveLength(0);
-    expect((await db.sql`select text from outbound_commands where source_message_id=${row.id}`)[0]!.text).toContain('No se guardó ningún cambio');
+    expect(payloads).toHaveLength(1);
+    const chunks = payloads[0].messages.map((message: any) => {
+      try { return JSON.parse(message.content); } catch { return null; }
+    }).filter((value: any) => value?.section === 'currentInput');
+    expect(JSON.parse(chunks.map((chunk: any) => chunk.text).join('')).text).toBe(texts.join('\n'));
+    expect(JSON.stringify(payloads[0])).toContain('Global Atención');
+    expect(JSON.stringify(payloads[0])).not.toMatch(/STYLE-B|SECRETO-B/);
+    expect((await db.sql`select text from outbound_commands where source_message_id=${row.id}`)[0]!.text).toBe('ok');
     expect(await db.sql`select id from messages where conversation_id=${row.conversation_id}`).toHaveLength(55);
     await worker.process({ businessId: B, messageId: row.id, correlationId: 'foreign' });
-    expect(payloads).toHaveLength(0);
+    expect(payloads).toHaveLength(1);
     await inbound.handle(event({ providerMessageId: 'full-manual', remoteJid, fromMe: true, text: 'manual closure' }));
     for (const [index, text] of ['next-one', 'next-two'].entries())
       await inbound.handle(event({ providerMessageId: `full-next-${index}`, remoteJid, text }));
@@ -709,7 +724,9 @@ describe("PostgreSQL messaging workers", () => {
     expect(suffix!.turns.map(turn => turn.raw_text)).toEqual([...texts, 'manual closure', 'next-one', 'next-two']);
     expect(suffix!.summaries.find(summary => summary.version === 1)!.structured_summary).toEqual(content);
     await worker.process({ businessId: A, messageId: latest.id, correlationId: 'suffix' });
-    expect(payloads).toHaveLength(0);
+    expect(payloads).toHaveLength(2);
+    expect(payloads[1].messages.at(-1).content).toBe('next-one\nnext-two');
+    expect((await db.sql`select text from outbound_commands where source_message_id=${latest.id}`)[0]!.text).toBe('ok');
     await pools.admin.run(undefined, r => r.updatePlatformAiInstructions(''));
     await db.sql`update outbox_events set published_at=now() where stable_key like 'ai:full-%'`;
   });
@@ -752,13 +769,14 @@ describe("PostgreSQL messaging workers", () => {
       await makeEligible();
       const source = await pools.worker.run(context, r => r.loadAiMessage(latest.id, true));
       const requests: any[] = [];
-      await new PostgresAiJobProcessor(pools, { generate: async request => {
+      await new PostgresAiJobProcessor(pools, { generate: async () => { throw new Error('Unexpected generate'); }, converse: async request => {
         requests.push(request);
-        return { text: 'ok', providerId: 'test', usageTokens: 1 };
-      } }).process({ businessId: A, messageId: latest.id, correlationId: kind });
+        return { message: { role: 'assistant', content: 'ok', toolCalls: [] }, providerId: 'test', usageTokens: 1 };
+      } } as AiProvider & ToolConversationProvider).process({ businessId: A, messageId: latest.id, correlationId: kind });
       const closed = ['failure', 'provider-failure', 'manual', 'claimed'].includes(kind);
       expect(source!.currentGroup.map(turn => turn.raw_text).join('\n')).toBe(closed ? ' \tcurrent\n ' : 'prior\n \tcurrent\n ');
-      expect(requests).toHaveLength(0);
+      expect(requests).toHaveLength(1);
+      expect(requests[0].messages.at(-1).content).toBe(closed ? ' \tcurrent\n ' : 'prior\n \tcurrent\n ');
       expect(await pools.worker.run(context, r => r.loadAiMessage(first.id, true))).toBeNull();
       await db.sql`update outbox_events set published_at=now() where payload->>'messageId' in (${first.id},${latest.id})`;
     }
@@ -795,14 +813,14 @@ describe("PostgreSQL messaging workers", () => {
     const run = pools.worker.run.bind(pools.worker);
     let reads = 0;
     pools.worker.run = async (context, fn) => {
-      const result = await run(context, fn);
+      // Pause before the native transaction, not after its atomic response commits.
       if (context?.requestId === 'race-2' && ++reads === 2) { enter(); await gate; }
-      return result;
+      return run(context, fn);
     };
-    const worker = new PostgresAiJobProcessor(pools, { generate: async request => {
+    const worker = new PostgresAiJobProcessor(pools, { generate: async () => { throw new Error('Unexpected generate'); }, converse: async request => {
       requests.push(request);
-      return { text: 'agrupado', providerId: 'test', usageTokens: 1 };
-    } });
+      return { message: { role: 'assistant', content: 'agrupado', toolCalls: [] }, providerId: 'test', usageTokens: 1 };
+    } } as AiProvider & ToolConversationProvider);
     await worker.process(first);
     expect(requests).toHaveLength(0);
     const context = tenantContext({ businessId: A, actorId: 'test', role: 'internal_worker', requestId: 'race-source' });
@@ -826,11 +844,12 @@ describe("PostgreSQL messaging workers", () => {
     await Promise.all([old, waiting]);
     pools.worker.reserveAdvisoryLock = reserve;
     pools.worker.run = run;
-    expect(requests).toHaveLength(0);
+    expect(requests).toHaveLength(1);
+    expect(requests.at(-1).messages.at(-1).content).toBe('uno\ndos\ntres');
     expect(await db.sql`select outbound_id from outbound_commands where source_message_id=${second.messageId}`).toHaveLength(0);
     expect(await db.sql`select outbound_id from outbound_commands where source_message_id=${latest.messageId} and state='generated'`).toHaveLength(1);
     await worker.process({ ...latest, businessId: B });
-    expect(requests).toHaveLength(0);
+    expect(requests).toHaveLength(1);
 
     const fourth = await accept('race-4', 'cuatro');
     const sent: string[] = [];
@@ -847,7 +866,7 @@ describe("PostgreSQL messaging workers", () => {
     await worker.process(fourth);
     expect(await dispatcher.dispatchNext()).toBe(true);
     expect(sent).toHaveLength(1);
-    expect(sent[0]).toContain('No se guardó ningún cambio');
+    expect(sent[0]).toBe('agrupado');
     expect(await dispatcher.dispatchNext()).toBe(false);
     const conversation = (await db.sql<{ id: string }[]>`select id from conversations where remote_jid='race@s.whatsapp.net'`)[0]!;
     expect((await db.sql`select state from outbound_commands where source_message_id=${latest.messageId}`)[0]!.state).toBe('failed');
