@@ -23,6 +23,65 @@ export interface AiProvider {
   generate(request: AiGenerateRequest): Promise<AiGenerateResult>;
 }
 
+/** Independent opt-in port for native tool conversations; no execution authority. */
+export const TOOL_CONVERSATION_LIMITS = {
+  messages: 100, definitions: 32, calls: 8, argumentBytes: 16_384,
+  messageCharacters: 16_384, outputCharacters: 8192, reasoningCharacters: 32_768,
+  requestBytes: 131_072,
+} as const;
+
+const ToolNameSchema = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
+const ToolCallIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
+const JsonObjectSchema = z.record(z.string(), z.json());
+const boundedArguments = JsonObjectSchema.refine(value =>
+  new TextEncoder().encode(JSON.stringify(value)).byteLength <= TOOL_CONVERSATION_LIMITS.argumentBytes);
+export const ConversationToolCallSchema = z.object({
+  id: ToolCallIdSchema, name: ToolNameSchema, arguments: boundedArguments,
+}).strict();
+export type ConversationToolCall = z.infer<typeof ConversationToolCallSchema>;
+
+export const ToolAssistantMessageSchema = z.object({
+  role: z.literal("assistant"),
+  content: z.string().max(TOOL_CONVERSATION_LIMITS.messageCharacters).nullable(),
+  toolCalls: z.array(ConversationToolCallSchema).max(TOOL_CONVERSATION_LIMITS.calls).default([]),
+  /** Internal provider protocol state. Never render, log or send to the customer. */
+  providerState: z.object({
+    reasoningContent: z.string().max(TOOL_CONVERSATION_LIMITS.reasoningCharacters),
+  }).strict().optional(),
+}).strict().refine(message => message.toolCalls.length > 0 || Boolean(message.content?.trim()));
+export type ToolAssistantMessage = z.infer<typeof ToolAssistantMessageSchema>;
+
+const ToolConversationMessageSchema = z.union([
+  z.object({ role: z.enum(["system", "user"]), content: z.string().min(1).max(TOOL_CONVERSATION_LIMITS.messageCharacters) }).strict(),
+  ToolAssistantMessageSchema,
+  z.object({ role: z.literal("tool"), toolCallId: ToolCallIdSchema,
+    content: z.string().max(TOOL_CONVERSATION_LIMITS.messageCharacters) }).strict(),
+]);
+export type ToolConversationMessage = z.input<typeof ToolConversationMessageSchema>;
+
+export const ToolConversationRequestSchema = z.object({
+  messages: z.array(ToolConversationMessageSchema).min(1).max(TOOL_CONVERSATION_LIMITS.messages),
+  tools: z.array(z.object({
+    name: ToolNameSchema, description: z.string().min(1).max(2000),
+    // A JSON Schema object, not permission to execute. T2 validates tool-specific arguments.
+    parameters: JsonObjectSchema.refine(value => value.type === "object"),
+  }).strict()).max(TOOL_CONVERSATION_LIMITS.definitions),
+  maxOutputCharacters: z.number().int().min(1).max(TOOL_CONVERSATION_LIMITS.outputCharacters),
+  correlationId: z.string().min(1).max(200),
+}).strict();
+export type ToolConversationRequest = z.input<typeof ToolConversationRequestSchema>;
+export interface ToolConversationResult {
+  message: ToolAssistantMessage;
+  providerId: string;
+  usageTokens: number;
+}
+export interface ToolConversationProvider {
+  converse(request: ToolConversationRequest): Promise<ToolConversationResult>;
+}
+export function hasToolConversationProvider(provider: AiProvider): provider is AiProvider & ToolConversationProvider {
+  return "converse" in provider && typeof provider.converse === "function";
+}
+
 /** Proposal arguments are untrusted selections, never authorization or saved outcomes.
  * T15 must resolve ownership, sender identity, confirmation, terms and execution.
  * No generated prose is returned here: clarification is a missing-field plan.
