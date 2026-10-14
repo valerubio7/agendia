@@ -45,7 +45,8 @@ export class PostgresAiJobProcessor {
   ) {
     if (!hasToolConversationProvider(provider)) throw new Error("AI job provider requires callable converse");
     this.conversational = provider;
-    this.agenda = new PostgresWhatsAppAgenda(pools);
+    this.agenda = new PostgresWhatsAppAgenda(pools, undefined,
+      event => console.warn(JSON.stringify(event)));
   }
   private context(businessId: string, correlationId: string) {
     return tenantContext({

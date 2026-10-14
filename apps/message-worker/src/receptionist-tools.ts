@@ -78,10 +78,29 @@ export const receptionistToolDefinitions: ToolConversationRequest["tools"] = Obj
   name, description: descriptions[name as ToolName], parameters: z.toJSONSchema(schema) as ToolConversationRequest["tools"][number]["parameters"],
 }));
 
-export function parseReceptionistTool(name: string, args: unknown): ReceptionistToolCommand | null {
-  if (!Object.hasOwn(schemas, name)) return null;
-  const parsed = schemas[name as ToolName].safeParse(args);
-  return parsed.success ? { name, arguments: parsed.data } as ReceptionistToolCommand : null;
+export type ReceptionistToolDiagnostic = {
+  code: "receptionist.tool_rejected";
+  toolName: ToolName | "unknown";
+  errorCode: import("@agendia/db").AppointmentError["code"] | "INVALID_TOOL" | "UNKNOWN_APPOINTMENT_ERROR";
+  schemaIssueCategory?: "unknown_tool" | "unexpected_fields" | "invalid_type" | "invalid_value";
+};
+export type ReceptionistToolDiagnostics = (event: ReceptionistToolDiagnostic) => void;
+
+export function parseReceptionistTool(name: string, args: unknown,
+  diagnose?: ReceptionistToolDiagnostics): ReceptionistToolCommand | null {
+  if (!Object.hasOwn(schemas, name)) {
+    diagnose?.({ code: "receptionist.tool_rejected", toolName: "unknown", errorCode: "INVALID_TOOL", schemaIssueCategory: "unknown_tool" });
+    return null;
+  }
+  const toolName = name as ToolName;
+  const parsed = schemas[toolName].safeParse(args);
+  if (parsed.success) return { name: toolName, arguments: parsed.data } as ReceptionistToolCommand;
+  // Never forward Zod issues: paths, unknown keys and messages can contain private input.
+  const issue = parsed.error.issues[0];
+  const schemaIssueCategory = issue?.code === "unrecognized_keys" ? "unexpected_fields"
+    : issue?.code === "invalid_type" ? "invalid_type" : "invalid_value";
+  diagnose?.({ code: "receptionist.tool_rejected", toolName, errorCode: "INVALID_TOOL", schemaIssueCategory });
+  return null;
 }
 
 /** Inside a transaction, staged_action is NOT committed. Only the outer session return
@@ -124,10 +143,11 @@ export class ReceptionistToolSession {
   constructor(private handler: (command: ReceptionistToolCommand) => Promise<ReceptionistToolResult>,
     readonly context: Readonly<{ message: string; recent: readonly string[]; pending: unknown;
       naturalConfirmation?: Readonly<NaturalConfirmationBinding> | null; messages?: readonly ToolConversationMessage[];
-      pendingPresentation?: Readonly<ReceptionistDatePresentation> | null }> = { message: "", recent: [], pending: null }) {}
+      pendingPresentation?: Readonly<ReceptionistDatePresentation> | null }> = { message: "", recent: [], pending: null },
+    private diagnose?: ReceptionistToolDiagnostics) {}
   execute(name: string, args: unknown): Promise<ReceptionistToolResult> {
     if (this.closed || ++this.calls > 16) return Promise.resolve({ status: "rejected", code: "SESSION_LIMIT" });
-    const command = parseReceptionistTool(name, args);
+    const command = parseReceptionistTool(name, args, this.diagnose);
     if (!command) return Promise.resolve({ status: "rejected", code: "INVALID_TOOL" });
     const result = this.tail.then(async () => {
       if (this.closed) return { status: "rejected", code: "SESSION_CLOSED" } as const;

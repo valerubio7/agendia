@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { createRuntimePools, tenantContext, type StoredAppointment } from "@agendia/db";
@@ -305,6 +305,69 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     expect(available.text).not.toContain("Ana");
     expect((await counts(h)).clients).toBe(0);
     expect((await counts(h)).appointments).toBe(0);
+  });
+
+  for (const [text, date, weekday] of [
+    ["Consultar horarios del Corte mañana", "2026-10-15", "jueves"],
+    ["Proba el viernes 16", "2026-10-16", "viernes"],
+  ] as const) {
+    test(`current customer date overrides wrong model date in fresh and retained scope: ${weekday}`, async () => {
+      const h = await fixture();
+      h.now = "2026-10-14T19:30:00-03:00";
+      const proposal: ReceptionistToolCommand = { name: "availability", arguments: {
+        serviceId: h.service, date: "2026-10-19",
+      } };
+      for (const retained of [false, true]) {
+        if (retained) await turn(h, "Consultar horarios el 2026-10-20, prefiero Beatriz", proposal);
+        const response = await turn(h, text, proposal);
+        expect(response.text).toContain(`${date}: 09:00`);
+        expect(response.text).not.toContain("2026-10-19");
+        expect(response.text).not.toContain("2026-10-20");
+        const followup = await turn(h, "¿Qué horarios hay?", proposal);
+        expect(followup.text).toContain(`${date}: 09:00`);
+      }
+      expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
+    });
+  }
+
+  test("appointment denials retain private client results and emit only safe internal codes", async () => {
+    const h = await fixture(), foreign = await fixture();
+    const foreignAppointment = await booked(foreign);
+    const events: unknown[] = [];
+    h.agenda = new PostgresWhatsAppAgenda(pools, () => h.now, event => events.push(event));
+    const commands: ReceptionistToolCommand[] = [
+      { name: "availability", arguments: { serviceId: foreign.service, date: "2035-04-02" } },
+      { name: "availability", arguments: { serviceId: h.service, date: "2035-04-02", appointmentId: foreignAppointment.id } },
+      { name: "owned_appointment", arguments: { appointmentId: foreignAppointment.id } },
+    ];
+    const id = await receive(h, "Private customer request, name and phone must not be logged");
+    const outcome = await h.agenda.withReceptionistSession(job(h, id), async session => {
+      for (const command of commands) {
+        expect(await session.execute(command.name, command.arguments)).toEqual({ status: "rejected", code: "AGENDA_REJECTED" });
+      }
+      return "No se guardó ningún cambio.";
+    });
+    expect(outcome.status).toBe("committed");
+    expect(events).toEqual(commands.map(command => ({ code: "receptionist.tool_rejected",
+      toolName: command.name, errorCode: "UNKNOWN_OWNED_ID" })));
+    const serialized = JSON.stringify(events);
+    for (const forbidden of [id, h.business, h.service, foreign.service, foreignAppointment.id, phone, "Private customer", "arguments"])
+      expect(serialized).not.toContain(forbidden);
+    expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
+    const warning = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await factoryTurn(h, "Private request", [commands[0]!], ["rejected"], "No se guardó ningún cambio.");
+      expect(warning.mock.calls).toEqual([[JSON.stringify({ code: "receptionist.tool_rejected",
+        toolName: "availability", errorCode: "UNKNOWN_OWNED_ID" })]]);
+    } finally { warning.mockRestore(); }
+  });
+
+  test("without a current or retained date availability keeps the model-selected day", async () => {
+    const h = await fixture();
+    const response = await turn(h, "Consultar horarios del Corte", { name: "availability", arguments: {
+      serviceId: h.service, date: "2035-04-03",
+    } });
+    expect(response.text).toContain("2035-04-03: 09:00");
   });
 
   for (const modelResource of ["other", "omitted"] as const) {

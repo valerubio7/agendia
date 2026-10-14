@@ -72,6 +72,27 @@ describe("receptionist tool boundary", () => {
     expect((await session.execute("read_business", {})).status).toBe("data");
     expect(calls).toBe(1);
   });
+  test("invalid tool diagnostics expose only controlled names, codes and schema categories", async () => {
+    const events: unknown[] = [];
+    const session = new ReceptionistToolSession(async () => ({ status: "data", data: {} }), undefined,
+      event => events.push(event));
+    const secret = "private-name-phone-provider-text";
+    for (const [name, args, toolName, schemaIssueCategory] of [
+      [secret, { secret }, "unknown", "unknown_tool"],
+      ["read_business", { [secret]: id }, "read_business", "unexpected_fields"],
+      ["availability", { serviceId: id }, "availability", "invalid_type"],
+      ["availability", { serviceId: secret, date: "2026-10-15" }, "availability", "invalid_value"],
+      ["availability", { serviceId: id, date: "2026-02-30" }, "availability", "invalid_value"],
+    ] as const) {
+      expect(await session.execute(name, args)).toEqual({ status: "rejected", code: "INVALID_TOOL" });
+      expect(events.at(-1)).toEqual({ code: "receptionist.tool_rejected", toolName,
+        errorCode: "INVALID_TOOL", schemaIssueCategory });
+    }
+    expect(JSON.stringify(events)).not.toContain(secret);
+    expect(JSON.stringify(events)).not.toContain(id);
+    await session.execute("read_business", {});
+    expect(events).toHaveLength(5);
+  });
   test("bounds calls and closes the capability at transaction end", async () => {
     let calls = 0;
     const session = new ReceptionistToolSession(async () => { calls++; return { status: "data", data: {} }; });
@@ -82,8 +103,12 @@ describe("receptionist tool boundary", () => {
     expect((await session.execute("read_business", {})).status).toBe("rejected");
   });
   test("does not turn infrastructure errors into unavailable facts", async () => {
-    const session = new ReceptionistToolSession(async () => { throw new Error("private database detail"); });
+    const events: unknown[] = [];
+    const session = new ReceptionistToolSession(async () => { throw new Error("private database detail"); }, undefined,
+      event => events.push(event));
     await expect(session.execute("read_business", {})).rejects.toThrow("private database detail");
+    await expect(session.drain()).rejects.toThrow("private database detail");
+    expect(events).toEqual([]);
   });
   test("oversized result aborts rather than silently hiding facts", async () => {
     const session = new ReceptionistToolSession(async () => ({ status: "data", data: "x".repeat(20000) }));

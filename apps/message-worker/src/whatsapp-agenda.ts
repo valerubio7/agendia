@@ -9,7 +9,7 @@ import {
 import type { PostgresAiJob } from "./ai-job.ts";
 import { ReceptionistToolSession, canonicalReceptionistDate, RECEPTIONIST_CALENDAR_TIME_ZONE,
   type ReceptionistToolCommand, type ReceptionistToolResult,
-  type ReceptionistSessionOutcome } from "./receptionist-tools.ts";
+  type ReceptionistSessionOutcome, type ReceptionistToolDiagnostics } from "./receptionist-tools.ts";
 
 import { buildReceptionistMessages } from "./receptionist.ts";
 
@@ -47,7 +47,8 @@ const actionContext = (now: string) => ({ actor: "customer" as const, channel: "
 type GuardedMutation = Extract<ReceptionistToolCommand, { name: "cancel" | "notes" | "preference" }>;
 
 export class PostgresWhatsAppAgenda {
-  constructor(private pools: Pools, private clock = () => new Date().toISOString()) {}
+  constructor(private pools: Pools, private clock = () => new Date().toISOString(),
+    private diagnose?: ReceptionistToolDiagnostics) {}
   private context(job: PostgresAiJob) {
     return tenantContext({ businessId: job.businessId, actorId: "message-worker", role: "internal_worker", requestId: job.correlationId });
   }
@@ -140,10 +141,15 @@ export class PostgresWhatsAppAgenda {
             return result.result;
           } catch (error) {
             if (!(error instanceof AppointmentError)) throw error;
+            const errorCode = ["INVALID_INPUT", "UNKNOWN_OWNED_ID", "INELIGIBLE_CATALOG", "UNAVAILABLE", "BUSY", "CLIENT_CONFLICT",
+              "STATE_LOCKED", "STARTED_STRUCTURE_LOCKED", "LEAD_TIME", "NOTES_LOCKED", "NOT_TRANSITION", "INVALID_ACTION_CONTEXT",
+              "ATTENDANCE_FORBIDDEN", "INVALID_ATTENDANCE_TIME", "BEFORE_START", "CONFIRMATION_REQUIRED"].includes(error.code)
+              ? error.code : "UNKNOWN_APPOINTMENT_ERROR";
+            this.diagnose?.({ code: "receptionist.tool_rejected", toolName: command.name, errorCode });
             return { status: "rejected", code: "AGENDA_REJECTED" };
           }
         }, { message: source.raw_text, recent: source.turns.slice(-12).map(turn => turn.raw_text.slice(0, 2000)),
-          pending: structuredClone(dialogue), pendingPresentation, naturalConfirmation, messages });
+          pending: structuredClone(dialogue), pendingPresentation, naturalConfirmation, messages }, this.diagnose);
         let text: string;
         try {
           text = await converse(session);
@@ -233,7 +239,7 @@ export class PostgresWhatsAppAgenda {
         const selection = customerTemporalSelection(source.raw_text, this.clock());
         const retainedScope = binding || dialogue.bookingPreference !== undefined || dialogue.bookingUnresolvedPreference
           || dialogue.requestedDate !== undefined;
-        const date = retainedScope ? selection.date ?? dialogue.requestedDate ?? args.date : args.date;
+        const date = selection.date ?? (retainedScope ? dialogue.requestedDate ?? args.date : args.date);
         if (selection.date) dialogue.requestedDate = selection.date;
         if (resolved.unresolved) return { status: "clarification", code: "UNKNOWN_RESOURCE", message: missingFieldText(["resource"]) };
         const options = await this.alternatives(repo, job.businessId, args.serviceId, date,
