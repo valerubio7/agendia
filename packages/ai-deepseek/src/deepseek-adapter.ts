@@ -48,19 +48,23 @@ const MAX_PROPOSAL_CHARACTERS = 8192;
 /** Header deadline is not a TCP measurement; total deadline includes streaming body.
  * Race explicitly so deterministic injected transports cannot ignore our deadline.
  */
-async function completion(options: AdapterOptions, fetcher: Fetcher, body: unknown): Promise<any> {
+async function completion(options: AdapterOptions, fetcher: Fetcher, body: unknown, signal?: AbortSignal): Promise<any> {
   const controller = new AbortController();
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   let totalTimer: ReturnType<typeof setTimeout> | undefined;
   let headerTimer: ReturnType<typeof setTimeout> | undefined;
   let timedOut = false;
   let complete = false;
+  let cancel: () => void = () => {};
   const deadline = new Promise<never>((_, reject) => {
     const expire = () => {
       timedOut = true;
       controller.abort();
       reject(new AiProviderError("timeout"));
     };
+    cancel = expire;
+    signal?.addEventListener("abort", cancel, { once: true });
+    if (signal?.aborted) expire();
     totalTimer = setTimeout(expire, options.totalTimeoutMs ?? DEEPSEEK_TOTAL_TIMEOUT_MS);
     headerTimer = setTimeout(expire, options.connectTimeoutMs ?? DEEPSEEK_CONNECT_TIMEOUT_MS);
   });
@@ -100,7 +104,7 @@ async function completion(options: AdapterOptions, fetcher: Fetcher, body: unkno
     try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
     catch { throw new AiProviderError("invalid_response"); }
   };
-  try { return await Promise.race([run(), deadline]); }
+  try { return await Promise.race([deadline, ...(signal?.aborted ? [] : [run()])]); }
   catch (error) {
     if (timedOut) throw new AiProviderError("timeout");
     if (error instanceof AiProviderError) throw error;
@@ -108,6 +112,7 @@ async function completion(options: AdapterOptions, fetcher: Fetcher, body: unkno
   } finally {
     clearTimeout(totalTimer);
     clearTimeout(headerTimer);
+    signal?.removeEventListener("abort", cancel);
     if (reader) {
       if (!complete) void reader.cancel().catch(() => {});
       else reader.releaseLock();
@@ -194,8 +199,11 @@ function parseToolResponse(payload: unknown, request: ValidToolRequest, usedIds:
   const names = new Set(request.tools.map(tool => tool.name));
   for (const wire of wireCalls) {
     if (!objectValue(wire) || wire.type !== "function" || !objectValue(wire.function)) return invalid();
-    if (Object.keys(wire).some(key => !["id", "type", "function"].includes(key)) ||
+    if (Object.keys(wire).some(key => !["id", "type", "function", "index"].includes(key)) ||
         Object.keys(wire.function).some(key => !["name", "arguments"].includes(key))) return invalid();
+    // Optional provider index is benign metadata, not authorization or correlation.
+    // Validate it when present, then omit it from domain calls; IDs remain authoritative.
+    if ("index" in wire && (typeof wire.index !== "number" || !Number.isSafeInteger(wire.index) || wire.index < 0)) return invalid();
     const args = wire.function.arguments;
     if (typeof args !== "string" || byteLength(args) > TOOL_CONVERSATION_LIMITS.argumentBytes) return invalid();
     // JSON parsing and the shared schema reject arrays, scalars and non-JSON values.
@@ -223,7 +231,7 @@ export class DeepSeekAdapter implements AiProvider, AgendaProposalProvider, Tool
   private readonly fetcher: Fetcher;
   constructor(private readonly options: AdapterOptions) { this.fetcher = options.fetcher ?? fetch; }
 
-  async converse(request: ToolConversationRequest): Promise<ToolConversationResult> {
+  async converse(request: ToolConversationRequest, signal?: AbortSignal): Promise<ToolConversationResult> {
     let input: ValidToolRequest;
     let usedIds: Set<string>;
     let body: ReturnType<typeof toolRequestBody>;
@@ -233,7 +241,7 @@ export class DeepSeekAdapter implements AiProvider, AgendaProposalProvider, Tool
       body = toolRequestBody(input, this.options.model ?? "deepseek-chat");
       if (byteLength(JSON.stringify(body)) > TOOL_CONVERSATION_LIMITS.requestBytes) throw new AiProviderError("invalid_request");
     } catch { throw new AiProviderError("invalid_request"); }
-    const payload: unknown = await completion(this.options, this.fetcher, body);
+    const payload: unknown = await completion(this.options, this.fetcher, body, signal);
     try { return parseToolResponse(payload, input, usedIds); }
     catch { throw new AiProviderError("invalid_response"); }
   }

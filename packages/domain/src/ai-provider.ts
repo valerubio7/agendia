@@ -76,7 +76,7 @@ export interface ToolConversationResult {
   usageTokens: number;
 }
 export interface ToolConversationProvider {
-  converse(request: ToolConversationRequest): Promise<ToolConversationResult>;
+  converse(request: ToolConversationRequest, signal?: AbortSignal): Promise<ToolConversationResult>;
 }
 export function hasToolConversationProvider(provider: AiProvider): provider is AiProvider & ToolConversationProvider {
   return "converse" in provider && typeof provider.converse === "function";

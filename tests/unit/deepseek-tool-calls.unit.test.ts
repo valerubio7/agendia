@@ -17,6 +17,22 @@ const envelope = (message: unknown, finish_reason = "stop") => JSON.stringify({
 const provider = (body: string) => new DeepSeekAdapter({ apiKey: "test-only", fetcher: async () => new Response(body) });
 
 describe("native tool conversations", () => {
+  test("native cancellation aborts transport, including pre-aborted requests", async () => {
+    const controller = new AbortController();
+    let received: AbortSignal | null | undefined;
+    let fetches = 0;
+    const adapter = new DeepSeekAdapter({ apiKey: "test-only", fetcher: async (_, init) => {
+      fetches++; received = init?.signal;
+      return new Promise(() => {});
+    } });
+    const pending = adapter.converse(request, controller.signal);
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ code: "timeout" });
+    expect(received?.aborted).toBe(true);
+    await expect(adapter.converse(request, controller.signal)).rejects.toMatchObject({ code: "timeout" });
+    expect(fetches).toBe(1);
+  });
+
   test("returns natural final text without exposing reasoning", async () => {
     const result = await provider(envelope({ role: "assistant", content: " Tenemos cortes y color. ", reasoning_content: "private reasoning" })).converse(request);
     expect(result.message.content).toBe("Tenemos cortes y color.");
@@ -35,6 +51,40 @@ describe("native tool conversations", () => {
         { id: "call_2", name: "read_catalog", arguments: { search: "corte" } },
       ]);
     }
+  });
+
+  test("accepts optional numeric index metadata without exposing it in domain calls", async () => {
+    for (const calls of [
+      [{ ...call("synthetic_call"), index: 0 }],
+      [{ ...call(), index: 0 }, { ...call("call_2"), index: 1 }],
+      [call(), { ...call("call_2"), index: 1 }],
+      [{ ...call(), index: Number.MAX_SAFE_INTEGER }],
+    ]) {
+      const result = await provider(envelope({ role: "assistant", content: "Synthetic preamble", tool_calls: calls }, "tool_calls")).converse(request);
+      expect(result.message.content).toBe("Synthetic preamble");
+      expect(result.message.toolCalls).toEqual(calls.map(wire => ({ id: wire.id, name: "read_catalog", arguments: {} })));
+    }
+  });
+
+  test("rejects invalid index metadata and unknown wire keys", async () => {
+    for (const wire of [
+      ...["0", null, true, {}, [], -1, 0.5, Number.MAX_SAFE_INTEGER + 1].map(index => ({ ...call(), index })),
+      { ...call(), index: 0, extra: "unexpected" },
+      { ...call(), extra: "unexpected" },
+      { ...call(), index: 0, function: { ...call().function, extra: "unexpected" } },
+    ]) await expect(provider(envelope({ role: "assistant", content: null, tool_calls: [wire] }, "tool_calls")).converse(request)).rejects.toMatchObject({ code: "invalid_response" });
+  });
+
+  test("index metadata cannot authorize tools or replace ID validation and correlation", async () => {
+    for (const calls of [
+      [{ ...call("call_1", "unknown"), index: 0 }],
+      [{ ...call("bad id"), index: 0 }],
+      [{ ...call("call_1", "read_catalog", "[]"), index: 0 }],
+      [{ ...call(), index: 0 }, { ...call(), index: 1 }],
+    ]) await expect(provider(envelope({ role: "assistant", content: null, tool_calls: calls }, "tool_calls")).converse(request)).rejects.toMatchObject({ code: "invalid_response" });
+    // Repeated metadata is benign; distinct IDs still determine correlation.
+    const result = await provider(envelope({ role: "assistant", content: null, tool_calls: [{ ...call(), index: 0 }, { ...call("call_2"), index: 0 }] }, "tool_calls")).converse(request);
+    expect(result.message.toolCalls.map(tool => tool.id)).toEqual(["call_1", "call_2"]);
   });
 
   test("serializes native functions, assistant calls, correlated results and reasoning round-trip", async () => {
