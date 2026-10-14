@@ -424,21 +424,43 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
 
   test("new names require an explicit answer and detailed delivered quote before real confirmation", async () => {
     const h = await fixture();
-    const initial = await turn(h, "Reservar Corte el 2035-04-02 a las 10:00", book(h));
+    const initial = await factoryTurn(h, "Reservar Corte el 2035-04-02 a las 10:00", [
+      { name: "prepare_booking", arguments: { serviceId: h.service, startsAt } },
+    ], ["clarification"], toolReply);
     expect(initial.text).toContain("Nombre Apellido");
-    const modelNames = await turn(h, "El perfil dice María Pérez", { operation: "clarify", arguments: { missing: ["names"] } });
+    expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
+    const modelNames = await factoryTurn(h, "El perfil dice María Pérez", [{ name: "confirm_quote", arguments: {} }],
+      ["clarification"], "Necesito tu respuesta: mi nombre es Nombre Apellido.");
     expect(modelNames.text).toContain("mi nombre es");
-    expect((await counts(h)).clients).toBe(0);
-    const quote = await turn(h, "Mi nombre es María Pérez");
+    expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
+    await factoryTurn(h, "Mi nombre es María", [{ name: "confirm_quote", arguments: {} }],
+      ["clarification"], "Necesito también tu apellido.");
+    expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
+    const quote = await factoryTurn(h, "Mi nombre es María Pérez", [{ name: "confirm_quote", arguments: {} }], ["prepared_quote"], toolReply);
     for (const term of ["Corte", "2035-04-02", "10:00", "30 minutos", "ARS 1500"]) expect(quote.text).toContain(term);
-    expect((await counts(h)).appointments).toBe(0);
-    const early = await turn(h, "confirmo");
+    expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
+    const early = await factoryTurn(h, "confirmo", request => {
+      expect(JSON.parse(request.messages[1]!.content!).runtime.naturalConfirmation).toBeNull();
+      return [{ name: "confirm_quote", arguments: {} }];
+    }, ["prepared_quote"], toolReply);
     expect(early.text).toContain("Primero necesitás recibir");
-    expect((await counts(h)).clients).toBe(0);
+    expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
+    const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
+    expect(pending!.dialogue.quote.outboundId).toBe(early.outboundId);
+    expect(early.outboundId).not.toBe(quote.outboundId);
+    const [unsent] = await db.sql`select source_message_id,state,acknowledged_at from outbound_commands where outbound_id=${early.outboundId}`;
+    expect(unsent).toEqual({ source_message_id: early.messageId, state: "generated", acknowledged_at: null });
     await delivered(early);
-    const saved = await turn(h, "sí");
+    const [sent] = await db.sql`select state,acknowledged_at from outbound_commands where outbound_id=${early.outboundId}`;
+    expect(sent!.state).toBe("sent");
+    expect(sent!.acknowledged_at).not.toBeNull();
+    const saved = await factoryTurn(h, "dale reservame ese", request => {
+      expect(JSON.parse(request.messages[1]!.content!).runtime.pending.quote.outboundId).toBe(early.outboundId);
+      return factoryAcceptance(request);
+    }, ["staged_action"], "Guardado:");
     expect(saved.text).toContain("Guardado:");
-    expect(await counts(h)).toMatchObject({ clients: 1, appointments: 1, effects: 1 });
+    expect(await counts(h)).toMatchObject({ clients: 1, appointments: 1, receipts: 6, effects: 1 });
+    expect(await db.sql`select outbound_id from outbound_commands where business_id=${h.business}`).toHaveLength(6);
     const [appointment] = await appointments(h);
     expect(appointment!.client).toMatchObject({ firstName: "María", lastName: "Pérez", phone });
     expect(appointment!.origin).toBe("ai");
@@ -448,28 +470,72 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
   test("existing current client names are never requested or AI-edited", async () => {
     const h = await fixture();
     await db.sql`insert into clients(business_id,first_name,last_name,phone) values(${h.business},'Stored','Identity',${phone})`;
-    const quote = await turn(h, "Reservar Corte el 2035-04-02 a las 10:00", book(h));
+    const [identity] = await db.sql`select id,first_name,last_name,phone from clients where business_id=${h.business}`;
+    const quote = await factoryTurn(h, "Reservar Corte el 2035-04-02 a las 10:00", [
+      { name: "prepare_booking", arguments: { serviceId: h.service, startsAt } },
+    ], ["prepared_quote"], toolReply);
     expect(quote.text).toContain("Reserva propuesta");
     expect(quote.text).not.toContain("Nombre Apellido");
+    expect(await counts(h)).toMatchObject({ clients: 1, appointments: 0, effects: 0 });
+    const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
+    expect(pending!.dialogue.quote.outboundId).toBe(quote.outboundId);
     await delivered(quote);
-    await turn(h, "confirmo");
+    const [sent] = await db.sql`select source_message_id,state,acknowledged_at from outbound_commands where outbound_id=${quote.outboundId}`;
+    expect(sent!.source_message_id).toBe(quote.messageId);
+    expect(sent!.state).toBe("sent");
+    expect(sent!.acknowledged_at).not.toBeNull();
+    await factoryTurn(h, "dale, mi nombre es Inventado Modelo, reservame ese", factoryAcceptance,
+      ["staged_action"], "Guardado: Inventado Modelo.");
     const [appointment] = await appointments(h);
-    expect(appointment!.client).toMatchObject({ firstName: "Stored", lastName: "Identity", phone });
-    expect((await counts(h)).clients).toBe(1);
+    expect(appointment!.client).toMatchObject({ id: identity!.id, firstName: "Stored", lastName: "Identity", phone });
+    expect([...await db.sql`select id,first_name,last_name,phone from clients where business_id=${h.business}`]).toEqual([identity!]);
+    expect(appointment!.origin).toBe("ai");
+    expect(await counts(h)).toMatchObject({ clients: 1, appointments: 1, receipts: 2, effects: 1 });
+    expect(await db.sql`select outbound_id from outbound_commands where business_id=${h.business}`).toHaveLength(2);
   });
 
   test("changed current service terms require a fresh delivered confirmation", async () => {
     const h = await fixture();
-    await prepare(h);
+    await factoryTurn(h, "Reservar Corte el 2035-04-02 a las 10:00", [
+      { name: "prepare_booking", arguments: { serviceId: h.service, startsAt } },
+    ], ["clarification"], toolReply);
+    const quote = await factoryTurn(h, "Mi nombre es María Pérez", [{ name: "confirm_quote", arguments: {} }], ["prepared_quote"], toolReply);
+    expect(quote.text).toContain("30 minutos, ARS 1500");
+    await delivered(quote);
     await db.sql`update services set duration_minutes=45,price_ars=2300 where id=${h.service}`;
-    const fresh = await turn(h, "confirmo");
+    const fresh = await factoryTurn(h, "dale reservame ese", factoryAcceptance, ["prepared_quote"], toolReply);
     expect(fresh.text).toContain("Las condiciones cambiaron");
     expect(fresh.text).toContain("45 minutos, ARS 2300");
-    expect((await counts(h)).appointments).toBe(0);
-    await delivered(fresh);
-    const saved = await turn(h, "confirmo");
+    expect(fresh.outboundId).not.toBe(quote.outboundId);
+    expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
+    const early = await factoryTurn(h, "confirmo", request => {
+      expect(JSON.parse(request.messages[1]!.content!).runtime.naturalConfirmation).toBeNull();
+      return [{ name: "confirm_quote", arguments: {} }];
+    }, ["prepared_quote"], toolReply);
+    expect(early.text).toContain("Primero necesitás recibir");
+    expect(early.text).toContain("45 minutos, ARS 2300");
+    expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
+    const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
+    expect(pending!.dialogue.quote.outboundId).toBe(early.outboundId);
+    expect(early.outboundId).not.toBe(fresh.outboundId);
+    const [unsent] = await db.sql`select source_message_id,state,acknowledged_at from outbound_commands where outbound_id=${early.outboundId}`;
+    expect(unsent).toEqual({ source_message_id: early.messageId, state: "generated", acknowledged_at: null });
+    await delivered(early);
+    const [sent] = await db.sql`select state,acknowledged_at from outbound_commands where outbound_id=${early.outboundId}`;
+    expect(sent!.state).toBe("sent");
+    expect(sent!.acknowledged_at).not.toBeNull();
+    const saved = await factoryTurn(h, "sí, reservame con esas condiciones nuevas", request => {
+      expect(JSON.parse(request.messages[1]!.content!).runtime.pending.quote.outboundId).toBe(early.outboundId);
+      return factoryAcceptance(request);
+    }, ["staged_action"], "Guardado:");
     expect(saved.text).toContain("Guardado:");
-    expect((await appointments(h))[0]!.terms).toMatchObject({ durationMinutes: 45, priceArs: 2300 });
+    const [appointment] = await appointments(h);
+    expect(appointment!.terms).toMatchObject({ durationMinutes: 45, priceArs: 2300 });
+    expect(appointment!.endMs - appointment!.startMs).toBe(45 * 60000);
+    expect(appointment!.client).toMatchObject({ firstName: "María", lastName: "Pérez", phone });
+    expect(appointment!.origin).toBe("ai");
+    expect(await counts(h)).toMatchObject({ clients: 1, appointments: 1, receipts: 5, effects: 1 });
+    expect(await db.sql`select outbound_id from outbound_commands where business_id=${h.business}`).toHaveLength(5);
   });
 
   for (const kind of ["book", "change"] as const) {
