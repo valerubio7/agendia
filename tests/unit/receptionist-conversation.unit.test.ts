@@ -122,7 +122,7 @@ describe("bounded model-led receptionist", () => {
     const provider: ToolConversationProvider = { converse: async (_, received) => { signal = received; return new Promise(() => {}); } };
     let executions = 0;
     const session = new ReceptionistToolSession(async () => { executions++; return { status: "data", data: {} }; });
-    await expect(converseReceptionist(provider, session, messages(), "test", { durationMs: 10 })).rejects.toThrow();
+    await expect(converseReceptionist(provider, session, messages(), "test", { durationMs: 10 })).rejects.toMatchObject({ code: "timeout" });
     expect(signal?.aborted).toBe(true);
     expect((await session.execute("read_business", {})).status).toBe("rejected");
     expect(executions).toBe(0);
@@ -138,7 +138,7 @@ describe("bounded model-led receptionist", () => {
     await expect(converseReceptionist(script.provider, makeSession(), [{ role: "user", content: "x".repeat(17000) }], "test")).rejects.toThrow();
     expect(script.requests).toHaveLength(0);
     const controller = new AbortController(); controller.abort();
-    await expect(converseReceptionist(script.provider, makeSession(), messages(), "test", { signal: controller.signal })).rejects.toThrow();
+    await expect(converseReceptionist(script.provider, makeSession(), messages(), "test", { signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
     expect(script.requests).toHaveLength(0);
   });
   test("cancellation drains an active tool and refuses late continuation authority", async () => {

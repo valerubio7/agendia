@@ -8,6 +8,7 @@ import {
 import { tenantContext, type createRuntimePools } from "@agendia/db";
 import { PostgresWhatsAppAgenda } from "./whatsapp-agenda.ts";
 import { converseReceptionist } from "./receptionist.ts";
+import { AiProviderError } from "@agendia/ai-deepseek";
 
 type Pools = ReturnType<typeof createRuntimePools>;
 export interface PostgresAiJob {
@@ -44,7 +45,7 @@ export class PostgresAiJobProcessor {
   ) {
     if (!hasToolConversationProvider(provider)) throw new Error("AI job provider requires callable converse");
     this.conversational = provider;
-    this.agenda = new PostgresWhatsAppAgenda(pools, undefined);
+    this.agenda = new PostgresWhatsAppAgenda(pools);
   }
   private context(businessId: string, correlationId: string) {
     return tenantContext({
@@ -87,12 +88,21 @@ export class PostgresAiJobProcessor {
     if (!release) return;
     try {
       // Native execution has no language gate or legacy fallback.
-      const outcome = await this.agenda.withReceptionistSession(job, session => {
+      let conversationFailure: unknown;
+      const outcome = await this.agenda.withReceptionistSession(job, async session => {
         if (!session.context.messages) throw new Error("Missing receptionist context");
-        return converseReceptionist(this.conversational, session, [...session.context.messages], job.correlationId);
+        try {
+          return await converseReceptionist(this.conversational, session, [...session.context.messages], job.correlationId);
+        } catch (error) {
+          if (error instanceof AiProviderError || (error instanceof DOMException && error.name === "AbortError"))
+            conversationFailure = error;
+          throw error;
+        }
       });
-      // Infrastructure/unknown outcomes remain retryable; atomic effects roll back.
-      if (outcome.status === "infrastructure_failure") throw new Error("Receptionist infrastructure failure");
+      // Preserve the transport classification only AFTER the transaction rolls
+      // back. Never expose provider errors as customer facts or persist success.
+      if (outcome.status === "infrastructure_failure")
+        throw conversationFailure ?? new Error("Receptionist infrastructure failure");
     } finally {
       await release();
     }

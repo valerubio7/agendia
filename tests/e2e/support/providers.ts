@@ -1,5 +1,5 @@
 import type { SocketFactory } from "@agendia/whatsapp-baileys";
-import { AgendaProposalSchema, type AgendaProposal } from "@agendia/domain";
+import type { ReceptionistToolCommand, ReceptionistToolResult } from "../../../apps/message-worker/src/receptionist-tools.ts";
 
 type SendOutcome = "ack" | "rejected" | "crash";
 class DeterministicSocket {
@@ -171,7 +171,8 @@ export class DeterministicDeepSeekSystemDouble {
   active = false;
   next: "success" | "timeout" | "error" = "success";
   summaryNext: "success" | "timeout" | "error" = "success";
-  agendaProposal: AgendaProposal | null = null;
+  nativeCalls: ReceptionistToolCommand[] | ((messages: Array<{ role: string; content: string | null }>) => ReceptionistToolCommand[]) = [];
+  nativeFinal: ((results: ReceptionistToolResult[]) => string) | null = null;
   private agendaTransport: "success" | "header-deadline" | "body-deadline" | "error" = "success";
   private observedFailure?: () => void;
   agendaAborts = 0;
@@ -194,7 +195,8 @@ export class DeterministicDeepSeekSystemDouble {
     if (outcome === "timeout") throw new Error("deterministic timeout");
     if (outcome === "error")
       return new Response("provider unavailable", { status: 503 });
-    const agenda = !summary && JSON.parse(body).response_format?.type === "json_object";
+    const payload = JSON.parse(body);
+    const agenda = !summary && Array.isArray(payload.tools);
     if (agenda && this.agendaTransport === "error") {
       this.observedFailure?.();
       return new Response("provider unavailable", { status: 503 });
@@ -236,13 +238,33 @@ export class DeterministicDeepSeekSystemDouble {
           preferences: [],
           openItems: [],
         })
-      : agenda && this.agendaProposal
-        ? JSON.stringify(AgendaProposalSchema.parse(this.agendaProposal))
-        : `Respuesta determinista ${this.calls.length}`;
+      : "No se guardó ningún cambio de agenda.";
+    let message: Record<string, unknown> = { role: "assistant", content };
+    let finish_reason = "stop";
+    if (agenda) {
+      const messages = payload.messages as Array<{ role: string; content: string | null; tool_call_id?: string }>;
+      if (messages.at(-1)?.role === "tool") {
+        const firstResult = messages.findLastIndex(item => item.role !== "tool") + 1;
+        const results = messages.slice(firstResult).map(item => JSON.parse(item.content!) as ReceptionistToolResult);
+        const catalog = results[0]?.status === "data" ? results[0].data as { items?: Array<{ name: string; durationMinutes: number; priceArs: number }> } : null;
+        message.content = this.nativeFinal ? this.nativeFinal(results)
+          : catalog?.items ? catalog.items.map(item => `${item.name}: ${item.durationMinutes} minutos, ARS ${item.priceArs}`).join("\n") || "No hay servicios activos."
+          : content;
+      } else {
+        const calls = typeof this.nativeCalls === "function" ? this.nativeCalls(messages) : this.nativeCalls;
+        if (calls.length) {
+          message = { role: "assistant", content: null, tool_calls: calls.map((command, index) => ({
+            id: `system-${this.calls.length}-${index}`, type: "function",
+            function: { name: command.name, arguments: JSON.stringify(command.arguments) },
+          })) };
+          finish_reason = "tool_calls";
+        }
+      }
+    }
     return new Response(
       JSON.stringify({
         id: `deepseek-${this.calls.length}`,
-        choices: [{ message: { content }, ...(agenda && this.agendaProposal ? { finish_reason: "stop" } : {}) }],
+        choices: [{ message, finish_reason }],
         usage: { total_tokens: 3 },
       }),
       { status: 200 },

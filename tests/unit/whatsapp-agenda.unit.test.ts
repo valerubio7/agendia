@@ -6,8 +6,8 @@ import {
   quoteTermsEqual, quoteText, argentinaDate, nearbyDate, agendaTime, customerTemporalSelection, missingFieldText,
   type AgendaQuote,
 } from "../../packages/domain/src/whatsapp-agenda.ts";
-import { AgendaProposalSchema, hasAgendaProposalProvider } from "@agendia/domain";
-import { isAgendaMessage } from "../../apps/message-worker/src/whatsapp-agenda.ts";
+import { hasToolConversationProvider } from "@agendia/domain";
+import { parseReceptionistTool } from "../../apps/message-worker/src/receptionist-tools.ts";
 
 const pn = "5491123456789@s.whatsapp.net";
 const lid = "123456789@lid";
@@ -110,31 +110,28 @@ describe("only explicit customer answers confer conversational authority", () =>
   });
 });
 
-describe("bounded proposal contract and deterministic customer responses", () => {
-  test("all nine operations are accepted without write-authority fields", () => {
-    const proposals = [
-      { operation: "clarify", arguments: { missing: ["date"] } },
-      { operation: "read_catalog", arguments: {} },
-      { operation: "list_appointments", arguments: {} },
-      { operation: "availability", arguments: { serviceId, date: "2030-04-01" } },
-      { operation: "book", arguments: { serviceId, startsAt: quote.startsAt } },
-      { operation: "change", arguments: { appointmentId, startsAt: quote.startsAt } },
-      { operation: "cancel", arguments: { appointmentId } },
-      { operation: "notes", arguments: { appointmentId, notes: "model suggestion" } },
-      { operation: "preference", arguments: { appointmentId, resourceId } },
-    ];
-    for (const proposal of proposals) {
-      expect(AgendaProposalSchema.safeParse(proposal).success).toBe(true);
-      expect(AgendaProposalSchema.safeParse({ ...proposal, confirmed: true }).success).toBe(false);
+describe("native commands and guarded customer responses", () => {
+  test("native tools reject model-supplied write authority and unsupported mutations", () => {
+    for (const [name, args] of [
+      ["read_catalog", {}], ["owned_appointments", {}],
+      ["availability", { serviceId, date: "2030-04-01" }],
+      ["prepare_booking", { serviceId, startsAt: quote.startsAt }],
+      ["prepare_change", { appointmentId, startsAt: quote.startsAt }],
+      ["cancel", { appointmentId }], ["notes", { appointmentId, notes: "model suggestion" }],
+      ["preference", { appointmentId, resourceId }], ["confirm_quote", {}],
+    ] as const) {
+      expect(parseReceptionistTool(name, args)).not.toBeNull();
+      expect(parseReceptionistTool(name, { ...args, confirmed: true })).toBeNull();
     }
-    for (const operation of ["attendance", "done", "no_show", "reopen", "edit_client", "edit_catalog", "override_terms"])
-      expect(AgendaProposalSchema.safeParse({ operation, arguments: { appointmentId } }).success).toBe(false);
-    expect(AgendaProposalSchema.safeParse({ operation: "book", arguments: { serviceId, startsAt: quote.startsAt, phone: "+14155552671", priceArs: 0 } }).success).toBe(false);
+    for (const name of ["attendance", "done", "no_show", "reopen", "edit_client", "edit_catalog", "override_terms"])
+      expect(parseReceptionistTool(name, { appointmentId })).toBeNull();
+    expect(parseReceptionistTool("prepare_booking", { serviceId, startsAt: quote.startsAt, phone: "+14155552671", priceArs: 0 })).toBeNull();
   });
-  test("runtime provider capability is discovered structurally", () => {
+  test("native provider capability requires a callable conversation port", () => {
     const generate = async () => ({ text: "hola", providerId: "test", usageTokens: 0 });
-    expect(hasAgendaProposalProvider({ generate })).toBe(false);
-    expect(hasAgendaProposalProvider({ generate, proposeAgenda: async () => ({ operation: "read_catalog", arguments: {} }) } as any)).toBe(true);
+    expect(hasToolConversationProvider({ generate })).toBe(false);
+    expect(hasToolConversationProvider({ generate, converse: null } as any)).toBe(false);
+    expect(hasToolConversationProvider({ generate, converse: async () => ({}) } as any)).toBe(true);
   });
   test("quote names every agreed term and never claims it was saved", () => {
     const text = quoteText(quote);
@@ -193,29 +190,10 @@ describe("bounded proposal contract and deterministic customer responses", () =>
     expect(choose?.("Color", "service", catalog, false)).toBeUndefined();
     expect(choose?.("Color", "service", [...catalog, { id: appointmentId, name: "Color" }], true)).toBeUndefined();
   });
-  test("fallback uses closed factual templates, escaped address data and validated habitual hours", async () => {
+  test("obsolete factual admission and rendering exports are absent", async () => {
     const module = await import("../../apps/message-worker/src/whatsapp-agenda.ts");
-    const route = Reflect.get(module, "factualQuestion");
-    const render = Reflect.get(module, "renderFactualReply");
-    expect(route?.("¿Dónde están ubicados?")).toBe("address");
-    expect(route?.("¿Cuál es el horario de atención?")).toBe("hours");
-    expect(route?.("Hola")).toBe("greeting");
-    for (const text of ["Dirección y horarios", "¿Dirección y menú?", "¿Abren mañana?"])
-      expect(route?.(text)).toBe("unsupported");
-    expect(route?.("Reprogramar mi turno mañana")).toBeNull();
-    for (const text of ["Horarios del Corte el 2035-04-02", "Consultar horarios el 2035-04-02", "Horarios para mañana", "Horarios de Corte"])
-      expect(route?.(text)).toBeNull();
-    for (const text of ["Horario de atención mañana", "Horario habitual el 2035-04-02", "Dirección y horario habitual"])
-      expect(route?.(text)).toBe("unsupported");
-    expect(render?.("address", 'Calle 123\n"dato"', null)).toBe('Dirección registrada: "Calle 123\\n\\"dato\\"".');
-    expect(render?.("address", "", null)).toContain("No hay una dirección registrada");
-    expect(render?.("hours", "", { 1: [{ startMinute: 540, endMinute: 1080 }] })).toContain("Horario habitual: lunes: 09:00–18:00");
-    expect(render?.("hours", "", { 6: [{ startMinute: 1320, endMinute: 120 }] })).toContain("sábado: 22:00–02:00 (día siguiente)");
-    for (const schedule of [null, {}, "te agendé", { 1: [{ startMinute: -1, endMinute: 2000 }] }])
-      expect(render?.("hours", "", schedule)).toBe("No hay un horario habitual registrado.");
-    expect(render?.("greeting", "", null)).toContain("Hola");
-    expect(render?.("unsupported", "", null)).toContain("No se guardó ningún cambio");
-    expect(isAgendaMessage("reservar un turno")).toBe(true);
-    expect(isAgendaMessage("¿Dónde están ubicados?")).toBe(false);
+    for (const name of ["factualQuestion", "renderFactualReply", "isAgendaMessage"])
+      expect(Reflect.has(module, name)).toBe(false);
+    expect(Reflect.has(module.PostgresWhatsAppAgenda.prototype, "process")).toBe(false);
   });
 });

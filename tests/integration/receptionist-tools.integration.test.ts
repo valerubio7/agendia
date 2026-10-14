@@ -42,7 +42,7 @@ async function fixture(profile = true) {
   await db.sql`insert into resources(id,business_id,name,weekly_schedule) values(${resource},${business},'Ana',${db.sql.json(schedule)})`;
   await db.sql`insert into resource_services(business_id,resource_id,service_id) values(${business},${resource},${service})`;
   await db.sql`insert into clients(business_id,first_name,last_name,phone) values(${business},'María','Pérez',${phone})`;
-  const agenda = new PostgresWhatsAppAgenda(pools, { proposeAgenda: async () => { throw new Error("No classifier allowed"); } }, () => "2035-04-01T08:00:00-03:00");
+  const agenda = new PostgresWhatsAppAgenda(pools, () => "2035-04-01T08:00:00-03:00");
   async function receive(text: string, trusted = true) {
     const providerId = randomUUID();
     const event = normalizeBaileysMessage(session, { key: { id: providerId, remoteJid: "5491123456789@s.whatsapp.net" }, message: { conversation: text } }, trusted)!;

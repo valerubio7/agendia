@@ -1,7 +1,6 @@
 import { expect } from "@playwright/test";
 import { test } from "./support/fixtures.ts";
 import { assertSemanticBoundary } from "./support/system.ts";
-import { AgendaProposalRequestSchema } from "@agendia/domain";
 
 const tenants = [
   {
@@ -147,10 +146,10 @@ test("real services complete the deterministic multi-tenant happy path", async (
   expect(await system.receiveGroup(tenants[0]!.email)).toBe("ignored_group");
   for (const [index, item] of accepted.entries()) {
     await system.releaseReply(
-      tenants[index]!.email, item.providerMessageId, 600, 0,
+      tenants[index]!.email, item.providerMessageId, 600, index,
     );
     await expect.poll(() => system.providers.baileys.acks.length).toBe(index + 1);
-    expect(system.providers.deepSeek.calls).toHaveLength(0);
+    expect(system.providers.deepSeek.calls).toHaveLength(index + 1);
   }
   expect(system.providers.baileys.acks.map(({ jid }) => jid)).toEqual(
     accepted.map(({ remoteJid }) => remoteJid),
@@ -174,10 +173,10 @@ test("real services complete the deterministic multi-tenant happy path", async (
     ),
   );
   expect(system.providers.baileys.acks.every(ack => ack.text.includes("No se guardó ningún cambio de agenda"))).toBe(true);
-  system.providers.deepSeek.agendaProposal = { operation: "read_catalog", arguments: {} };
+  system.providers.deepSeek.nativeCalls = [{ name: "read_catalog", arguments: {} }];
   for (const [index, tenant] of tenants.entries()) {
     const catalog = await system.receiveText(tenant.email, accepted[index]!.remoteJid, "Consultar servicios");
-    await system.releaseReply(tenant.email, catalog.providerMessageId, 90, index);
+    await system.releaseReply(tenant.email, catalog.providerMessageId, 90, system.providers.deepSeek.calls.length);
     await expect.poll(() => system.providers.baileys.acks.length).toBe(3 + index);
     expect(system.providers.baileys.acks[2 + index]!.text).toBe(`Servicio ${tenant.name}: 30 minutos, ARS 1000`);
     expect(system.providers.baileys.acks[2 + index]!.jid).toBe(accepted[index]!.remoteJid);
@@ -243,26 +242,111 @@ test("real services complete the deterministic multi-tenant happy path", async (
     )
     .toBe(2);
   const summaries = await system.summaryEvidence();
-  const groupRequest = system.providers.deepSeek.calls.map(call => JSON.parse(call))
-    .filter(payload => payload.response_format?.type === "json_object")
-    .map(payload => AgendaProposalRequestSchema.parse(JSON.parse(payload.messages.find((message: { role: string }) => message.role === "user").content)))
-    .find(request => request.correlationId === `ai:${latest.providerMessageId}`);
-  expect(groupRequest, "The latest grouped inbound must invoke the structured proposal provider").toBeDefined();
+  const groupRequest = system.providers.deepSeek.calls.slice(callsBeforeGroup).map(call => JSON.parse(call))
+    .find(payload => Array.isArray(payload.tools) && payload.messages.at(-1)?.role === "user"
+      && payload.messages.at(-1).content === `${firstGroupText}\n${latestGroupText}`);
+  expect(groupRequest, "The latest grouped inbound must invoke the native tool provider").toBeDefined();
   const nextSummaryCall = system.providers.deepSeek.calls.findLast(call => call.includes("Resumen estructurado"));
   expect(nextSummaryCall).toContain("Resumen determinista");
-  expect(groupRequest!.message).toBe(latestGroupText);
-  expect(groupRequest!.context.recent.slice(-2)).toEqual([firstGroupText, latestGroupText]);
-  expect(groupRequest!.context.recent.filter(text => text === firstGroupText)).toHaveLength(1);
-  expect(groupRequest!.context.recent.filter(text => text === latestGroupText)).toHaveLength(1);
-  expect(JSON.stringify(groupRequest!.catalog)).toContain("Clínica Norte");
+  const groupContext = JSON.parse(groupRequest.messages[1].content);
+  expect(groupContext.runtime.currentEvidence).toBe(latestGroupText);
+  const receivedGroup = groupRequest.messages.at(-1).content.split("\n");
+  expect(receivedGroup).toEqual([firstGroupText, latestGroupText]);
+  expect(receivedGroup.filter((text: string) => text === firstGroupText)).toHaveLength(1);
+  expect(receivedGroup.filter((text: string) => text === latestGroupText)).toHaveLength(1);
+  expect(groupContext.business.displayName).toBe("Clínica Norte");
   expect(JSON.stringify(groupRequest)).not.toContain("Taller Sur");
   expect(system.providers.deepSeek.calls.filter(
     (call) => !call.includes("Resumen estructurado"),
-  )).toHaveLength(repliesBeforeGroup + 1);
+  )).toHaveLength(repliesBeforeGroup + 2);
   assertSemanticBoundary("summary-update", {
     monotonic: summaries.some(
       (row) => row.version === 2 && row.coveredThrough > 5,
     ),
     usedByNextSummary: Boolean(nextSummaryCall?.includes("Resumen determinista")),
   });
+
+  // Actual provider protocol → committed SQL receipts/effects → real API → panel.
+  // No model-produced ID or synthetic provenance is accepted as delivery evidence.
+  const businessPage = tenantPages[0]!;
+  const csrf = await businessPage.evaluate(() => sessionStorage.getItem("agendia.csrf"));
+  expect(csrf).toBeTruthy();
+  const headers = { Origin: system.webUrl, "x-csrf-token": csrf! };
+  const read = async (path: string) => {
+    const response = await businessPage.request.get(`${system.webUrl}/api/me/${path}`);
+    expect(response.status()).toBe(200);
+    return response.json();
+  };
+  const services = await read("services");
+  const service = services.find((item: { name: string }) => item.name === `Servicio ${tenants[0]!.name}`);
+  expect(service).toBeDefined();
+  const schedule = Object.fromEntries(Array.from({ length: 7 }, (_, day) => [day, [{ startMinute: 0, endMinute: 1440 }]]));
+  expect((await businessPage.request.put(`${system.webUrl}/api/me/business-calendar`, {
+    headers, data: { weeklySchedule: schedule },
+  })).status()).toBe(200);
+  const resourceResponse = await businessPage.request.post(`${system.webUrl}/api/me/resources`, {
+    headers, data: { name: "Native professional", serviceIds: [service.id], weeklySchedule: schedule },
+  });
+  expect(resourceResponse.status()).toBe(201);
+  const resource = await resourceResponse.json();
+  const date = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Argentina/Buenos_Aires",
+    year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(Date.now() + 86400000));
+  const slots = await read(`appointments/availability?${new URLSearchParams({ serviceId: service.id, resourceId: resource.id, date })}`);
+  const slot = slots.find((item: { startMs: number }) => item.startMs >= Date.parse(`${date}T10:00:00-03:00`));
+  expect(slot).toBeDefined();
+  const sendNative = async (text: string) => {
+    const callsBefore = system.providers.deepSeek.calls.length;
+    const acksBefore = system.providers.baileys.acks.length;
+    const received = await system.receiveText(tenants[0]!.email, accepted[0]!.remoteJid, text);
+    await system.releaseReply(tenants[0]!.email, received.providerMessageId, 90, callsBefore);
+    await expect.poll(() => system.providers.baileys.acks.length).toBe(acksBefore + 1);
+    const nativeRounds = system.providers.deepSeek.calls.slice(callsBefore)
+      .map(call => JSON.parse(call)).filter(payload => Array.isArray(payload.tools));
+    expect(nativeRounds).toHaveLength(2);
+    expect(nativeRounds[0].messages.at(-1)).toMatchObject({ role: "user", content: text });
+    expect(nativeRounds[1].messages.at(-1).role).toBe("tool");
+    return received;
+  };
+  system.providers.deepSeek.nativeFinal = results => {
+    const result = results[0]!;
+    return result.status === "staged_action" ? "Reserva guardada."
+      : "message" in result && result.message ? result.message : "Necesito aclarar tu solicitud.";
+  };
+  system.providers.deepSeek.nativeCalls = [{ name: "prepare_booking", arguments: {
+    serviceId: service.id, resourceId: resource.id, startsAt: slot.start,
+  } }];
+  const prepared = await sendNative(`Reservar Servicio ${tenants[0]!.name} el ${date} a las 10:00`);
+  expect(await system.agendaEvidence(tenants[0]!.email, prepared.providerMessageId)).toMatchObject({
+    state: "completed", clients: 0, appointments: 0, effects: 0, receipts: 1,
+  });
+  system.providers.deepSeek.nativeCalls = [{ name: "confirm_quote", arguments: {} }];
+  const quoted = await sendNative("Mi nombre es Clara López");
+  expect(system.providers.baileys.acks.at(-1)!.text).toContain("30 minutos, ARS 1000");
+  expect(await system.agendaEvidence(tenants[0]!.email, quoted.providerMessageId)).toMatchObject({ appointments: 0, effects: 0 });
+  const delivery = await system.deliveryEvidence();
+  expect(delivery.at(-1)).toMatchObject({ state: "sent" });
+  let interpretedAcceptances = 0;
+  system.providers.deepSeek.nativeCalls = messages => {
+    const runtime = JSON.parse(messages[1]!.content!).runtime;
+    expect(runtime.currentEvidence).toBe("dale reservame ese");
+    expect(runtime.naturalConfirmation).not.toBeNull();
+    interpretedAcceptances++;
+    return [{ name: "confirm_quote_naturally", arguments: {
+      evidence: runtime.currentEvidence, ...runtime.naturalConfirmation,
+    } }];
+  };
+  const confirmed = await sendNative("dale reservame ese");
+  expect(interpretedAcceptances).toBe(1);
+  expect(await system.agendaEvidence(tenants[0]!.email, confirmed.providerMessageId)).toMatchObject({
+    state: "completed", clients: 1, appointments: 1, receipts: 1, effects: 1, outbound: 1,
+  });
+  const saved = await read(`appointments?${new URLSearchParams({ from: `${date}T00:00:00-03:00`, to: `${date}T23:59:59-03:00` })}`);
+  expect(saved).toHaveLength(1);
+  expect(saved[0]).toMatchObject({ origin: "ai", state: "confirmed", startsAt: slot.start,
+    client: { firstName: "Clara", lastName: "López" }, terms: { serviceId: service.id, priceArs: 1000, durationMinutes: 30 } });
+  await businessPage.getByRole("link", { name: "Turnos", exact: true }).click();
+  await businessPage.getByRole("button", { name: "Semana", exact: true }).click();
+  await expect(businessPage.getByRole("button", { name: /Clara López/ })).toBeVisible();
+  await businessPage.getByRole("button", { name: /Clara López/ }).click();
+  await expect(businessPage.getByText("Confirmado", { exact: true }).last()).toBeVisible();
 });

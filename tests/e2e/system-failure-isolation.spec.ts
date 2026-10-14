@@ -2,7 +2,6 @@ import { expect, type APIResponse } from "@playwright/test";
 import { test } from "./support/fixtures.ts";
 import { assertSemanticBoundary, systemExposure } from "./support/system.ts";
 import { formatActivityTimestamp } from "../../apps/web/src/live-panel.tsx";
-import { AgendaProposalRequestSchema } from "@agendia/domain";
 import { receivedSenderEvidence } from "../../packages/domain/src/whatsapp-agenda.ts";
 
 const ORIGIN = (system: { webUrl: string }) => system.webUrl;
@@ -325,7 +324,7 @@ test("contains hostile access and provider failures while preserving isolated re
     noAiBypass: system.providers.deepSeek.calls.length === callsBeforeFilters,
   });
 
-  system.providers.deepSeek.agendaProposal = { operation: "read_catalog", arguments: {} };
+  system.providers.deepSeek.nativeCalls = [{ name: "read_catalog", arguments: {} }];
   const agendaJid = "5491123456782@s.whatsapp.net";
   for (const [index, mode] of (["header-deadline", "body-deadline", "error"] as const).entries()) {
     const id = `agenda-${mode}`;
@@ -342,7 +341,7 @@ test("contains hostile access and provider failures while preserving isolated re
       state: "failed", failureCode: mode === "error" ? "provider_unavailable" : "timeout",
       clients: 0, appointments: 0, receipts: 0, effects: 0, outbound: 0,
     });
-    expect(system.providers.deepSeek.calls[calls]).toContain("Propose untrusted agenda arguments");
+    expect(JSON.parse(system.providers.deepSeek.calls[calls]!).tools.some((tool: { function: { name: string } }) => tool.function.name === "read_catalog")).toBe(true);
     expect(system.providers.deepSeek.agendaAborts).toBe(aborted + (mode === "error" ? 0 : 1));
     expect(system.providers.baileys.acks).toHaveLength(0);
   }
@@ -469,11 +468,10 @@ test("contains hostile access and provider failures while preserving isolated re
     });
   const recoveryRequest = system.providers.deepSeek.calls.slice(callsBeforeRecovery)
     .map(call => JSON.parse(call))
-    .filter(payload => payload.response_format?.type === "json_object")
-    .map(payload => AgendaProposalRequestSchema.parse(JSON.parse(payload.messages.find((message: { role: string }) => message.role === "user").content)))
-    .find(request => request.correlationId === "ai:worker-recovery");
-  expect(recoveryRequest, "Worker recovery must invoke an admitted structured proposal, not a fixed fallback").toBeDefined();
-  expect(recoveryRequest!.message).toBe("Consultar servicios, recover");
+    .find(payload => Array.isArray(payload.tools) && payload.messages.at(-1)?.role === "user"
+      && payload.messages.at(-1).content === "Consultar servicios, recover");
+  expect(recoveryRequest, "Worker recovery must invoke the native provider, not a fixed fallback").toBeDefined();
+  expect(JSON.parse(recoveryRequest.messages[1].content).runtime.currentEvidence).toBe("Consultar servicios, recover");
   expect(JSON.stringify(recoveryRequest)).not.toContain(tenants[0]!.secret);
   expect(await system.agendaEvidence(tenants[1]!.email, "worker-recovery")).toMatchObject({
     state: "completed", clients: 0, appointments: 0, receipts: 1, effects: 0, outbound: 1,

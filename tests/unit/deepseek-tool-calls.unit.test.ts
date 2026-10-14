@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { DeepSeekAdapter } from "../../packages/ai-deepseek/src/deepseek-adapter.ts";
 import type { ToolConversationRequest } from "../../packages/domain/src/ai-provider.ts";
+import { DeterministicDeepSeekSystemDouble } from "../e2e/support/providers.ts";
 
 const request: ToolConversationRequest = {
   messages: [{ role: "system", content: "Usa datos reales." }, { role: "user", content: "¿Qué ofrecen?" }],
@@ -17,6 +18,26 @@ const envelope = (message: unknown, finish_reason = "stop") => JSON.stringify({
 const provider = (body: string) => new DeepSeekAdapter({ apiKey: "test-only", fetcher: async () => new Response(body) });
 
 describe("native tool conversations", () => {
+  test("system double performs assistant call, actual result, and final native protocol", async () => {
+    const transport = new DeterministicDeepSeekSystemDouble();
+    transport.active = true;
+    transport.nativeCalls = [{ name: "read_catalog", arguments: {} }];
+    const adapter = new DeepSeekAdapter({ apiKey: "fixture", fetcher: transport.fetcher });
+    const first = await adapter.converse(request);
+    expect(first.message.content).toBeNull();
+    expect(first.message.toolCalls).toHaveLength(1);
+    const tool = first.message.toolCalls[0]!;
+    expect(tool.name).toBe("read_catalog");
+    expect(tool.arguments).toEqual({});
+    const final = await adapter.converse({ ...request, messages: [...request.messages, first.message,
+      { role: "tool", toolCallId: tool.id, content: JSON.stringify({ status: "data", data: { items: [
+        { name: "Corte", durationMinutes: 30, priceArs: 1500 },
+      ], hasMore: false } }) }] });
+    expect(final.message.toolCalls).toEqual([]);
+    expect(final.message.content).toBe("Corte: 30 minutos, ARS 1500");
+    const wire = JSON.parse(transport.calls[1]!);
+    expect(wire.messages.at(-1)).toMatchObject({ role: "tool", tool_call_id: tool.id });
+  });
   test("native cancellation aborts transport, including pre-aborted requests", async () => {
     const controller = new AbortController();
     let received: AbortSignal | null | undefined;
