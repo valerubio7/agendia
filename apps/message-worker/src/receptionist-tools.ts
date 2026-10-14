@@ -1,5 +1,33 @@
 import { z } from "zod";
-import { CalendarDateSchema, InstantSchema, type ToolConversationRequest } from "@agendia/domain";
+import { CalendarDateSchema, InstantSchema, type ToolConversationMessage, type ToolConversationRequest } from "@agendia/domain";
+
+// The calendar engine in domain/agenda-availability.ts uses this fixed IANA zone;
+// it is not a profile setting or a model-selected timezone.
+export const RECEPTIONIST_CALENDAR_TIME_ZONE = "America/Argentina/Buenos_Aires";
+export interface ReceptionistDatePresentation {
+  timeZone: string;
+  localDate: string;
+  localTime: string;
+  weekday: string;
+  label: string;
+}
+/** Presentation only. Never insert these fields into quote terms or fingerprints. */
+export function canonicalReceptionistDate(instant: unknown, timeZone: unknown): ReceptionistDatePresentation | null {
+  const parsed = InstantSchema.safeParse(instant);
+  if (!parsed.success || typeof timeZone !== "string" || !timeZone) return null;
+  try {
+    const formatter = new Intl.DateTimeFormat("es-AR", {
+      timeZone, calendar: "gregory", numberingSystem: "latn", hourCycle: "h23",
+      year: "numeric", month: "2-digit", day: "2-digit", weekday: "long", hour: "2-digit", minute: "2-digit",
+    });
+    const parts = formatter.formatToParts(new Date(parsed.data));
+    const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(item => item.type === type)!.value;
+    const localDate = `${part("year").padStart(4, "0")}-${part("month")}-${part("day")}`;
+    const localTime = `${part("hour")}:${part("minute")}`;
+    const weekday = part("weekday");
+    return { timeZone, localDate, localTime, weekday, label: `${weekday} ${localDate} a las ${localTime} (${timeZone})` };
+  } catch { return null; }
+}
 
 const id = z.uuid();
 const selection = { serviceId: id, resourceId: id.optional(), startsAt: InstantSchema };
@@ -66,7 +94,7 @@ export type ReceptionistToolResult =
   | { status: "data"; data: unknown }
   | { status: "unavailable_data"; code: string }
   | { status: "clarification" | "rejected"; code: string; message?: string }
-  | { status: "prepared_quote"; quote: unknown; message: string }
+  | { status: "prepared_quote"; quote: unknown; message: string; presentation?: ReceptionistDatePresentation | null }
   | { status: "staged_action"; operation: string; appointment: unknown };
 export type ReceptionistSessionOutcome =
   | { status: "committed"; outboundId: string; actions: { operation: string; appointmentId: string }[] }
@@ -95,7 +123,8 @@ export class ReceptionistToolSession {
   private failure: unknown;
   constructor(private handler: (command: ReceptionistToolCommand) => Promise<ReceptionistToolResult>,
     readonly context: Readonly<{ message: string; recent: readonly string[]; pending: unknown;
-      naturalConfirmation?: Readonly<NaturalConfirmationBinding> | null }> = { message: "", recent: [], pending: null }) {}
+      naturalConfirmation?: Readonly<NaturalConfirmationBinding> | null; messages?: readonly ToolConversationMessage[];
+      pendingPresentation?: Readonly<ReceptionistDatePresentation> | null }> = { message: "", recent: [], pending: null }) {}
   execute(name: string, args: unknown): Promise<ReceptionistToolResult> {
     if (this.closed || ++this.calls > 16) return Promise.resolve({ status: "rejected", code: "SESSION_LIMIT" });
     const command = parseReceptionistTool(name, args);

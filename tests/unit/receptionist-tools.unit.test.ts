@@ -1,7 +1,28 @@
 import { describe, expect, test } from "bun:test";
 import { ReceptionistToolSession, receptionistToolDefinitions, parseReceptionistTool } from "../../apps/message-worker/src/receptionist-tools.ts";
 
+import { canonicalReceptionistDate as canonicalDate } from "../../apps/message-worker/src/receptionist-tools.ts";
 const id = "123e4567-e89b-42d3-a456-426614174000";
+describe("canonical receptionist date presentation", () => {
+  const zone = "America/Argentina/Buenos_Aires";
+  test("2035-04-02 is canonically Monday, not Wednesday", () => {
+    expect(canonicalDate("2035-04-02T10:00:00-03:00", zone)).toEqual({
+      timeZone: zone, localDate: "2035-04-02", localTime: "10:00", weekday: "lunes",
+      label: "lunes 2035-04-02 a las 10:00 (America/Argentina/Buenos_Aires)",
+    });
+  });
+  test("UTC midnight converts to the real local previous date and weekday", () => {
+    expect(canonicalDate("2035-04-02T01:30:00Z", zone)).toMatchObject({
+      localDate: "2035-04-01", localTime: "22:30", weekday: "domingo",
+    });
+  });
+  test("missing, invalid or ambiguous times/zones produce no invented labels", () => {
+    for (const instant of [null, undefined, "", "2035-04-02", "tomorrow", "2035-02-30T10:00:00Z"])
+      expect(canonicalDate(instant, zone)).toBeNull();
+    for (const invalidZone of [null, undefined, "", "Mars/Local"])
+      expect(canonicalDate("2035-04-02T10:00:00-03:00", invalidZone)).toBeNull();
+  });
+});
 describe("receptionist tool boundary", () => {
   test("native definitions are a closed strict allowlist", () => {
     expect(receptionistToolDefinitions.length).toBeGreaterThan(8);
@@ -17,6 +38,8 @@ describe("receptionist tool boundary", () => {
       expect(parseReceptionistTool("prepare_booking", { serviceId: id, startsAt: "2035-04-02T10:00:00-03:00", [field]: id })).toBeNull();
     }
     expect(parseReceptionistTool("confirm_quote", { confirmed: true })).toBeNull();
+    expect(parseReceptionistTool("prepare_booking", { serviceId: id, startsAt: "2035-04-02T10:00:00-03:00",
+      presentation: canonicalDate("2035-04-02T10:00:00-03:00", "America/Argentina/Buenos_Aires") })).toBeNull();
   });
   test("validates IDs, real dates, instants and text limits", () => {
     expect(parseReceptionistTool("availability", { serviceId: id, date: "2035-02-30" })).toBeNull();

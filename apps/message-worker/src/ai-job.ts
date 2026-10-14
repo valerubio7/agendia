@@ -1,12 +1,15 @@
 import {
   type AiProvider,
   hasAgendaProposalProvider,
+  hasToolConversationProvider,
+  type ToolConversationProvider,
   type ConversationSummarizer,
   type ConversationSummaryContent,
 } from "@agendia/domain";
 import { tenantContext, type createRuntimePools } from "@agendia/db";
 import { AiProviderError } from "@agendia/ai-deepseek";
 import { PostgresWhatsAppAgenda, factualQuestion, renderFactualReply } from "./whatsapp-agenda.ts";
+import { converseReceptionist } from "./receptionist.ts";
 
 type Pools = ReturnType<typeof createRuntimePools>;
 export interface PostgresAiJob {
@@ -35,12 +38,17 @@ const visible = (turn: { direction: string; processing_state: string }) =>
   turn.direction === "inbound" || turn.processing_state === "sent";
 export class PostgresAiJobProcessor {
   private readonly agenda: PostgresWhatsAppAgenda | null;
+  private readonly conversational: ToolConversationProvider | null;
   constructor(
     private pools: Pools,
     provider: AiProvider,
     private budget = 8_000,
   ) {
-    this.agenda = hasAgendaProposalProvider(provider) ? new PostgresWhatsAppAgenda(pools, provider) : null;
+    this.conversational = hasToolConversationProvider(provider) ? provider : null;
+    this.agenda = hasAgendaProposalProvider(provider) ? new PostgresWhatsAppAgenda(pools, provider)
+      : this.conversational ? new PostgresWhatsAppAgenda(pools, {
+        proposeAgenda: async () => { throw new Error("Legacy proposal route disabled"); },
+      }) : null;
   }
   private context(businessId: string, correlationId: string) {
     return tenantContext({
@@ -83,6 +91,16 @@ export class PostgresAiJobProcessor {
     if (!release) return;
     let agendaAttempt = false;
     try {
+      // Native capability always leads production DeepSeek input, without a language gate.
+      if (this.conversational && this.agenda) {
+        agendaAttempt = true;
+        const outcome = await this.agenda.withReceptionistSession(job, session => {
+          if (!session.context.messages) throw new Error("Missing receptionist context");
+          return converseReceptionist(this.conversational!, session, [...session.context.messages], job.correlationId);
+        });
+        if (outcome.status === "infrastructure_failure") throw new Error("Receptionist infrastructure failure");
+        return;
+      }
       if (this.agenda) {
         agendaAttempt = true;
         if (await this.agenda.process(job)) return;

@@ -8,8 +8,11 @@ import {
   quoteTermsEqual, quoteText, missingFieldText, isAgendaDialogueFollowup, type AgendaDialogue, type AgendaQuote,
 } from "../../../packages/domain/src/whatsapp-agenda.ts";
 import type { PostgresAiJob } from "./ai-job.ts";
-import { ReceptionistToolSession, type ReceptionistToolCommand, type ReceptionistToolResult,
+import { ReceptionistToolSession, canonicalReceptionistDate, RECEPTIONIST_CALENDAR_TIME_ZONE,
+  type ReceptionistToolCommand, type ReceptionistToolResult,
   type ReceptionistSessionOutcome } from "./receptionist-tools.ts";
+
+import { buildReceptionistMessages } from "./receptionist.ts";
 
 type Pools = ReturnType<typeof createRuntimePools>;
 type Source = NonNullable<Awaited<ReturnType<PostgresRepositories["loadAiMessage"]>>>;
@@ -189,6 +192,14 @@ export class PostgresWhatsAppAgenda {
           && await repo.agendaQuoteDelivered(dialogue.quote.outboundId, source.connection_id, phone)
           ? Object.freeze({ evidenceReference: fingerprint("inbound", { id: source.id, text: source.raw_text }),
             quoteFingerprint: fingerprint("quote", dialogue.quote) }) : null;
+        const settings = await repo.platformAiInstructions();
+        const now = this.clock();
+        const pendingPresentation = canonicalReceptionistDate(dialogue.quote?.startsAt, RECEPTIONIST_CALENDAR_TIME_ZONE);
+        const messages = buildReceptionistMessages(source, settings.additionalInstructions, now, {
+          pending: structuredClone(dialogue), pendingPresentation, naturalConfirmation, currentEvidence: source.raw_text,
+          calendarTimeZone: RECEPTIONIST_CALENDAR_TIME_ZONE,
+          serverPresentation: canonicalReceptionistDate(now, RECEPTIONIST_CALENDAR_TIME_ZONE),
+        });
         const session = new ReceptionistToolSession(async command => {
           const reading = ["read_business", "read_catalog", "read_calendar", "read_resources", "availability", "owned_appointments", "owned_appointment"].includes(command.name);
           if (actions.length && !reading) return { status: "rejected", code: "ACTION_ALREADY_STAGED" };
@@ -225,7 +236,8 @@ export class PostgresWhatsAppAgenda {
                 : reply.saved
                 ? { status: "staged_action", operation: command.name, appointment: this.receptionistAppointment(reply.saved) }
                 : reply.renderedQuote && reply.dialogue.quote
-                  ? { status: "prepared_quote", quote: structuredClone(reply.dialogue.quote), message: reply.text }
+                  ? { status: "prepared_quote", quote: structuredClone(reply.dialogue.quote), message: reply.text,
+                    presentation: canonicalReceptionistDate(reply.dialogue.quote.startsAt, RECEPTIONIST_CALENDAR_TIME_ZONE) }
                   : { status: command.name === "confirm_quote" || command.name === "confirm_quote_naturally" || command.name.startsWith("prepare_") ? "clarification" : "rejected",
                     code: "CUSTOMER_INPUT_REQUIRED", message: reply.text };
               return { result, reply };
@@ -243,12 +255,12 @@ export class PostgresWhatsAppAgenda {
             return { status: "rejected", code: "AGENDA_REJECTED" };
           }
         }, { message: source.raw_text, recent: source.turns.slice(-12).map(turn => turn.raw_text.slice(0, 2000)),
-          pending: structuredClone(dialogue), naturalConfirmation });
+          pending: structuredClone(dialogue), pendingPresentation, naturalConfirmation, messages });
         let text: string;
         try {
           text = await converse(session);
           await session.drain();
-        } finally { session.close(); }
+        } finally { session.close(); await session.drain(); }
         if (typeof text !== "string" || !text.trim() || text.length > 12000) throw new Error("Invalid receptionist response");
         // Natural prose is allowed, but model prose alone cannot attest exact quote
         // terms. Always attach the backend summary before marking this quote outbound.
@@ -275,7 +287,8 @@ export class PostgresWhatsAppAgenda {
   }
   private receptionistAppointment(ap: StoredAppointment) {
     return { id: ap.id, startsAt: ap.startsAt, terms: ap.terms, state: ap.state,
-      notes: ap.notes, preference: ap.customerResourcePreference };
+      notes: ap.notes, preference: ap.customerResourcePreference,
+      presentation: canonicalReceptionistDate(ap.startsAt, RECEPTIONIST_CALENDAR_TIME_ZONE) };
   }
   private async receptionistRead(repo: PostgresRepositories, job: PostgresAiJob, source: Source,
     phone: string | null, command: ReceptionistToolCommand): Promise<ReceptionistToolResult> {
@@ -297,7 +310,8 @@ export class PostgresWhatsAppAgenda {
       case "read_calendar": {
         const calendar = await repo.getBusinessCalendar(job.businessId);
         if (!calendar.weeklySchedule) return { status: "unavailable_data", code: "BUSINESS_CALENDAR_MISSING" };
-        return { status: "data", data: { weeklySchedule: calendar.weeklySchedule, closures: bounded(await repo.listBusinessClosures(job.businessId)),
+        return { status: "data", data: { timeZone: RECEPTIONIST_CALENDAR_TIME_ZONE,
+          weeklySchedule: calendar.weeklySchedule, closures: bounded(await repo.listBusinessClosures(job.businessId)),
           establishesAvailability: false } };
       }
       case "availability": {
@@ -312,7 +326,8 @@ export class PostgresWhatsAppAgenda {
           serviceId: args.serviceId, date: args.date, ...(args.resourceId ? { resourceId: args.resourceId } : {}),
         }, { clock: this.clock, ...(args.appointmentId ? { appointmentId: args.appointmentId } : {}) });
         return { status: "data", data: bounded(options.map(option => ({ startsAt: option.start, resourceId: option.resourceId,
-          serviceId: option.terms.serviceId, durationMinutes: option.terms.durationMinutes, priceArs: option.terms.priceArs }))) };
+          serviceId: option.terms.serviceId, durationMinutes: option.terms.durationMinutes, priceArs: option.terms.priceArs,
+          presentation: canonicalReceptionistDate(option.start, RECEPTIONIST_CALENDAR_TIME_ZONE) }))) };
       }
       case "owned_appointments": {
         const client = await repo.findClientByCanonicalPhone(phone!);

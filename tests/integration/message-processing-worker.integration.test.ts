@@ -3,7 +3,6 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PgBoss } from "pg-boss";
 import { createRuntimePools, tenantContext, PostgresRepositories } from "@agendia/db";
-import { DeepSeekAdapter } from "@agendia/ai-deepseek";
 import {
   BaileysAuthStateAdapter,
   BaileysAuthStore,
@@ -226,7 +225,7 @@ describe("PostgreSQL messaging workers", () => {
     });
   });
 
-  test("renders tenant facts without generation, provider instructions, summaries or timeout dependence", async () => {
+  test("legacy provider port renders tenant facts without generation, instructions, summaries or timeout dependence", async () => {
     const conversation = (
       await db.sql<
         { id: string }[]
@@ -234,19 +233,12 @@ describe("PostgreSQL messaging workers", () => {
     )[0]!;
     await db.sql`insert into conversation_summaries(business_id,conversation_id,version,covered_through,structured_summary) values(${A},${conversation.id},1,0,${db.sql.json({ facts: ["cliente nuevo"], requests: [], commitments: [], preferences: [], openItems: [] })})`;
     const calls: string[] = [];
-    const provider = new DeepSeekAdapter({
-      apiKey: "test-only",
-      fetcher: async (_u, i) => {
-        calls.push(String(i?.body));
-        return new Response(
-          JSON.stringify({
-            id: "d1",
-            choices: [{ message: { content: "Llega mañana" } }],
-          }),
-          { status: 200 },
-        );
-      },
-    });
+    // Explicit legacy-only mock: no native converse capability. Production DeepSeek
+    // routing is exercised by receptionist-conversation.integration.test.ts.
+    const provider = { generate: async (request: unknown) => {
+      calls.push(JSON.stringify(request));
+      return { text: "Llega mañana", providerId: "legacy-mock", usageTokens: 0 };
+    } };
     const worker = new PostgresAiJobProcessor(pools, provider, 500);
     await db.sql`update messages set raw_text='¿Dónde están ubicados?' where provider_message_id='m1'`;
     await worker.process({
@@ -287,12 +279,7 @@ describe("PostgreSQL messaging workers", () => {
     await db.sql`update messages set raw_text='retry',processing_state='pending' where provider_message_id='m1'`;
     const timeout = new PostgresAiJobProcessor(
       pools,
-      new DeepSeekAdapter({
-        apiKey: "hidden",
-        fetcher: async () => new Promise<Response>(() => {}),
-        connectTimeoutMs: 10,
-        totalTimeoutMs: 20,
-      }),
+      { generate: async () => new Promise<never>(() => {}) },
       500,
     );
     await timeout.process({
@@ -684,7 +671,7 @@ describe("PostgreSQL messaging workers", () => {
     ]);
   });
 
-  test("retains complete long groups and manual suffix boundaries without forwarding history or instructions", async () => {
+  test("legacy provider port retains complete long groups and manual suffix boundaries without forwarding history or instructions", async () => {
     const inbound = new PostgresInboundHandler(pools);
     const remoteJid = 'full-group@s.whatsapp.net';
     const texts = Array.from({ length: 55 }, (_, index) => index === 0 ? ' \t' + '😀'.repeat(9000) + '\n ' : `input-${index}`);
@@ -696,10 +683,11 @@ describe("PostgreSQL messaging workers", () => {
     const additionalInstructions = ' \n\tGlobal Atención 😀  ';
     await pools.admin.run(undefined, r => r.updatePlatformAiInstructions(additionalInstructions));
     const payloads: any[] = [];
-    const worker = new PostgresAiJobProcessor(pools, new DeepSeekAdapter({ apiKey: 'test', fetcher: async (_url, init) => {
-      payloads.push(JSON.parse(String(init?.body)));
-      return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }));
-    } }));
+    // Opt into legacy-port compatibility without converse, not a live provider gate.
+    const worker = new PostgresAiJobProcessor(pools, { generate: async request => {
+      payloads.push(request);
+      return { text: 'ok', providerId: 'legacy-mock', usageTokens: 0 };
+    } });
     await makeEligible();
     const context = tenantContext({ businessId: A, actorId: 'test', role: 'internal_worker', requestId: 'full-source' });
     const source = await pools.worker.run(context, r => r.loadAiMessage(row.id, true));

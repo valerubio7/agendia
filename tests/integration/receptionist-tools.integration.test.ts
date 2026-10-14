@@ -84,6 +84,45 @@ function naturalArguments(tools: ReceptionistToolSession) {
   if (!binding) throw new Error("Expected delivered quote binding");
   return { ...binding, evidence: tools.context.message };
 }
+describe("canonical presentation without quote authority changes", () => {
+  test("slots, quotes, pending and appointments carry the backend Monday label without changing the fingerprint", async () => {
+    const h = await fixture();
+    const zone = "America/Argentina/Buenos_Aires";
+    const expected = { timeZone: zone, localDate: "2035-04-02", localTime: "10:00", weekday: "lunes" };
+    let snapshot: string;
+    const prepared = await h.run("ese horario", async tools => {
+      const calendar = data(await tools.execute("read_calendar", {})) as any;
+      expect(calendar.timeZone).toBe(zone);
+      const availability = data(await tools.execute("availability", { serviceId: h.service, date: "2035-04-02" })) as any;
+      expect(availability.items.find((item: any) => Date.parse(item.startsAt) === Date.parse(start)).presentation).toMatchObject(expected);
+      const result = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start });
+      expect((result as any).presentation).toMatchObject(expected);
+      if (result.status !== "prepared_quote") throw new Error("Missing quote");
+      snapshot = JSON.stringify(result.quote);
+      expect(snapshot).not.toContain("presentation");
+      expect(snapshot).not.toContain("weekday");
+      return "Te paso la propuesta.";
+    });
+    if (prepared.status !== "committed") throw new Error("Missing committed quote");
+    await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${prepared.outboundId}`;
+    await h.run("dale reservame ese", async tools => {
+      const pending = tools.context.pending as any;
+      // Delivery changes only the existing outbound binding, not presentation state.
+      expect({ ...pending.quote, outboundId: null }).toEqual(JSON.parse(snapshot!));
+      expect((tools.context as any).pendingPresentation).toMatchObject(expected);
+      const binding = structuredClone(tools.context.naturalConfirmation);
+      const result = await tools.execute("confirm_quote_naturally", naturalArguments(tools));
+      expect(result.status).toBe("staged_action");
+      if (result.status !== "staged_action") throw new Error("Missing staged appointment");
+      expect((result.appointment as any).presentation).toMatchObject(expected);
+      expect(tools.context.naturalConfirmation).toEqual(binding);
+      const owned = data(await tools.execute("owned_appointments", {})) as any;
+      expect(owned.items[0].presentation).toMatchObject(expected);
+      return "Listo.";
+    });
+    expect(await h.appointments()).toHaveLength(1);
+  });
+});
 describe("natural confirmation protocol", () => {
   for (const evidence of ["dale reservame ese", "dale resrvame ese"]) {
     test(`authentic delivered quote can be confirmed with ${evidence}`, async () => {
