@@ -2,10 +2,11 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { createRuntimePools, tenantContext, type StoredAppointment } from "@agendia/db";
-import { type AgendaProposal, type WeeklySchedule } from "@agendia/domain";
+import { ToolAssistantMessageSchema, type AgendaProposal, type WeeklySchedule, type AiProvider, type ToolConversationProvider, type ToolConversationRequest } from "@agendia/domain";
 import { normalizeBaileysMessage } from "../../packages/whatsapp-baileys/src/baileys-gateway.ts";
 import { PostgresInboundHandler } from "../../apps/whatsapp-manager/src/inbound-handler.ts";
 import { PostgresWhatsAppAgenda } from "../../apps/message-worker/src/whatsapp-agenda.ts";
+import type { ReceptionistToolCommand, ReceptionistToolResult } from "../../apps/message-worker/src/receptionist-tools.ts";
 import { createMessageWorker } from "../../apps/message-worker/src/index.ts";
 import { applyPostgresMigrations, startTestPostgres, type TestPostgres } from "../support/index.ts";
 
@@ -122,6 +123,70 @@ async function turn(h: Fixture, text: string, proposal?: AgendaProposal, options
   expect(await h.agenda.process(job(h, id))).toBe(true);
   return output(h, id);
 }
+/** Per-turn native scripts through the ACTUAL factory; no intent/keyword translation. */
+async function factoryTurn(h: Fixture, text: string,
+  calls: ReceptionistToolCommand[] | ((request: ToolConversationRequest) => ReceptionistToolCommand[]),
+  statuses: ReceptionistToolResult["status"][],
+  final: string | ((results: ReceptionistToolResult[]) => string)): Promise<Turn> {
+  const id = await receive(h, text);
+  const classicCalls = { proposals: h.proposalCalls, text: h.textCalls };
+  let rounds = 0, failure: unknown;
+  const provider: AiProvider & ToolConversationProvider = {
+    generate: async () => { throw new Error("Native factory must not generate"); },
+    converse: async request => {
+      try {
+        expect(request.tools.some(tool => tool.name === "confirm_quote_naturally")).toBe(true);
+        expect(JSON.parse(request.messages[1]!.content!).runtime.currentEvidence).toBe(text);
+        const message = !rounds++
+          ? ToolAssistantMessageSchema.parse({ role: "assistant", content: null, toolCalls:
+            (typeof calls === "function" ? calls(request) : calls).map((call, index) => ({
+              id: `factory-${index}`, name: call.name, arguments: call.arguments,
+            })) })
+          : (() => {
+            expect(rounds).toBe(2);
+            const results = request.messages.slice(-statuses.length).map(message => {
+              expect(message.role).toBe("tool");
+              return JSON.parse(message.content!) as ReceptionistToolResult;
+            });
+            expect(results.map(result => result.status)).toEqual(statuses);
+            return { role: "assistant" as const, content: typeof final === "string" ? final : final(results), toolCalls: [] };
+          })();
+        return { message, providerId: "factory-script", usageTokens: 0 };
+      } catch (error) { failure = error; throw error; }
+    },
+  };
+  const worker = createMessageWorker(pools, provider);
+  await worker.process(job(h, id));
+  if (failure) throw failure;
+  expect(rounds).toBe(2);
+  await worker.process(job(h, id));
+  expect(rounds).toBe(2);
+  expect(h.proposalCalls).toBe(classicCalls.proposals);
+  expect(h.textCalls).toBe(classicCalls.text);
+  const receipts = await db.sql`select message_id from whatsapp_agenda_receipts where message_id=${id}`;
+  expect(receipts).toHaveLength(1);
+  expect(await db.sql`select outbound_id from outbound_commands where business_id=${h.business} and source_message_id=${id}`).toHaveLength(1);
+  const effects = await db.sql`select payload from outbox_events where business_id=${h.business}
+    and topic='appointment.changed' and stable_key=${`agenda:${id}`}`;
+  expect(effects).toHaveLength(statuses.includes("staged_action") ? 1 : 0);
+  if (effects.length) expect(effects[0]!.payload.sourceMessageId).toBe(id);
+  return output(h, id);
+}
+const toolReply = (results: ReceptionistToolResult[]) => {
+  const result = results[0]!;
+  if (!("message" in result) || !result.message) throw new Error("Expected backend prompt/quote");
+  return result.message;
+};
+const factoryAcceptance = (request: ToolConversationRequest): ReceptionistToolCommand[] => {
+  const runtime = JSON.parse(request.messages[1]!.content!).runtime;
+  expect(runtime.naturalConfirmation).not.toBeNull();
+  return [{ name: "confirm_quote_naturally", arguments: { ...runtime.naturalConfirmation, evidence: runtime.currentEvidence } }];
+};
+const addressReply = (results: ReceptionistToolResult[]) => {
+  expect(results[0]!.status).toBe("data");
+  const profile = (results[0] as { data: { address: string | null } }).data;
+  return profile.address ? `Dirección registrada: "${profile.address}".` : "No hay dirección registrada.";
+};
 async function delivered(turn: Turn) {
   // Transport success is injected; these tests prove backend transactionality, not live delivery.
   await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${turn.outboundId}`;
@@ -1032,98 +1097,85 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     expect((await counts(h)).effects).toBe(1);
   });
 
-  test("runtime returns unrelated questions to text generation after a catalog reply", async () => {
+  test("runtime uses native facts after a catalog reply", async () => {
     const h = await fixture();
-    h.provider.generate = async () => {
-      h.textCalls++;
-      return { text: "Estamos en Avenida Central 123.", providerId: "injected", usageTokens: 1 };
-    };
-    const worker = createMessageWorker(pools, h.provider);
-    const catalogId = await receive(h, "Consultar servicios");
-    await worker.process(job(h, catalogId));
-    expect((await output(h, catalogId)).text).toContain("Corte");
-    const generalId = await receive(h, "¿Dónde están ubicados?");
-    await worker.process(job(h, generalId));
-    expect((await output(h, generalId)).text).toBe('Dirección registrada: "Avenida Central 123".');
-    expect(h.textCalls).toBe(0);
-    expect(h.proposalCalls).toBe(1);
-    expect((await counts(h)).appointments).toBe(0);
+    const catalog = await factoryTurn(h, "Consultar servicios", [{ name: "read_catalog", arguments: {} }], ["data"], results => {
+      const data = (results[0] as { data: { items: { name: string }[] } }).data;
+      return data.items.map(item => item.name).join(", ");
+    });
+    expect(catalog.text).toContain("Corte");
+    const general = await factoryTurn(h, "¿Dónde están ubicados?", [{ name: "read_business", arguments: {} }], ["data"], addressReply);
+    expect(general.text).toBe('Dirección registrada: "Avenida Central 123".');
+    expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
   });
 
-  test("runtime returns unrelated questions to text generation after a completed booking", async () => {
+  test("runtime uses native facts after a completed booking", async () => {
     const h = await fixture();
-    h.provider.generate = async () => {
-      h.textCalls++;
-      return { text: "Podés llegar en colectivo.", providerId: "injected", usageTokens: 1 };
-    };
-    const worker = createMessageWorker(pools, h.provider);
-    h.proposal = book(h);
-    const bookingId = await receive(h, "Reservar Corte el 2035-04-02 a las 10:00");
-    await worker.process(job(h, bookingId));
-    expect((await output(h, bookingId)).text).toContain("Nombre Apellido");
-    const namesId = await receive(h, "Mi nombre es María Pérez");
-    await worker.process(job(h, namesId));
-    const quote = await output(h, namesId);
+    const initial = await factoryTurn(h, "Reservar Corte el 2035-04-02 a las 10:00", [
+      { name: "prepare_booking", arguments: { serviceId: h.service, startsAt } },
+    ], ["clarification"], toolReply);
+    expect(initial.text).toContain("Nombre Apellido");
+    const quote = await factoryTurn(h, "Mi nombre es María Pérez", [{ name: "confirm_quote", arguments: {} }], ["prepared_quote"], toolReply);
     expect(quote.text).toContain("Reserva propuesta");
+    expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
     await delivered(quote);
-    const confirmId = await receive(h, "confirmo");
-    await worker.process(job(h, confirmId));
-    expect((await output(h, confirmId)).text).toContain("Guardado:");
-    const generalId = await receive(h, "¿Cómo puedo llegar?");
-    await worker.process(job(h, generalId));
-    expect((await output(h, generalId)).text).toBe('Dirección registrada: "Avenida Central 123".');
-    expect(h.textCalls).toBe(0);
-    expect(h.proposalCalls).toBe(1);
+    const saved = await factoryTurn(h, "dale reservame ese", factoryAcceptance, ["staged_action"], "Guardado:");
+    expect(saved.text).toContain("Guardado:");
+    const before = await appointments(h);
+    expect(before[0]!.client).toMatchObject({ firstName: "María", lastName: "Pérez", phone });
+    expect(before[0]!.startMs).toBe(Date.parse(startsAt));
+    expect(before[0]!.terms).toMatchObject({ durationMinutes: 30, priceArs: 1500 });
+    expect(before[0]!.origin).toBe("ai");
+    const general = await factoryTurn(h, "¿Cómo puedo llegar?", [{ name: "read_business", arguments: {} }], ["data"], addressReply);
+    expect(general.text).toBe('Dirección registrada: "Avenida Central 123".');
+    expect(await appointments(h)).toEqual(before);
     expect(await counts(h)).toMatchObject({ clients: 1, appointments: 1, effects: 1 });
   });
 
   test("runtime preserves pending names and delivered quotes across unrelated text detours", async () => {
     const h = await fixture();
-    h.provider.generate = async () => {
-      h.textCalls++;
-      return { text: "Estamos en Avenida Central 123.", providerId: "injected", usageTokens: 1 };
-    };
-    const worker = createMessageWorker(pools, h.provider);
-    h.proposal = book(h);
-    const bookingId = await receive(h, "Reservar Corte el 2035-04-02 a las 10:00");
-    await worker.process(job(h, bookingId));
-    expect((await output(h, bookingId)).text).toContain("Nombre Apellido");
-    const firstDetourId = await receive(h, "¿Dónde están ubicados?");
-    await worker.process(job(h, firstDetourId));
-    expect((await output(h, firstDetourId)).text).toBe('Dirección registrada: "Avenida Central 123".');
-    const namesId = await receive(h, "Mi nombre es María Pérez");
-    await worker.process(job(h, namesId));
-    const quote = await output(h, namesId);
+    const initial = await factoryTurn(h, "Reservar Corte el 2035-04-02 a las 10:00", [
+      { name: "prepare_booking", arguments: { serviceId: h.service, startsAt } },
+    ], ["clarification"], toolReply);
+    expect(initial.text).toContain("Nombre Apellido");
+    const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
+    const first = await factoryTurn(h, "¿Dónde están ubicados?", [{ name: "read_business", arguments: {} }], ["data"], addressReply);
+    expect(first.text).toBe('Dirección registrada: "Avenida Central 123".');
+    const [retained] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
+    expect(retained!.dialogue).toEqual(pending!.dialogue);
+    const quote = await factoryTurn(h, "Mi nombre es María Pérez", [{ name: "confirm_quote", arguments: {} }], ["prepared_quote"], toolReply);
     expect(quote.text).toContain("Reserva propuesta");
     await delivered(quote);
-    const secondDetourId = await receive(h, "¿Cómo puedo llegar?");
-    await worker.process(job(h, secondDetourId));
-    expect((await output(h, secondDetourId)).text).toBe('Dirección registrada: "Avenida Central 123".');
-    expect((await counts(h)).appointments).toBe(0);
-    const confirmId = await receive(h, "confirmo");
-    await worker.process(job(h, confirmId));
-    expect((await output(h, confirmId)).text).toContain("Guardado:");
-    expect(h.textCalls).toBe(0);
-    expect(h.proposalCalls).toBe(1);
-    expect((await counts(h)).appointments).toBe(1);
+    const second = await factoryTurn(h, "¿Cómo puedo llegar?", request => {
+      expect(JSON.parse(request.messages[1]!.content!).runtime.pending.quote.outboundId).toBe(quote.outboundId);
+      return [{ name: "read_business", arguments: {} }];
+    }, ["data"], addressReply);
+    expect(second.text).toBe('Dirección registrada: "Avenida Central 123".');
+    expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
+    await factoryTurn(h, "dale reservame ese", factoryAcceptance, ["staged_action"], "Guardado:");
+    expect(await counts(h)).toMatchObject({ clients: 1, appointments: 1, effects: 1 });
   });
 
   test("runtime keeps short date and time answers in an active booking dialogue", async () => {
     const h = await fixture();
-    const worker = createMessageWorker(pools, h.provider);
-    h.proposal = book(h);
-    const missingId = await receive(h, "Reservar Corte");
-    await worker.process(job(h, missingId));
-    expect((await output(h, missingId)).text).toBe("¿Para qué día?");
-    const dateId = await receive(h, "El 2035-04-02");
-    await worker.process(job(h, dateId));
-    expect((await output(h, dateId)).text).toContain("Horarios disponibles");
-    const timeId = await receive(h, "a las 10:00");
-    await worker.process(job(h, timeId));
-    expect((await output(h, timeId)).text).toContain("Nombre Apellido");
-    expect(h.textCalls).toBe(0);
-    expect(h.proposalCalls).toBe(3);
-    expect((await counts(h)).clients).toBe(0);
+    const missing = await factoryTurn(h, "Reservar Corte", [{ name: "read_catalog", arguments: {} }], ["data"], "¿Para qué día?");
+    expect(missing.text).toBe("¿Para qué día?");
+    const date = await factoryTurn(h, "El 2035-04-02", [
+      { name: "availability", arguments: { serviceId: h.service, date: "2035-04-02" } },
+    ], ["data"], results => {
+      const slots = (results[0] as { data: { items: { startsAt: string }[] } }).data.items;
+      expect(slots.some(slot => Date.parse(slot.startsAt) === Date.parse(startsAt))).toBe(true);
+      return "Horarios disponibles: 2035-04-02 a las 10:00. ¿Cuál preferís?";
+    });
+    expect(date.text).toContain("Horarios disponibles");
+    const selected = await factoryTurn(h, "a las 10:00", request => {
+      expect(request.messages.some(message => message.content?.includes("El 2035-04-02"))).toBe(true);
+      return [{ name: "prepare_booking", arguments: { serviceId: h.service, startsAt } }];
+    }, ["clarification"], toolReply);
+    expect(selected.text).toContain("Nombre Apellido");
+    const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
+    expect(Date.parse(pending!.dialogue.quote.startsAt)).toBe(Date.parse(startsAt));
+    expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
   });
 
   test("explicit preference keeps same-day alternatives on Ana when another resource is free at the requested time", async () => {
@@ -1209,24 +1261,29 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     const weekday = new Date("2035-04-02T12:00:00Z").getUTCDay();
     const schedule: WeeklySchedule = { [weekday]: [{ startMinute: 630, endMinute: 690 }] };
     await db.sql`update resources set weekly_schedule=${db.sql.json(schedule)} where id=${h.resource}`;
-    const offered = await turn(h, "Reservar Corte el 2035-04-02, prefiero Ana", book(h));
+    const offered = await factoryTurn(h, "Reservar Corte el 2035-04-02, prefiero Ana", [
+      { name: "prepare_booking", arguments: { serviceId: h.service, startsAt } },
+    ], ["clarification"], toolReply);
     expect(offered.text).toContain("10:30");
-    const detour = await receive(h, "¿Dónde están ubicados?");
-    await createMessageWorker(pools, h.provider).process(job(h, detour));
-    expect((await output(h, detour)).text).toBe('Dirección registrada: "Avenida Central 123".');
-    expect(h.textCalls).toBe(0);
-    h.agenda = new PostgresWhatsAppAgenda(pools, h.provider, () => h.now);
-    const selected = await turn(h, "10:30", { operation: "book", arguments: {
+    const detour = await factoryTurn(h, "¿Dónde están ubicados?", [{ name: "read_business", arguments: {} }], ["data"], addressReply);
+    expect(detour.text).toBe('Dirección registrada: "Avenida Central 123".');
+    // Each factoryTurn constructs a fresh worker: retained preference is durable, not in-memory.
+    const selected = await factoryTurn(h, "10:30", [{ name: "prepare_booking", arguments: {
       serviceId: h.service, resourceId: h.alternate, startsAt: "2035-04-02T10:30:00-03:00",
-    } });
+    } }], ["clarification"], toolReply);
     expect(selected.text).toContain("Nombre Apellido");
-    const quote = await turn(h, "Mi nombre es María Pérez");
+    const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
+    expect(pending!.dialogue.quote.terms.resourceId).toBe(h.resource);
+    expect(pending!.dialogue.quote.preference).toBe(h.resource);
+    const quote = await factoryTurn(h, "Mi nombre es María Pérez", [{ name: "confirm_quote", arguments: {} }], ["prepared_quote"], toolReply);
     await delivered(quote);
-    const saved = await turn(h, "confirmo");
+    const saved = await factoryTurn(h, "dale reservame ese", factoryAcceptance, ["staged_action"], "Guardado:");
     expect(saved.text).toContain("Guardado:");
     const appointment = (await appointments(h))[0]!;
     expect(appointment.terms.resourceId).toBe(h.resource);
     expect(appointment.customerResourcePreference).toBe(h.resource);
+    expect(appointment.startMs).toBe(Date.parse("2035-04-02T10:30:00-03:00"));
+    expect(appointment.client).toMatchObject({ firstName: "María", lastName: "Pérez", phone });
     expect(await counts(h)).toMatchObject({ clients: 1, appointments: 1, effects: 1 });
   });
 
@@ -1366,25 +1423,22 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     }
   });
 
-  test("factual fallback never calls generation, uses only tenant facts and creates no saved agenda evidence", async () => {
+  test("native factual replies use only tenant facts and create no saved agenda effects", async () => {
     const foreign = await fixture();
     await db.sql`update business_profiles set address='Foreign street 999' where business_id=${foreign.business}`;
-    for (const [question, expected] of [
-      ["¿Qué novedades hay?", "No se guardó ningún cambio"],
-      ["¿Dónde están ubicados?", 'Dirección registrada: "Avenida Central 123".'],
-      ["¿Cuál es el horario de atención?", "Horario habitual:"],
-      ["Hola", "Hola"],
-      ["Dirección y horarios", "No se guardó ningún cambio"],
-      ["¿Abren mañana?", "No se guardó ningún cambio"],
+    for (const [question, name, expected] of [
+      ["¿Qué novedades hay?", "read_business", "No se guardó ningún cambio"],
+      ["¿Dónde están ubicados?", "read_business", 'Dirección registrada: "Avenida Central 123".'],
+      ["¿Cuál es el horario de atención?", "read_calendar", "Horario habitual:"],
+      ["Hola", "read_business", "Hola"],
+      ["Dirección y horarios", "read_calendar", "No se guardó ningún cambio"],
+      ["¿Abren mañana?", "read_calendar", "No se guardó ningún cambio"],
     ] as const) {
       const h = await fixture();
-      h.provider.generate = async () => {
-        h.textCalls++;
-        return { text: "Listo, te agendé para mañana a las 10:00", providerId: "injected", usageTokens: 1 };
-      };
-      const id = await receive(h, question);
-      await createMessageWorker(pools, h.provider).process(job(h, id));
-      const reply = await output(h, id);
+      const reply = await factoryTurn(h, question, [{ name, arguments: {} }], ["data"], results => {
+        expect(JSON.stringify(results)).toContain(name === "read_business" ? "Avenida Central 123" : "weeklySchedule");
+        return expected;
+      });
       expect(reply.text).toContain(expected);
       expect(reply.text).not.toContain("Foreign street");
       expect(reply.text).not.toContain("te agendé");
@@ -1392,58 +1446,60 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
       expect(h.proposalCalls).toBe(0);
       expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
       expect(await db.sql`select id from audit_events where business_id=${h.business} and event_type='whatsapp.agenda.saved'`).toHaveLength(0);
-      expect(await db.sql`select message_id from whatsapp_agenda_receipts where message_id=${id}`).toHaveLength(0);
+      expect(await db.sql`select message_id from whatsapp_agenda_receipts where message_id=${reply.messageId}`).toHaveLength(1);
+      const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
+      expect(pending!.dialogue).toEqual({ quote: null, awaitingNames: false });
     }
     const missing = await fixture();
     await db.sql`update business_profiles set address='' where business_id=${missing.business}`;
     await db.sql`update business_calendars set weekly_schedule='{}' where business_id=${missing.business}`;
-    for (const question of ["¿Dónde están ubicados?", "¿Cuál es el horario de atención?"]) {
-      const id = await receive(missing, question);
-      await createMessageWorker(pools, missing.provider).process(job(missing, id));
-      expect((await output(missing, id)).text).toContain("No hay");
+    for (const [question, name] of [["¿Dónde están ubicados?", "read_business"], ["¿Cuál es el horario de atención?", "read_calendar"]] as const) {
+      const reply = await factoryTurn(missing, question, [{ name, arguments: {} }], ["data"], results => {
+        expect(JSON.stringify(results)).toContain(name === "read_business" ? '"address":null' : '"weeklySchedule":{}');
+        return "No hay datos registrados.";
+      });
+      expect(reply.text).toContain("No hay");
     }
   });
 
-  test("factual greeting routing does not steal literal catalog answers from pending changes", async () => {
+  test("native tools preserve literal Hola catalog answers in pending changes", async () => {
     for (const kind of ["service", "resource"] as const) {
       const h = await fixture();
       const appointment = await booked(h);
       if (kind === "service") await db.sql`update services set name='Hola' where id=${h.otherService}`;
       else await db.sql`update resources set name='Hola' where id=${h.alternate}`;
-      h.proposal = { operation: "change", arguments: { appointmentId: appointment.id,
+      const command: ReceptionistToolCommand = { name: "prepare_change", arguments: { appointmentId: appointment.id,
         ...(kind === "service" ? { serviceId: h.otherService } : { resourceId: h.alternate }),
       } };
-      const worker = createMessageWorker(pools, h.provider);
-      const request = await receive(h, kind === "service" ? "Cambiar servicio" : "Cambiar recurso");
-      await worker.process(job(h, request));
-      const answer = await receive(h, "Hola");
-      await worker.process(job(h, answer));
-      const reply = await output(h, answer);
-      if (kind === "service") {
-        expect(reply.text).toContain("Cambio propuesto: Hola");
-        await delivered(reply);
-        const confirmation = await receive(h, "confirmo");
-        await worker.process(job(h, confirmation));
-      } else expect(reply.text).toContain("Cambio guardado");
+      const before = await appointments(h);
+      await factoryTurn(h, kind === "service" ? "Cambiar servicio" : "Cambiar recurso", [command], ["clarification"], toolReply);
+      const reply = await factoryTurn(h, "Hola", [command], ["prepared_quote"], toolReply);
+      expect(reply.text).toContain(kind === "service" ? "Cambio propuesto: Hola" : "Cambio propuesto: Corte");
+      const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
+      expect(pending!.dialogue.quote.terms[kind === "service" ? "serviceId" : "resourceId"]).toBe(kind === "service" ? h.otherService : h.alternate);
+      expect(await appointments(h)).toEqual(before);
+      await delivered(reply);
+      await factoryTurn(h, "dale cambialo", factoryAcceptance, ["staged_action"], "Cambio guardado");
       expect((await appointments(h))[0]!.terms[kind === "service" ? "serviceId" : "resourceId"]).toBe(kind === "service" ? h.otherService : h.alternate);
+      expect(await counts(h)).toMatchObject({ clients: 1, appointments: 1, effects: 2 });
       expect(h.textCalls).toBe(0);
     }
   });
 
-  test("actual worker factory executes proposals and text fallback cannot claim booked success", async () => {
+  test("actual worker factory executes native tools and rejects generate-only providers upfront", async () => {
     const h = await fixture();
-    const worker = createMessageWorker(pools, h.provider);
-    const catalogId = await receive(h, "Consultar servicios");
-    await worker.process(job(h, catalogId));
-    expect((await output(h, catalogId)).text).toContain("Corte");
-    expect(h.proposalCalls).toBe(1);
+    const catalog = await factoryTurn(h, "Consultar servicios", [{ name: "read_catalog", arguments: {} }], ["data"], results => {
+      expect(JSON.stringify(results)).toContain("Corte");
+      return "Corte";
+    });
+    expect(catalog.text).toContain("Corte");
+    expect(h.proposalCalls).toBe(0);
     expect(h.textCalls).toBe(0);
     const other = await fixture();
-    const textWorker = createMessageWorker(pools, { generate: other.provider.generate });
-    const textId = await receive(other, "¿Dónde están ubicados?");
-    await textWorker.process(job(other, textId));
-    expect((await output(other, textId)).text).toBe('Dirección registrada: "Avenida Central 123".');
+    expect(() => createMessageWorker(pools, { generate: other.provider.generate })).toThrow("requires callable converse");
     expect(other.textCalls).toBe(0);
-    expect((await counts(other)).appointments).toBe(0);
+    expect(other.proposalCalls).toBe(0);
+    expect(await counts(other)).toMatchObject({ clients: 0, appointments: 0, receipts: 0, effects: 0 });
+    expect(await db.sql`select outbound_id from outbound_commands where business_id=${other.business}`).toHaveLength(0);
   });
 });
