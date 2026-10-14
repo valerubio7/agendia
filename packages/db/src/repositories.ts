@@ -884,13 +884,13 @@ export class PostgresRepositories {
     return (
       (
         await this
-          .db`select display_name "displayName",description,address,business_hours "businessHours",offerings from business_profiles limit 1`
+          .db`select display_name "displayName",description,address from business_profiles limit 1`
       )[0] ?? null
     );
   }
   saveFullProfile(businessId: string, p: Record<string, string>) {
     return this
-      .db`insert into business_profiles(business_id,display_name,description,address,business_hours,offerings) values(${businessId},${p.displayName!},${p.description!},${p.address!},${p.businessHours!},${p.offerings!}) on conflict(business_id) do update set display_name=excluded.display_name,description=excluded.description,address=excluded.address,business_hours=excluded.business_hours,offerings=excluded.offerings,updated_at=now()`;
+      .db`insert into business_profiles(business_id,display_name,description,address) values(${businessId},${p.displayName!},${p.description!},${p.address!}) on conflict(business_id) do update set display_name=excluded.display_name,description=excluded.description,address=excluded.address,updated_at=now()`;
   }
   saveAssistant(businessId: string, active: boolean) {
     return this
@@ -1203,7 +1203,7 @@ export class PostgresRepositories {
       (
         await this.db<
           Record<string, string>[]
-        >`select display_name,description,address,business_hours,offerings from business_profiles limit 1`
+        >`select display_name,description,address from business_profiles limit 1`
       )[0] ?? {};
     const assistant =
       (

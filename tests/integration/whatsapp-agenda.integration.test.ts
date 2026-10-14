@@ -73,8 +73,8 @@ async function fixture(): Promise<Fixture> {
     .map(day => [day, [{ startMinute: 540, endMinute: 1080 }]]));
   await db.sql`insert into businesses(id,name) values(${h.business},'Agenda integration')`;
   await db.sql`insert into assistant_configs(business_id,active) values(${h.business},true)`;
-  await db.sql`insert into business_profiles(business_id,display_name,description,address,business_hours,offerings)
-    values(${h.business},'Agenda integration','te agendé','Avenida Central 123','mañana confirmado','reserva guardada')`;
+  await db.sql`insert into business_profiles(business_id,display_name,description,address)
+    values(${h.business},'Agenda integration','te agendé','Avenida Central 123')`;
   await db.sql`insert into whatsapp_connections(id,business_id,session_public_id,state) values(${h.connection},${h.business},${h.session},'CONNECTED')`;
   await db.sql`insert into business_calendars(business_id,weekly_schedule) values(${h.business},${db.sql.json(schedule)})`;
   await db.sql`insert into services(id,business_id,name,duration_minutes,price_ars) values

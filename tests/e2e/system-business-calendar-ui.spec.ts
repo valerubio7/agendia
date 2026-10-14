@@ -45,7 +45,7 @@ test("Horario reads only the tenant calendar and retries safely", async ({ brows
       expect(response.status()).toBe(200);
     };
     await seed(business, "business-profile", {
-      displayName: "Horario propio", description: "", address: "", offerings: "", businessHours: "LEGACY 09:00 a 18:00",
+      displayName: "Horario propio", description: "", address: "Dirección conservada",
     });
     await seed(other, "business-calendar", { weeklySchedule: {} });
     const methods: string[] = [];
@@ -56,7 +56,7 @@ test("Horario reads only the tenant calendar and retries safely", async ({ brows
       .getByRole("link", { name: "Horario", exact: true }).click();
     const screen = business.getByRole("main");
     await expect(screen.getByRole("heading", { name: "Horario sin configurar", exact: true })).toBeVisible();
-    await expect(screen.getByText(/LEGACY/)).toHaveCount(0);
+    await expect(screen.getByText("Dirección conservada", { exact: true })).toHaveCount(0);
     await business.screenshot({ path: testInfo.outputPath("calendar-unconfigured.png"), fullPage: true });
     await other.goto(`${system.webUrl}/business-calendar`);
     await expect(other.getByRole("heading", { name: "Todos los días sin atención", exact: true })).toBeVisible();

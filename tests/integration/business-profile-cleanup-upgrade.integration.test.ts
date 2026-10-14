@@ -15,7 +15,8 @@ async function assistantColumns(db: TestPostgres) {
   return (await db.sql`select column_name from information_schema.columns
     where table_schema='public' and table_name='assistant_configs' order by ordinal_position`).map(row => row.column_name);
 }
-const retained = ["business_id", "display_name", "description", "address", "business_hours", "offerings", "updated_at"];
+const retained = ["business_id", "display_name", "description", "address", "updated_at"];
+const obsoleteProfile = ["business_hours", "offerings"];
 
 async function columns(db: TestPostgres) {
   const rows = await db.sql`select column_name from information_schema.columns
@@ -35,7 +36,42 @@ async function security(db: TestPostgres) {
   };
 }
 
-test("fresh migrations retain the five-field profile and two-field assistant with activation defaults", async () => {
+test("forward profile cleanup preserves structured catalog, calendars and resource schedules", async () => {
+  const db = await startTestPostgres();
+  try {
+    const names = (await readdir(directory)).filter(name => name.endsWith(".sql")).sort();
+    for (const name of names.filter(name => name < "0034"))
+      await db.sql.unsafe(await readFile(join(directory, name), "utf8"));
+    const businessId = randomUUID(), serviceId = randomUUID(), resourceId = randomUUID();
+    const schedule = { 1: [{ startMinute: 540, endMinute: 1080 }] };
+    await db.sql`insert into businesses(id,name) values(${businessId},'Upgrade fixture')`;
+    await db.sql`insert into business_profiles(business_id,display_name,description,address,business_hours,offerings)
+      values(${businessId},'Retained name','Retained description','Retained address','DELETE HOURS','DELETE OFFERINGS')`;
+    await db.sql`insert into services(id,business_id,name,duration_minutes,price_ars)
+      values(${serviceId},${businessId},'Structured service',30,1200)`;
+    await db.sql`insert into business_calendars(business_id,weekly_schedule) values(${businessId},${db.sql.json(schedule)})`;
+    await db.sql`insert into resources(id,business_id,name,weekly_schedule)
+      values(${resourceId},${businessId},'Structured resource',${db.sql.json(schedule)})`;
+    await db.sql`insert into resource_services(business_id,resource_id,service_id) values(${businessId},${resourceId},${serviceId})`;
+    const snapshot = async () => ({
+      profiles: await db.sql`select business_id,display_name,description,address,updated_at from business_profiles`,
+      services: await db.sql`select * from services`,
+      calendars: await db.sql`select * from business_calendars`,
+      resources: await db.sql`select * from resources`,
+      assignments: await db.sql`select * from resource_services`,
+      security: await security(db),
+    });
+    const before = await snapshot();
+    for (const name of names.filter(name => name >= "0034"))
+      await db.sql.unsafe(await readFile(join(directory, name), "utf8"));
+    expect(await columns(db)).toEqual(retained);
+    expect(await snapshot()).toEqual(before);
+  } finally {
+    await db.stop();
+  }
+}, 120_000);
+
+test("fresh migrations retain the three-field profile and two-field assistant with activation defaults", async () => {
   const db = await startTestPostgres();
   try {
     await applyPostgresMigrations(db.sql, directory);
@@ -65,7 +101,7 @@ test("fresh migrations retain the five-field profile and two-field assistant wit
 test("populated upgrade consolidates every assistant text while preserving profiles, metadata, history and security", async () => {
   const db = await startTestPostgres();
   try {
-    // Inventory succeeds before 0023 exists: RED must be a schema assertion, not ENOENT.
+    // Missing forward migrations must fail schema assertions, not file reads.
     const names = (await readdir(directory)).filter(name => name.endsWith(".sql")).sort();
     for (const name of names.filter(name => name < "0022")) {
       await db.sql.unsafe(await readFile(join(directory, name), "utf8"));
@@ -98,7 +134,7 @@ test("populated upgrade consolidates every assistant text while preserving profi
             ${sequence},${direction},${`${text} ${index}`},'2025-01-01T00:00:00Z',${state})`;
       }
     }
-    const profiles = await db.sql`select business_id,display_name,description,address,business_hours,offerings,updated_at
+    const profiles = await db.sql`select business_id,display_name,description,address,updated_at
       from business_profiles order by business_id`;
     expect(profiles).toHaveLength(2);
     expect((await columns(db)).filter(name => retired.includes(name))).toEqual(retired);
@@ -146,6 +182,7 @@ test("populated upgrade consolidates every assistant text while preserving profi
     });
     const afterColumns = await columns(db);
     expect(afterColumns.filter(name => retired.includes(name))).toEqual([]);
+    expect(afterColumns.filter(name => obsoleteProfile.includes(name))).toEqual([]);
     expect(afterColumns).toEqual(retained);
     expect([...(await db.sql`select * from business_profiles order by business_id`)]).toEqual([...profiles]);
     expect((await assistantColumns(db)).filter(name => legacyAssistant.includes(name))).toEqual([]);

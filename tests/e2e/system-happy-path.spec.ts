@@ -8,13 +8,15 @@ const tenants = [
     name: "Clínica Norte",
     email: "norte@example.test",
     password: "tenant norte password safe",
-    hours: "Lunes a viernes",
+    description: "Atención clínica personalizada",
+    address: "Avenida Norte 123",
   },
   {
     name: "Taller Sur",
     email: "sur@example.test",
     password: "tenant sur password safe",
-    hours: "Cerrado ahora",
+    description: "Reparaciones y mantenimiento",
+    address: "Calle Sur 456",
   },
 ];
 
@@ -66,14 +68,18 @@ test("real services complete the deterministic multi-tenant happy path", async (
     await login(tenantPage, system.webUrl, tenant.email, tenant.password);
     await expect(tenantPage).toHaveURL(/\/profile$/);
     await tenantPage.getByLabel("Nombre comercial").fill(tenant.name);
-    await tenantPage.getByLabel("Horarios").fill(tenant.hours);
+    await tenantPage.getByLabel("Descripción", { exact: true }).fill(tenant.description);
+    await tenantPage.getByLabel("Dirección", { exact: true }).fill(tenant.address);
+    for (const label of ["Horarios", "Servicios o productos"])
+      await expect(tenantPage.getByLabel(label, { exact: true })).toHaveCount(0);
     await tenantPage.getByRole("button", { name: "Guardar perfil" }).click();
     await expect(tenantPage.getByRole("status")).toHaveText("Perfil guardado");
     await tenantPage.reload();
     await expect(tenantPage.getByLabel("Nombre comercial")).toHaveValue(
       tenant.name,
     );
-    await expect(tenantPage.getByLabel("Horarios")).toHaveValue(tenant.hours);
+    await expect(tenantPage.getByLabel("Descripción", { exact: true })).toHaveValue(tenant.description);
+    await expect(tenantPage.getByLabel("Dirección", { exact: true })).toHaveValue(tenant.address);
     await tenantPage.getByRole("link", { name: "Asistente" }).click();
     await expect(tenantPage).toHaveURL(/\/assistant$/);
     await tenantPage.getByLabel("Respuestas automáticas activas").check();

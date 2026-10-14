@@ -46,8 +46,6 @@ const profileFields = [
   "displayName",
   "description",
   "address",
-  "businessHours",
-  "offerings",
 ] as const;
 const assistantFields = [
   "style",

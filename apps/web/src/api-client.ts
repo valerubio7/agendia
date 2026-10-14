@@ -32,8 +32,6 @@ export type Profile = {
   displayName: string;
   description: string;
   address: string;
-  businessHours: string;
-  offerings: string;
 };
 export type Service = {
   id: string;
@@ -412,8 +410,6 @@ export class ApiClient {
       displayName: body.displayName,
       description: body.description,
       address: body.address,
-      businessHours: body.businessHours,
-      offerings: body.offerings,
     });
   assistant = () => this.call<Partial<Assistant>>("/me/assistant");
   saveAssistant = (

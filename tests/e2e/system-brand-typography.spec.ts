@@ -219,12 +219,12 @@ test("official local faces, root tokens and shared roles survive real login/prof
   await expect.soft(heading).toHaveCSS("font-weight", "650");
   await expect.soft(page.locator(".profile-field__label").first()).toHaveCSS("font-weight", "650");
   await page.getByLabel("Nombre comercial", { exact: true }).fill(name);
-  const hours = page.getByLabel("Horarios", { exact: true });
-  await hours.fill("Lunes a viernes de 9:00 a 18:00; sábados de 10:00 a 13:00 con turno previo.");
-  await expect.soft(hours).toHaveCSS("font-family", /"JetBrains Mono"/);
-  await expect.soft(hours).toHaveCSS("font-weight", "450");
-  await expect.soft(hours).toHaveCSS("font-variant-numeric", "tabular-nums");
-  await expect.soft(page.locator('label[for="profile-businessHours"]')).toHaveCSS("font-weight", "700");
+  const description = page.getByLabel("Descripción", { exact: true });
+  await description.fill("Asesoramiento personalizado para pequeños negocios.");
+  await expect.soft(description).toHaveCSS("font-family", /"Source Sans 3"/);
+  await expect.soft(description).toHaveCSS("font-weight", "450");
+  for (const label of ["Horarios", "Servicios o productos"])
+    await expect(page.getByLabel(label, { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Guardar perfil", exact: true }).click();
   await expect(page.getByRole("status")).toHaveText("Perfil guardado");
   await loaded(page);

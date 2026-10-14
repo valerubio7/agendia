@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { BusinessProfileSchema, InMemoryProfileRepository, ProfileService, serializeProfileForAi } from "../../packages/domain/src/business-profile.ts";
 
-const valid = { displayName: "Estética Bella", description: "Tratamientos faciales", address: "Av. Siempre Viva 123", businessHours: "Lunes a viernes 9–18", offerings: "Limpieza facial" };
-const legacy = { contact: "LEGACY_CONTACT", faq: "LEGACY_FAQ", policies: "LEGACY_POLICIES", additionalInfo: "LEGACY_ADDITIONAL_INFO" };
+const valid = { displayName: "Estética Bella", description: "Tratamientos faciales", address: "Av. Siempre Viva 123" };
+const legacy = { businessHours: "LEGACY_HOURS", offerings: "LEGACY_OFFERINGS", contact: "LEGACY_CONTACT", faq: "LEGACY_FAQ", policies: "LEGACY_POLICIES", additionalInfo: "LEGACY_ADDITIONAL_INFO" };
 
 describe("tenant business profile", () => {
   test("stores every allowed field under the authenticated tenant and serializes only allowed context", () => {
@@ -23,12 +23,14 @@ describe("tenant business profile", () => {
     );
   });
 
-  test("rejects invalid data atomically and keeps business hours informational", () => {
+  test("rejects invalid retained fields atomically", () => {
     const repository = new InMemoryProfileRepository();
     const service = new ProfileService(repository);
     service.save("tenant-a", valid);
     expect(() => service.save("tenant-a", { ...valid, description: "x".repeat(4_001) })).toThrow();
     expect(service.get("tenant-a")?.description).toBe("Tratamientos faciales");
-    expect(BusinessProfileSchema.parse({ ...valid, businessHours: "Cerrado hoy" }).businessHours).toBe("Cerrado hoy");
+    expect(() => service.save("tenant-a", { ...valid, address: "x".repeat(501) })).toThrow();
+    expect(() => service.save("tenant-a", { ...valid, displayName: "" })).toThrow();
+    expect(service.get("tenant-a")).toEqual(valid);
   });
 });

@@ -320,7 +320,6 @@ describe("Next web client against Fastify contracts", () => {
   test("profile payload only forwards retained fields even from a legacy caller", async () => {
     const profile = {
       displayName: "Tenant", description: "Description", address: "Address",
-      businessHours: "24h", offerings: "Services",
     };
     const client = new ApiClient(async (input, init) => {
       if (input.endsWith("/auth/login") || input.endsWith("/auth/session"))
@@ -332,7 +331,7 @@ describe("Next web client against Fastify contracts", () => {
     });
     await client.login("tenant@example.test", "safe password");
     const legacyProfile = {
-      ...profile, contact: "old contact", faq: "old faq",
+      ...profile, businessHours: "old hours", offerings: "old offerings", contact: "old contact", faq: "old faq",
       policies: "old policies", additionalInfo: "old info", business_id: "hostile",
     };
     await expect(client.saveProfile(legacyProfile)).resolves.toEqual(profile);
@@ -501,8 +500,6 @@ describe("Next web client against Fastify contracts", () => {
       displayName: "Tenant",
       description: "",
       address: "",
-      businessHours: "24h",
-      offerings: "",
     };
     await tenant.saveProfile(profile);
     expect((await tenant.profile()).displayName).toBe("Tenant");

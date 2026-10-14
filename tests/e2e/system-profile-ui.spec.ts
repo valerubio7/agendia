@@ -11,8 +11,6 @@ const values = {
   displayName: "Estudio Perfil Claro",
   description: "Asesoramiento personalizado para pequeños negocios.",
   address: "Avenida Siempreviva 742, Buenos Aires",
-  businessHours: "Lunes a viernes de 9:00 a 18:00; sábados con turno.",
-  offerings: "Diagnóstico inicial, planificación y acompañamiento mensual.",
 };
 
 async function login(page: Page, url: string, email: string, password: string) {
@@ -126,7 +124,6 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
 
     const sectionHeadings = [
       "Identidad del negocio",
-      "Operación diaria",
     ] as const;
     const sections: Locator[] = [];
     for (const heading of sectionHeadings) {
@@ -158,21 +155,17 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
     const displayName = form.getByLabel("Nombre comercial", { exact: true });
     const description = form.getByLabel("Descripción", { exact: true });
     const address = form.getByLabel("Dirección", { exact: true });
-    const businessHours = form.getByLabel("Horarios", { exact: true });
-    const offerings = form.getByLabel("Servicios o productos", { exact: true });
-    for (const label of ["Contacto", "Preguntas frecuentes", "Políticas", "Información adicional"])
+    for (const label of ["Horarios", "Servicios o productos", "Contacto", "Preguntas frecuentes", "Políticas", "Información adicional"])
       await expect(screen.getByLabel(label, { exact: true })).toHaveCount(0);
-    for (const name of ["contact", "faq", "policies", "additionalInfo"])
+    for (const name of ["businessHours", "offerings", "contact", "faq", "policies", "additionalInfo"])
       await expect(form.locator(`[name="${name}"]`)).toHaveCount(0);
     const fields = [
       displayName,
       description,
       address,
-      businessHours,
-      offerings,
     ];
 
-    await expect(form.locator("input, textarea, select")).toHaveCount(5);
+    await expect(form.locator("input, textarea, select")).toHaveCount(3);
     await expect(displayName).toHaveAttribute("required", "");
     for (const optionalField of fields.slice(1)) {
       await expect(optionalField).not.toHaveAttribute("required", /.*/);
@@ -194,9 +187,6 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
     await expect(displayName).toHaveCSS("color", "rgb(28, 38, 32)");
     await expect(displayName).toHaveCSS("font-weight", "450");
     await expect(displayName).toHaveCSS("font-family", /Source Sans 3/);
-    await expect(businessHours).toHaveCSS("font-family", /JetBrains Mono/);
-    await expect(businessHours).toHaveCSS("font-variant-numeric", "tabular-nums");
-    await expect(form.locator('label[for="profile-businessHours"]')).toHaveCSS("font-weight", "700");
     await expect(savePanel).toHaveCSS("background-color", "rgb(18, 55, 42)");
     await expect(savePanel.locator("p")).toHaveCSS("color", "rgb(243, 238, 225)");
     await expect(save).toHaveCSS("background-color", "rgb(168, 58, 26)");
@@ -205,9 +195,6 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
     await expectTextInput(displayName, "160");
     await expectTextarea(description, "4000");
     await expectTextInput(address, "500");
-    await expectTextarea(businessHours, "2000");
-    await expect(form.locator('[name="businessHours"]')).toHaveCount(1);
-    await expectTextarea(offerings, "8000");
 
     await expectNoHorizontalOverflow(tenantPage);
     await expect(hero).toBeVisible();
@@ -217,8 +204,6 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
     await displayName.fill(values.displayName);
     await description.fill(values.description);
     await address.fill(values.address);
-    await businessHours.fill(values.businessHours);
-    await offerings.fill(values.offerings);
 
     let observeSaveRequest!: () => void;
     const saveRequestObserved = new Promise<void>((resolve) => {
@@ -241,7 +226,7 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
     await tenantPage.route("**/me/business-profile", saveHandler);
 
     // Enter keyboard modality through the last field, then genuinely Tab to save.
-    await offerings.click();
+    await address.click();
     await tenantPage.keyboard.press("Tab");
     await expect(save).toBeFocused();
     expect(await save.evaluate((element) => element.matches(":focus-visible"))).toBe(true);
@@ -269,15 +254,11 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
     await expect(
       tenantPage.getByLabel("Nombre comercial", { exact: true }),
     ).toHaveValue(values.displayName);
-    await expect(
-      tenantPage.getByLabel("Servicios o productos", { exact: true }),
-    ).toHaveValue(values.offerings);
-    await expect(
-      tenantPage.getByLabel("Horarios", { exact: true }),
-    ).toHaveValue(values.businessHours);
+    for (const label of ["Horarios", "Servicios o productos"])
+      await expect(tenantPage.getByLabel(label, { exact: true })).toHaveCount(0);
     await expect(tenantPage.getByLabel("Descripción", { exact: true })).toHaveValue(values.description);
     await expect(tenantPage.getByLabel("Dirección", { exact: true })).toHaveValue(values.address);
-    for (const name of ["contact", "faq", "policies", "additionalInfo"])
+    for (const name of ["businessHours", "offerings", "contact", "faq", "policies", "additionalInfo"])
       await expect(tenantPage.locator(`#business-profile-form [name="${name}"]`)).toHaveCount(0);
     await expectNoHorizontalOverflow(tenantPage);
 

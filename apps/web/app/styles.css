@@ -1206,16 +1206,6 @@ main.login-frame {
   box-shadow: 0 0 0 0.25rem rgba(47, 110, 82, 0.18);
 }
 
-.profile-screen textarea[name="businessHours"],
-.profile-screen label[for="profile-businessHours"] {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-}
-
-.profile-screen label[for="profile-businessHours"] {
-  font-weight: 700;
-}
-
 .profile-screen .profile-field__hint {
   max-width: 65ch;
   color: var(--ink-2);

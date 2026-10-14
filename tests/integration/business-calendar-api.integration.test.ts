@@ -44,7 +44,7 @@ beforeAll(async () => {
   };
   a = await fixture("calendar-a@example.test"); b = await fixture("calendar-b@example.test");
   admin = await fixture("calendar-admin@example.test", true);
-  await database.sql`insert into business_profiles(business_id,display_name,business_hours) values(${a.businessId},'A','Legacy free text, not a schedule')`;
+  await database.sql`insert into business_profiles(business_id,display_name,address) values(${a.businessId},'A','Retained address')`;
   // The API must hold the shared lock already when its first mutation runs.
   await database.sql.unsafe(`create function require_calendar_lock() returns trigger language plpgsql as $$
     declare key bigint := hashtextextended('business-calendar:' || NEW.business_id::text,0);
@@ -71,7 +71,7 @@ test("missing is null without writes; weekly singleton preserves spans, off/full
   expect((await request("GET", a)).json<unknown>()).toEqual({ weeklySchedule: {} });
   expect((await request("PUT", a, { weeklySchedule })).statusCode).toBe(200);
   expect((await effects()).calendars).toBe(1);
-  expect((await database.sql`select business_hours from business_profiles where business_id=${a.businessId}`)[0]?.business_hours).toBe("Legacy free text, not a schedule");
+  expect((await database.sql`select address from business_profiles where business_id=${a.businessId}`)[0]?.address).toBe("Retained address");
   expect(await pools.api.run(ctx(a), repo => repo.getBusinessCalendar(a.businessId))).toEqual({ weeklySchedule });
 });
 

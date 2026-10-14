@@ -68,7 +68,7 @@ beforeAll(async () => {
     join(import.meta.dir, "../../packages/db/migrations"),
   );
   await db.sql`insert into businesses(id,name,status) values(${A},'Tenant A','active'),(${B},'Tenant B','active')`;
-  await db.sql`insert into business_profiles(business_id,display_name,offerings,business_hours) values(${A},'A','envíos','cerrado'),(${B},'B','SECRETO-B','cerrado')`;
+  await db.sql`insert into business_profiles(business_id,display_name,description) values(${A},'A','envíos'),(${B},'B','SECRETO-B')`;
   await db.sql`update business_profiles set description='RETAINED_DESCRIPTION',address='RETAINED_ADDRESS' where business_id=${A}`;
   await db.sql`insert into assistant_configs(business_id,active,style,business_instructions) values(${A},true,${maximumStyle},${maximumBusinessInstructions}),(${B},false,'STYLE-B','no usar')`;
   await db.sql`insert into whatsapp_connections(id,business_id,session_public_id,state,owner_id) values(${CA},${A},${SA},'CONNECTED','manager-1'),(${CB},${B},${SB},'CONNECTED','manager-2')`;
@@ -261,7 +261,7 @@ describe("PostgreSQL messaging workers", () => {
     expect(calls).toHaveLength(0);
     const [reply] = await db.sql`select text from outbound_commands`;
     expect(reply!.text).toBe('Dirección registrada: "RETAINED_ADDRESS".');
-    for (const excluded of ["RETAINED_DESCRIPTION", "envíos", "cerrado", "cliente nuevo", "LEGACY_CONTACT", "LEGACY_FAQ", "LEGACY_POLICIES", "LEGACY_INFO", "STYLE-B", "SECRETO-B", maximumStyle, maximumBusinessInstructions])
+    for (const excluded of ["RETAINED_DESCRIPTION", "cliente nuevo", "LEGACY_CONTACT", "LEGACY_FAQ", "LEGACY_POLICIES", "LEGACY_INFO", "STYLE-B", "SECRETO-B", maximumStyle, maximumBusinessInstructions])
       expect(reply!.text).not.toContain(excluded);
     expect(maximumStyle.length).toBe(32022);
     expect(maximumBusinessInstructions.length).toBe(64058);
