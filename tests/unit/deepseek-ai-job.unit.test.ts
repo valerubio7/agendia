@@ -9,7 +9,8 @@ import {
   DeterministicAiProvider,
   InMemoryAiJobRepository,
 } from "../support/message-worker/ai-job.ts";
-import { AI_SYSTEM_INSTRUCTIONS, type AiGenerateRequest, type AgendaProposal } from "../../packages/domain/src/ai-provider.ts";
+import { AI_SYSTEM_INSTRUCTIONS, type AiGenerateRequest, type ToolConversationRequest } from "../../packages/domain/src/ai-provider.ts";
+import { parseReceptionistTool } from "../../apps/message-worker/src/receptionist-tools.ts";
 
 const request: AiGenerateRequest = {
   business: { commercialName: "Tienda", services: "Envíos" },
@@ -26,108 +27,81 @@ const request: AiGenerateRequest = {
   correlationId: "req-1",
 };
 
-const proposalRequest = {
-  message: "Quiero un turno", context: { summary: "", recent: [] },
-  catalog: { services: [], resources: [] }, correlationId: "proposal-1",
+const conversationRequest: ToolConversationRequest = {
+  messages: [{ role: "system", content: "Usa datos autorizados." }, { role: "user", content: "¿Qué servicios hay?" }],
+  tools: [{ name: "read_catalog", description: "Read services", parameters: { type: "object", properties: {} } }],
+  maxOutputCharacters: 500, correlationId: "conversation-1",
 };
 const serviceId = "11111111-1111-4111-8111-111111111111";
 const appointmentId = "22222222-2222-4222-8222-222222222222";
-const envelope = (value: unknown, finish_reason = "stop") => JSON.stringify({
-  choices: [{ finish_reason, message: { content: JSON.stringify(value) } }],
+const envelope = (content = "¿Qué fecha preferís?") => JSON.stringify({
+  id: "native-1", choices: [{ finish_reason: "stop", message: { role: "assistant", content } }],
+  usage: { total_tokens: 12 },
 });
-const clarify = { operation: "clarify", arguments: { missing: ["date"] } } satisfies AgendaProposal;
 
-describe("bounded agenda proposals", () => {
-  test("returns only validated arguments and requests JSON without executable tools", async () => {
-    let body: any;
+describe("bounded native conversation fixtures", () => {
+  test("scripted call, correlated result and final assistant never claim execution", async () => {
+    const wireCall = { id: "catalog-1", type: "function", function: { name: "read_catalog", arguments: "{}" } };
+    const bodies: any[] = [];
     const adapter = new DeepSeekAdapter({ apiKey: "secret", fetcher: async (_, init) => {
-      body = JSON.parse(String(init?.body));
-      return new Response(envelope(clarify));
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(bodies.length === 1 ? JSON.stringify({
+        id: "native-call", choices: [{ finish_reason: "tool_calls", message: { role: "assistant", content: null, tool_calls: [wireCall] } }],
+      }) : envelope("Ofrecemos cortes. ¿Qué fecha preferís?"));
     } });
-    expect(await adapter.proposeAgenda(proposalRequest)).toEqual(clarify);
-    expect(body.response_format).toEqual({ type: "json_object" });
-    expect(body.tools).toBeUndefined();
-    expect(body.messages[0].content).toContain("clarify");
-    expect(body.messages[0].content).not.toContain("secret");
+    const first = await adapter.converse(conversationRequest);
+    expect(first.message.toolCalls).toEqual([{ id: "catalog-1", name: "read_catalog", arguments: {} }]);
+    const toolResult = { role: "tool", toolCallId: "catalog-1", content: '{"status":"data","data":{"services":["Corte"]}}' } as const;
+    const final = await adapter.converse({ ...conversationRequest, messages: [...conversationRequest.messages, first.message, toolResult] });
+    expect(final).toEqual({ message: { role: "assistant", content: "Ofrecemos cortes. ¿Qué fecha preferís?", toolCalls: [] }, providerId: "native-1", usageTokens: 12 });
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0].tools).toEqual([{ type: "function", function: conversationRequest.tools[0] }]);
+    expect(bodies[0].response_format).toBeUndefined();
+    expect(bodies[1].messages[2].tool_calls).toEqual([wireCall]);
+    expect(bodies[1].messages[3]).toEqual({ role: "tool", tool_call_id: "catalog-1", content: toolResult.content });
+    expect(JSON.stringify(bodies)).not.toContain("secret");
   });
 
-  test("accepts each agenda intent without claiming execution", async () => {
-    for (const proposal of [
-      { operation: "read_catalog", arguments: {} },
-      { operation: "list_appointments", arguments: {} },
-      { operation: "availability", arguments: { serviceId, date: "2030-01-10" } },
-      { operation: "book", arguments: { serviceId, startsAt: "2030-01-10T10:00:00-03:00" } },
-      { operation: "change", arguments: { appointmentId, serviceId } },
-      { operation: "cancel", arguments: { appointmentId } },
-      { operation: "notes", arguments: { appointmentId, notes: "Ventana" } },
-      { operation: "preference", arguments: { appointmentId, resourceId: null } },
-      clarify,
-    ] satisfies AgendaProposal[]) {
-      const adapter = new DeepSeekAdapter({ apiKey: "secret", fetcher: async () => new Response(envelope(proposal)) });
-      expect(await adapter.proposeAgenda(proposalRequest)).toEqual(proposal);
-    }
+  test("business validation belongs to typed tools, including authority and terms", () => {
+    for (const [name, args] of [
+      ["edit_client", {}], ["edit_catalog", {}], ["attendance", { appointmentId }],
+      ["read_catalog", { success: true }], ["prepare_change", { appointmentId }],
+      ["availability", { serviceId, date: "2030-02-30" }],
+      ["prepare_booking", { serviceId, startsAt: "tomorrow" }],
+      ["notes", { appointmentId, notes: 42 }], ["cancel", []],
+      ["cancel", { appointmentId: "not-a-uuid" }],
+      ...["businessId", "tenantId", "sender", "clientId", "phone", "confirmed", "priceArs", "durationMinutes"].map(key =>
+        ["cancel", { appointmentId, [key]: true }] as const),
+      ["notes", { appointmentId, notes: "x".repeat(2001) }],
+    ] as const) expect(parseReceptionistTool(name, args)).toBeNull();
+    for (const [name, args] of [
+      ["read_catalog", {}], ["owned_appointments", {}],
+      ["availability", { serviceId, date: "2030-01-10" }],
+      ["prepare_booking", { serviceId, startsAt: "2030-01-10T10:00:00-03:00" }],
+      ["prepare_change", { appointmentId, serviceId }], ["cancel", { appointmentId }],
+      ["notes", { appointmentId, notes: "x".repeat(2000) }], ["preference", { appointmentId, resourceId: null }],
+    ] as const) expect(parseReceptionistTool(name, args)?.name).toBe(name);
   });
 
-  test("rejects unknown operations, authority, terms and malformed nested arguments", async () => {
-    const invalid = [
-      { operation: "edit_client", arguments: {} },
-      { operation: "edit_catalog", arguments: {} },
-      { operation: "attendance", arguments: { appointmentId } },
-      { ...clarify, success: true },
-      { operation: "change", arguments: { appointmentId } },
-      { operation: "availability", arguments: { serviceId, date: "2030-02-30" } },
-      { operation: "book", arguments: { serviceId, startsAt: "tomorrow" } },
-      { operation: "notes", arguments: { appointmentId, notes: 42 } },
-      { operation: "cancel", arguments: [] },
-      { operation: "cancel", arguments: { appointmentId: "not-a-uuid" } },
-      { operation: "clarify", arguments: { missing: [] } },
-      { operation: "clarify", arguments: { missing: ["date", "date"] } },
-      ...["businessId", "tenantId", "sender", "clientId", "phone", "confirmed", "priceArs", "durationMinutes"].map(key => ({
-        operation: "cancel", arguments: { appointmentId, [key]: true },
-      })),
-    ];
-    for (const value of invalid) {
-      const adapter = new DeepSeekAdapter({ apiKey: "secret", fetcher: async () => new Response(envelope(value)) });
-      await expect(adapter.proposeAgenda(proposalRequest)).rejects.toMatchObject({ code: "invalid_response" });
-    }
-  });
-
-  test("rejects bounded input before fetch and bounded/truncated model output", async () => {
+  test("rejects invalid metadata before fetch; native history bounds have independent coverage", async () => {
     let calls = 0;
-    const adapter = new DeepSeekAdapter({ apiKey: "secret", fetcher: async () => { calls++; return new Response(envelope(clarify)); } });
+    const adapter = new DeepSeekAdapter({ apiKey: "secret", fetcher: async () => { calls++; return new Response(envelope()); } });
     for (const value of [
-      { ...proposalRequest, message: "x".repeat(4001) },
-      { ...proposalRequest, context: { summary: "", recent: Array(21).fill("x") } },
-      { ...proposalRequest, catalog: { services: Array(101).fill({ id: serviceId, name: "S" }), resources: [] } },
-      { ...proposalRequest, sender: "forged" },
-      { ...proposalRequest, context: { summary: "x".repeat(4001), recent: [] } },
-      { ...proposalRequest, context: { summary: "", recent: ["x".repeat(2001)] } },
-      { ...proposalRequest, correlationId: "x".repeat(201) },
-      { ...proposalRequest, context: { summary: "", recent: Array(20).fill("😀".repeat(1000)) } },
-    ]) await expect(adapter.proposeAgenda(value)).rejects.toMatchObject({ code: "invalid_request" });
+      { ...conversationRequest, sender: "forged" },
+      { ...conversationRequest, correlationId: "x".repeat(201) },
+    ]) await expect(adapter.converse(value)).rejects.toMatchObject({ code: "invalid_request" });
     expect(calls).toBe(0);
-    for (const body of ["{", envelope(clarify, "length"), envelope(clarify, "tool_calls"),
-      JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "{" } }] }),
-      envelope({ operation: "notes", arguments: { appointmentId, notes: "x".repeat(2001) } }),
-      " ".repeat(65537),
-      JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "x".repeat(8193) } }] }),
-    ]) {
-      const provider = new DeepSeekAdapter({ apiKey: "secret", fetcher: async () => new Response(body) });
-      await expect(provider.proposeAgenda(proposalRequest)).rejects.toMatchObject({ code: "invalid_response" });
-    }
+    // Message/definition/argument/byte bounds and finish reasons: deepseek-tool-calls.unit.test.ts.
   });
 
-  test("rejects declared oversize and malformed UTF-8, but accepts exact notes limit", async () => {
+  test("rejects declared oversize and malformed UTF-8", async () => {
     for (const response of [
       new Response("{}", { headers: { "content-length": "65537" } }),
       new Response(new Uint8Array([0xff])),
     ]) {
       const adapter = new DeepSeekAdapter({ apiKey: "secret", fetcher: async () => response });
-      await expect(adapter.proposeAgenda(proposalRequest)).rejects.toMatchObject({ code: "invalid_response" });
+      await expect(adapter.converse(conversationRequest)).rejects.toMatchObject({ code: "invalid_response" });
     }
-    const value = { operation: "notes", arguments: { appointmentId, notes: "x".repeat(2000) } } satisfies AgendaProposal;
-    const adapter = new DeepSeekAdapter({ apiKey: "secret", fetcher: async () => new Response(envelope(value)) });
-    expect(await adapter.proposeAgenda(proposalRequest)).toEqual(value);
   });
 
   test("deadlines cover hung headers/body even when injected fetch ignores abort", async () => {
@@ -141,7 +115,7 @@ describe("bounded agenda proposals", () => {
           return new Response(new ReadableStream({ cancel() { cancelled = true; } }));
         },
       });
-      await expect(adapter.proposeAgenda(proposalRequest)).rejects.toMatchObject({ code: "timeout" });
+      await expect(adapter.converse(conversationRequest)).rejects.toMatchObject({ code: "timeout" });
       expect(signal?.aborted).toBe(true);
       if (phase === "body") expect(cancelled).toBe(true);
     }
@@ -159,33 +133,49 @@ describe("bounded agenda proposals", () => {
         }));
       },
     });
-    await expect(adapter.proposeAgenda(proposalRequest)).rejects.toMatchObject({ code: "invalid_response" });
+    await expect(adapter.converse(conversationRequest)).rejects.toMatchObject({ code: "invalid_response" });
     expect(cancelled).toBe(true);
     await Bun.sleep(25);
     expect(signal?.aborted).toBe(false);
     let successSignal: AbortSignal | null | undefined;
     const good = new DeepSeekAdapter({ apiKey: "secret", totalTimeoutMs: 15, fetcher: async (_, init) => {
-      successSignal = init?.signal; return new Response(envelope(clarify));
+      successSignal = init?.signal; return new Response(envelope());
     } });
-    await good.proposeAgenda(proposalRequest);
+    await good.converse(conversationRequest);
     await Bun.sleep(25);
     expect(successSignal?.aborted).toBe(false);
   });
 
-  test("distinguishes network, malformed JSON and actual timeout without retries", async () => {
+  test("classifies network, HTTP and malformed JSON without retries or key exposure", async () => {
     for (const [fetcher, code] of [
       [async () => { throw new Error("network secret"); }, "provider_unavailable"],
       [async () => new Response("{"), "invalid_response"],
+      [async () => new Response("secret", { status: 429 }), "rate_limited"],
+      [async () => new Response("secret", { status: 503 }), "provider_unavailable"],
     ] as const) {
       let calls = 0;
       const adapter = new DeepSeekAdapter({ apiKey: "secret", fetcher: async () => { calls++; return fetcher(); } });
-      await expect(adapter.generate(request)).rejects.toMatchObject({ code });
+      const pending = adapter.converse(conversationRequest);
+      await expect(pending).rejects.toMatchObject({ code });
+      try { await pending; } catch (error) {
+        expect(error).toBeInstanceOf(AiProviderError);
+        expect(String(error)).not.toContain("secret");
+      }
       expect(calls).toBe(1);
     }
   });
 });
 
 describe("replaceable DeepSeek AI processing", () => {
+  test("generic generation rejects malformed JSON without retry", async () => {
+    let calls = 0;
+    const adapter = new DeepSeekAdapter({ apiKey: "fixture", fetcher: async () => {
+      calls++;
+      return new Response("{");
+    } });
+    await expect(adapter.generate(request)).rejects.toMatchObject({ code: "invalid_response" });
+    expect(calls).toBe(1);
+  });
   test("appends full raw platform additions only when nonempty", () => {
     const base = buildDeepSeekRequest(request);
     for (const additionalInstructions of ["", " \n\t ", "  Atención 😀\n\tfin  "]) {

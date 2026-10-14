@@ -2,10 +2,11 @@ import { describe, expect, test } from "bun:test";
 import type {
   AiProvider,
   AiGenerateRequest,
-  AgendaProposalProvider,
-  AgendaProposal,
+  ToolConversationProvider,
+  ToolConversationRequest,
   ConversationSummarizer,
 } from "@agendia/domain";
+import { hasToolConversationProvider } from "@agendia/domain";
 import {
   AiProviderError,
   DeepSeekAdapter,
@@ -37,19 +38,26 @@ describe("worker/provider production contracts", () => {
     });
     expect(double.calls).toHaveLength(1);
   });
-  test("keeps proposal capability separate from text-only worker providers", async () => {
+  test("keeps native conversation capability separate from text-only worker providers", async () => {
     const textOnly: AiProvider = { generate: async () => ({ text: "unchanged", providerId: "text", usageTokens: 0 }) };
     expect(await textOnly.generate(request)).toMatchObject({ text: "unchanged" });
-    const proposal = { operation: "read_catalog", arguments: {} } satisfies AgendaProposal;
-    const provider: AgendaProposalProvider = new DeepSeekAdapter({
+    expect(hasToolConversationProvider(textOnly)).toBe(false);
+    expect(hasToolConversationProvider({ ...textOnly, converse: null } as AiProvider)).toBe(false);
+    const provider: AiProvider & ToolConversationProvider = new DeepSeekAdapter({
       apiKey: "secret", fetcher: async () => new Response(JSON.stringify({
-        choices: [{ finish_reason: "stop", message: { content: JSON.stringify(proposal) } }],
+        id: "native", usage: { total_tokens: 3 },
+        choices: [{ finish_reason: "stop", message: { role: "assistant", content: "¿Qué servicio buscás?" } }],
       })),
     });
-    expect(await provider.proposeAgenda({
-      message: "Servicios?", context: { summary: "", recent: [] },
-      catalog: { services: [], resources: [] }, correlationId: "p1",
-    })).toEqual(proposal);
+    expect(hasToolConversationProvider(provider)).toBe(true);
+    const nativeRequest: ToolConversationRequest = {
+      messages: [{ role: "user", content: "Servicios?" }], tools: [],
+      maxOutputCharacters: 100, correlationId: "native-1",
+    };
+    expect(await provider.converse(nativeRequest)).toEqual({
+      message: { role: "assistant", content: "¿Qué servicio buscás?", toolCalls: [] },
+      providerId: "native", usageTokens: 3,
+    });
   });
   test("summary transport rejects malformed JSON and covers hung body", async () => {
     for (const [fetcher, code] of [
