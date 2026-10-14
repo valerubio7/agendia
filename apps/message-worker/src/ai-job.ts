@@ -1,14 +1,12 @@
 import {
   type AiProvider,
-  hasAgendaProposalProvider,
   hasToolConversationProvider,
   type ToolConversationProvider,
   type ConversationSummarizer,
   type ConversationSummaryContent,
 } from "@agendia/domain";
 import { tenantContext, type createRuntimePools } from "@agendia/db";
-import { AiProviderError } from "@agendia/ai-deepseek";
-import { PostgresWhatsAppAgenda, factualQuestion, renderFactualReply } from "./whatsapp-agenda.ts";
+import { PostgresWhatsAppAgenda } from "./whatsapp-agenda.ts";
 import { converseReceptionist } from "./receptionist.ts";
 
 type Pools = ReturnType<typeof createRuntimePools>;
@@ -37,18 +35,16 @@ const validSummary = <T extends { structured_summary: any }>(rows: T[]) =>
 const visible = (turn: { direction: string; processing_state: string }) =>
   turn.direction === "inbound" || turn.processing_state === "sent";
 export class PostgresAiJobProcessor {
-  private readonly agenda: PostgresWhatsAppAgenda | null;
-  private readonly conversational: ToolConversationProvider | null;
+  private readonly agenda: PostgresWhatsAppAgenda;
+  private readonly conversational: ToolConversationProvider;
   constructor(
     private pools: Pools,
     provider: AiProvider,
     private budget = 8_000,
   ) {
-    this.conversational = hasToolConversationProvider(provider) ? provider : null;
-    this.agenda = hasAgendaProposalProvider(provider) ? new PostgresWhatsAppAgenda(pools, provider)
-      : this.conversational ? new PostgresWhatsAppAgenda(pools, {
-        proposeAgenda: async () => { throw new Error("Legacy proposal route disabled"); },
-      }) : null;
+    if (!hasToolConversationProvider(provider)) throw new Error("AI job provider requires callable converse");
+    this.conversational = provider;
+    this.agenda = new PostgresWhatsAppAgenda(pools, undefined);
   }
   private context(businessId: string, correlationId: string) {
     return tenantContext({
@@ -89,43 +85,14 @@ export class PostgresAiJobProcessor {
       true,
     );
     if (!release) return;
-    let agendaAttempt = false;
     try {
-      // Native capability always leads production DeepSeek input, without a language gate.
-      if (this.conversational && this.agenda) {
-        agendaAttempt = true;
-        const outcome = await this.agenda.withReceptionistSession(job, session => {
-          if (!session.context.messages) throw new Error("Missing receptionist context");
-          return converseReceptionist(this.conversational!, session, [...session.context.messages], job.correlationId);
-        });
-        if (outcome.status === "infrastructure_failure") throw new Error("Receptionist infrastructure failure");
-        return;
-      }
-      if (this.agenda) {
-        agendaAttempt = true;
-        if (await this.agenda.process(job)) return;
-        agendaAttempt = false;
-      }
-      const data = await this.pools.worker.run(context, (r) =>
-        r.loadAiMessage(job.messageId, true),
-      );
-      if (!data) return;
-      const kind = factualQuestion(data.raw_text) ?? "unsupported";
-      const calendar = kind === "hours" ? await this.pools.worker.run(context,
-        r => r.getBusinessCalendar(job.businessId)) : null;
-      const reply = renderFactualReply(kind, data.profile.address ?? "", calendar?.weeklySchedule);
-      await this.pools.worker.run(context, (r) =>
-        r.saveGenerated(job.messageId, job.businessId, reply),
-      );
-    } catch (error) {
-      // Agenda infrastructure/unknown outcome must remain retryable. Its atomic receipt,
-      // response and domain effects either all committed or all rolled back.
-      if (agendaAttempt) throw error;
-      const code =
-        error instanceof AiProviderError ? error.code : "provider_unavailable";
-      await this.pools.worker.run(context, (r) =>
-        r.failAi(job.messageId, job.businessId, `ai.${code}`),
-      );
+      // Native execution has no language gate or legacy fallback.
+      const outcome = await this.agenda.withReceptionistSession(job, session => {
+        if (!session.context.messages) throw new Error("Missing receptionist context");
+        return converseReceptionist(this.conversational, session, [...session.context.messages], job.correlationId);
+      });
+      // Infrastructure/unknown outcomes remain retryable; atomic effects roll back.
+      if (outcome.status === "infrastructure_failure") throw new Error("Receptionist infrastructure failure");
     } finally {
       await release();
     }

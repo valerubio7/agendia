@@ -88,11 +88,13 @@ const actionContext = (now: string) => ({ actor: "customer" as const, channel: "
 const noSave = "No se guardó el cambio. El turno o la disponibilidad ya no permiten esa operación. Podés consultar alternativas.";
 
 export class PostgresWhatsAppAgenda {
-  constructor(private pools: Pools, private provider: AgendaProposalProvider, private clock = () => new Date().toISOString()) {}
+  constructor(private pools: Pools, private provider: AgendaProposalProvider | undefined, private clock = () => new Date().toISOString()) {}
   private context(job: PostgresAiJob) {
     return tenantContext({ businessId: job.businessId, actorId: "message-worker", role: "internal_worker", requestId: job.correlationId });
   }
   async process(job: PostgresAiJob): Promise<boolean> {
+    const provider = this.provider;
+    if (!provider) throw new Error("Legacy agenda process requires a proposal provider");
     const context = this.context(job);
     const plan = await this.pools.worker.run(context, async repo => {
       const source = await repo.loadAiMessage(job.messageId, true);
@@ -117,7 +119,7 @@ export class PostgresWhatsAppAgenda {
     const localAnswer = plan.dialogue.quote && (explicitQuoteConfirmation(plan.source.raw_text)
       || (plan.dialogue.awaitingNames && explicitCustomerNames(plan.source.raw_text)));
     // Model plans never establish confirmation, names, preference expressions or identity.
-    const proposal = !plan.phone || localAnswer ? null : AgendaProposalSchema.parse(await this.provider.proposeAgenda({
+    const proposal = !plan.phone || localAnswer ? null : AgendaProposalSchema.parse(await provider.proposeAgenda({
       message: plan.source.raw_text,
       context: { summary: "", recent: plan.source.turns.slice(-12).map(turn => turn.raw_text.slice(0, 2000)) },
       catalog: {

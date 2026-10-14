@@ -14,6 +14,7 @@ import {
 } from "@agendia/ai-deepseek";
 import { createMessagingRuntime } from "../../apps/whatsapp-manager/src/index.ts";
 import { startMessageWorker } from "../../apps/message-worker/src/index.ts";
+import { PostgresAiJobProcessor } from "../../apps/message-worker/src/ai-job.ts";
 import { deepSeekFetchDouble } from "../support/index.ts";
 
 const request: AiGenerateRequest = {
@@ -58,6 +59,27 @@ describe("worker/provider production contracts", () => {
       message: { role: "assistant", content: "¿Qué servicio buscás?", toolCalls: [] },
       providerId: "native", usageTokens: 3,
     });
+  });
+  test("requires callable converse before accessing the database", () => {
+    let databaseTouches = 0;
+    const pools = new Proxy({} as ConstructorParameters<typeof PostgresAiJobProcessor>[0], {
+      get() { databaseTouches++; throw new Error("Unexpected database access"); },
+    });
+    const textOnly: AiProvider = {
+      generate: async () => ({ text: "unused", providerId: "text", usageTokens: 0 }),
+    };
+    for (const provider of [textOnly, { ...textOnly, converse: null }]) {
+      expect(() => new PostgresAiJobProcessor(pools, provider)).toThrow(/converse/i);
+    }
+    const native: AiProvider & ToolConversationProvider = {
+      ...textOnly,
+      converse: async () => ({
+        message: { role: "assistant", content: "unused", toolCalls: [] },
+        providerId: "native", usageTokens: 0,
+      }),
+    };
+    expect(() => new PostgresAiJobProcessor(pools, native)).not.toThrow();
+    expect(databaseTouches).toBe(0);
   });
   test("summary transport rejects malformed JSON and covers hung body", async () => {
     for (const [fetcher, code] of [
