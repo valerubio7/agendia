@@ -84,6 +84,97 @@ function naturalArguments(tools: ReceptionistToolSession) {
   if (!binding) throw new Error("Expected delivered quote binding");
   return { ...binding, evidence: tools.context.message };
 }
+describe("native preparation preserves customer change authority", () => {
+  for (const [name, text, fields] of [
+    ["notes are not a time change", "Cambiar nota: llegaré tarde", { startsAt: "2035-04-02T11:00:00-03:00" }],
+    ["unsupported name change", "Cambiar nombre del turno", { startsAt: "2035-04-02T11:00:00-03:00" }],
+    ["service choice cannot be invented", "Cambiar servicio del turno", {}],
+    ["explicit time conflict uses a different available slot", "Reprogramar mi turno el 2035-04-02 a las 11:00", { startsAt: "2035-04-02T12:00:00-03:00" }],
+    ["unspecified no-op selection", "Reprogramar mi turno", { startsAt: start }],
+    ["explicit no-op service choice", "Cambiar servicio del turno a Corte", {}],
+    ["resource request cannot change time", "Cambiar recurso del turno a Ana", { startsAt: "2035-04-02T11:00:00-03:00" }],
+    ["temporal request cannot select a different valid service", "Reprogramar mi turno el 2035-04-02 a las 11:00", { startsAt: "2035-04-02T11:00:00-03:00" }],
+  ] as const) test(name, async () => {
+    const h = await fixture();
+    await prepareNatural(h);
+    await h.run("dale reservame ese", async tools => {
+      expect((await tools.execute("confirm_quote_naturally", naturalArguments(tools))).status).toBe("staged_action");
+      return "Listo.";
+    });
+    const [appointment] = await h.appointments();
+    let selectedService = h.service;
+    if (name === "temporal request cannot select a different valid service") {
+      selectedService = randomUUID();
+      await db.sql`insert into services(id,business_id,name,duration_minutes,price_ars) values(${selectedService},${h.business},'Color',30,2000)`;
+      await db.sql`insert into resource_services(business_id,resource_id,service_id) values(${h.business},${h.resource},${selectedService})`;
+    }
+    let selection: ReceptionistToolResult;
+    await h.run(text, async tools => {
+      const slots = data(await tools.execute("availability", { serviceId: selectedService, date: "2035-04-02", appointmentId: appointment!.id })) as { items: { startsAt: string }[] };
+      if ("startsAt" in fields) expect(slots.items.some(slot => Date.parse(slot.startsAt) === Date.parse(fields.startsAt))).toBe(true);
+      selection = await tools.execute("prepare_change", { appointmentId: appointment!.id, serviceId: selectedService,
+        ...(name === "resource request cannot change time" ? { resourceId: h.resource } : {}), ...fields });
+      return "Necesito el cambio que querés hacer.";
+    });
+    expect(await h.appointments()).toEqual([appointment!]);
+    expect(selection!.status).not.toBe("prepared_quote");
+    expect(selection!.status).not.toBe("staged_action");
+    await h.run("¿qué quedó pendiente?", async tools => {
+      expect((tools.context.pending as any).quote).toBeNull();
+      return "No hay propuesta de cambio.";
+    });
+  });
+});
+describe("native delivered change consent", () => {
+  test("relative proposal stays unchanged until delivery, then one authentic confirmation changes exactly once", async () => {
+    const h = await fixture();
+    await prepareNatural(h);
+    await h.run("dale reservame ese", async tools => {
+      expect((await tools.execute("confirm_quote_naturally", naturalArguments(tools))).status).toBe("staged_action");
+      return "Reservado.";
+    });
+    const [original] = await h.appointments();
+    const later = "2035-04-02T11:00:00-03:00";
+    const prepared = await h.run("mmm mejor más tarde", async tools => {
+      const quote = await tools.execute("prepare_change", { appointmentId: original!.id, startsAt: later });
+      expect(quote.status).toBe("prepared_quote");
+      if (quote.status === "prepared_quote") expect(Date.parse((quote.quote as { startsAt: string }).startsAt)).toBe(Date.parse(later));
+      expect((await tools.execute("confirm_quote", {})).status).not.toBe("staged_action");
+      return "Te propongo esta alternativa.";
+    });
+    expect(await h.appointments()).toEqual([original!]);
+    await h.run("dale cambialo", async tools => {
+      expect(tools.context.naturalConfirmation).toBeNull();
+      expect((await tools.execute("confirm_quote_naturally", {
+        evidence: tools.context.message, evidenceReference: "a".repeat(64), quoteFingerprint: "b".repeat(64),
+      })).status).toBe("clarification");
+      return "Primero necesitás recibir la propuesta.";
+    });
+    expect(await h.appointments()).toEqual([original!]);
+    if (prepared.status !== "committed") throw new Error("Missing change quote");
+    const [output] = await db.sql`select text from outbound_commands where outbound_id=${prepared.outboundId}`;
+    expect(output!.text).toContain("11:00");
+    await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${prepared.outboundId}`;
+    const job = await h.receive("dale cambialo");
+    const result = await h.agenda.withReceptionistSession(job, async tools => {
+      const args = naturalArguments(tools);
+      expect((await tools.execute("confirm_quote_naturally", args)).status).toBe("staged_action");
+      expect((await tools.execute("confirm_quote_naturally", args)).status).toBe("rejected");
+      return "Cambio guardado.";
+    });
+    expect(result.status).toBe("committed");
+    if (result.status === "committed") expect(result.actions).toHaveLength(1);
+    const changed = await h.appointments();
+    expect(changed).toHaveLength(1);
+    expect(changed[0]!.id).toBe(original!.id);
+    expect(Date.parse(changed[0]!.startsAt)).toBe(Date.parse(later));
+    expect((await h.agenda.withReceptionistSession(job, async () => { throw new Error("Retry must not execute"); })).status).toBe("not_current");
+    expect(await h.appointments()).toEqual(changed);
+    const [effects] = await db.sql`select count(*)::int count from outbox_events where business_id=${h.business}
+      and topic='appointment.changed' and payload->>'sourceMessageId'=${job.messageId}`;
+    expect(effects!.count).toBe(1);
+  });
+});
 describe("canonical presentation without quote authority changes", () => {
   test("slots, quotes, pending and appointments carry the backend Monday label without changing the fingerprint", async () => {
     const h = await fixture();

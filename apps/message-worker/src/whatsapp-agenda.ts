@@ -338,8 +338,9 @@ export class PostgresWhatsAppAgenda {
       default: throw new Error("Non-reading tool reached read handler");
     }
   }
-  /** Model selections can prepare, never authorize a mutation. Unlike legacy
-   * proposal routing this does not need keyword/date/name parsing for admission.
+  /** Model selections can propose alternatives, never override customer-selected
+   * fields or authorize a mutation. This is not conversation admission: relative
+   * requests may receive a disclosed quote without an exact literal clock time.
    * Confirmation still uses actual subsequent input and delivered quote evidence.
    */
   private async prepareReceptionistQuote(repo: PostgresRepositories, job: PostgresAiJob, source: Source, phone: string,
@@ -365,6 +366,48 @@ export class PostgresWhatsAppAgenda {
       appointmentId: current.id, previous: snapshot(current), serviceId: current.terms.serviceId, resourceId: null,
       ...(resolved.preference !== undefined ? { preference: resolved.preference } : {}), unresolvedPreference: resolved.unresolved,
     };
+    if (current) {
+      const intent = structuralChangeIntent(source.raw_text);
+      const pendingChange = dialogue.change?.appointmentId === current.id ? dialogue.change : undefined;
+      const kind = intent ?? pendingChange?.kind ?? "temporal";
+      // Preparation does not require keyword admission, but a different received
+      // operation cannot be laundered into a structural quote by model arguments.
+      const unsupportedDirective = intent === undefined && /^(?:(?:quiero|necesito|por favor)\s+)?(?:cambiar|cambia|cambiá|reprogramar|reprogramá|mover|mové|pasar)(?:\s|[.!]|$)/iu.test(source.raw_text.trim());
+      if (explicitNotes(source.raw_text) !== undefined || explicitCancel(source.raw_text) || unsupportedDirective)
+        return unchanged("Indicá qué cambio de horario, servicio o recurso querés. No se preparó ningún cambio.", { ...dialogue, quote: null });
+      const retained = pendingChange ?? binding;
+      if (intent === undefined && retained && retained.previous !== snapshot(current))
+        return unchanged("El turno cambió desde tu solicitud. Pedí el cambio nuevamente; no se guardó nada.", emptyAgendaDialogue());
+      if (kind !== "temporal") {
+        const catalog = kind === "service" ? (await repo.listServices()).filter(item => item.status === "active")
+          : resources.filter(item => item.status === "active");
+        const chosen = customerChangeChoice(source.raw_text, kind, catalog, intent === undefined)
+          ?? (kind === "resource" ? resolved.preferred?.id : undefined);
+        next.change = { appointmentId: current.id, previous: snapshot(current), kind };
+        delete next.reschedule;
+        if (!chosen) return unchanged(missingFieldText([kind]), next, [kind]);
+        const incompatible = Date.parse(startsAt) !== current.startMs
+          || (kind === "service" && ((args.resourceId !== undefined && args.resourceId !== current.terms.resourceId)
+            || serviceId !== chosen))
+          || (kind === "resource" && (serviceId !== current.terms.serviceId || args.resourceId !== chosen));
+        if (incompatible) return unchanged("La propuesta cambia campos que no pediste. No se guardó ningún cambio.", next);
+        if (kind === "service" && chosen === current.terms.serviceId)
+          return unchanged("Ese ya es el servicio del turno. ¿Qué servicio querés?", next, ["service"]);
+      } else {
+        if (serviceId !== current.terms.serviceId)
+          return unchanged("La propuesta cambia un servicio que no pediste. No se guardó ningún cambio.", next);
+        if (args.resourceId !== undefined && args.resourceId !== current.terms.resourceId && !resolved.preferred && !binding?.preference)
+          return unchanged("La propuesta cambia un recurso que no pediste. No se guardó ningún cambio.", next);
+        const selection = customerTemporalSelection(source.raw_text, this.clock());
+        const date = selection.date ?? (intent === undefined ? binding?.date : undefined);
+        const time = selection.time ?? (intent === undefined ? binding?.time : undefined);
+        if ((date && date !== argentinaDate(startsAt)) || (time && time !== agendaTime(startsAt)))
+          return unchanged("La propuesta no coincide con el día y hora que pediste. Indicá nuevamente el día y la hora; no se guardó nada.", { ...next, reschedule: { ...next.reschedule!, ...(date ? { date } : {}), ...(time ? { time } : {}) } }, ["date", "time"]);
+        // Retain only received selections, never promote a proposed model slot
+        // into customer intent for a later preparation.
+        next.reschedule = { ...next.reschedule!, ...(date ? { date } : {}), ...(time ? { time } : {}) };
+      }
+    }
     if (resolved.unresolved) return unchanged(missingFieldText(["resource"]), next, ["resource"]);
     const resourceId = resolved.preference ?? args.resourceId;
     const options = await repo.listAppointmentAvailability(job.businessId, { serviceId, date: argentinaDate(startsAt),
@@ -372,6 +415,9 @@ export class PostgresWhatsAppAgenda {
     const selected = options.find(option => option.startMs === Date.parse(startsAt) && option.resourceId === current?.terms.resourceId)
       ?? options.find(option => option.startMs === Date.parse(startsAt));
     if (!selected) return unchanged(this.slotsText(options), next, ["time"]);
+    if (current && selected.startMs === current.startMs && serviceId === current.terms.serviceId
+      && selected.resourceId === current.terms.resourceId && (resolved.preference ?? null) === current.customerResourcePreference)
+      return unchanged("La propuesta no cambia el turno. Indicá qué querés cambiar.", next);
     const client = await repo.findClientByCanonicalPhone(phone);
     const names = explicitCustomerNames(source.raw_text) ?? dialogue.bookingNames ?? null;
     next.bookingNames = names;
