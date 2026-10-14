@@ -1,0 +1,115 @@
+import { z } from "zod";
+import { CalendarDateSchema, InstantSchema, type ToolConversationRequest } from "@agendia/domain";
+
+const id = z.uuid();
+const selection = { serviceId: id, resourceId: id.optional(), startsAt: InstantSchema };
+const schemas = {
+  read_business: z.object({}).strict(),
+  read_catalog: z.object({}).strict(),
+  read_calendar: z.object({}).strict(),
+  read_resources: z.object({}).strict(),
+  availability: z.object({ serviceId: id, date: CalendarDateSchema, resourceId: id.optional(), appointmentId: id.optional() }).strict(),
+  owned_appointments: z.object({}).strict(),
+  owned_appointment: z.object({ appointmentId: id }).strict(),
+  prepare_booking: z.object(selection).strict(),
+  prepare_change: z.object({ appointmentId: id, serviceId: id.optional(), resourceId: id.optional(), startsAt: InstantSchema.optional() })
+    .strict().refine(args => args.serviceId !== undefined || args.resourceId !== undefined || args.startsAt !== undefined),
+  confirm_quote: z.object({}).strict(),
+  confirm_quote_naturally: z.object({
+    evidence: z.string().min(1).max(12000),
+    evidenceReference: z.string().regex(/^[a-f0-9]{64}$/u),
+    quoteFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
+  }).strict(),
+  clear_pending: z.object({}).strict(),
+  cancel: z.object({ appointmentId: id }).strict(),
+  notes: z.object({ appointmentId: id, notes: z.string().max(2000).nullable() }).strict(),
+  preference: z.object({ appointmentId: id, resourceId: id.nullable() }).strict(),
+};
+type ToolName = keyof typeof schemas;
+export type ReceptionistToolCommand = {
+  [Name in ToolName]: { name: Name; arguments: z.infer<(typeof schemas)[Name]> }
+}[ToolName];
+const descriptions: Record<ToolName, string> = {
+  read_business: "Read registered displayName, description and address. Missing data is not an infrastructure failure.",
+  read_catalog: "Read active services and current prices and durations; these are not appointment quotes.",
+  read_calendar: "Read habitual business hours and closures. This does not establish appointment availability.",
+  read_resources: "Read active resources, their schedules and eligible service IDs. No capacity is reserved.",
+  availability: "Read actual slots on exactly one date for a tenant service and optional resource. Optional appointmentId is verified as current sender-owned before excluding its occupancy for a change. No reservation.",
+  owned_appointments: "Read appointments belonging to the verified current WhatsApp sender only.",
+  owned_appointment: "Inspect one current sender-owned appointment. IDs never establish ownership.",
+  prepare_booking: "Prepare a real slot quote, not a booking. Replaces previous pending selection. Confirmation requires later explicit customer consent after quote delivery.",
+  prepare_change: "Prepare a sender-owned change quote, not a saved change. Requires later explicit confirmation after delivery.",
+  confirm_quote: "Legacy literal confirmation or pending names using the actual received message. Effects are staged until session commit.",
+  confirm_quote_naturally: "Interpret clear explicit acceptance of the exact delivered pending quote. Copy the COMPLETE current message as evidence and its runtime naturalConfirmation bindings. Never invoke for ambiguity, hypotheticals, negation or changed conditions: clarify or prepare a fresh quote instead. Backend verifies evidence authenticity and quote context, NOT consent semantics; interpretation can be wrong. Effects remain staged until session commit.",
+  clear_pending: "Discard the pending draft/quote when the customer changes their mind. Never cancels or changes a saved appointment.",
+  cancel: "Request cancellation using existing explicit customer-intent guards; model call alone is not permission.",
+  notes: "Request notes update; backend takes notes from the actual explicit customer message, never model prose.",
+  preference: "Request preference metadata using existing customer-expression guards; does not change assignment or reserve capacity.",
+};
+export const receptionistToolDefinitions: ToolConversationRequest["tools"] = Object.entries(schemas).map(([name, schema]) => ({
+  name, description: descriptions[name as ToolName], parameters: z.toJSONSchema(schema) as ToolConversationRequest["tools"][number]["parameters"],
+}));
+
+export function parseReceptionistTool(name: string, args: unknown): ReceptionistToolCommand | null {
+  if (!Object.hasOwn(schemas, name)) return null;
+  const parsed = schemas[name as ToolName].safeParse(args);
+  return parsed.success ? { name, arguments: parsed.data } as ReceptionistToolCommand : null;
+}
+
+/** Inside a transaction, staged_action is NOT committed. Only the outer session return
+ * attests durability. T3 may compose a natural final answer from staged outcomes, but
+ * must never send it separately: the session persists it with effects and receipts.
+ * prepared_quote is no mutation; the backend appends the exact quote to the final
+ * answer to attest delivery. Internal reasoning/provider state never enters results.
+ */
+export type ReceptionistToolResult =
+  | { status: "data"; data: unknown }
+  | { status: "unavailable_data"; code: string }
+  | { status: "clarification" | "rejected"; code: string; message?: string }
+  | { status: "prepared_quote"; quote: unknown; message: string }
+  | { status: "staged_action"; operation: string; appointment: unknown };
+export type ReceptionistSessionOutcome =
+  | { status: "committed"; outboundId: string; actions: { operation: string; appointmentId: string }[] }
+  | { status: "not_current" | "infrastructure_failure" };
+
+/** T3 copies these opaque runtime references plus the exact context.message into
+ * confirm_quote_naturally ONLY after interpreting clear acceptance of that quote.
+ * For ambiguous, negated, hypothetical or changed conditions, return clarification
+ * or prepare a new quote instead. Authentic non-consent text can still pass the
+ * binding checks if a model misinterprets it: that false-positive risk is not a
+ * deterministic backend guarantee. No boolean assertion can remove that risk.
+ */
+export interface NaturalConfirmationBinding {
+  readonly evidenceReference: string;
+  readonly quoteFingerprint: string;
+}
+/** The handler is a transaction-local runtime capability, not a model repository.
+ * Calls are serialized even if the provider batches them. Retaining this object
+ * after the callback gives no capability. Infrastructure exceptions must abort
+ * the entire transaction; do not turn them into missing business facts.
+ */
+export class ReceptionistToolSession {
+  private calls = 0;
+  private closed = false;
+  private tail: Promise<unknown> = Promise.resolve();
+  private failure: unknown;
+  constructor(private handler: (command: ReceptionistToolCommand) => Promise<ReceptionistToolResult>,
+    readonly context: Readonly<{ message: string; recent: readonly string[]; pending: unknown;
+      naturalConfirmation?: Readonly<NaturalConfirmationBinding> | null }> = { message: "", recent: [], pending: null }) {}
+  execute(name: string, args: unknown): Promise<ReceptionistToolResult> {
+    if (this.closed || ++this.calls > 16) return Promise.resolve({ status: "rejected", code: "SESSION_LIMIT" });
+    const command = parseReceptionistTool(name, args);
+    if (!command) return Promise.resolve({ status: "rejected", code: "INVALID_TOOL" });
+    const result = this.tail.then(async () => {
+      if (this.closed) return { status: "rejected", code: "SESSION_CLOSED" } as const;
+      if (this.failure) throw this.failure;
+      const output = await this.handler(command);
+      if (new TextEncoder().encode(JSON.stringify(output)).byteLength > 16384) throw new Error("Tool result limit");
+      return output;
+    });
+    this.tail = result.catch(error => { this.failure = error; });
+    return result;
+  }
+  async drain(): Promise<void> { await this.tail; if (this.failure) throw this.failure; }
+  close(): void { this.closed = true; }
+}

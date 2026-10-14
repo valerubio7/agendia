@@ -8,6 +8,8 @@ import {
   quoteTermsEqual, quoteText, missingFieldText, isAgendaDialogueFollowup, type AgendaDialogue, type AgendaQuote,
 } from "../../../packages/domain/src/whatsapp-agenda.ts";
 import type { PostgresAiJob } from "./ai-job.ts";
+import { ReceptionistToolSession, type ReceptionistToolCommand, type ReceptionistToolResult,
+  type ReceptionistSessionOutcome } from "./receptionist-tools.ts";
 
 type Pools = ReturnType<typeof createRuntimePools>;
 type Source = NonNullable<Awaited<ReturnType<PostgresRepositories["loadAiMessage"]>>>;
@@ -158,6 +160,212 @@ export class PostgresWhatsAppAgenda {
     });
     return true;
   }
+  /** T3 entry point: no linguistic admission or proposal-provider call. The callback
+   * composes a natural final response while holding source/dialogue/calendar fences.
+   * Do not send externally from the callback. A staged effect becomes committed only
+   * after this method returns committed; any callback/persistence failure rolls back.
+   * T3 must bound provider rounds/time because locks live for the callback duration.
+   */
+  async withReceptionistSession(job: PostgresAiJob,
+    converse: (session: ReceptionistToolSession) => Promise<string>): Promise<ReceptionistSessionOutcome> {
+    try {
+      return await this.pools.worker.run(this.context(job), async repo => {
+        const source = await repo.lockAgendaSource(job.messageId);
+        if (!source || source.business_id !== job.businessId) return { status: "not_current" } as const;
+        const phone = await repo.agendaSender(job.messageId);
+        let dialogue = phone ? await repo.lockAgendaDialogue(job.businessId, source.connection_id, phone) : emptyAgendaDialogue();
+        await repo.acquireBusinessCalendarLock({ businessId: job.businessId });
+        const actions: { operation: string; appointmentId: string }[] = [];
+        let quoteNeedsDelivery = false;
+        // Opaque bindings commit to the trusted runtime scope and the whole quote,
+        // including operation, appointment, terms, names and delivery provenance.
+        // These are context checks, NOT proof that free text semantically consents.
+        const fingerprint = (kind: string, value: unknown) => createHash("sha256").update(JSON.stringify({
+          kind, businessId: job.businessId, connectionId: source.connection_id, phone, value,
+        })).digest("hex");
+        const initialQuoteSnapshot = dialogue.quote ? JSON.stringify(dialogue.quote) : null;
+        const naturalConfirmation = phone && dialogue.quote && !dialogue.awaitingNames
+          && dialogue.quote.sourceMessageId !== source.id
+          && await repo.agendaQuoteDelivered(dialogue.quote.outboundId, source.connection_id, phone)
+          ? Object.freeze({ evidenceReference: fingerprint("inbound", { id: source.id, text: source.raw_text }),
+            quoteFingerprint: fingerprint("quote", dialogue.quote) }) : null;
+        const session = new ReceptionistToolSession(async command => {
+          const reading = ["read_business", "read_catalog", "read_calendar", "read_resources", "availability", "owned_appointments", "owned_appointment"].includes(command.name);
+          if (actions.length && !reading) return { status: "rejected", code: "ACTION_ALREADY_STAGED" };
+          if (!phone && !["read_business", "read_catalog", "read_calendar", "read_resources", "availability"].includes(command.name))
+            return { status: "rejected", code: "UNVERIFIED_SENDER" };
+          if (command.name === "confirm_quote_naturally") {
+            if (!naturalConfirmation) return { status: "clarification", code: "NATURAL_CONFIRMATION_UNAVAILABLE" };
+            const args = command.arguments;
+            if (args.evidence !== source.raw_text || args.evidenceReference !== naturalConfirmation.evidenceReference
+              || args.quoteFingerprint !== naturalConfirmation.quoteFingerprint || !dialogue.quote
+              || JSON.stringify(dialogue.quote) !== initialQuoteSnapshot
+              || fingerprint("quote", dialogue.quote) !== args.quoteFingerprint)
+              return { status: "rejected", code: "INVALID_CONFIRMATION_BINDING" };
+          }
+          try {
+            const result = await repo.appointmentOperationSavepoint(async inner => {
+              if (reading) return { result: await this.receptionistRead(inner, job, source, phone, command) };
+              const draft = structuredClone(dialogue);
+              let reply: Reply;
+              if (command.name === "clear_pending") {
+                reply = unchanged("No se guardó ningún turno nuevo ni se cambió un turno existente.", emptyAgendaDialogue());
+              } else if (command.name === "prepare_booking" || command.name === "prepare_change") {
+                reply = await this.prepareReceptionistQuote(inner, job, source, phone!, draft, command);
+              } else {
+                const proposal = command.name === "confirm_quote" || command.name === "confirm_quote_naturally" ? null
+                  : AgendaProposalSchema.parse({ operation: command.name, arguments: command.arguments });
+                // Only this separate, runtime-bound protocol enables model-interpreted
+                // consent. Delivery, ownership, terms, capacity and persistence still
+                // follow the same guarded branch; other linguistic guards stay intact.
+                reply = await this.respond(inner, job, source, phone!, draft, proposal,
+                  command.name === "confirm_quote_naturally" ? { sourceMessageId: source.id, quoteSnapshot: initialQuoteSnapshot! } : undefined);
+              }
+              const result: ReceptionistToolResult = command.name === "clear_pending" ? { status: "data", data: { pending: null } }
+                : reply.saved
+                ? { status: "staged_action", operation: command.name, appointment: this.receptionistAppointment(reply.saved) }
+                : reply.renderedQuote && reply.dialogue.quote
+                  ? { status: "prepared_quote", quote: structuredClone(reply.dialogue.quote), message: reply.text }
+                  : { status: command.name === "confirm_quote" || command.name === "confirm_quote_naturally" || command.name.startsWith("prepare_") ? "clarification" : "rejected",
+                    code: "CUSTOMER_INPUT_REQUIRED", message: reply.text };
+              return { result, reply };
+            });
+            if (result.reply) {
+              const previouslyQuoted = quoteNeedsDelivery && dialogue.quote ? JSON.stringify(dialogue.quote) : null;
+              dialogue = result.reply.dialogue;
+              quoteNeedsDelivery = Boolean(dialogue.quote && (result.reply.renderedQuote === JSON.stringify(dialogue.quote)
+                || previouslyQuoted === JSON.stringify(dialogue.quote)));
+              if (result.reply.saved) actions.push({ operation: command.name, appointmentId: result.reply.saved.id });
+            }
+            return result.result;
+          } catch (error) {
+            if (!(error instanceof AppointmentError)) throw error;
+            return { status: "rejected", code: "AGENDA_REJECTED" };
+          }
+        }, { message: source.raw_text, recent: source.turns.slice(-12).map(turn => turn.raw_text.slice(0, 2000)),
+          pending: structuredClone(dialogue), naturalConfirmation });
+        let text: string;
+        try {
+          text = await converse(session);
+          await session.drain();
+        } finally { session.close(); }
+        if (typeof text !== "string" || !text.trim() || text.length > 12000) throw new Error("Invalid receptionist response");
+        // Natural prose is allowed, but model prose alone cannot attest exact quote
+        // terms. Always attach the backend summary before marking this quote outbound.
+        if (dialogue.quote && quoteNeedsDelivery) text += "\n\n" + quoteText(dialogue.quote);
+        const output = await repo.saveGenerated(job.messageId, job.businessId, text);
+        if (!output) throw new Error("Receptionist source changed before atomic save");
+        if (dialogue.quote && quoteNeedsDelivery) dialogue.quote.outboundId = output.outbound_id;
+        if (phone) await repo.saveAgendaDialogue(job.businessId, source.connection_id, phone, dialogue);
+        await repo.recordAgendaReceipt(job.businessId, job.messageId, output.outbound_id, actions[0]?.operation ?? "receptionist");
+        await repo.appendAudit(job.businessId, {
+          eventType: actions.length ? "whatsapp.agenda.saved" : "whatsapp.agenda.reply", outcome: "success",
+          eventHash: createHash("sha256").update(job.messageId).digest("hex"),
+        });
+        for (const action of actions) await repo.enqueueOutbox(job.businessId, "appointment.changed", `agenda:${job.messageId}`, {
+          appointmentId: action.appointmentId, sourceMessageId: job.messageId,
+        });
+        return { status: "committed", outboundId: output.outbound_id, actions } as const;
+      });
+    } catch {
+      // No SQL/provider details become customer facts, and the pending source remains
+      // retryable. The caller must treat this as infrastructure failure, not success.
+      return { status: "infrastructure_failure" };
+    }
+  }
+  private receptionistAppointment(ap: StoredAppointment) {
+    return { id: ap.id, startsAt: ap.startsAt, terms: ap.terms, state: ap.state,
+      notes: ap.notes, preference: ap.customerResourcePreference };
+  }
+  private async receptionistRead(repo: PostgresRepositories, job: PostgresAiJob, source: Source,
+    phone: string | null, command: ReceptionistToolCommand): Promise<ReceptionistToolResult> {
+    const bounded = <T>(items: T[]) => {
+      const selected = items.slice(0, 50);
+      while (selected.length && new TextEncoder().encode(JSON.stringify(selected)).byteLength > 12000) selected.pop();
+      return { items: selected, hasMore: selected.length < items.length };
+    };
+    switch (command.name) {
+      case "read_business": {
+        const profile = source.profile;
+        if (!Object.keys(profile).length) return { status: "unavailable_data", code: "BUSINESS_PROFILE_MISSING" };
+        return { status: "data", data: { displayName: profile.display_name || null,
+          description: profile.description || null, address: profile.address || null } };
+      }
+      case "read_catalog": return { status: "data", data: bounded((await repo.listServices()).filter(item => item.status === "active")
+        .map(({ id, name, description, durationMinutes, priceArs }) => ({ id, name, description, durationMinutes, priceArs }))) };
+      case "read_resources": return { status: "data", data: bounded((await repo.listResources(job.businessId)).filter(item => item.status === "active")) };
+      case "read_calendar": {
+        const calendar = await repo.getBusinessCalendar(job.businessId);
+        if (!calendar.weeklySchedule) return { status: "unavailable_data", code: "BUSINESS_CALENDAR_MISSING" };
+        return { status: "data", data: { weeklySchedule: calendar.weeklySchedule, closures: bounded(await repo.listBusinessClosures(job.businessId)),
+          establishesAvailability: false } };
+      }
+      case "availability": {
+        const args = command.arguments;
+        if (!(await repo.listServices()).some(item => item.id === args.serviceId && item.status === "active")
+          || (args.resourceId && !(await repo.getResource(job.businessId, args.resourceId)))) throw new AppointmentError("UNKNOWN_OWNED_ID");
+        if (args.appointmentId) {
+          if (!phone) throw new AppointmentError("UNKNOWN_OWNED_ID");
+          await this.owned(repo, job.businessId, phone, args.appointmentId);
+        }
+        const options = await repo.listAppointmentAvailability(job.businessId, {
+          serviceId: args.serviceId, date: args.date, ...(args.resourceId ? { resourceId: args.resourceId } : {}),
+        }, { clock: this.clock, ...(args.appointmentId ? { appointmentId: args.appointmentId } : {}) });
+        return { status: "data", data: bounded(options.map(option => ({ startsAt: option.start, resourceId: option.resourceId,
+          serviceId: option.terms.serviceId, durationMinutes: option.terms.durationMinutes, priceArs: option.terms.priceArs }))) };
+      }
+      case "owned_appointments": {
+        const client = await repo.findClientByCanonicalPhone(phone!);
+        const appointments = client ? await repo.listAppointments(job.businessId, { clientId: client.id }) : [];
+        return { status: "data", data: bounded(appointments.filter(ap => ap.client.phone === phone).map(ap => this.receptionistAppointment(ap))) };
+      }
+      case "owned_appointment": return { status: "data", data: this.receptionistAppointment(await this.owned(repo, job.businessId, phone!, command.arguments.appointmentId)) };
+      default: throw new Error("Non-reading tool reached read handler");
+    }
+  }
+  /** Model selections can prepare, never authorize a mutation. Unlike legacy
+   * proposal routing this does not need keyword/date/name parsing for admission.
+   * Confirmation still uses actual subsequent input and delivered quote evidence.
+   */
+  private async prepareReceptionistQuote(repo: PostgresRepositories, job: PostgresAiJob, source: Source, phone: string,
+    dialogue: AgendaDialogue, command: Extract<ReceptionistToolCommand, { name: "prepare_booking" | "prepare_change" }>): Promise<Reply> {
+    const args = command.arguments;
+    const current = command.name === "prepare_change" ? await this.owned(repo, job.businessId, phone, command.arguments.appointmentId) : null;
+    if (current && (current.state !== "confirmed" || Date.parse(this.clock()) >= current.startMs)) throw new AppointmentError("STATE_LOCKED");
+    const serviceId = args.serviceId ?? current!.terms.serviceId;
+    const startsAt = args.startsAt ?? current!.startsAt;
+    if (!(await repo.listServices()).some(item => item.id === serviceId && item.status === "active")) throw new AppointmentError("UNKNOWN_OWNED_ID");
+    const resources = await repo.listResources(job.businessId);
+    if (args.resourceId && !resources.some(item => item.id === args.resourceId && item.status === "active")) throw new AppointmentError("UNKNOWN_OWNED_ID");
+    const binding = current && dialogue.reschedule?.appointmentId === current.id ? dialogue.reschedule : undefined;
+    const previousPreference = current ? binding?.preference !== undefined ? binding.preference : current.customerResourcePreference : dialogue.bookingPreference;
+    const resolved = trustedPreference(source.raw_text, resources, previousPreference,
+      current ? binding?.unresolvedPreference : dialogue.bookingUnresolvedPreference);
+    const next: AgendaDialogue = { ...emptyAgendaDialogue(),
+      ...(dialogue.bookingNames !== undefined ? { bookingNames: dialogue.bookingNames } : {}),
+      ...(resolved.preference !== undefined ? { bookingPreference: resolved.preference } : {}),
+      bookingUnresolvedPreference: resolved.unresolved,
+      requestedDate: argentinaDate(startsAt), requestedTime: agendaTime(startsAt) };
+    if (current) next.reschedule = {
+      appointmentId: current.id, previous: snapshot(current), serviceId: current.terms.serviceId, resourceId: null,
+      ...(resolved.preference !== undefined ? { preference: resolved.preference } : {}), unresolvedPreference: resolved.unresolved,
+    };
+    if (resolved.unresolved) return unchanged(missingFieldText(["resource"]), next, ["resource"]);
+    const resourceId = resolved.preference ?? args.resourceId;
+    const options = await repo.listAppointmentAvailability(job.businessId, { serviceId, date: argentinaDate(startsAt),
+      ...(resourceId ? { resourceId } : {}) }, { clock: this.clock, ...(current ? { appointmentId: current.id } : {}) });
+    const selected = options.find(option => option.startMs === Date.parse(startsAt) && option.resourceId === current?.terms.resourceId)
+      ?? options.find(option => option.startMs === Date.parse(startsAt));
+    if (!selected) return unchanged(this.slotsText(options), next, ["time"]);
+    const client = await repo.findClientByCanonicalPhone(phone);
+    const names = explicitCustomerNames(source.raw_text) ?? dialogue.bookingNames ?? null;
+    next.bookingNames = names;
+    next.quote = { kind: current ? "change" : "book", appointmentId: current?.id ?? null, startsAt: selected.start,
+      terms: selected.terms, preference: resolved.preference ?? null, previous: current ? snapshot(current) : null,
+      names: current ? null : names, sourceMessageId: source.id, outboundId: null };
+    next.awaitingNames = !current && !client && !names;
+    return next.awaitingNames ? unchanged(missingFieldText(["names"]), next, ["names"]) : summaryReply(next);
+  }
   private async owned(repo: PostgresRepositories, businessId: string, phone: string, id: string): Promise<StoredAppointment> {
     const current = await repo.getAppointment(businessId, id);
     // Re-resolve the *current* stored phone, never a historical binding to client ID.
@@ -204,7 +412,8 @@ export class PostgresWhatsAppAgenda {
     return `Horarios disponibles${scope}: ${[...days].map(([day, times]) => `${day}: ${times.join(", ")}`).join("; ")}. ¿Cuál elegís?`;
   }
   private async respond(repo: PostgresRepositories, job: PostgresAiJob, source: Source, phone: string,
-    dialogue: AgendaDialogue, proposal: AgendaProposal | null): Promise<Reply> {
+    dialogue: AgendaDialogue, proposal: AgendaProposal | null,
+    naturalConfirmation?: { sourceMessageId: string; quoteSnapshot: string }): Promise<Reply> {
     const now = this.clock();
     const selection = customerTemporalSelection(source.raw_text, now);
     if (selection.date) dialogue.requestedDate = selection.date;
@@ -221,7 +430,11 @@ export class PostgresWhatsAppAgenda {
       }
       if (explicitQuoteConfirmation(source.raw_text)) return unchanged(missingFieldText(["names"]), dialogue);
     }
-    if (dialogue.quote && explicitQuoteConfirmation(source.raw_text)) {
+    // Legacy callers omit this protocol and keep the literal helper unchanged.
+    // Runtime binding establishes authentic context only; semantics are model risk.
+    const boundInterpretation = naturalConfirmation?.sourceMessageId === source.id
+      && naturalConfirmation.quoteSnapshot === JSON.stringify(dialogue.quote);
+    if (dialogue.quote && (explicitQuoteConfirmation(source.raw_text) || boundInterpretation)) {
       const quote = dialogue.quote;
       if (!await repo.agendaQuoteDelivered(quote.outboundId, source.connection_id, phone))
         return summaryReply(dialogue, "Primero necesitás recibir el detalle de la propuesta. ");
