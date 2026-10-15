@@ -172,7 +172,9 @@ test("real services complete the deterministic multi-tenant happy path", async (
       ),
     ),
   );
-  expect(system.providers.baileys.acks.every(ack => ack.text.includes("No se guardó ningún cambio de agenda"))).toBe(true);
+  expect(system.providers.baileys.acks.map(ack => ack.text)).toEqual(
+    accepted.map(() => "¿Qué servicio y día querés consultar?"),
+  );
   system.providers.deepSeek.nativeCalls = [{ name: "read_catalog", arguments: {} }];
   for (const [index, tenant] of tenants.entries()) {
     const catalog = await system.receiveText(tenant.email, accepted[index]!.remoteJid, "Consultar servicios");
@@ -340,13 +342,35 @@ test("real services complete the deterministic multi-tenant happy path", async (
   expect(await system.agendaEvidence(tenants[0]!.email, confirmed.providerMessageId)).toMatchObject({
     state: "completed", clients: 1, appointments: 1, receipts: 1, effects: 1, outbound: 1,
   });
-  const saved = await read(`appointments?${new URLSearchParams({ from: `${date}T00:00:00-03:00`, to: `${date}T23:59:59-03:00` })}`);
+  const appointmentPath = `appointments?${new URLSearchParams({ from: `${date}T00:00:00-03:00`, to: `${date}T23:59:59-03:00` })}`;
+  const saved = await read(appointmentPath);
   expect(saved).toHaveLength(1);
   expect(saved[0]).toMatchObject({ origin: "ai", state: "confirmed", startsAt: slot.start,
     client: { firstName: "Clara", lastName: "López" }, terms: { serviceId: service.id, priceArs: 1000, durationMinutes: 30 } });
   await businessPage.getByRole("link", { name: "Turnos", exact: true }).click();
-  await businessPage.getByRole("button", { name: "Semana", exact: true }).click();
-  await expect(businessPage.getByRole("button", { name: /Clara López/ })).toBeVisible();
-  await businessPage.getByRole("button", { name: /Clara López/ }).click();
-  await expect(businessPage.getByText("Confirmado", { exact: true }).last()).toBeVisible();
+  const time = new Intl.DateTimeFormat("es-AR", { timeZone: "America/Argentina/Buenos_Aires",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(slot.startMs);
+  for (const reload of [false, true]) {
+    if (reload) await businessPage.reload();
+    await businessPage.getByRole("button", { name: "Semana", exact: true }).click();
+    const appointment = businessPage.getByRole("list", { name: `Turnos ${date}`, exact: true })
+      .getByRole("button", { name: /Clara López/ });
+    await expect(appointment).toHaveCount(1);
+    await expect(appointment).toBeVisible();
+    await expect(appointment.getByText(`Servicio ${tenants[0]!.name}`, { exact: true })).toBeVisible();
+    await expect(appointment.getByText("Confirmado", { exact: true })).toBeVisible();
+    await expect(appointment.locator("time")).toHaveAttribute("datetime", slot.start);
+    await expect(appointment.locator("time")).toHaveText(time);
+    const detailResponse = businessPage.waitForResponse(response =>
+      response.url().endsWith(`/api/me/appointments/${saved[0].id}`) && response.status() === 200);
+    await appointment.click();
+    expect(await (await detailResponse).json()).toEqual(saved[0]);
+    const detail = businessPage.getByRole("region", { name: "Detalle del turno", exact: true });
+    await expect(detail.getByText("Confirmado", { exact: true })).toBeVisible();
+    await expect(detail.getByText("IA", { exact: true })).toBeVisible();
+  }
+  expect(await read(appointmentPath)).toEqual(saved);
+  expect(await system.agendaEvidence(tenants[0]!.email, confirmed.providerMessageId)).toMatchObject({
+    state: "completed", clients: 1, appointments: 1, receipts: 1, effects: 1, outbound: 1,
+  });
 });

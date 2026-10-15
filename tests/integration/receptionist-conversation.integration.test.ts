@@ -55,24 +55,24 @@ describe("production inbound native conversation with transactional tools", () =
   test("informal grouped input reaches model with grounded facts, then complete factual/availability batch", async () => {
     const h = await fixture();
     const older = await h.receive("ola kiero arreglarme");
-    const current = await h.receive("queda cerca y hay algo el martes?");
+    const current = await h.receive("queda cerca y hay algo el 2035-04-03?");
     let round = 0;
     const w = h.worker(async request => {
       expect(await h.outputs()).toHaveLength(0);
       if (!round++) {
-        expect(request.messages.at(-1)!.content).toBe("ola kiero arreglarme\nqueda cerca y hay algo el martes?");
+        expect(request.messages.at(-1)!.content).toBe("ola kiero arreglarme\nqueda cerca y hay algo el 2035-04-03?");
         expect(request.messages[1]!.content).toContain("Calle real 1");
         return { ...batch("facts", "read_business"), toolCalls: [
           { id: "facts", name: "read_business", arguments: {} },
-          { id: "slots", name: "availability", arguments: { serviceId: h.service, date: "2035-04-02" } },
+          { id: "slots", name: "availability", arguments: { serviceId: h.service, date: "2035-04-03" } },
         ] };
       }
       expect(request.messages.slice(-2).map(m => m.role)).toEqual(["tool", "tool"]);
-      expect(request.messages.at(-1)!.content).toContain("2035-04-02");
+      expect(request.messages.at(-1)!.content).toContain("2035-04-03");
       const slots = JSON.parse(request.messages.at(-1)!.content!);
-      expect(slots.data.items[0].presentation.weekday).toBe("lunes");
+      expect(slots.data.items[0].presentation.weekday).toBe("martes");
       expect(slots.data.items[0].presentation.timeZone).toBe("America/Argentina/Buenos_Aires");
-      return finish("Estamos en Calle real 1. ¿Qué horario preferís?");
+      return finish('{"kind":"reply","facts":["read_business","availability"],"businessFields":["address"],"ask":"time"}');
     });
     await w.processor.process(older);
     expect(w.requests).toHaveLength(0);
@@ -82,6 +82,9 @@ describe("production inbound native conversation with transactional tools", () =
     const out = await h.outputs();
     expect(out).toHaveLength(1);
     expect(out[0]!.state).toBe("generated");
+    expect(out[0]!.text).toContain('Dirección registrada: "Calle real 1".');
+    expect(out[0]!.text).toContain("Horarios disponibles: 2035-04-03:");
+    expect(out[0]!.text).toContain("¿Qué horario elegís?");
     expect(out[0]!.text).not.toContain("never public");
     expect(await h.appointments()).toHaveLength(0);
   });
@@ -91,7 +94,7 @@ describe("production inbound native conversation with transactional tools", () =
     const quoteWorker = h.worker(async request => {
       if (!round++) return batch("prepare", "prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T10:00:00-03:00" });
       expect(JSON.parse(request.messages.at(-1)!.content!).presentation.weekday).toBe("lunes");
-      return finish("Te paso la propuesta.");
+      return finish('{"kind":"reply"}');
     });
     await quoteWorker.processor.process(await h.receive("ese me sirve"));
     expect(await h.appointments()).toHaveLength(0);
@@ -99,7 +102,7 @@ describe("production inbound native conversation with transactional tools", () =
     expect(out[0]!.text).toContain("ARS 1500");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${out[0]!.outbound_id}`;
     round = 0;
-    const changeWorker = h.worker(async () => !round++ ? batch("clear", "clear_pending") : finish("Claro, buscamos otra opción."));
+    const changeWorker = h.worker(async () => !round++ ? batch("clear", "clear_pending") : finish('{"kind":"reply","ask":"start"}'));
     await changeWorker.processor.process(await h.receive("no mejor otro"));
     expect(await h.appointments()).toHaveLength(0);
     round = 0;
@@ -118,7 +121,7 @@ describe("production inbound native conversation with transactional tools", () =
         return batch("accept", "confirm_quote_naturally", { ...context.runtime.naturalConfirmation, evidence: context.runtime.currentEvidence });
       }
       expect(request.messages.at(-1)!.content).toContain("staged_action");
-      return finish("Listo, quedó reservado.");
+      return finish('{"kind":"reply"}');
     });
     const job = await h.receive("dale resrvame ese");
     await acceptWorker.processor.process(job);
@@ -131,7 +134,7 @@ describe("production inbound native conversation with transactional tools", () =
   test("provider failure after staged booking rolls back everything and permits retry", async () => {
     const h = await fixture();
     let round = 0;
-    const prepare = h.worker(async () => !round++ ? batch("prepare", "prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T10:00:00-03:00" }) : finish("Te paso los detalles."));
+    const prepare = h.worker(async () => !round++ ? batch("prepare", "prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T10:00:00-03:00" }) : finish('{"kind":"reply"}'));
     await prepare.processor.process(await h.receive("primero ese"));
     const out = await h.outputs();
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${out[0]!.outbound_id}`;
@@ -150,7 +153,7 @@ describe("production inbound native conversation with transactional tools", () =
     const [source] = await db.sql`select processing_state from messages where id=${job.messageId}`;
     expect(source!.processing_state).toBe("pending");
     round = 0;
-    const retry = h.worker(async request => round === 0 ? script(request) : finish("Listo."));
+    const retry = h.worker(async request => round === 0 ? script(request) : finish('{"kind":"reply"}'));
     await retry.processor.process(job);
     expect(await h.appointments()).toHaveLength(1);
     expect(await h.outputs()).toHaveLength(2);
@@ -161,7 +164,7 @@ describe("production inbound native conversation with transactional tools", () =
     const w = h.worker(async request => {
       if (!round++) return batch("ownership", "owned_appointments");
       expect(request.messages.at(-1)!.content).toContain("UNVERIFIED_SENDER");
-      return finish("No pude verificar tu número; no cambié ningún turno.");
+      return finish('{"kind":"reply"}');
     });
     await w.processor.process(await h.receive("arreglalo", false));
     expect(await h.appointments()).toHaveLength(0);

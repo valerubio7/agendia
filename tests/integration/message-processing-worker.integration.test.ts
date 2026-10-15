@@ -112,7 +112,7 @@ describe("PostgreSQL messaging workers", () => {
     let earlyCalls = 0;
     await new PostgresAiJobProcessor(pools, { generate: async () => { throw new Error('Unexpected generate'); }, converse: async () => {
       earlyCalls++;
-      return { message: { role: 'assistant', content: 'early', toolCalls: [] }, providerId: 'test', usageTokens: 1 };
+      return { message: { role: 'assistant', content: '{"kind":"reply","ask":"clarify"}', toolCalls: [] }, providerId: 'test', usageTokens: 1 };
     } } as AiProvider & ToolConversationProvider).process({ businessId: A, messageId: after.payload.messageId, correlationId: 'early' });
     expect(earlyCalls).toBe(0);
     const dispatcher = new AiOutboxDispatcher(pools, boss, immediateOutboxRecovery);
@@ -236,7 +236,10 @@ describe("PostgreSQL messaging workers", () => {
     const calls: string[] = [];
     const provider = { generate: async () => { throw new Error('Unexpected generate'); }, converse: async (request: unknown) => {
       calls.push(JSON.stringify(request));
-      return { message: { role: 'assistant' as const, content: 'Estamos en RETAINED_ADDRESS.', toolCalls: [] }, providerId: 'native-mock', usageTokens: 1 };
+      const message = calls.length === 1
+        ? { role: 'assistant' as const, content: null, toolCalls: [{ id: 'business', name: 'read_business', arguments: {} }] }
+        : { role: 'assistant' as const, content: '{"kind":"reply","facts":["read_business"],"businessFields":["address"]}', toolCalls: [] };
+      return { message, providerId: 'native-mock', usageTokens: 1 };
     } };
     const worker = new PostgresAiJobProcessor(pools, provider, 500);
     await db.sql`update messages set raw_text='¿Dónde están ubicados?' where provider_message_id='m1'`;
@@ -264,12 +267,13 @@ describe("PostgreSQL messaging workers", () => {
     await db.sql`delete from conversation_summaries where business_id=${A} and version=2`;
     await db.sql`update assistant_configs set style='Estilo A',business_instructions='Instrucciones A' where business_id=${A}`;
     await worker.process(job);
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
+    expect(JSON.parse(calls[1]!).messages.at(-1)).toMatchObject({ role: 'tool', toolCallId: 'business', content: JSON.stringify({ status: 'data', data: { displayName: 'A', description: 'RETAINED_DESCRIPTION', address: 'RETAINED_ADDRESS' } }) });
     for (const included of ['¿Dónde están ubicados?', 'RETAINED_ADDRESS', 'RETAINED_DESCRIPTION', 'cliente nuevo', 'Estilo A', 'Instrucciones A'])
       expect(calls[0]).toContain(included);
     for (const excluded of ['STYLE-B', 'SECRETO-B', 'no usar']) expect(calls[0]).not.toContain(excluded);
     const [reply] = await db.sql`select text from outbound_commands`;
-    expect(reply!.text).toBe('Estamos en RETAINED_ADDRESS.');
+    expect(reply!.text).toBe('Dirección registrada: "RETAINED_ADDRESS".');
     expect(reply!.text).not.toMatch(/STYLE-B|SECRETO-B|cliente nuevo|Instrucciones A/);
     expect(
       await db.sql`select outbound_id from outbound_commands`,
@@ -393,7 +397,7 @@ describe("PostgreSQL messaging workers", () => {
       generate: async () => { throw new Error('Unexpected generate'); },
       converse: async request => {
         requests.push(request);
-        return { message: { role: 'assistant', content: 'Respuesta al texto completo.', toolCalls: [] }, providerId: 'test', usageTokens: 1 };
+        return { message: { role: 'assistant', content: '{"kind":"reply","ask":"clarify"}', toolCalls: [] }, providerId: 'test', usageTokens: 1 };
       },
     } as AiProvider & ToolConversationProvider, 500);
     const job = { businessId: A, messageId: row.id, correlationId: 'native-800' };
@@ -401,7 +405,7 @@ describe("PostgreSQL messaging workers", () => {
     await worker.process(job);
     expect(requests).toHaveLength(1);
     expect(requests[0].messages.at(-1).content).toBe('x'.repeat(800));
-    expect((await db.sql`select text from outbound_commands where source_message_id=${row.id}`).map(r => r.text)).toEqual(['Respuesta al texto completo.']);
+    expect((await db.sql`select text from outbound_commands where source_message_id=${row.id}`).map(r => r.text)).toEqual(['¿Podés aclarar qué necesitás?']);
     expect((await db.sql`select processing_state from messages where id=${row.id}`)[0]!.processing_state).toBe('generated');
     await db.sql`update outbox_events set published_at=now() where stable_key='ai:native-800'`;
   });
@@ -476,7 +480,7 @@ describe("PostgreSQL messaging workers", () => {
           generate: async () => { throw new Error('Unexpected generate'); },
           converse: async () => {
             calls.push("called");
-            return { message: { role: 'assistant', content: 'ok', toolCalls: [] }, providerId: "id", usageTokens: 1 };
+            return { message: { role: 'assistant', content: '{"kind":"reply","ask":"clarify"}', toolCalls: [] }, providerId: "id", usageTokens: 1 };
           },
         } as AiProvider & ToolConversationProvider,
         500,
@@ -503,7 +507,7 @@ describe("PostgreSQL messaging workers", () => {
           generate: async () => { throw new Error('Unexpected generate'); },
           converse: async (request) => {
             aiCalls.push(request);
-            return { message: { role: 'assistant', content: 'ok', toolCalls: [] }, providerId: "id", usageTokens: 1 };
+            return { message: { role: 'assistant', content: '{"kind":"reply","ask":"clarify"}', toolCalls: [] }, providerId: "id", usageTokens: 1 };
           },
         } as AiProvider & ToolConversationProvider,
         300,
@@ -610,7 +614,7 @@ describe("PostgreSQL messaging workers", () => {
         pools,
         {
           generate: async () => { throw new Error('Unexpected generate'); },
-          converse: async () => ({ message: { role: 'assistant', content: 'fallback', toolCalls: [] }, providerId: 'id', usageTokens: 1 }),
+          converse: async () => ({ message: { role: 'assistant', content: '{"kind":"reply","ask":"clarify"}', toolCalls: [] }, providerId: 'id', usageTokens: 1 }),
         } as AiProvider & ToolConversationProvider,
         40,
       ),
@@ -640,7 +644,7 @@ describe("PostgreSQL messaging workers", () => {
           generate: async () => { throw new Error('Unexpected generate'); },
           converse: async (request) => {
             contexts.push(JSON.parse(request.messages[1]!.content!));
-            return { message: { role: 'assistant', content: 'fallback', toolCalls: [] }, providerId: "id", usageTokens: 1 };
+            return { message: { role: 'assistant', content: '{"kind":"reply","ask":"clarify"}', toolCalls: [] }, providerId: "id", usageTokens: 1 };
           },
         } as AiProvider & ToolConversationProvider,
         500,
@@ -695,7 +699,7 @@ describe("PostgreSQL messaging workers", () => {
     const payloads: any[] = [];
     const worker = new PostgresAiJobProcessor(pools, { generate: async () => { throw new Error('Unexpected generate'); }, converse: async request => {
       payloads.push(request);
-      return { message: { role: 'assistant', content: 'ok', toolCalls: [] }, providerId: 'native-mock', usageTokens: 1 };
+      return { message: { role: 'assistant', content: '{"kind":"reply","ask":"clarify"}', toolCalls: [] }, providerId: 'native-mock', usageTokens: 1 };
     } } as AiProvider & ToolConversationProvider);
     await makeEligible();
     const context = tenantContext({ businessId: A, actorId: 'test', role: 'internal_worker', requestId: 'full-source' });
@@ -710,7 +714,7 @@ describe("PostgreSQL messaging workers", () => {
     expect(JSON.parse(chunks.map((chunk: any) => chunk.text).join('')).text).toBe(texts.join('\n'));
     expect(JSON.stringify(payloads[0])).toContain('Global Atención');
     expect(JSON.stringify(payloads[0])).not.toMatch(/STYLE-B|SECRETO-B/);
-    expect((await db.sql`select text from outbound_commands where source_message_id=${row.id}`)[0]!.text).toBe('ok');
+    expect((await db.sql`select text from outbound_commands where source_message_id=${row.id}`)[0]!.text).toBe('¿Podés aclarar qué necesitás?');
     expect(await db.sql`select id from messages where conversation_id=${row.conversation_id}`).toHaveLength(55);
     await worker.process({ businessId: B, messageId: row.id, correlationId: 'foreign' });
     expect(payloads).toHaveLength(1);
@@ -726,7 +730,7 @@ describe("PostgreSQL messaging workers", () => {
     await worker.process({ businessId: A, messageId: latest.id, correlationId: 'suffix' });
     expect(payloads).toHaveLength(2);
     expect(payloads[1].messages.at(-1).content).toBe('next-one\nnext-two');
-    expect((await db.sql`select text from outbound_commands where source_message_id=${latest.id}`)[0]!.text).toBe('ok');
+    expect((await db.sql`select text from outbound_commands where source_message_id=${latest.id}`)[0]!.text).toBe('¿Podés aclarar qué necesitás?');
     await pools.admin.run(undefined, r => r.updatePlatformAiInstructions(''));
     await db.sql`update outbox_events set published_at=now() where stable_key like 'ai:full-%'`;
   });
@@ -771,7 +775,7 @@ describe("PostgreSQL messaging workers", () => {
       const requests: any[] = [];
       await new PostgresAiJobProcessor(pools, { generate: async () => { throw new Error('Unexpected generate'); }, converse: async request => {
         requests.push(request);
-        return { message: { role: 'assistant', content: 'ok', toolCalls: [] }, providerId: 'test', usageTokens: 1 };
+        return { message: { role: 'assistant', content: '{"kind":"reply","ask":"clarify"}', toolCalls: [] }, providerId: 'test', usageTokens: 1 };
       } } as AiProvider & ToolConversationProvider).process({ businessId: A, messageId: latest.id, correlationId: kind });
       const closed = ['failure', 'provider-failure', 'manual', 'claimed'].includes(kind);
       expect(source!.currentGroup.map(turn => turn.raw_text).join('\n')).toBe(closed ? ' \tcurrent\n ' : 'prior\n \tcurrent\n ');
@@ -819,7 +823,7 @@ describe("PostgreSQL messaging workers", () => {
     };
     const worker = new PostgresAiJobProcessor(pools, { generate: async () => { throw new Error('Unexpected generate'); }, converse: async request => {
       requests.push(request);
-      return { message: { role: 'assistant', content: 'agrupado', toolCalls: [] }, providerId: 'test', usageTokens: 1 };
+      return { message: { role: 'assistant', content: '{"kind":"reply","ask":"clarify"}', toolCalls: [] }, providerId: 'test', usageTokens: 1 };
     } } as AiProvider & ToolConversationProvider);
     await worker.process(first);
     expect(requests).toHaveLength(0);
@@ -866,7 +870,7 @@ describe("PostgreSQL messaging workers", () => {
     await worker.process(fourth);
     expect(await dispatcher.dispatchNext()).toBe(true);
     expect(sent).toHaveLength(1);
-    expect(sent[0]).toBe('agrupado');
+    expect(sent[0]).toBe('¿Podés aclarar qué necesitás?');
     expect(await dispatcher.dispatchNext()).toBe(false);
     const conversation = (await db.sql<{ id: string }[]>`select id from conversations where remote_jid='race@s.whatsapp.net'`)[0]!;
     expect((await db.sql`select state from outbound_commands where source_message_id=${latest.messageId}`)[0]!.state).toBe('failed');

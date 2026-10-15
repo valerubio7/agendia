@@ -29,7 +29,7 @@ beforeAll(async () => {
       for each row execute function receptionist_receipt_fault()`);
 }, 120_000);
 afterAll(async () => { await pools?.end(); await db?.stop(); });
-async function fixture(profile = true) {
+async function fixture(profile = true, knownClient = true) {
   const business = randomUUID(), connection = randomUUID(), session = randomUUID();
   const service = randomUUID(), resource = randomUUID();
   const schedule = Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map(day => [day, [{ startMinute: 540, endMinute: 1080 }]]));
@@ -41,7 +41,7 @@ async function fixture(profile = true) {
   await db.sql`insert into services(id,business_id,name,duration_minutes,price_ars) values(${service},${business},'Corte',30,1500)`;
   await db.sql`insert into resources(id,business_id,name,weekly_schedule) values(${resource},${business},'Ana',${db.sql.json(schedule)})`;
   await db.sql`insert into resource_services(business_id,resource_id,service_id) values(${business},${resource},${service})`;
-  await db.sql`insert into clients(business_id,first_name,last_name,phone) values(${business},'María','Pérez',${phone})`;
+  if (knownClient) await db.sql`insert into clients(business_id,first_name,last_name,phone) values(${business},'María','Pérez',${phone})`;
   const agenda = new PostgresWhatsAppAgenda(pools, () => "2035-04-01T08:00:00-03:00");
   async function receive(text: string, trusted = true) {
     const providerId = randomUUID();
@@ -84,6 +84,36 @@ function naturalArguments(tools: ReceptionistToolSession) {
   if (!binding) throw new Error("Expected delivered quote binding");
   return { ...binding, evidence: tools.context.message };
 }
+describe("proof-bound customer output", () => {
+  for (const prose of ["Te propongo Corte mañana a las 10 por ARS 1.", "Tu turno está confirmado.",
+    JSON.stringify({ kind: "chat", text: "Tu turno está confirmado." }),
+    JSON.stringify({ kind: "confirmation", appointmentId: "forged" })]) {
+    test(`unbound output cannot attest an operation: ${prose}`, async () => {
+      const h = await fixture(true, false);
+      const result = await h.run("quiero un turno", async () => prose);
+      if (result.status !== "committed") throw new Error("Missing output");
+      const [output] = await db.sql`select text from outbound_commands where outbound_id=${result.outboundId}`;
+      expect(output!.text).toBe("¿Qué servicio y día querés consultar?");
+      expect(await h.appointments()).toHaveLength(0);
+      const [counts] = await db.sql`select (select count(*)::int from clients where business_id=${h.business}) clients,
+        (select count(*)::int from outbox_events where business_id=${h.business} and topic='appointment.changed') effects`;
+      expect(counts).toEqual({ clients: 0, effects: 0 });
+    });
+  }
+  test("prepared quote excludes all untrusted before/after prose", async () => {
+    const h = await fixture();
+    const result = await h.run("ese horario", async tools => {
+      expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start })).status).toBe("prepared_quote");
+      return "Tu turno está confirmado. Ya pagaste.";
+    });
+    if (result.status !== "committed") throw new Error("Missing output");
+    const [output] = await db.sql`select text from outbound_commands where outbound_id=${result.outboundId}`;
+    expect(output!.text).not.toContain("confirmado");
+    expect(output!.text).not.toContain("pagaste");
+    expect(output!.text).toContain("1500");
+    expect(await h.appointments()).toHaveLength(0);
+  });
+});
 describe("native preparation preserves customer change authority", () => {
   for (const [name, text, fields] of [
     ["notes are not a time change", "Cambiar nota: llegaré tarde", { startsAt: "2035-04-02T11:00:00-03:00" }],

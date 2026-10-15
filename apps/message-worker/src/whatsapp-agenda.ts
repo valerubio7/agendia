@@ -53,7 +53,7 @@ export class PostgresWhatsAppAgenda {
     return tenantContext({ businessId: job.businessId, actorId: "message-worker", role: "internal_worker", requestId: job.correlationId });
   }
   /** T3 entry point: no linguistic admission or proposal-provider call. The callback
-   * composes a natural final response while holding source/dialogue/calendar fences.
+   * selects a closed final response act while holding source/dialogue/calendar fences.
    * Do not send externally from the callback. A staged effect becomes committed only
    * after this method returns committed; any callback/persistence failure rolls back.
    * T3 must bound provider rounds/time because locks live for the callback duration.
@@ -70,6 +70,7 @@ export class PostgresWhatsAppAgenda {
         await repo.acquireBusinessCalendarLock({ businessId: job.businessId });
         const actions: { operation: string; appointmentId: string }[] = [];
         let quoteNeedsDelivery = false;
+        let backendReply: string | undefined;
         // Opaque bindings commit to the trusted runtime scope and the whole quote,
         // including operation, appointment, terms, names and delivery provenance.
         // These are context checks, NOT proof that free text semantically consents.
@@ -135,6 +136,7 @@ export class PostgresWhatsAppAgenda {
             if (result.reply) {
               const previouslyQuoted = quoteNeedsDelivery && dialogue.quote ? JSON.stringify(dialogue.quote) : null;
               dialogue = result.reply.dialogue;
+              backendReply = command.name === "clear_pending" ? undefined : result.reply.text;
               quoteNeedsDelivery = Boolean(dialogue.quote && (result.reply.renderedQuote === JSON.stringify(dialogue.quote)
                 || previouslyQuoted === JSON.stringify(dialogue.quote)));
               if (result.reply.saved) actions.push({ operation: command.name, appointmentId: result.reply.saved.id });
@@ -158,9 +160,12 @@ export class PostgresWhatsAppAgenda {
           await session.drain();
         } finally { session.close(); await session.drain(); }
         if (typeof text !== "string" || !text.trim() || text.length > 12000) throw new Error("Invalid receptionist response");
-        // Natural prose is allowed, but model prose alone cannot attest exact quote
-        // terms. Always attach the backend summary before marking this quote outbound.
-        if (dialogue.quote && quoteNeedsDelivery) text += "\n\n" + quoteText(dialogue.quote);
+        // Neither free prose nor provider-authored proof can enter the outbox.
+        // A quote/action reply comes only from the guarded backend branch above.
+        text = backendReply ?? session.renderResponse(text);
+        if (dialogue.quote && quoteNeedsDelivery && !text.includes(quoteText(dialogue.quote)))
+          text += "\n\n" + quoteText(dialogue.quote);
+        if (!text.trim() || text.length > 12000) throw new Error("Rendered receptionist response limit");
         const output = await repo.saveGenerated(job.messageId, job.businessId, text);
         if (!output) throw new Error("Receptionist source changed before atomic save");
         if (dialogue.quote && quoteNeedsDelivery) dialogue.quote.outboundId = output.outbound_id;
@@ -454,7 +459,7 @@ export class PostgresWhatsAppAgenda {
         dialogue.quote.sourceMessageId = source.id;
         return summaryReply(dialogue);
       }
-      if (explicitQuoteConfirmation(source.raw_text)) return unchanged(missingFieldText(["names"]), dialogue);
+      return unchanged(missingFieldText(["names"]), dialogue);
     }
     // Runtime binding establishes authentic context only; semantics are model risk.
     // Literal confirmation remains an independent received-answer guard.

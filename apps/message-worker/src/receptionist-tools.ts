@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { renderReceptionistResponse, type ReceptionistFact } from "./receptionist-response.ts";
 import { CalendarDateSchema, InstantSchema, type ToolConversationMessage, type ToolConversationRequest } from "@agendia/domain";
 
 // The calendar engine in domain/agenda-availability.ts uses this fixed IANA zone;
@@ -124,10 +125,9 @@ export function parseReceptionistTool(name: string, args: unknown,
 }
 
 /** Inside a transaction, staged_action is NOT committed. Only the outer session return
- * attests durability. T3 may compose a natural final answer from staged outcomes, but
- * must never send it separately: the session persists it with effects and receipts.
- * prepared_quote is no mutation; the backend appends the exact quote to the final
- * answer to attest delivery. Internal reasoning/provider state never enters results.
+ * attests durability. Final response acts select backend-rendered facts only;
+ * the transaction owner renders actual quotes and saved actions without model
+ * prose. prepared_quote is no mutation. No result may be sent separately.
  */
 export type ReceptionistToolResult =
   | { status: "data"; data: unknown }
@@ -156,6 +156,9 @@ export interface NaturalConfirmationBinding {
  * the entire transaction; do not turn them into missing business facts.
  */
 export class ReceptionistToolSession {
+  private readonly evidence: ReceptionistFact[] = [];
+  /** Render from private completed tool evidence, not provider-supplied proofs. */
+  renderResponse(raw: string): string { return renderReceptionistResponse(raw, this.evidence); }
   private calls = 0;
   private observedCalls = 0;
   private completedCalls = 0;
@@ -174,6 +177,7 @@ export class ReceptionistToolSession {
     const toolName = Object.hasOwn(schemas, name) ? name as ToolName : "unknown";
     const completed = (output: ReceptionistToolResult): ReceptionistToolResult => {
       this.completedCalls++;
+      if (toolName !== "unknown") this.evidence.push({ name: toolName, result: structuredClone(output) });
       emitReceptionistDiagnostic(this.diagnose, { code: "receptionist.tool_completed", toolName, status: output.status });
       return output;
     };
