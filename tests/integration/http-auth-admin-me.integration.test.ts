@@ -358,13 +358,11 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
     await database.sql`insert into business_profiles(business_id,display_name) values(${a.business.id},'Old name')`;
     expect(await database.sql`select column_name from information_schema.columns
       where table_schema='public' and table_name='business_profiles'
-      and column_name in ('contact','faq','policies','additional_info')`).toHaveLength(0);
+      and column_name in ('business_hours','offerings','contact','faq','policies','additional_info')`).toHaveLength(0);
     const profile = {
       displayName: "Tenant A",
       description: "A",
       address: "",
-      businessHours: "24h",
-      offerings: "",
       business_id: b.business.id,
     };
     expect(
@@ -383,6 +381,7 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
         origin: ORIGIN,
         body: {
           ...profile, description,
+          businessHours: "Discard hours", offerings: "Discard offerings",
           contact: "Discard contact", faq: "Discard FAQ",
           policies: "Discard policies", additionalInfo: "Discard info",
         },
@@ -390,10 +389,9 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
       expect(saved.statusCode).toBe(200);
       expect(saved.json() as unknown).toEqual({ ...retained, description });
       expect((await request("GET", "/me/business-profile", authA)).json() as unknown).toEqual({ ...retained, description });
-      expect((await database.sql`select display_name,description,address,business_hours,offerings
+      expect((await database.sql`select display_name,description,address
         from business_profiles where business_id=${a.business.id}`)[0]).toEqual({
         display_name: retained.displayName, description, address: retained.address,
-        business_hours: retained.businessHours, offerings: retained.offerings,
       });
     }
     expect(

@@ -11,6 +11,7 @@ import {
 
 export const serviceName = "message-worker" as const;
 export * from "./ai-job.ts";
+export * from "./whatsapp-agenda.ts";
 export const createMessageWorker = (
   pools: ReturnType<typeof createRuntimePools>,
   provider: AiProvider,

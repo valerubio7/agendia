@@ -40,11 +40,91 @@ async function expectReachable(locator: Locator) {
   await expect(locator).toBeVisible();
 }
 
+async function expectPair(locator: Locator, foreground: string, background: string) {
+  await expect(locator).toHaveCSS("color", foreground);
+  await expect(locator).toHaveCSS("background-color", background);
+}
+
+async function expectKeyboardFocus(page: Page, locator: Locator) {
+  for (let step = 0; step < 20; step++) {
+    await page.keyboard.press("Tab");
+    if (await locator.evaluate((element) => element === document.activeElement)) break;
+  }
+  await expect(locator).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Tab");
+  await expect(locator).toBeFocused();
+  expect(await locator.evaluate((element) => element.matches(":focus-visible"))).toBe(true);
+  await expect(locator).toHaveCSS("outline-color", "rgb(168, 58, 26)");
+  await expect(locator).toHaveCSS("outline-style", "solid");
+}
+
+async function expectOfficialSignalBrand(page: Page, shell: Locator) {
+  const header = shell.locator(".assistant-signal__header");
+  const wrapper = header.locator(".assistant-signal__brand");
+  const image = wrapper.locator("img");
+  // First guard must expose the actual missing SVG before testing geometry.
+  await expect(image).toHaveCount(1);
+  await expect(image).toHaveAttribute("src", "/brand/logo-symbol-inverse.svg");
+  await expect(wrapper).toHaveAttribute("aria-hidden", "true");
+  await expect(image).toHaveAttribute("alt", "");
+  await expect(shell.getByRole("img", { name: "agendIA", exact: true })).toHaveCount(1);
+  await expect(header).not.toContainText(/agendIA/i);
+  await expect(shell.locator(".assistant-signal__core")).toHaveText("IA");
+  const asset = await page.context().request.get(new URL("/brand/logo-symbol-inverse.svg", page.url()).href);
+  expect(asset.ok()).toBe(true);
+  expect(await asset.text()).toMatch(/viewBox="0 0 120 120"/);
+  await expect.poll(() => image.evaluate((element) => {
+    const img = element as HTMLImageElement;
+    // ViewBox coordinates do not prescribe a viewBox-only SVG's natural pixels.
+    return img.complete && Number.isFinite(img.naturalWidth) &&
+      Number.isFinite(img.naturalHeight) && img.naturalWidth > 0 &&
+      img.naturalHeight > 0 && img.naturalWidth === img.naturalHeight;
+  })).toBe(true);
+  await expect(image).toHaveCSS("object-fit", "contain");
+  for (const side of ["top", "right", "bottom", "left"]) {
+    await expect(wrapper).toHaveCSS(`padding-${side}`, "22px");
+  }
+  for (const element of [wrapper, image]) {
+    await expect(element).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(element).toHaveCSS("background-image", "none");
+    await expect(element).toHaveCSS("box-shadow", "none");
+    await expect(element).toHaveCSS("filter", "none");
+    await expect(element).toHaveCSS("transform", "none");
+    await expect(element).toHaveCSS("opacity", "1");
+  }
+  await header.scrollIntoViewIfNeeded();
+  const bounds = await header.evaluate((element) => {
+    const box = (node: Element) => {
+      const rect = node.getBoundingClientRect();
+      return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height };
+    };
+    return {
+      header: box(element), label: box(element.firstElementChild!),
+      wrapper: box(element.querySelector(".assistant-signal__brand")!),
+      image: box(element.querySelector("img")!), card: box(element.closest(".assistant-signal")!),
+      viewport: { left: 0, right: innerWidth, top: 0, bottom: innerHeight },
+    };
+  });
+  expect(bounds.image.width).toBe(24);
+  expect(bounds.image.height).toBe(24);
+  expect(bounds.wrapper.width).toBe(68);
+  expect(bounds.wrapper.height).toBe(68);
+  expect(bounds.wrapper.left - bounds.label.right).toBeGreaterThanOrEqual(16);
+  for (const container of [bounds.header, bounds.card, bounds.viewport]) {
+    expect(bounds.wrapper.left).toBeGreaterThanOrEqual(container.left);
+    expect(bounds.wrapper.right).toBeLessThanOrEqual(container.right);
+    expect(bounds.wrapper.top).toBeGreaterThanOrEqual(container.top);
+    expect(bounds.wrapper.bottom).toBeLessThanOrEqual(container.bottom);
+  }
+  console.log("Assistant official symbol bounds", JSON.stringify(bounds));
+}
+
 test("the redesigned Assistant screen preserves the real configuration workflow responsively", async ({
   browser,
   page,
   system,
-}) => {
+}, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
@@ -105,6 +185,22 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
       }),
     ).toBeVisible();
 
+    await expectOfficialSignalBrand(tenantPage, shell);
+
+    // Official palette and role weights: assert the genuine hero mismatch first.
+    await expectPair(hero, "rgb(243, 238, 225)", "rgb(18, 55, 42)");
+    await expect(hero.locator("h1")).toHaveCSS("font-weight", "650");
+    await expect(hero.locator("h1")).toHaveCSS("font-family", /Source Sans 3/);
+    const eyebrow = hero.locator(".assistant-hero__eyebrow");
+    await expect(eyebrow).toHaveCSS("color", "rgb(243, 238, 225)");
+    await expect(eyebrow).toHaveCSS("font-family", /Source Sans 3/);
+    await expect(eyebrow).toHaveCSS("font-weight", "650");
+    const numeric = hero.locator(".assistant-signal__legend span").first();
+    await expect(numeric).toHaveCSS("color", "rgb(243, 238, 225)");
+    await expect(numeric).toHaveCSS("font-family", /JetBrains Mono/);
+    await expect(numeric).toHaveCSS("font-weight", "700");
+    await expect(numeric).toHaveCSS("font-variant-numeric", "tabular-nums");
+
     const sectionHeadings = [
       "Voz y personalidad",
       "Contexto y dirección",
@@ -159,11 +255,24 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
       );
     }
 
+    for (const section of sections) {
+      await expect(section.locator("h2")).toHaveCSS("font-weight", "650");
+      await expect(section.locator(".assistant-field__label")).toHaveCSS("font-weight", "650");
+      await expect(section.locator(".assistant-field__label")).toHaveCSS("font-family", /Source Sans 3/);
+      await expectPair(section.locator("textarea"), "rgb(28, 38, 32)", "rgb(243, 238, 225)");
+      await expect(section.locator("textarea")).toHaveCSS("font-family", /JetBrains Mono/);
+      await expect(section.locator("textarea")).toHaveCSS("font-weight", "450");
+    }
+
     const save = savePanel.getByRole("button", {
       name: "Guardar configuración",
       exact: true,
     });
     await expect(save).toHaveCount(1);
+    await expectPair(save, "rgb(255, 255, 255)", "rgb(168, 58, 26)");
+    await expect(save).toHaveCSS("font-weight", "650");
+    await expectKeyboardFocus(tenantPage, save);
+    await tenantPage.screenshot({ path: testInfo.outputPath("assistant-desktop.png"), fullPage: true });
     await expect(save).toHaveAttribute("type", "submit");
     await expect(save).toHaveAttribute("form", "assistant-configuration-form");
     await expect(form.locator("button")).toHaveCount(0);
@@ -215,12 +324,16 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
       await expect(
         savePanel.getByRole("button", { name: "Guardando…", exact: true }),
       ).toBeDisabled();
+      await expectPair(savePanel.getByRole("button", { name: "Guardando…", exact: true }), "rgb(255, 255, 255)", "rgb(168, 58, 26)");
+      await expect(form).toHaveAttribute("aria-busy", "true");
     } finally {
       releaseSaveRequest();
     }
     const status = screen.getByRole("status");
     await expect(status).toHaveCount(1);
     await expect(status).toHaveText("Asistente guardado");
+    await expectPair(status, "rgb(255, 255, 255)", "rgb(46, 125, 79)");
+    await tenantPage.screenshot({ path: testInfo.outputPath("assistant-success.png"), fullPage: true });
     await tenantPage.unroute("**/me/assistant");
 
     await tenantPage.reload();
@@ -273,6 +386,11 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
       exact: true,
     });
     await expect(reloadConfiguration).toBeVisible();
+    // This mounted conflict is simulated 409 style coverage, not API rejection proof.
+    await expectPair(conflictAlert, "rgb(255, 255, 255)", "rgb(179, 58, 31)");
+    await expectPair(reloadConfiguration, "rgb(255, 255, 255)", "rgb(46, 107, 78)");
+    await expectKeyboardFocus(tenantPage, reloadConfiguration);
+    await tenantPage.screenshot({ path: testInfo.outputPath("assistant-conflict.png"), fullPage: true });
 
     await tenantPage.unroute("**/me/assistant", conflictRoute);
     const refreshedConfiguration = tenantPage.waitForResponse(
@@ -315,6 +433,8 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
     await expectReachable(mobileSave);
     await expect(mobileSave).toBeEnabled();
     await expectNoHorizontalOverflow(tenantPage);
+    await expectOfficialSignalBrand(tenantPage, shell);
+    await tenantPage.screenshot({ path: testInfo.outputPath("assistant-mobile.png"), fullPage: true });
   } finally {
     await tenantContext.close();
   }

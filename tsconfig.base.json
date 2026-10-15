@@ -19,6 +19,12 @@
     ],
     "baseUrl": ".",
     "paths": {
+      "@agendia/domain/client-registry": ["packages/domain/src/client-registry.ts"],
+      "@agendia/domain/calendar-values": ["packages/domain/src/calendar-values.ts"],
+      "@agendia/domain/appointment-lifecycle": ["packages/domain/src/appointment-lifecycle.ts"],
+      "@agendia/domain/business-calendar": ["packages/domain/src/business-calendar.ts"],
+      "@agendia/domain/agenda-availability": ["packages/domain/src/agenda-availability.ts"],
+      "@agendia/domain/resource-catalog": ["packages/domain/src/resource-catalog.ts"],
       "@agendia/*": [
         "packages/*/src/index.ts"
       ]

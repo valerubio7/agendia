@@ -9,12 +9,15 @@ import {
   createBrowserApiTransport,
   formValues,
   type ApiTransport,
+  type BusinessClosure,
+  type BusinessClosureRequest,
 } from "../../apps/web/src/api-client.ts";
 import {
   formatActivityTimestamp,
   runWhatsAppLinkMonitor,
 } from "../../apps/web/src/live-panel.tsx";
 import { renderWhatsAppQrDataUrl } from "../../apps/web/src/qr-code.ts";
+import { formatArgentinaClosureDate, formatArgentinaClosureInstant } from "../../apps/web/src/ui/argentina-closure-time.ts";
 import { createRuntimePools } from "@agendia/db";
 import {
   createWhatsAppManager,
@@ -25,6 +28,230 @@ import {
   startTestPostgres,
   type TestPostgres,
 } from "../support/index.ts";
+
+test("operation dispatch is one-write scoped and receipt/fence wrappers retain transport protections", async () => {
+  const calls: { path: string; init?: RequestInit }[] = [];
+  const signal = new AbortController().signal;
+  const client = new ApiClient(async (path, init) => {
+    calls.push({ path, ...(init ? { init } : {}) });
+    return Response.json(path === "/api/auth/login" ? { csrfToken: "receipt-csrf" } : { id: "saved" });
+  });
+  await client.login("receipt@example.test", "receipt test password");
+  calls.length = 0;
+  const key = "12345678-1234-4234-8234-123456789abc";
+  const captured: object[] = [];
+  await client.withAppointmentOperation(key, operation => captured.push(operation), () =>
+    client.appointmentNotes("record/slash", { notes: "One" }, signal));
+  await client.appointmentNotes("record/slash", { notes: "Legacy" }, signal);
+  await client.appointmentOperation("key/slash", signal);
+  await client.cancelAppointmentOperation({ key, kind: "notes", target: "record", actor: "untrusted" } as { key: string; kind: "notes"; target: string }, signal);
+  expect(captured).toEqual([{ key, kind: "notes", target: "record/slash" }]);
+  expect(new Headers(calls[0]!.init?.headers).get("x-appointment-operation-key")).toBe(key);
+  expect(new Headers(calls[1]!.init?.headers).has("x-appointment-operation-key")).toBe(false);
+  expect(calls[2]!.path).toBe("/api/me/appointment-operations/key%2Fslash");
+  expect(calls[2]!.init?.cache).toBe("no-store");
+  expect(calls[2]!.init?.method).toBe("GET");
+  expect(calls[3]!.path).toBe(`/api/me/appointment-operations/${key}/cancel`);
+  expect(calls[3]!.init?.method).toBe("POST");
+  expect(new Headers(calls[3]!.init?.headers).get("x-csrf-token")).toBe("receipt-csrf");
+  expect(JSON.parse(String(calls[3]!.init?.body))).toEqual({ key, kind: "notes", target: "record" });
+  for (const call of calls) { expect(call.init?.signal).toBe(signal); expect(call.init?.credentials).toBe("include"); }
+  expect(() => client.withAppointmentOperation(key, () => { throw new Error("capture rejected"); }, () => client.appointmentNotes("a", { notes: null }))).toThrow("capture rejected");
+  await client.appointmentOperation(key);
+  expect(new Headers(calls.at(-1)!.init?.headers).has("x-appointment-operation-key")).toBe(false);
+  await expect(client.appointmentOperation("..")).rejects.toThrow(TypeError);
+  await expect(client.cancelAppointmentOperation({ key: "..", kind: "create", target: null })).rejects.toThrow(TypeError);
+});
+
+test("Turnos wrappers allowlist wire bodies, encode queries and forward cancellation", async () => {
+  const signal = new AbortController().signal;
+  const calls: { path: string; init: RequestInit | undefined }[] = [];
+  const client = new ApiClient(async (path, init) => {
+    calls.push({ path, init });
+    return Response.json({ id: "saved" });
+  });
+  const terms = { serviceId: "s", resourceId: "r", serviceName: "Servicio", resourceName: "Recurso", durationMinutes: 30, priceArs: 0 };
+  const structure = { serviceId: "s", resourceId: "r", date: "2026-01-01", startRaw: "2026-01-01T10:00:00-03:00", expectedTerms: terms, confirmed: true as const };
+  await client.appointments({ from: "2026-01-01T00:00:00+03:00", to: "2026-02-01T00:00:00Z" }, signal);
+  await client.appointment("id/slash", signal);
+  await client.appointmentAvailability({ serviceId: "s &?", resourceId: "r", date: "2026-01-01", appointmentId: "a" }, signal);
+  await client.createAppointment({ ...structure, clientId: "c", businessId: "foreign" } as typeof structure & { clientId: string }, signal);
+  await client.createAppointment({ ...structure, newClient: { firstName: "Ana", lastName: "Pérez", phone: "11 23456789", role: "admin" } } as typeof structure & { newClient: { firstName: string; lastName: string; phone: string } }, signal);
+  await client.changeAppointment("id/slash", { ...structure, notes: "not structural" } as typeof structure, signal);
+  await client.appointmentNotes("a", { notes: null, state: "done" } as { notes: null }, signal);
+  await client.appointmentState("a", { state: "cancelled", confirmed: true, actor: "admin" } as { state: "cancelled"; confirmed: true }, signal);
+  expect(calls[0]?.path).toBe("/api/me/appointments?from=2026-01-01T00%3A00%3A00%2B03%3A00&to=2026-02-01T00%3A00%3A00Z");
+  expect(calls[1]?.path).toBe("/api/me/appointments/id%2Fslash");
+  expect(calls[2]?.path).toBe("/api/me/appointments/availability?serviceId=s+%26%3F&date=2026-01-01&resourceId=r&appointmentId=a");
+  expect(calls[5]?.path).toBe("/api/me/appointments/id%2Fslash");
+  expect(calls.map(call => call.init?.method)).toEqual(["GET", "GET", "GET", "POST", "POST", "PATCH", "PATCH", "PATCH"]);
+  expect(JSON.parse(String(calls[3]?.init?.body))).toEqual({ ...structure, clientId: "c" });
+  expect(JSON.parse(String(calls[4]?.init?.body))).toEqual({ ...structure, newClient: { firstName: "Ana", lastName: "Pérez", phone: "11 23456789" } });
+  expect(JSON.parse(String(calls[5]?.init?.body))).toEqual(structure);
+  expect(JSON.parse(String(calls[6]?.init?.body))).toEqual({ notes: null });
+  expect(JSON.parse(String(calls[7]?.init?.body))).toEqual({ state: "cancelled", confirmed: true });
+  for (const call of calls) {
+    expect(call.init?.signal).toBe(signal);
+    expect(call.init?.credentials).toBe("include");
+  }
+  for (const id of [".", ".."]) {
+    await expect(client.appointment(id)).rejects.toThrow(TypeError);
+    await expect(client.changeAppointment(id, structure)).rejects.toThrow(TypeError);
+  }
+});
+
+test("business calendar GET preserves nullable raw schedules and forwards cancellation", async () => {
+  const signal = new AbortController().signal;
+  for (const weeklySchedule of [null, {}, { 1: [{ startMinute: 547, endMinute: 123 }] }]) {
+    const client = new ApiClient(async (path, init) => {
+      expect(path).toBe("/api/me/business-calendar");
+      expect(init?.method).toBe("GET");
+      expect(init?.signal).toBe(signal);
+      expect(init?.body).toBeUndefined();
+      return Response.json({ weeklySchedule });
+    });
+    expect(await client.businessCalendar(signal)).toEqual({ weeklySchedule });
+  }
+});
+
+test("business closures GET preserves ordered raw union DTOs and cancellation", async () => {
+  const signal = new AbortController().signal;
+  const closures: BusinessClosure[] = [
+    { id: "b", kind: "date", date: "2035-02-02" },
+    { id: "c", kind: "date", date: "2035-01-01" },
+    { id: "d", kind: "interval", start: "2035-01-02T02:04:05.006+02:00", end: "2035-01-02T03:04:05.006+02:00" },
+    { id: "e", kind: "interval", start: "2035-01-02T02:04:05.006+02:00", end: "2035-01-02T03:04:05.006+02:00" },
+  ];
+  const client = new ApiClient(async (path, init) => {
+    expect(path).toBe("/api/me/business-calendar/closures");
+    expect(init?.method).toBe("GET");
+    expect(init?.signal).toBe(signal);
+    expect(init?.body).toBeUndefined();
+    return Response.json(closures);
+  });
+  expect(await client.businessClosures(signal)).toEqual(closures);
+});
+
+test("business closure POST returns confirmed raw DTOs and forwards cancellation", async () => {
+  const signal = new AbortController().signal;
+  const inputs: BusinessClosureRequest[] = [{ kind: "date", date: "2035-02-02" },
+    { kind: "interval", start: "2035-01-02T03:04:05.006Z", end: "2035-01-02T04:04:05.007Z" }];
+  for (const body of inputs) {
+    const saved = { id: "confirmed", ...body };
+    const client = new ApiClient(async (path, init) => {
+      expect(path).toBe("/api/me/business-calendar/closures");
+      expect(init?.method).toBe("POST");
+      expect(init?.signal).toBe(signal);
+      expect(JSON.parse(init!.body as string)).toEqual(body);
+      return Response.json(saved, { status: 201 });
+    });
+    expect(await client.createBusinessClosure(body, signal)).toEqual(saved);
+  }
+});
+
+test("closure PUT and DELETE encode identity, preserve raw bodies and use shared CSRF and cancellation", async () => {
+  const signal = new AbortController().signal;
+  const input: BusinessClosureRequest = { kind: "interval",
+    start: "2008-01-07T13:00:05.123+02:00", end: "2008-01-07T14:00:06.789+02:00" };
+  const saved = { id: "row/id", ...input };
+  const calls: string[] = [];
+  const client = new ApiClient(async (path, init) => {
+    if (path === "/api/auth/login") return Response.json({ csrfToken: "closure-csrf" });
+    if (path === "/api/auth/session") return Response.json({ role: "business_user", businessId: "tenant" });
+    expect(path).toBe("/api/me/business-calendar/closures/row%2Fid");
+    expect(init?.signal).toBe(signal);
+    expect(new Headers(init?.headers).get("x-csrf-token")).toBe("closure-csrf");
+    calls.push(init!.method!);
+    if (init?.method === "PUT") {
+      expect(JSON.parse(init.body as string)).toEqual(input);
+      return Response.json(saved);
+    }
+    expect(init?.method).toBe("DELETE");
+    expect(init?.body).toBeUndefined();
+    return new Response(null, { status: 204 });
+  });
+  await client.login("closures@example.test", "safe test password");
+  expect(await client.updateBusinessClosure(saved.id, input, signal)).toEqual(saved);
+  expect(await client.deleteBusinessClosure(saved.id, signal)).toBeUndefined();
+  expect(calls).toEqual(["PUT", "DELETE"]);
+});
+
+test("Argentina closure display retains local days, precision and per-instant offsets", () => {
+  expect(formatArgentinaClosureDate("2035-01-01")).toBe("01/01/2035");
+  expect(formatArgentinaClosureInstant("2035-01-02T02:04:05.006+02:00"))
+    .toBe("01/01/2035, 21:04:05.006 (Argentina, GMT-03:00)");
+  expect(formatArgentinaClosureInstant("2009-01-02T00:00:00.007Z"))
+    .toBe("01/01/2009, 22:00:00.007 (Argentina, GMT-02:00)");
+});
+
+test("standalone client POST allowlists raw input and returns the canonical DTO with transport protections", async () => {
+  const signal = new AbortController().signal;
+  const calls: { path: string; init?: RequestInit }[] = [];
+  const saved = { id: "owned-client", firstName: "Alicia", lastName: "Gómez", phone: "+5491123456789" };
+  const client = new ApiClient(async (path, init) => {
+    if (path === "/api/auth/login") return Response.json({ csrfToken: "create-client-csrf" });
+    if (path === "/api/auth/session") return Response.json({ role: "business_user", businessId: "tenant" });
+    calls.push({ path, ...(init === undefined ? {} : { init }) });
+    return Response.json(saved, { status: 201 });
+  });
+  await client.login("create-client@example.test", "safe test password");
+  const input = { firstName: " Alicia ", lastName: " Gómez ", phone: "11 2345-6789",
+    businessId: "foreign", id: "untrusted", role: "admin" };
+  expect(await client.createClient(input, signal)).toEqual(saved);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.path).toBe("/api/me/clients");
+  expect(calls[0]?.init?.method).toBe("POST");
+  expect(calls[0]?.init?.signal).toBe(signal);
+  expect(calls[0]?.init?.credentials).toBe("include");
+  const headers = new Headers(calls[0]?.init?.headers);
+  expect(headers.get("content-type")).toBe("application/json");
+  expect(headers.get("x-csrf-token")).toBe("create-client-csrf");
+  expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+    firstName: " Alicia ", lastName: " Gómez ", phone: "11 2345-6789",
+  });
+});
+
+test("client query encoding preserves literal search and history identity without admitting unsafe paths", async () => {
+  const signal = new AbortController().signal;
+  const paths: string[] = [];
+  const transport = createBrowserApiTransport("https://panel.agendia.test", async (path, init) => {
+    paths.push(path);
+    expect(init?.signal).toBe(signal);
+    expect(init?.method).toBe("GET");
+    return Response.json([]);
+  });
+  const client = new ApiClient(transport);
+  for (const q of ["  Ana  María  ", "%_\\\\", "../?q=#&+", "https://evil.test/path"]) {
+    await client.clients(q, signal);
+    const destination = new URL(paths.at(-1)!, "https://panel.agendia.test");
+    expect(destination.pathname).toBe("/api/me/clients");
+    expect(destination.searchParams.get("q")).toBe(q.trim());
+    expect([...destination.searchParams.keys()]).toEqual(["q"]);
+  }
+  await client.clients("  ", signal);
+  expect(paths.at(-1)).toBe("/api/me/clients");
+  await client.clientAppointments("row/id?x=#", signal);
+  expect(paths.at(-1)).toBe("/api/me/appointments?clientId=row%2Fid%3Fx%3D%23");
+  const calls: RequestInit[] = [];
+  const saved = { id: "stable-id", firstName: "Ana", lastName: "María", phone: "+5491123456789" };
+  const writer = new ApiClient(async (path, init) => {
+    if (path === "/api/auth/login") return Response.json({ csrfToken: "client-csrf" });
+    if (path === "/api/auth/session") return Response.json({ role: "business_user", businessId: "tenant" });
+    expect(path).toBe("/api/me/clients/stable-id");
+    calls.push(init!);
+    return Response.json(saved);
+  });
+  await writer.login("clients@example.test", "safe test password");
+  expect(await writer.updateClient(saved.id, { ...saved }, signal)).toEqual(saved);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.method).toBe("PUT");
+  expect(calls[0]?.signal).toBe(signal);
+  expect(new Headers(calls[0]?.headers).get("x-csrf-token")).toBe("client-csrf");
+  expect(JSON.parse(calls[0]!.body as string)).toEqual({ firstName: saved.firstName, lastName: saved.lastName, phone: saved.phone });
+  for (const id of ["..", "."]) {
+    await expect(writer.updateClient(id, saved, signal)).rejects.toBeInstanceOf(TypeError);
+  }
+});
 
 const ORIGIN = "https://panel.agendia.test";
 const LINK_KEY = Buffer.alloc(32, 6);
@@ -93,7 +320,6 @@ describe("Next web client against Fastify contracts", () => {
   test("profile payload only forwards retained fields even from a legacy caller", async () => {
     const profile = {
       displayName: "Tenant", description: "Description", address: "Address",
-      businessHours: "24h", offerings: "Services",
     };
     const client = new ApiClient(async (input, init) => {
       if (input.endsWith("/auth/login") || input.endsWith("/auth/session"))
@@ -105,7 +331,7 @@ describe("Next web client against Fastify contracts", () => {
     });
     await client.login("tenant@example.test", "safe password");
     const legacyProfile = {
-      ...profile, contact: "old contact", faq: "old faq",
+      ...profile, businessHours: "old hours", offerings: "old offerings", contact: "old contact", faq: "old faq",
       policies: "old policies", additionalInfo: "old info", business_id: "hostile",
     };
     await expect(client.saveProfile(legacyProfile)).resolves.toEqual(profile);
@@ -116,12 +342,13 @@ describe("Next web client against Fastify contracts", () => {
     const safeTransport: ApiTransport = async (input) => {
       transportCalls += 1;
       expect(input).toBe("/api/auth/session");
-      return Response.json({ role: "platform_admin", businessId: null });
+      return Response.json({ role: "platform_admin", businessId: null, identityId: "admin-identity" });
     };
 
     await expect(new ApiClient(safeTransport).session()).resolves.toEqual({
       role: "platform_admin",
       businessId: null,
+      identityId: "admin-identity",
     });
     expect(transportCalls).toBe(1);
 
@@ -263,12 +490,16 @@ describe("Next web client against Fastify contracts", () => {
       (await tenant.login("tenant@web.test", "replacement tenant password"))
         .role,
     ).toBe("business_user");
+    const [identity] = await database.sql`select id from auth_identities where normalized_email = ${"tenant@web.test"}`;
+    expect(identity).toBeDefined();
+    if (!identity) throw new Error("Expected the authenticated tenant identity row");
+    expect(await tenant.session()).toEqual({ role: "business_user", businessId: business.id, identityId: identity.id });
+    const repeatedSession = await tenant.login("tenant@web.test", "replacement tenant password");
+    expect(repeatedSession.identityId).toBe(identity.id);
     const profile = {
       displayName: "Tenant",
       description: "",
       address: "",
-      businessHours: "24h",
-      offerings: "",
     };
     await tenant.saveProfile(profile);
     expect((await tenant.profile()).displayName).toBe("Tenant");

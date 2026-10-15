@@ -33,7 +33,12 @@ const navigation: Record<ShellVariant, NavigationConfiguration> = {
     desktopLabel: "Navegación del negocio",
     mobileLabel: "Navegación móvil del negocio",
     links: [
+      { href: "/turnos", label: "Turnos" },
       { href: "/profile", label: "Perfil" },
+      { href: "/services", label: "Servicios" },
+      { href: "/resources", label: "Recursos" },
+      { href: "/business-calendar", label: "Horario" },
+      { href: "/clients", label: "Clientes" },
       { href: "/assistant", label: "Asistente" },
       { href: "/whatsapp", label: "WhatsApp" },
     ],

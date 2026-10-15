@@ -2,6 +2,7 @@ import { expect, type APIResponse } from "@playwright/test";
 import { test } from "./support/fixtures.ts";
 import { assertSemanticBoundary, systemExposure } from "./support/system.ts";
 import { formatActivityTimestamp } from "../../apps/web/src/live-panel.tsx";
+import { receivedSenderEvidence } from "../../packages/domain/src/whatsapp-agenda.ts";
 
 const ORIGIN = (system: { webUrl: string }) => system.webUrl;
 const tenants = [
@@ -65,8 +66,6 @@ const profile = (tenant: (typeof tenants)[number]) => ({
   displayName: tenant.name,
   description: tenant.secret,
   address: "",
-  businessHours: "cerrado",
-  offerings: "servicio",
 });
 async function json(response: Response | APIResponse) {
   return response.json() as Promise<Record<string, unknown>>;
@@ -325,37 +324,38 @@ test("contains hostile access and provider failures while preserving isolated re
     noAiBypass: system.providers.deepSeek.calls.length === callsBeforeFilters,
   });
 
-  const callsBeforeTimeout = system.providers.deepSeek.calls.length;
-  system.providers.deepSeek.next = "timeout";
-  await system.receive(tenants[0]!.email, {
-    providerMessageId: "ai-timeout",
-    text: "timeout",
+  system.providers.deepSeek.nativeCalls = [{ name: "read_catalog", arguments: {} }];
+  const agendaJid = "5491123456782@s.whatsapp.net";
+  for (const [index, mode] of (["header-deadline", "body-deadline", "error"] as const).entries()) {
+    const id = `agenda-${mode}`;
+    const calls = system.providers.deepSeek.calls.length;
+    const aborted = system.providers.deepSeek.agendaAborts;
+    const failure = system.providers.deepSeek.configureAgendaTransport(mode);
+    expect((await system.receive(tenants[0]!.email, {
+      providerMessageId: id, remoteJid: `549112345678${index}@s.whatsapp.net`, text: "Consultar servicios",
+    })).outcome).toBe("accepted");
+    await system.releaseReply(tenants[0]!.email, id, 600, calls);
+    // Await the real adapter abort (5s headers / 30s body), not a fabricated timeout error.
+    await failure;
+    await expect.poll(() => system.agendaEvidence(tenants[0]!.email, id)).toEqual({
+      state: "failed", failureCode: mode === "error" ? "provider_unavailable" : "timeout",
+      clients: 0, appointments: 0, receipts: 0, effects: 0, outbound: 0,
+    });
+    expect(JSON.parse(system.providers.deepSeek.calls[calls]!).tools.some((tool: { function: { name: string } }) => tool.function.name === "read_catalog")).toBe(true);
+    expect(system.providers.deepSeek.agendaAborts).toBe(aborted + (mode === "error" ? 0 : 1));
+    expect(system.providers.baileys.acks).toHaveLength(0);
+  }
+  // Agenda failures escape to the queue; they do not commit a terminal ai.failed message.
+  expect((await system.evidence()).audit.filter(row => row.type === "ai.failed")).toHaveLength(0);
+  void system.providers.deepSeek.configureAgendaTransport("success");
+  const recovered = await system.receiveText(tenants[0]!.email, agendaJid, "Consultar servicios");
+  // Failed attempts retain the already released deadline: recovery must not need a second release.
+  await expect.poll(() => system.providers.baileys.acks.length).toBe(1);
+  expect(system.providers.baileys.acks[0]).toMatchObject({ jid: agendaJid, text: "No hay servicios activos registrados." });
+  await expect.poll(() => system.agendaEvidence(tenants[0]!.email, recovered.providerMessageId)).toMatchObject({
+    state: "completed", clients: 0, appointments: 0, receipts: 1, effects: 0, outbound: 1,
   });
-  await system.releaseReply(tenants[0]!.email, "ai-timeout", 600, callsBeforeTimeout);
-  await expect
-    .poll(async () =>
-      (await system.evidence()).technical.map((row) => row.code),
-    )
-    .toContain("ai.timeout");
-  const callsBeforeError = system.providers.deepSeek.calls.length;
-  system.providers.deepSeek.next = "error";
-  await system.receive(tenants[0]!.email, {
-    providerMessageId: "ai-error",
-    text: "error",
-  });
-  await system.releaseReply(tenants[0]!.email, "ai-error", 600, callsBeforeError);
-  await expect
-    .poll(async () =>
-      (await system.evidence()).technical.map((row) => row.code),
-    )
-    .toContain("ai.provider_unavailable");
   const silent = await system.evidence();
-  expect(silent.outbound).toHaveLength(0);
-  expect(
-    silent.technical
-      .filter((row) => row.code.startsWith("ai."))
-      .every((row) => row.email === tenants[0]!.email),
-  ).toBe(true);
 
   system.providers.deepSeek.summaryNext = "timeout";
   const outboundBeforeSummary = silent.outbound.length;
@@ -430,9 +430,12 @@ test("contains hostile access and provider failures while preserving isolated re
   ).toBe("connected");
 
   const callsBeforeRecovery = system.providers.deepSeek.calls.length;
+  const recoveryJid = "5491123456788@s.whatsapp.net";
+  expect(receivedSenderEvidence({ remoteJid: recoveryJid })).toMatchObject({ phone: "+5491123456788" });
   await system.recoverWorker(tenants[1]!.email, {
     providerMessageId: "worker-recovery",
-    text: "recover",
+    remoteJid: recoveryJid,
+    text: "Consultar servicios, recover",
   });
   // Restart must retain the initial deadline; only this explicit release makes
   // the durable outbox eligible for the recovered worker.
@@ -459,12 +462,20 @@ test("contains hostile access and provider failures while preserving isolated re
     );
   const evidence = await system.evidence();
   expect(evidence.tenants.every((row) => row.messages > 0)).toBe(true);
-  expect(
-    evidence.audit.filter((row) => row.type === "ai.failed").length,
-  ).toBeGreaterThanOrEqual(2);
-  expect(
-    system.providers.deepSeek.calls.find((call) => call.includes("recover")),
-  ).not.toContain(tenants[0]!.secret);
+  for (const mode of ["header-deadline", "body-deadline", "error"])
+    expect(await system.agendaEvidence(tenants[0]!.email, `agenda-${mode}`)).toMatchObject({
+      state: "failed", receipts: 0, effects: 0, outbound: 0,
+    });
+  const recoveryRequest = system.providers.deepSeek.calls.slice(callsBeforeRecovery)
+    .map(call => JSON.parse(call))
+    .find(payload => Array.isArray(payload.tools) && payload.messages.at(-1)?.role === "user"
+      && payload.messages.at(-1).content === "Consultar servicios, recover");
+  expect(recoveryRequest, "Worker recovery must invoke the native provider, not a fixed fallback").toBeDefined();
+  expect(JSON.parse(recoveryRequest.messages[1].content).runtime.currentEvidence).toBe("Consultar servicios, recover");
+  expect(JSON.stringify(recoveryRequest)).not.toContain(tenants[0]!.secret);
+  expect(await system.agendaEvidence(tenants[1]!.email, "worker-recovery")).toMatchObject({
+    state: "completed", clients: 0, appointments: 0, receipts: 1, effects: 0, outbound: 1,
+  });
 
   const adminBusinesses = (await json(
     await api(system, admin, "/admin/businesses"),

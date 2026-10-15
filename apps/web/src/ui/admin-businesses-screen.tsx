@@ -169,7 +169,13 @@ export function AdminBusinessesScreen({
         >
           <header>
             <span>Registro operativo</span>
-            <span aria-hidden="true">AG / IA</span>
+            <span className="brand admin-registry-map__brand" aria-hidden="true">
+              <img
+                className="brand__image"
+                src="/brand/logo-symbol-inverse.svg"
+                alt=""
+              />
+            </span>
           </header>
           <div className="admin-registry-map__track" aria-hidden="true">
             <span />

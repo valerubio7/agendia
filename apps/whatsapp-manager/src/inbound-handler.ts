@@ -1,4 +1,5 @@
 import { tenantContext, type createRuntimePools } from "@agendia/db";
+import type { SenderEvidence } from "../../../packages/domain/src/whatsapp-agenda.ts";
 
 export type InboundMessageKind =
   | "text"
@@ -15,6 +16,7 @@ export interface InboundWhatsAppEvent {
   kind: InboundMessageKind;
   text: string | null;
   receivedAt: number;
+  senderEvidence?: SenderEvidence;
 }
 
 export type InboundOutcome =
@@ -72,6 +74,7 @@ export class PostgresInboundHandler {
         text: event.text,
         receivedAt: new Date(event.receivedAt),
         classification: outcome,
+        ...(outcome === "accepted" && event.senderEvidence ? { senderEvidence: event.senderEvidence } : {}),
       }),
     );
     if (!stored) return { outcome: "duplicate" };

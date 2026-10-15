@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 388 120" role="img" aria-label="agendIA imagotipo principal">
+  <!-- Lockup oficial: chispa C03 + palabra Bricolage 800. Ver nota de contornos en logotipo.svg -->
+  <g>
+    <path d="M60 6 Q66 56 114 62 Q66 68 60 116 Q54 68 6 62 Q54 56 60 6 Z" fill="#1C2620"/>
+    <circle cx="60" cy="62" r="10" fill="#FF6B49"/>
+  </g>
+  <text x="128" y="80" font-family="Bricolage, Archivo, system-ui, sans-serif" font-size="58" font-weight="800" letter-spacing="-1"><tspan fill="#1C2620">agend</tspan><tspan fill="#FF6B49">IA</tspan></text>
+</svg>
