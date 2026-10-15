@@ -214,18 +214,37 @@ export class PostgresWhatsAppAgenda {
       }
       case "availability": {
         const args = command.arguments;
-        if (!(await repo.listServices()).some(item => item.id === args.serviceId && item.status === "active")
-          || (args.resourceId && !(await repo.getResource(job.businessId, args.resourceId)))) throw new AppointmentError("UNKNOWN_OWNED_ID");
+        const referenceFailure = (kind: "service" | "resource" | "appointment_context",
+          errorCode: AppointmentError["code"] = "UNKNOWN_OWNED_ID"): ReceptionistToolResult => {
+          emitReceptionistDiagnostic(this.diagnose, { code: "receptionist.tool_rejected", toolName: "availability",
+            errorCode, referenceFailureKind: kind });
+          return { status: "rejected", code: kind === "service" ? "SERVICE_REFERENCE_REQUIRED"
+            : kind === "resource" ? "RESOURCE_REFERENCE_REQUIRED" : "AGENDA_REJECTED",
+            message: kind === "service"
+              ? "Consultá read_catalog y reintentá con el ID devuelto del mismo servicio elegido; si no está o es ambiguo, preguntá sin elegir otro."
+              : kind === "resource"
+                ? "Consultá read_resources y reintentá con el ID devuelto del mismo recurso elegido; si no está o es ambiguo, preguntá sin elegir otro ni quitar la preferencia."
+                : "No se pudo verificar la consulta; no se guardó nada. Actualizá read_catalog/read_resources sin cambiar la elección. Para reprogramar, consultá owned_appointments del remitente actual y usá solo un turno propio elegible; nunca inventes IDs ni borres el contexto retenido. Para una búsqueda nueva, no envíes appointmentId." };
+        };
+        if (!(await repo.listServices()).some(item => item.id === args.serviceId && item.status === "active"))
+          return referenceFailure("service");
+        if (args.resourceId && (await repo.getResource(job.businessId, args.resourceId))?.status !== "active")
+          return referenceFailure("resource");
         const binding = dialogue.reschedule;
         const appointmentId = binding?.appointmentId ?? args.appointmentId;
         if (appointmentId) {
-          if (!phone) throw new AppointmentError("UNKNOWN_OWNED_ID");
-          const current = await this.owned(repo, job.businessId, phone, appointmentId);
+          if (!phone) return referenceFailure("appointment_context");
+          let current: StoredAppointment;
+          try { current = await this.owned(repo, job.businessId, phone, appointmentId); }
+          catch (error) {
+            if (!(error instanceof AppointmentError)) throw error;
+            return referenceFailure("appointment_context", error.code);
+          }
           if (current.state !== "confirmed" || Date.parse(this.clock()) >= current.startMs)
-            throw new AppointmentError("STATE_LOCKED");
+            return referenceFailure("appointment_context", "STATE_LOCKED");
           if (binding && (binding.previous !== snapshot(current) || binding.serviceId !== current.terms.serviceId
             || args.serviceId !== binding.serviceId || (args.appointmentId && args.appointmentId !== binding.appointmentId)))
-            return { status: "rejected", code: "STALE_APPOINTMENT_CONTEXT", message: "El turno cambió o la consulta cambia un servicio que no pediste; no se guardó nada." };
+            return referenceFailure("appointment_context");
         }
         const resources = await repo.listResources(job.businessId);
         const resolved = trustedPreference(source.raw_text, resources,

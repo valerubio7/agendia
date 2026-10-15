@@ -36,7 +36,12 @@ const schemas = {
   read_catalog: z.object({}).strict(),
   read_calendar: z.object({}).strict(),
   read_resources: z.object({}).strict(),
-  availability: z.object({ serviceId: id, date: CalendarDateSchema, resourceId: id.optional(), appointmentId: id.optional() }).strict(),
+  availability: z.object({
+    serviceId: id.describe("Use only an ID from fresh read_catalog results or validated pending state for the chosen service."),
+    date: CalendarDateSchema,
+    resourceId: id.describe("Use only an ID from fresh read_resources results or validated pending state for the chosen resource.").optional(),
+    appointmentId: id.describe("Only a current sender-owned eligible reschedule reference; omit for a new availability search. Never invent IDs or drop retained reschedule context.").optional(),
+  }).strict(),
   owned_appointments: z.object({}).strict(),
   owned_appointment: z.object({ appointmentId: id }).strict(),
   prepare_booking: z.object(selection).strict(),
@@ -91,6 +96,7 @@ export type ReceptionistToolDiagnostic = {
   code: "receptionist.tool_rejected";
   toolName: ToolName | "unknown";
   errorCode: import("@agendia/db").AppointmentError["code"] | "INVALID_TOOL" | "UNKNOWN_APPOINTMENT_ERROR";
+  referenceFailureKind?: "service" | "resource" | "appointment_context";
   schemaIssueCategory?: "unknown_tool" | "unexpected_fields" | "invalid_type" | "invalid_value";
 };
 export type ReceptionistToolDiagnostics = (event: ReceptionistToolDiagnostic) => void;

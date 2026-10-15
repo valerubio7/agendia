@@ -6,6 +6,7 @@ import { ToolAssistantMessageSchema, type WeeklySchedule, type AiProvider, type 
 import { normalizeBaileysMessage } from "../../packages/whatsapp-baileys/src/baileys-gateway.ts";
 import { PostgresInboundHandler } from "../../apps/whatsapp-manager/src/inbound-handler.ts";
 import { PostgresWhatsAppAgenda } from "../../apps/message-worker/src/whatsapp-agenda.ts";
+import { converseReceptionist } from "../../apps/message-worker/src/receptionist.ts";
 import type { ReceptionistToolCommand, ReceptionistToolResult } from "../../apps/message-worker/src/receptionist-tools.ts";
 import { createMessageWorker } from "../../apps/message-worker/src/index.ts";
 import { applyPostgresMigrations, startTestPostgres, type TestPostgres } from "../support/index.ts";
@@ -330,26 +331,84 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     });
   }
 
+  test("public availability references recover through fresh native tool results without changing the chosen service or resource", async () => {
+    for (const kind of ["service", "resource"] as const) {
+      for (const invalid of ["missing", "foreign", "inactive"] as const) {
+        const h = await fixture(), foreign = await fixture();
+        const bad = invalid === "missing" ? randomUUID() : invalid === "foreign" ? foreign[kind] : h[kind];
+        if (invalid === "inactive") {
+          if (kind === "service") await db.sql`update services set status='suspended' where id=${bad}`;
+          else await db.sql`update resources set status='suspended' where id=${bad}`;
+        }
+        const events: unknown[] = [];
+        h.agenda = new PostgresWhatsAppAgenda(pools, () => h.now, event => events.push(event));
+        const id = await receive(h, "Horarios del Corte mañana, prefiero Ana");
+        let round = 0;
+        const provider: ToolConversationProvider = { converse: async request => {
+          const call = (name: string, args: Record<string, string>) => ({ message: { role: "assistant" as const, content: null,
+            toolCalls: [{ id: `recovery_${round}`, name, arguments: args }] }, providerId: "fake", usageTokens: 0 });
+          round++;
+          if (round === 1) return call("availability", { serviceId: kind === "service" ? bad : h.service,
+            resourceId: kind === "resource" ? bad : h.resource, date: "2035-04-02" });
+          const result = JSON.parse(request.messages.at(-1)!.content!);
+          if (round === 2) {
+            expect(result).toMatchObject({ status: "rejected", code: `${kind.toUpperCase()}_REFERENCE_REQUIRED` });
+            expect(result.message).toContain(kind === "service" ? "read_catalog" : "read_resources");
+            expect(JSON.stringify(result)).not.toContain(bad);
+            // Simulate the same chosen public entity becoming active again, not selecting another one.
+            if (invalid === "inactive") {
+              if (kind === "service") await db.sql`update services set status='active' where id=${bad}`;
+              else await db.sql`update resources set status='active' where id=${bad}`;
+            }
+            return call(kind === "service" ? "read_catalog" : "read_resources", {});
+          }
+          if (round === 3) {
+            const chosen = result.data.items.find((item: { name: string }) => item.name === (kind === "service" ? "Corte" : "Ana"));
+            expect(chosen.id).toBe(h[kind]);
+            return call("availability", { serviceId: kind === "service" ? chosen.id : h.service,
+              resourceId: kind === "resource" ? chosen.id : h.resource, date: "2035-04-02" });
+          }
+          expect(result.status).toBe("data");
+          expect(result.data.items.length).toBeGreaterThan(0);
+          expect(result.data.items.every((item: { serviceId: string; resourceId: string }) => item.serviceId === h.service && item.resourceId === h.resource)).toBe(true);
+          return { message: { role: "assistant", content: "Horarios verificados.", toolCalls: [] }, providerId: "fake", usageTokens: 0 };
+        } };
+        expect((await h.agenda.withReceptionistSession(job(h, id), session => converseReceptionist(provider, session,
+          [...session.context.messages!], "reference-recovery"))).status).toBe("committed");
+        expect(round).toBe(4);
+        expect(events).toContainEqual({ code: "receptionist.tool_rejected", toolName: "availability",
+          errorCode: "UNKNOWN_OWNED_ID", referenceFailureKind: kind });
+        for (const secret of [bad, id, phone]) expect(JSON.stringify(events)).not.toContain(secret);
+        expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
+      }
+    }
+  });
+
   test("appointment denials retain private client results and emit only safe internal codes", async () => {
     const h = await fixture(), foreign = await fixture();
     const foreignAppointment = await booked(foreign);
     const events: unknown[] = [];
     h.agenda = new PostgresWhatsAppAgenda(pools, () => h.now, event => events.push(event));
     const commands: ReceptionistToolCommand[] = [
-      { name: "availability", arguments: { serviceId: foreign.service, date: "2035-04-02" } },
       { name: "availability", arguments: { serviceId: h.service, date: "2035-04-02", appointmentId: foreignAppointment.id } },
+      { name: "availability", arguments: { serviceId: h.service, date: "2035-04-02", appointmentId: randomUUID() } },
       { name: "owned_appointment", arguments: { appointmentId: foreignAppointment.id } },
     ];
     const id = await receive(h, "Private customer request, name and phone must not be logged");
     const outcome = await h.agenda.withReceptionistSession(job(h, id), async session => {
+      const results = [];
       for (const command of commands) {
-        expect(await session.execute(command.name, command.arguments)).toEqual({ status: "rejected", code: "AGENDA_REJECTED" });
+        const result = await session.execute(command.name, command.arguments);
+        expect(result).toMatchObject({ status: "rejected", code: "AGENDA_REJECTED" });
+        expect(result).not.toHaveProperty("data");
+        results.push(result);
       }
+      expect(results[0]).toEqual(results[1]);
       return "No se guardó ningún cambio.";
     });
     expect(outcome.status).toBe("committed");
     expect(events.filter((e: any) => e.code === "receptionist.tool_rejected")).toEqual(commands.map(command => ({ code: "receptionist.tool_rejected",
-      toolName: command.name, errorCode: "UNKNOWN_OWNED_ID" })));
+      toolName: command.name, errorCode: "UNKNOWN_OWNED_ID", ...(command.name === "availability" ? { referenceFailureKind: "appointment_context" } : {}) })));
     const serialized = JSON.stringify(events);
     for (const forbidden of [id, h.business, h.service, foreign.service, foreignAppointment.id, phone, "Private customer", "arguments"])
       expect(serialized).not.toContain(forbidden);
@@ -358,7 +417,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     try {
       await factoryTurn(h, "Private request", [commands[0]!], ["rejected"], "No se guardó ningún cambio.");
       expect(warning.mock.calls).toEqual([
-        [JSON.stringify({ code: "receptionist.tool_rejected", toolName: "availability", errorCode: "UNKNOWN_OWNED_ID" })],
+        [JSON.stringify({ code: "receptionist.tool_rejected", toolName: "availability", errorCode: "UNKNOWN_OWNED_ID", referenceFailureKind: "appointment_context" })],
         [JSON.stringify({ code: "receptionist.tool_completed", toolName: "availability", status: "rejected" })],
         [JSON.stringify({ code: "receptionist.turn_completed", toolCalls: 1, completedCalls: 1, failedCalls: 0 })],
       ]);
@@ -498,12 +557,15 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
         await db.sql`update appointments set state='cancelled' where id=${appointment.id}`;
       if (invalid === "started") h.now = "2035-04-02T10:00:00-03:00";
       const before = await appointments(h);
+      const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
       h.agenda = new PostgresWhatsAppAgenda(pools, () => h.now);
       const rejected = await turn(h, "Consultar horarios del Corte el 2035-04-03, prefiero Desconocido", {
         name: "availability", arguments: {
           serviceId: invalid === "model-service" ? h.otherService : h.service, date: "2035-04-03", resourceId: h.alternate,
         },
       });
+      const [retained] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
+      expect(retained!.dialogue).toEqual(pending!.dialogue);
       expect(rejected.text).not.toContain("Horarios disponibles");
       expect(rejected.text).not.toContain("No reconocí el recurso");
       expect(rejected.text).toContain("guardó");
