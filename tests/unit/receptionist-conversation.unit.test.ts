@@ -96,6 +96,49 @@ describe("bounded model-led receptionist", () => {
     expect(batch[3]!.content).toContain("INVALID_TOOL");
     expect(JSON.stringify(batch)).toContain("private");
   });
+  test("fresh evidence policy preserves stale failure history and passes actual current results", async () => {
+    const input = { ...source, turns: [{ id: "3", sequence: "3", direction: "outbound", processing_state: "sent",
+      raw_text: "consulta rechazada" }] };
+    const initial = buildReceptionistMessages(input, "config", "2035-04-01T12:00:00Z");
+    expect(initial[0]!.content).toContain("Los fallos relatados por asistentes anteriores no son evidencia actual");
+    expect(initial[0]!.content).toContain("availability");
+    expect(initial[0]!.content).toContain("read_catalog");
+    expect(initial[0]!.content).toContain("antes de ofrecer opciones o afirmar que la consulta actual fue rechazada o falló");
+    expect(initial[0]!.content).toContain("no pidas UUIDs ni reconfirmes datos conocidos");
+    expect(initial).toContainEqual({ role: "assistant", content: "consulta rechazada", toolCalls: [] });
+    const first = calls("availability");
+    first.toolCalls[0]!.arguments = { serviceId: "123e4567-e89b-42d3-a456-426614174000", date: "2035-04-02" };
+    let executions = 0;
+    const output = { status: "data" as const, data: { items: [], message: "current backend evidence" } };
+    const session = new ReceptionistToolSession(async () => { executions++; return output; });
+    const script = scripted([first, final("No hay horarios.")]);
+    await converseReceptionist(script.provider, session, initial, "test");
+    expect(executions).toBe(1);
+    expect(script.requests[1]!.messages.at(-1)).toEqual({ role: "tool", toolCallId: "availability_0", content: JSON.stringify(output) });
+    expect(script.requests[1]!.messages).toContainEqual({ role: "assistant", content: "consulta rechazada", toolCalls: [] });
+  });
+  test("completed turns include zero-call summaries and drained call counts only", async () => {
+    for (const useTools of [false, true]) {
+      const events: unknown[] = [];
+      let executions = 0;
+      const session = new ReceptionistToolSession(async () => { executions++; return { status: "data", data: {} }; }, undefined,
+        event => events.push(event));
+      const script = scripted(useTools ? [calls("read_catalog", "availability"), final()] : [final()]);
+      await converseReceptionist(script.provider, session, messages(), "test");
+      session.reportCompletedTurn();
+      session.reportCompletedTurn();
+      expect(executions).toBe(useTools ? 1 : 0);
+      expect(events.at(-1)).toEqual({ code: "receptionist.turn_completed", toolCalls: useTools ? 2 : 0,
+        completedCalls: useTools ? 2 : 0, failedCalls: 0 });
+      expect(events.filter((e: any) => e.code === "receptionist.turn_completed")).toHaveLength(1);
+    }
+  });
+  test("infrastructure failure drains without emitting a successful turn summary", async () => {
+    const events: unknown[] = [];
+    const session = new ReceptionistToolSession(async () => { throw new Error("private fault"); }, undefined, event => events.push(event));
+    await expect(converseReceptionist(scripted([calls("read_catalog")]).provider, session, messages(), "test")).rejects.toThrow("private fault");
+    expect(events).toEqual([{ code: "receptionist.tool_completed", toolName: "read_catalog", status: "infrastructure_failure" }]);
+  });
   test("exact natural confirmation evidence comes from runtime context", async () => {
     const binding = { evidenceReference: "a".repeat(64), quoteFingerprint: "b".repeat(64) };
     const session = new ReceptionistToolSession(async command => {

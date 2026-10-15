@@ -79,6 +79,15 @@ export const receptionistToolDefinitions: ToolConversationRequest["tools"] = Obj
 }));
 
 export type ReceptionistToolDiagnostic = {
+  code: "receptionist.tool_completed";
+  toolName: ToolName | "unknown";
+  status: ReceptionistToolResult["status"] | "infrastructure_failure";
+} | {
+  code: "receptionist.turn_completed";
+  toolCalls: number;
+  completedCalls: number;
+  failedCalls: number;
+} | {
   code: "receptionist.tool_rejected";
   toolName: ToolName | "unknown";
   errorCode: import("@agendia/db").AppointmentError["code"] | "INVALID_TOOL" | "UNKNOWN_APPOINTMENT_ERROR";
@@ -86,10 +95,15 @@ export type ReceptionistToolDiagnostic = {
 };
 export type ReceptionistToolDiagnostics = (event: ReceptionistToolDiagnostic) => void;
 
+export function emitReceptionistDiagnostic(diagnose: ReceptionistToolDiagnostics | undefined, event: ReceptionistToolDiagnostic): void {
+  // Observability must never roll back a mutation or turn its retry into a duplicate.
+  try { Promise.resolve(diagnose?.(event)).catch(() => {}); } catch {}
+}
+
 export function parseReceptionistTool(name: string, args: unknown,
   diagnose?: ReceptionistToolDiagnostics): ReceptionistToolCommand | null {
   if (!Object.hasOwn(schemas, name)) {
-    diagnose?.({ code: "receptionist.tool_rejected", toolName: "unknown", errorCode: "INVALID_TOOL", schemaIssueCategory: "unknown_tool" });
+    emitReceptionistDiagnostic(diagnose, { code: "receptionist.tool_rejected", toolName: "unknown", errorCode: "INVALID_TOOL", schemaIssueCategory: "unknown_tool" });
     return null;
   }
   const toolName = name as ToolName;
@@ -99,7 +113,7 @@ export function parseReceptionistTool(name: string, args: unknown,
   const issue = parsed.error.issues[0];
   const schemaIssueCategory = issue?.code === "unrecognized_keys" ? "unexpected_fields"
     : issue?.code === "invalid_type" ? "invalid_type" : "invalid_value";
-  diagnose?.({ code: "receptionist.tool_rejected", toolName, errorCode: "INVALID_TOOL", schemaIssueCategory });
+  emitReceptionistDiagnostic(diagnose, { code: "receptionist.tool_rejected", toolName, errorCode: "INVALID_TOOL", schemaIssueCategory });
   return null;
 }
 
@@ -137,6 +151,10 @@ export interface NaturalConfirmationBinding {
  */
 export class ReceptionistToolSession {
   private calls = 0;
+  private observedCalls = 0;
+  private completedCalls = 0;
+  private failedCalls = 0;
+  private turnReported = false;
   private closed = false;
   private tail: Promise<unknown> = Promise.resolve();
   private failure: unknown;
@@ -146,19 +164,37 @@ export class ReceptionistToolSession {
       pendingPresentation?: Readonly<ReceptionistDatePresentation> | null }> = { message: "", recent: [], pending: null },
     private diagnose?: ReceptionistToolDiagnostics) {}
   execute(name: string, args: unknown): Promise<ReceptionistToolResult> {
-    if (this.closed || ++this.calls > 16) return Promise.resolve({ status: "rejected", code: "SESSION_LIMIT" });
+    this.observedCalls++;
+    const toolName = Object.hasOwn(schemas, name) ? name as ToolName : "unknown";
+    const completed = (output: ReceptionistToolResult): ReceptionistToolResult => {
+      this.completedCalls++;
+      emitReceptionistDiagnostic(this.diagnose, { code: "receptionist.tool_completed", toolName, status: output.status });
+      return output;
+    };
+    if (this.closed || ++this.calls > 16) return Promise.resolve(completed({ status: "rejected", code: "SESSION_LIMIT" }));
     const command = parseReceptionistTool(name, args, this.diagnose);
-    if (!command) return Promise.resolve({ status: "rejected", code: "INVALID_TOOL" });
+    if (!command) return Promise.resolve(completed({ status: "rejected", code: "INVALID_TOOL" }));
     const result = this.tail.then(async () => {
       if (this.closed) return { status: "rejected", code: "SESSION_CLOSED" } as const;
       if (this.failure) throw this.failure;
       const output = await this.handler(command);
       if (new TextEncoder().encode(JSON.stringify(output)).byteLength > 16384) throw new Error("Tool result limit");
       return output;
+    }).then(completed, error => {
+      this.failedCalls++;
+      emitReceptionistDiagnostic(this.diagnose, { code: "receptionist.tool_completed", toolName, status: "infrastructure_failure" });
+      throw error;
     });
     this.tail = result.catch(error => { this.failure = error; });
     return result;
   }
   async drain(): Promise<void> { await this.tail; if (this.failure) throw this.failure; }
   close(): void { this.closed = true; }
+  /** Called by the transaction owner only after drain and durable commit. */
+  reportCompletedTurn(): void {
+    if (this.turnReported || !this.closed || this.failure || this.completedCalls !== this.observedCalls) return;
+    this.turnReported = true;
+    emitReceptionistDiagnostic(this.diagnose, { code: "receptionist.turn_completed", toolCalls: this.observedCalls,
+      completedCalls: this.completedCalls, failedCalls: this.failedCalls });
+  }
 }

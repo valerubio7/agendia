@@ -85,13 +85,47 @@ describe("receptionist tool boundary", () => {
       ["availability", { serviceId: id, date: "2026-02-30" }, "availability", "invalid_value"],
     ] as const) {
       expect(await session.execute(name, args)).toEqual({ status: "rejected", code: "INVALID_TOOL" });
-      expect(events.at(-1)).toEqual({ code: "receptionist.tool_rejected", toolName,
+      expect(events.filter((e: any) => e.code === "receptionist.tool_rejected").at(-1)).toEqual({ code: "receptionist.tool_rejected", toolName,
         errorCode: "INVALID_TOOL", schemaIssueCategory });
     }
     expect(JSON.stringify(events)).not.toContain(secret);
     expect(JSON.stringify(events)).not.toContain(id);
     await session.execute("read_business", {});
-    expect(events).toHaveLength(5);
+    expect(events.filter((e: any) => e.code === "receptionist.tool_rejected")).toHaveLength(5);
+  });
+  test("completion evidence covers all controlled outcomes without private payloads", async () => {
+    const events: unknown[] = [];
+    const secret = "private-name-phone-provider-text";
+    const outputs = [
+      { status: "data", data: secret }, { status: "unavailable_data", code: secret },
+      { status: "clarification", code: secret, message: secret }, { status: "rejected", code: secret },
+      { status: "prepared_quote", quote: secret, message: secret },
+      { status: "staged_action", operation: secret, appointment: secret },
+    ] as const;
+    let executions = 0;
+    const session = new ReceptionistToolSession(async () => outputs[executions++]!, undefined, event => events.push(event));
+    for (const output of outputs) {
+      await session.execute("read_business", {});
+      expect(events.at(-1)).toEqual({ code: "receptionist.tool_completed", toolName: "read_business", status: output.status });
+    }
+    await session.execute(secret, { [secret]: secret });
+    expect(events.at(-1)).toEqual({ code: "receptionist.tool_completed", toolName: "unknown", status: "rejected" });
+    expect(executions).toBe(6);
+    expect(JSON.stringify(events)).not.toContain(secret);
+    expect(JSON.stringify(events)).not.toContain(id);
+  });
+  test("throwing diagnostics cannot fail or repeat a successful mutation or schema rejection", async () => {
+    for (const diagnose of [() => { throw new Error("private logger failure"); }, async () => { throw new Error("private logger failure"); }]) {
+      let executions = 0;
+      const session = new ReceptionistToolSession(async () => { executions++; return { status: "staged_action", operation: "cancel", appointment: {} }; },
+        undefined, diagnose);
+      expect((await session.execute("cancel", { appointmentId: id })).status).toBe("staged_action");
+      expect((await session.execute("availability", {})).status).toBe("rejected");
+      session.close();
+      await session.drain();
+      session.reportCompletedTurn();
+      expect(executions).toBe(1);
+    }
   });
   test("bounds calls and closes the capability at transaction end", async () => {
     let calls = 0;
@@ -108,7 +142,7 @@ describe("receptionist tool boundary", () => {
       event => events.push(event));
     await expect(session.execute("read_business", {})).rejects.toThrow("private database detail");
     await expect(session.drain()).rejects.toThrow("private database detail");
-    expect(events).toEqual([]);
+    expect(events).toEqual([{ code: "receptionist.tool_completed", toolName: "read_business", status: "infrastructure_failure" }]);
   });
   test("oversized result aborts rather than silently hiding facts", async () => {
     const session = new ReceptionistToolSession(async () => ({ status: "data", data: "x".repeat(20000) }));

@@ -7,7 +7,7 @@ import {
   quoteTermsEqual, quoteText, missingFieldText, type AgendaDialogue, type AgendaQuote,
 } from "../../../packages/domain/src/whatsapp-agenda.ts";
 import type { PostgresAiJob } from "./ai-job.ts";
-import { ReceptionistToolSession, canonicalReceptionistDate, RECEPTIONIST_CALENDAR_TIME_ZONE,
+import { ReceptionistToolSession, canonicalReceptionistDate, RECEPTIONIST_CALENDAR_TIME_ZONE, emitReceptionistDiagnostic,
   type ReceptionistToolCommand, type ReceptionistToolResult,
   type ReceptionistSessionOutcome, type ReceptionistToolDiagnostics } from "./receptionist-tools.ts";
 
@@ -60,8 +60,9 @@ export class PostgresWhatsAppAgenda {
    */
   async withReceptionistSession(job: PostgresAiJob,
     converse: (session: ReceptionistToolSession) => Promise<string>): Promise<ReceptionistSessionOutcome> {
+    let completedSession: ReceptionistToolSession | undefined;
     try {
-      return await this.pools.worker.run(this.context(job), async repo => {
+      const outcome = await this.pools.worker.run(this.context(job), async repo => {
         const source = await repo.lockAgendaSource(job.messageId);
         if (!source || source.business_id !== job.businessId) return { status: "not_current" } as const;
         const phone = await repo.agendaSender(job.messageId);
@@ -145,11 +146,12 @@ export class PostgresWhatsAppAgenda {
               "STATE_LOCKED", "STARTED_STRUCTURE_LOCKED", "LEAD_TIME", "NOTES_LOCKED", "NOT_TRANSITION", "INVALID_ACTION_CONTEXT",
               "ATTENDANCE_FORBIDDEN", "INVALID_ATTENDANCE_TIME", "BEFORE_START", "CONFIRMATION_REQUIRED"].includes(error.code)
               ? error.code : "UNKNOWN_APPOINTMENT_ERROR";
-            this.diagnose?.({ code: "receptionist.tool_rejected", toolName: command.name, errorCode });
+            emitReceptionistDiagnostic(this.diagnose, { code: "receptionist.tool_rejected", toolName: command.name, errorCode });
             return { status: "rejected", code: "AGENDA_REJECTED" };
           }
         }, { message: source.raw_text, recent: source.turns.slice(-12).map(turn => turn.raw_text.slice(0, 2000)),
           pending: structuredClone(dialogue), pendingPresentation, naturalConfirmation, messages }, this.diagnose);
+        completedSession = session;
         let text: string;
         try {
           text = await converse(session);
@@ -173,6 +175,8 @@ export class PostgresWhatsAppAgenda {
         });
         return { status: "committed", outboundId: output.outbound_id, actions } as const;
       });
+      if (outcome.status === "committed") completedSession?.reportCompletedTurn();
+      return outcome;
     } catch {
       // No SQL/provider details become customer facts, and the pending source remains
       // retryable. The caller must treat this as infrastructure failure, not success.

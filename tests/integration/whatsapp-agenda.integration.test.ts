@@ -348,7 +348,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
       return "No se guardó ningún cambio.";
     });
     expect(outcome.status).toBe("committed");
-    expect(events).toEqual(commands.map(command => ({ code: "receptionist.tool_rejected",
+    expect(events.filter((e: any) => e.code === "receptionist.tool_rejected")).toEqual(commands.map(command => ({ code: "receptionist.tool_rejected",
       toolName: command.name, errorCode: "UNKNOWN_OWNED_ID" })));
     const serialized = JSON.stringify(events);
     for (const forbidden of [id, h.business, h.service, foreign.service, foreignAppointment.id, phone, "Private customer", "arguments"])
@@ -357,8 +357,11 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     const warning = spyOn(console, "warn").mockImplementation(() => {});
     try {
       await factoryTurn(h, "Private request", [commands[0]!], ["rejected"], "No se guardó ningún cambio.");
-      expect(warning.mock.calls).toEqual([[JSON.stringify({ code: "receptionist.tool_rejected",
-        toolName: "availability", errorCode: "UNKNOWN_OWNED_ID" })]]);
+      expect(warning.mock.calls).toEqual([
+        [JSON.stringify({ code: "receptionist.tool_rejected", toolName: "availability", errorCode: "UNKNOWN_OWNED_ID" })],
+        [JSON.stringify({ code: "receptionist.tool_completed", toolName: "availability", status: "rejected" })],
+        [JSON.stringify({ code: "receptionist.turn_completed", toolCalls: 1, completedCalls: 1, failedCalls: 0 })],
+      ]);
     } finally { warning.mockRestore(); }
   });
 
@@ -1286,6 +1289,36 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
       expect((await appointments(h))[0]).toEqual(appointment);
     }
     expect((await counts(h)).effects).toBe(1);
+  });
+
+  test("execution summaries include zero calls, successful availability and invalid arguments after commit only", async () => {
+    const h = await fixture();
+    const events: unknown[] = [];
+    h.agenda = new PostgresWhatsAppAgenda(pools, () => h.now, event => events.push(event));
+    for (const mode of ["none", "availability", "invalid"] as const) {
+      events.length = 0;
+      const id = await receive(h, "decime para que horario tenes disponible");
+      const outcome = await h.agenda.withReceptionistSession(job(h, id), async session => {
+        // Intentionally leave the call pending: the owner must drain before commit/summary.
+        if (mode !== "none") void session.execute("availability", mode === "invalid" ? {} : { serviceId: h.service, date: "2035-04-02" });
+        return "Respuesta de prueba.";
+      });
+      expect(outcome.status).toBe("committed");
+      expect(events.at(-1)).toEqual({ code: "receptionist.turn_completed", toolCalls: mode === "none" ? 0 : 1,
+        completedCalls: mode === "none" ? 0 : 1, failedCalls: 0 });
+      if (mode !== "none") expect(events).toContainEqual({ code: "receptionist.tool_completed", toolName: "availability",
+        status: mode === "invalid" ? "rejected" : "data" });
+    }
+    events.length = 0;
+    await db.sql`insert into agenda_fault_fixture(business_id,enabled) values(${h.business},true)`;
+    const id = await receive(h, "Consultar horarios");
+    const outcome = await h.agenda.withReceptionistSession(job(h, id), async session => {
+      await session.execute("read_catalog", {});
+      return "No debe enviarse.";
+    });
+    expect(outcome.status).toBe("infrastructure_failure");
+    expect(events).toEqual([{ code: "receptionist.tool_completed", toolName: "read_catalog", status: "data" }]);
+    expect(await db.sql`select outbound_id from outbound_commands where source_message_id=${id}`).toHaveLength(0);
   });
 
   test("runtime uses native facts after a catalog reply", async () => {
