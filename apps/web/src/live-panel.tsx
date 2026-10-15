@@ -7,8 +7,13 @@ import {
   formValues,
   type Assistant,
   type Business,
+  type BusinessCalendar,
+  type BusinessClosureRequest,
+  type WeeklySchedule,
   type Profile,
   type Session,
+  type Service,
+  type Resource,
   type WhatsAppStatus,
 } from "./api-client";
 import { renderWhatsAppQrDataUrl } from "./qr-code";
@@ -20,11 +25,17 @@ import {
 import { AdminBusinessesScreen } from "./ui/admin-businesses-screen";
 import { AssistantScreen } from "./ui/assistant-screen";
 import { ProfileScreen } from "./ui/profile-screen";
+import { ServicesScreen } from "./ui/services-screen";
+import { ClientsScreen } from "./ui/clients-screen";
+import { TurnosScreen } from "./ui/turnos-screen";
+import { ResourcesScreen } from "./ui/resources-screen";
+import { BusinessCalendarScreen } from "./ui/business-calendar-screen";
+import type { ClosureReadState } from "./ui/business-closures-section";
 import { WhatsAppScreen } from "./ui/whatsapp-screen";
 
 export { formatActivityTimestamp } from "./ui/admin-businesses-screen";
 
-type Mode = "login" | "admin" | "profile" | "assistant" | "whatsapp";
+type Mode = "login" | "admin" | "profile" | "services" | "resources" | "business-calendar" | "clients" | "turnos" | "assistant" | "whatsapp";
 type AuthenticatedViewState =
   | "loading"
   | "ready"
@@ -35,8 +46,6 @@ const profileFields = [
   "displayName",
   "description",
   "address",
-  "businessHours",
-  "offerings",
 ] as const;
 const assistantFields = [
   "style",
@@ -159,10 +168,134 @@ export function LivePanel({ mode }: { mode: Mode }) {
   const assistantPendingRef = useRef(false);
   const assistantSaveAttemptRef = useRef(0);
   const loadAttemptRef = useRef(0);
+  const closureOwnerRef = useRef<{ businessId: string; generation: number } | null>(null);
+  // Reads and mutations share synchronous session/request ownership.
+  const closureRequestRef = useRef<AbortController | null>(null);
+  const [closures, setClosures] = useState<ClosureReadState>({ status: "loading" });
+  const loadClosures = async (): Promise<void> => {
+    const owner = closureOwnerRef.current;
+    if (!owner || mode !== "business-calendar" || logoutPendingRef.current || closureRequestRef.current) return;
+    const controller = new AbortController();
+    closureRequestRef.current = controller;
+    const current = () => closureOwnerRef.current === owner && loadAttemptRef.current === owner.generation &&
+      closureRequestRef.current === controller && !controller.signal.aborted && !logoutPendingRef.current;
+    setClosures(state => state.status === "ready" ? { ...state, pending: true } : { status: "loading" });
+    try {
+      const records = await api.businessClosures(controller.signal);
+      if (current()) setClosures({ status: "ready", closures: records, pending: false, warning: false });
+    } catch (cause) {
+      if (current()) setClosures(state => state.status === "ready"
+        ? { ...state, pending: false, warning: true }
+        : { status: "error", message: api.errorMessage(cause) });
+    } finally {
+      if (closureRequestRef.current === controller) closureRequestRef.current = null;
+    }
+  };
+  const mutateClosure = async (operation:
+    | { kind: "create"; input: BusinessClosureRequest }
+    | { kind: "update"; id: string; input: BusinessClosureRequest }
+    | { kind: "delete"; id: string }, signal: AbortSignal): Promise<boolean> => {
+    const owner = closureOwnerRef.current;
+    if (!owner || mode !== "business-calendar" || logoutPendingRef.current || closureRequestRef.current || signal.aborted) return false;
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal.addEventListener("abort", abort, { once: true });
+    closureRequestRef.current = controller;
+    const current = () => closureOwnerRef.current === owner && loadAttemptRef.current === owner.generation &&
+      closureRequestRef.current === controller && !controller.signal.aborted && !logoutPendingRef.current;
+    setClosures(state => state.status === "ready" ? { ...state, pending: true } : state);
+    try {
+      const saved = operation.kind === "create"
+        ? await api.createBusinessClosure(operation.input, controller.signal)
+        : operation.kind === "update"
+          ? await api.updateBusinessClosure(operation.id, operation.input, controller.signal)
+          : await api.deleteBusinessClosure(operation.id, controller.signal);
+      if (!current()) return false;
+      // Reconcile confirmed mutations before best-effort GET. Never invent a DTO or repeat a mutation.
+      setClosures(state => {
+        if (state.status !== "ready") return state;
+        if (operation.kind === "delete") return { ...state,
+          closures: state.closures.filter(row => row.id !== operation.id), warning: false };
+        if (!saved) return state;
+        return { ...state, closures: operation.kind === "update"
+          ? state.closures.map(row => row.id === operation.id ? saved : row)
+          : state.closures.some(row => row.id === saved.id)
+            ? state.closures.map(row => row.id === saved.id ? saved : row) : [...state.closures, saved],
+          warning: false };
+      });
+      try {
+        const records = await api.businessClosures(controller.signal);
+        if (current()) setClosures({ status: "ready", closures: records, pending: false, warning: false });
+      } catch {
+        if (current()) setClosures(state => state.status === "ready" ? { ...state, pending: false, warning: true } : state);
+      }
+      return current(); // A failed refresh does not undo a confirmed mutation.
+    } catch (cause) {
+      if (!current()) return false;
+      setClosures(state => state.status === "ready" ? { ...state, pending: false } : state);
+      throw cause;
+    } finally {
+      signal.removeEventListener("abort", abort);
+      if (closureRequestRef.current === controller) {
+        closureRequestRef.current = null;
+        setClosures(state => state.status === "ready" ? { ...state, pending: false } : state);
+      }
+    }
+  };
+  const calendarLoadRef = useRef<AbortController | null>(null);
+  const calendarRequestRef = useRef<AbortController | null>(null);
+  const [calendarPending, setCalendarPending] = useState(false);
+  const [calendarWarning, setCalendarWarning] = useState(false);
+  const calendarAction = async (weeklySchedule?: WeeklySchedule): Promise<boolean> => {
+    if (calendarRequestRef.current) return false;
+    const controller = new AbortController();
+    calendarRequestRef.current = controller;
+    const generation = loadAttemptRef.current;
+    const current = () => calendarRequestRef.current === controller &&
+      !controller.signal.aborted && loadAttemptRef.current === generation;
+    setCalendarPending(true);
+    setError("");
+    setNotice("");
+    try {
+      if (weeklySchedule !== undefined) {
+        try {
+          const confirmed = await api.saveBusinessCalendar(weeklySchedule, controller.signal);
+          if (!current()) return false;
+          setData(confirmed);
+          setNotice("Horario guardado");
+        } catch (cause) {
+          if (current()) setError(api.errorMessage(cause));
+          return false;
+        }
+      }
+      try {
+        const refreshed = await api.businessCalendar(controller.signal);
+        if (!current()) return false;
+        setData(refreshed);
+        setCalendarWarning(false);
+      } catch {
+        if (!current()) return false;
+        setCalendarWarning(true);
+      }
+      return true;
+    } finally {
+      if (current()) {
+        calendarRequestRef.current = null;
+        setCalendarPending(false);
+      }
+    }
+  };
   const load = async () => {
     if (mode === "login") return;
     const attempt = ++loadAttemptRef.current;
-    const isCurrent = () => loadAttemptRef.current === attempt;
+    closureOwnerRef.current = null;
+    closureRequestRef.current?.abort();
+    closureRequestRef.current = null;
+    setClosures({ status: "loading" });
+    calendarLoadRef.current?.abort();
+    const calendarController = mode === "business-calendar" ? new AbortController() : null;
+    calendarLoadRef.current = calendarController;
+    const isCurrent = () => loadAttemptRef.current === attempt && !calendarController?.signal.aborted;
 
     setData(null);
     setNotice("");
@@ -193,11 +326,23 @@ export function LivePanel({ mode }: { mode: Mode }) {
       return;
     }
 
+    if (mode === "business-calendar" && session.businessId) {
+      closureOwnerRef.current = { businessId: session.businessId, generation: attempt };
+      void loadClosures();
+    }
     let loaded: unknown;
     try {
       loaded =
         mode === "admin"
           ? { businesses: await api.businesses(), instructions: await api.platformAiInstructions() }
+          : mode === "clients" || mode === "turnos"
+            ? session
+          : mode === "business-calendar"
+            ? await api.businessCalendar(calendarController!.signal)
+          : mode === "resources"
+            ? await Promise.all([api.resources(), api.services()]).then(([resources, services]) => ({ resources, services }))
+          : mode === "services"
+            ? await api.services()
           : mode === "profile"
             ? await api.profile()
             : mode === "assistant"
@@ -233,6 +378,8 @@ export function LivePanel({ mode }: { mode: Mode }) {
   useEffect(() => {
     monitorRef.current?.abort();
     monitorRef.current = null;
+    setCalendarPending(false);
+    setCalendarWarning(false);
     profileSaveAttemptRef.current += 1;
     profilePendingRef.current = false;
     setProfilePending(false);
@@ -250,6 +397,12 @@ export function LivePanel({ mode }: { mode: Mode }) {
     } else void load();
     return () => {
       loadAttemptRef.current += 1;
+      closureOwnerRef.current = null;
+      closureRequestRef.current?.abort();
+      closureRequestRef.current = null;
+      calendarLoadRef.current?.abort();
+      calendarRequestRef.current?.abort();
+      calendarRequestRef.current = null;
       profileSaveAttemptRef.current += 1;
       profilePendingRef.current = false;
       assistantSaveAttemptRef.current += 1;
@@ -433,6 +586,10 @@ export function LivePanel({ mode }: { mode: Mode }) {
   const logout = async () => {
     if (logoutPendingRef.current) return;
     logoutPendingRef.current = true;
+    const interruptedClosure = closureRequestRef.current;
+    const closureOwner = closureOwnerRef.current;
+    interruptedClosure?.abort();
+    closureRequestRef.current = null;
     setLogoutPending(true);
     setError("");
 
@@ -443,6 +600,14 @@ export function LivePanel({ mode }: { mode: Mode }) {
       setError(await api.errorMessage(cause));
       logoutPendingRef.current = false;
       setLogoutPending(false);
+      // Only the aborted request's still-mounted session may regain manual GET recovery.
+      if (interruptedClosure && closureOwner) setClosures(state =>
+        closureOwnerRef.current === closureOwner && loadAttemptRef.current === closureOwner.generation &&
+        !closureRequestRef.current
+          ? state.status === "ready" && state.pending
+            ? { ...state, pending: false, warning: true }
+            : state.status === "loading" ? { status: "error", message: api.errorMessage(cause) } : state
+          : state);
     }
   };
   const feedback = (
@@ -570,6 +735,156 @@ export function LivePanel({ mode }: { mode: Mode }) {
             )
           }
         />
+      </AuthenticatedShell>
+    );
+  }
+  if (mode === "turnos") {
+    const session = data as Session;
+    const generation = loadAttemptRef.current;
+    return <AuthenticatedShell variant="business" activeHref="/turnos"
+      logoutPending={logoutPending} logoutAction={() => void logout()}>
+      {feedback}
+      <TurnosScreen key={`${session.businessId}:${generation}`} disabled={logoutPending}
+        sessionActive={() => !logoutPendingRef.current && loadAttemptRef.current === generation} />
+    </AuthenticatedShell>;
+  }
+  if (mode === "clients") {
+    const session = data as Session;
+    const generation = loadAttemptRef.current;
+    return <AuthenticatedShell variant="business" activeHref="/clients"
+      logoutPending={logoutPending} logoutAction={() => void logout()}>
+      {feedback}
+      <ClientsScreen key={`${session.businessId}:${session.identityId}:${generation}`} disabled={logoutPending}
+        businessId={session.businessId} identityId={session.identityId}
+        sessionActive={() => !logoutPendingRef.current && loadAttemptRef.current === generation} />
+    </AuthenticatedShell>;
+  }
+
+  if (mode === "resources") {
+    const catalog = data as { resources: Resource[]; services: Service[] };
+    return (
+      <AuthenticatedShell variant="business" activeHref="/resources"
+        logoutPending={logoutPending} logoutAction={() => void logout()}>
+        <ResourcesScreen resources={catalog.resources} services={catalog.services}
+          onLifecycle={async (id, action, signal) => {
+            const attempt = loadAttemptRef.current;
+            if (!catalog.resources.some(resource => resource.id === id)) throw new Error("Unknown resource");
+            const saved = action === "retire" ? await api.retireResource(id, signal)
+              : await api.setResourceStatus(id, action, signal);
+            if (signal.aborted || loadAttemptRef.current !== attempt) return false;
+            if (saved.id !== id) throw new Error("Unexpected resource response");
+            setData((current: unknown) => ({ ...(current as typeof catalog),
+              resources: (current as typeof catalog).resources.flatMap(resource =>
+                resource.id !== saved.id ? [resource] : action === "retire" ? [] : [saved as Resource]),
+            }));
+            try {
+              const resources = await api.resources(signal);
+              if (!signal.aborted && loadAttemptRef.current === attempt)
+                setData((current: unknown) => ({ ...(current as typeof catalog), resources }));
+              return true;
+            } catch {
+              return false; // Committed mutation; retry GET only.
+            }
+          }}
+          onSave={async (id, body, signal) => {
+            const attempt = loadAttemptRef.current;
+            if (id && !catalog.resources.some(resource => resource.id === id)) throw new Error("Unknown resource");
+            const saved = id ? await api.updateResource(id, body, signal) : await api.createResource(body, signal);
+            if (signal.aborted || loadAttemptRef.current !== attempt) return false;
+            setData((current: unknown) => {
+              const owned = current as typeof catalog;
+              return { ...owned, resources: owned.resources.some(resource => resource.id === saved.id)
+                ? owned.resources.map(resource => resource.id === saved.id ? saved : resource)
+                : [...owned.resources, saved] };
+            });
+            try {
+              const resources = await api.resources(signal);
+              if (!signal.aborted && loadAttemptRef.current === attempt)
+                setData((current: unknown) => ({ ...(current as typeof catalog), resources }));
+              return true;
+            } catch {
+              return false; // Confirmed save; recovery repeats GET only.
+            }
+          }}
+          onRefresh={async signal => {
+            const attempt = loadAttemptRef.current;
+            const resources = await api.resources(signal);
+            if (!signal.aborted && loadAttemptRef.current === attempt)
+              setData((current: unknown) => ({ ...(current as typeof catalog), resources }));
+          }} />
+      </AuthenticatedShell>
+    );
+  }
+  if (mode === "services") {
+    return (
+      <AuthenticatedShell
+        variant="business"
+        activeHref="/services"
+        logoutPending={logoutPending}
+        logoutAction={() => void logout()}
+      >
+        <ServicesScreen
+          services={data as Service[]}
+          onSave={async (id, body, signal) => {
+            const attempt = loadAttemptRef.current;
+            const saved = id ? await api.updateService(id, body, signal) : await api.createService(body, signal);
+            if (signal.aborted || loadAttemptRef.current !== attempt) return false;
+            setData((current: unknown) => {
+              const services = current as Service[];
+              return services.some(service => service.id === saved.id)
+                ? services.map(service => service.id === saved.id ? saved : service)
+                : [...services, saved];
+            });
+            try {
+              const services = await api.services(signal);
+              if (!signal.aborted && loadAttemptRef.current === attempt) setData(services);
+              return true;
+            } catch {
+              return false; // The mutation committed; only its catalog refresh failed.
+            }
+          }}
+          onLifecycle={async (id, action, signal) => {
+            const attempt = loadAttemptRef.current;
+            if (!(data as Service[]).some(service => service.id === id)) throw new Error("Unknown service");
+            const saved = action === "retire"
+              ? await api.retireService(id, signal)
+              : await api.setServiceStatus(id, action, signal);
+            if (signal.aborted || loadAttemptRef.current !== attempt) return false;
+            if (saved.id !== id) throw new Error("Unexpected service response");
+            setData((current: unknown) => (current as Service[]).flatMap(service =>
+              service.id !== saved.id ? [service] : action === "retire" ? [] : [saved as Service]));
+            try {
+              const services = await api.services(signal);
+              if (!signal.aborted && loadAttemptRef.current === attempt) setData(services);
+              return true;
+            } catch {
+              return false; // Committed mutation; recovery must only repeat GET.
+            }
+          }}
+          onRefresh={async signal => {
+            const attempt = loadAttemptRef.current;
+            const services = await api.services(signal);
+            if (!signal.aborted && loadAttemptRef.current === attempt) setData(services);
+          }}
+        />
+        {feedback}
+      </AuthenticatedShell>
+    );
+  }
+  if (mode === "business-calendar") {
+    return (
+      <AuthenticatedShell variant="business" activeHref="/business-calendar"
+        logoutPending={logoutPending} logoutAction={() => void logout()}>
+        <BusinessCalendarScreen {...data as BusinessCalendar}
+          closures={closures} retryClosures={loadClosures}
+          createClosure={(input, signal) => mutateClosure({ kind: "create", input }, signal)}
+          updateClosure={(id, input, signal) => mutateClosure({ kind: "update", id, input }, signal)}
+          deleteClosure={(id, signal) => mutateClosure({ kind: "delete", id }, signal)}
+          pending={calendarPending} error={error} notice={notice} warning={calendarWarning}
+          saveAction={calendarAction} retryAction={() => calendarAction()}
+          clearFeedback={() => {
+            if (!calendarRequestRef.current) { setError(""); setNotice(""); }
+          }} />
       </AuthenticatedShell>
     );
   }

@@ -88,12 +88,16 @@ export function ProfileScreen({
 
         <div
           className="profile-knowledge-map"
-          aria-label="La información del perfil se organiza en Identidad y Operación"
+          aria-label="La información del perfil describe la identidad del negocio"
         >
           <div className="profile-knowledge-map__heading">
             <span>Mapa de información</span>
-            <span aria-hidden="true">
-              agend<strong>IA</strong>
+            <span className="brand profile-knowledge-map__brand" aria-hidden="true">
+              <img
+                className="brand__image"
+                src="/brand/logo-symbol-inverse.svg"
+                alt=""
+              />
             </span>
           </div>
           <ol>
@@ -101,11 +105,6 @@ export function ProfileScreen({
               <span>01</span>
               <strong>Identidad</strong>
               <small>Quién sos y dónde atendés</small>
-            </li>
-            <li>
-              <span>02</span>
-              <strong>Operación</strong>
-              <small>Qué ofrecés y cuándo atendés</small>
             </li>
           </ol>
         </div>
@@ -164,41 +163,6 @@ export function ProfileScreen({
                 hint="Ubicación o zona de atención, si corresponde"
                 maxLength={500}
                 input
-              />
-            </div>
-          </section>
-
-          <section
-            className="profile-section profile-section--operation"
-            aria-labelledby="profile-operation-title"
-          >
-            <header className="profile-section__header">
-              <span className="profile-section__number" aria-hidden="true">
-                02
-              </span>
-              <div>
-                <p>La práctica cotidiana</p>
-                <h2 id="profile-operation-title">Operación diaria</h2>
-                <span>
-                  Reuní los datos que ayudan a responder consultas concretas
-                  sobre atención y oferta.
-                </span>
-              </div>
-            </header>
-            <div className="profile-section__fields profile-section__fields--operation">
-              <ProfileField
-                label="Horarios"
-                name="businessHours"
-                defaultValue={profile.businessHours ?? ""}
-                hint="Escribí días, franjas horarias y excepciones en texto libre"
-                maxLength={2000}
-              />
-              <ProfileField
-                label="Servicios o productos"
-                name="offerings"
-                defaultValue={profile.offerings ?? ""}
-                hint="Detallá lo que ofrecés con nombres comprensibles"
-                maxLength={8000}
               />
             </div>
           </section>

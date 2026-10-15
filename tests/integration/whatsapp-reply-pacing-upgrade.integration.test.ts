@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import type { AiProvider, ToolConversationProvider } from '@agendia/domain';
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createRuntimePools, tenantContext } from "@agendia/db";
@@ -145,10 +146,10 @@ describe('populated WhatsApp pacing upgrade', () => {
   test('already-published early jobs make no provider call; a restart retains fresh wakeups', async () => {
     let calls = 0;
     const group = groups.find(g => g.published && g.label === 'over-hour')!;
-    const worker = new PostgresAiJobProcessor(pools, { generate: async () => {
+    const worker = new PostgresAiJobProcessor(pools, { generate: async () => { throw new Error('Unexpected generate'); }, converse: async () => {
       calls++;
-      return { text: 'reply', providerId: 'test', usageTokens: 1 };
-    } });
+      return { message: { role: 'assistant', content: 'reply', toolCalls: [] }, providerId: 'test', usageTokens: 1 };
+    } } as AiProvider & ToolConversationProvider);
     for (const messageId of [group.opener, group.latest]) {
       await worker.process({ businessId: A, messageId, correlationId: messageId });
     }

@@ -1,11 +1,13 @@
 import {
-  ConversationContextBuilder,
-  InMemoryConversationHistory,
   type AiProvider,
+  hasToolConversationProvider,
+  type ToolConversationProvider,
   type ConversationSummarizer,
   type ConversationSummaryContent,
 } from "@agendia/domain";
 import { tenantContext, type createRuntimePools } from "@agendia/db";
+import { PostgresWhatsAppAgenda } from "./whatsapp-agenda.ts";
+import { converseReceptionist } from "./receptionist.ts";
 import { AiProviderError } from "@agendia/ai-deepseek";
 
 type Pools = ReturnType<typeof createRuntimePools>;
@@ -34,11 +36,18 @@ const validSummary = <T extends { structured_summary: any }>(rows: T[]) =>
 const visible = (turn: { direction: string; processing_state: string }) =>
   turn.direction === "inbound" || turn.processing_state === "sent";
 export class PostgresAiJobProcessor {
+  private readonly agenda: PostgresWhatsAppAgenda;
+  private readonly conversational: ToolConversationProvider;
   constructor(
     private pools: Pools,
-    private provider: AiProvider,
+    provider: AiProvider,
     private budget = 8_000,
-  ) {}
+  ) {
+    if (!hasToolConversationProvider(provider)) throw new Error("AI job provider requires callable converse");
+    this.conversational = provider;
+    this.agenda = new PostgresWhatsAppAgenda(pools, undefined,
+      event => console.warn(JSON.stringify(event)));
+  }
   private context(businessId: string, correlationId: string) {
     return tenantContext({
       businessId,
@@ -79,76 +88,22 @@ export class PostgresAiJobProcessor {
     );
     if (!release) return;
     try {
-      const data = await this.pools.worker.run(context, (r) =>
-        r.loadAiMessage(job.messageId, true),
-      );
-      if (!data) return;
-      const history = new InMemoryConversationHistory();
-      history.append(
-        job.businessId,
-        data.conversation_id,
-        data.turns.map((t) => ({
-          id: t.id,
-          sequence: Number(t.sequence),
-          role:
-            t.direction === "inbound"
-              ? ("customer" as const)
-              : ("assistant" as const),
-          text: t.raw_text,
-          ...(t.direction === "outbound"
-            ? {
-                delivery:
-                  t.processing_state === "sent"
-                    ? ("sent" as const)
-                    : ("failed" as const),
-              }
-            : {}),
-        })),
-      );
-      const summary = validSummary(data.summaries);
-      if (summary) {
-        const content = summaryContent(summary.structured_summary)!;
-        history.saveSummary(job.businessId, data.conversation_id, {
-          version: summary.version,
-          coveredThrough: Number(summary.covered_through),
-          ...content,
-        });
-      }
-      const built = new ConversationContextBuilder(history).build({
-        businessId: job.businessId,
-        conversationId: data.conversation_id,
-        currentGroupIds: data.currentGroup.map((turn) => turn.id),
+      // Native execution has no language gate or legacy fallback.
+      let conversationFailure: unknown;
+      const outcome = await this.agenda.withReceptionistSession(job, async session => {
+        if (!session.context.messages) throw new Error("Missing receptionist context");
+        try {
+          return await converseReceptionist(this.conversational, session, [...session.context.messages], job.correlationId);
+        } catch (error) {
+          if (error instanceof AiProviderError || (error instanceof DOMException && error.name === "AbortError"))
+            conversationFailure = error;
+          throw error;
+        }
       });
-      if (built.status === "blocked") {
-        await this.pools.worker.run(context, (r) =>
-          r.failAi(job.messageId, job.businessId, "ai.context_unavailable"),
-        );
-        return;
-      }
-      const { additionalInstructions } = await this.pools.worker.run(
-        undefined, (r) => r.platformAiInstructions(),
-      );
-      const result = await this.provider.generate({
-        additionalInstructions,
-        business: data.profile,
-        assistant: data.assistant,
-        context: {
-          summary: JSON.stringify(built.context.summary),
-          recent: built.context.recent.map((t) => t.text),
-        },
-        message: data.currentGroup.map((turn) => turn.raw_text).join("\n"),
-        maxOutputCharacters: 2_000,
-        correlationId: job.correlationId,
-      });
-      await this.pools.worker.run(context, (r) =>
-        r.saveGenerated(job.messageId, job.businessId, result.text),
-      );
-    } catch (error) {
-      const code =
-        error instanceof AiProviderError ? error.code : "provider_unavailable";
-      await this.pools.worker.run(context, (r) =>
-        r.failAi(job.messageId, job.businessId, `ai.${code}`),
-      );
+      // Preserve the transport classification only AFTER the transaction rolls
+      // back. Never expose provider errors as customer facts or persist success.
+      if (outcome.status === "infrastructure_failure")
+        throw conversationFailure ?? new Error("Receptionist infrastructure failure");
     } finally {
       await release();
     }

@@ -83,6 +83,68 @@ async function expectReachable(locator: Locator) {
   await expect(locator).toBeVisible();
 }
 
+async function expectPair(locator: Locator, background: string, color: string) {
+  await expect(locator).toHaveCSS("background-color", background);
+  await expect(locator).toHaveCSS("color", color);
+}
+
+async function keyboardFocus(page: Page, locator: Locator) {
+  for (let step = 0; step < 40; step++) {
+    await page.keyboard.press("Tab");
+    if (await locator.evaluate((element) => element === document.activeElement)) break;
+  }
+  await expect(locator).toBeFocused();
+  expect(await locator.evaluate((element) => element.matches(":focus-visible"))).toBe(true);
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Tab");
+  await expect(locator).toBeFocused();
+  await expect(locator).toHaveCSS("outline-color", "rgb(168, 58, 26)");
+  await expect(locator).toHaveCSS("outline-style", "solid");
+}
+
+async function expectRegistryBrand(hero: Locator) {
+  const image = hero.locator('.admin-registry-map__brand img');
+  await expect(image).toHaveCount(1);
+  await expect(image).toHaveAttribute("src", "/brand/logo-symbol-inverse.svg");
+  await expect(image).toHaveAttribute("alt", "");
+  await expect(hero.locator('.admin-registry-map__brand')).toHaveAttribute("aria-hidden", "true");
+  await expect(hero.getByRole("img")).toHaveCount(0);
+  await expect.poll(() => image.evaluate((element) => {
+    const img = element as HTMLImageElement;
+    return img.complete && Number.isFinite(img.naturalWidth) && img.naturalWidth > 0 &&
+      Number.isFinite(img.naturalHeight) && img.naturalHeight > 0 && img.naturalWidth === img.naturalHeight;
+  })).toBe(true);
+  const bounds = await image.evaluate((element) => {
+    const wrapper = element.parentElement!;
+    const header = wrapper.parentElement!;
+    const rect = (node: Element) => {
+      const r = node.getBoundingClientRect();
+      return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height };
+    };
+    const clipped: string[] = [];
+    const outer = rect(wrapper);
+    for (let ancestor = header; ancestor; ancestor = ancestor.parentElement!) {
+      const css = getComputedStyle(ancestor), r = rect(ancestor);
+      if ((/hidden|clip|auto|scroll/.test(css.overflowX) && (outer.left < r.left || outer.right > r.right)) ||
+          (/hidden|clip|auto|scroll/.test(css.overflowY) && (outer.top < r.top || outer.bottom > r.bottom))) clipped.push(ancestor.tagName);
+    }
+    return { image: rect(element), wrapper: outer, header: rect(header), label: rect(header.firstElementChild!), clipped,
+      padding: ["paddingTop", "paddingRight", "paddingBottom", "paddingLeft"].map(key => getComputedStyle(wrapper).getPropertyValue(key.replace(/[A-Z]/g, c => `-${c.toLowerCase()}`))) };
+  });
+  expect([bounds.image.width, bounds.image.height, bounds.wrapper.width, bounds.wrapper.height]).toEqual([24, 24, 68, 68]);
+  expect(bounds.padding).toEqual(["22px", "22px", "22px", "22px"]);
+  expect(bounds.wrapper.left - bounds.label.right).toBeGreaterThanOrEqual(16);
+  expect(bounds.wrapper.left).toBeGreaterThanOrEqual(bounds.header.left);
+  expect(bounds.wrapper.right).toBeLessThanOrEqual(bounds.header.right);
+  expect(bounds.wrapper.top).toBeGreaterThanOrEqual(bounds.header.top);
+  expect(bounds.wrapper.bottom).toBeLessThanOrEqual(bounds.header.bottom);
+  expect(bounds.clipped).toEqual([]);
+  for (const node of [image, hero.locator('.admin-registry-map__brand')]) {
+    for (const property of ["filter", "box-shadow", "transform"]) await expect(node).toHaveCSS(property, "none");
+  }
+  console.log("Admin registry bounds", JSON.stringify(bounds));
+}
+
 test("platform admin sees the locked base and saves additions", async ({ page, system }) => {
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   const base = page.getByLabel("Instrucciones base", { exact: true });
@@ -102,7 +164,7 @@ test("platform admin sees the locked base and saves additions", async ({ page, s
 test("the redesigned administration screen preserves the real business workflow responsively", async ({
   page,
   system,
-}) => {
+}, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
@@ -131,6 +193,14 @@ test("the redesigned administration screen preserves the real business workflow 
   const inventory = screen.locator('[data-ui="admin-inventory"]');
   await expect(screen).toHaveCount(1);
   await expect(hero).toBeVisible();
+  await expectPair(hero, "rgb(18, 55, 42)", "rgb(243, 238, 225)");
+  await expectRegistryBrand(hero);
+  const asset = await page.request.get(new URL("/brand/logo-symbol-inverse.svg", page.url()).href);
+  expect(asset.ok()).toBe(true);
+  expect(await asset.text()).toContain('viewBox="0 0 120 120"');
+  await expect(hero.locator("h1")).toHaveCSS("font-weight", "650");
+  await expect(hero.locator("h1")).toHaveCSS("font-family", /Source Sans 3/);
+  await expect(hero.locator("header")).toHaveCSS("font-weight", "700");
   await expect(
     hero.getByText("Operación de plataforma", { exact: true }),
   ).toBeVisible();
@@ -180,6 +250,11 @@ test("the redesigned administration screen preserves the real business workflow 
     exact: true,
   });
   await expect(createForm.getByRole("button")).toHaveCount(1);
+  await expectPair(createButton, "rgb(168, 58, 26)", "rgb(255, 255, 255)");
+  await expect(nameInput).toHaveCSS("font-family", /JetBrains Mono/);
+  await expect(nameInput).toHaveCSS("font-weight", "450");
+  await keyboardFocus(page, nameInput);
+  await page.screenshot({ path: testInfo.outputPath("admin-desktop.png"), fullPage: true });
 
   const table = inventory.getByRole("table");
   await expect(table).toBeVisible();
@@ -258,11 +333,15 @@ test("the redesigned administration screen preserves the real business workflow 
     await expect(
       createForm.getByRole("button", { name: "Creando…", exact: true }),
     ).toBeDisabled();
+    await expect(createForm).toHaveAttribute("aria-busy", "true");
+    await expectPair(createForm.getByRole("button", { name: "Creando…", exact: true }), "rgb(168, 58, 26)", "rgb(255, 255, 255)");
+    await page.screenshot({ path: testInfo.outputPath("admin-pending.png"), fullPage: true });
   } finally {
     releaseCreateRequest();
   }
 
   await expect(screen.getByRole("status")).toHaveText("Negocio creado");
+  await expectPair(screen.getByRole("status"), "rgb(46, 125, 79)", "rgb(255, 255, 255)");
   const createdRow = businessRow(page, table, tenant.name);
   await expect(createdRow).toHaveCount(1);
   await expect(
@@ -286,6 +365,11 @@ test("the redesigned administration screen preserves the real business workflow 
   await expect(createdRow.getByRole("cell")).toHaveCount(7);
   await page.unroute("**/admin/businesses");
 
+  await expectPair(createdRow.locator(".admin-status--business-active"), "rgb(46, 125, 79)", "rgb(255, 255, 255)");
+  await expectPair(createdRow.locator(".admin-status--assistant-inactive"), "rgb(243, 238, 225)", "rgb(76, 91, 83)");
+  await expectPair(createdRow.locator(".admin-status--whatsapp-link_required"), "rgb(233, 180, 76)", "rgb(28, 38, 32)");
+  await expect(createdRow.locator(".admin-timestamp").first()).toHaveCSS("font-weight", "450");
+  await keyboardFocus(page, createdRow.locator("summary"));
   let management = await openManagement(createdRow);
   const renameInput = management.getByLabel(`Nombre de ${tenant.name}`, {
     exact: true,
@@ -348,6 +432,7 @@ test("the redesigned administration screen preserves the real business workflow 
   };
   await page.route(renameRequest.url(), failedRenameRoute);
 
+  try {
   await failedRenameInput.fill(tenant.failedRenameName);
   await management
     .getByRole("button", { name: "Renombrar", exact: true })
@@ -363,7 +448,12 @@ test("the redesigned administration screen preserves the real business workflow 
   ).toHaveCount(0);
   await expect(failedRenameInput).toHaveValue(tenant.failedRenameName);
 
-  await page.unroute(renameRequest.url(), failedRenameRoute);
+  await expectPair(rowAlert, "rgb(179, 58, 31)", "rgb(255, 255, 255)");
+  await expect(rowAlert.locator("strong")).toHaveCSS("color", "rgb(255, 255, 255)");
+  await page.screenshot({ path: testInfo.outputPath("admin-mocked-error.png"), fullPage: true });
+  } finally {
+    await page.unroute(renameRequest.url(), failedRenameRoute);
+  }
   await failedRenameInput.fill(tenant.renamedName);
 
   const replacementPassword = management.getByLabel(
@@ -393,6 +483,7 @@ test("the redesigned administration screen preserves the real business workflow 
     managedRow.getByRole("cell", { name: "Suspendido", exact: true }),
   ).toBeVisible();
 
+  await expectPair(managedRow.locator(".admin-status--business-suspended"), "rgb(179, 58, 31)", "rgb(255, 255, 255)");
   management = await openManagement(managedRow);
   const reactivate = management.getByRole("button", {
     name: "Reactivar",
@@ -418,6 +509,7 @@ test("the redesigned administration screen preserves the real business workflow 
   await expectNoHorizontalOverflow(page);
 
   await page.setViewportSize({ width: 360, height: 800 });
+  await expectRegistryBrand(hero);
   const mobileTable = inventory.getByRole("table");
   const mobileRow = businessRow(page, mobileTable, tenant.renamedName);
   const mobileManagement = await openManagement(mobileRow);
@@ -451,4 +543,5 @@ test("the redesigned administration screen preserves the real business workflow 
   await expect(mobileRow).toHaveCount(1);
   await expect(mobileRow.getByRole("cell")).toHaveCount(7);
   await expectNoHorizontalOverflow(page);
+  await page.screenshot({ path: testInfo.outputPath("admin-mobile.png"), fullPage: true });
 });

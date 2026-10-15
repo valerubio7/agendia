@@ -15,6 +15,7 @@ import {
   startTestPostgres,
 } from "../../support/index.ts";
 import { SystemProviders } from "./providers.ts";
+import { captureWebDiagnostics, createWebRuntime, probeHttp, webRuntimeEnv, warmWebRoutes } from "./web-runtime.ts";
 
 const admin = {
   email: "admin@example.test",
@@ -45,18 +46,6 @@ async function freePort() {
     throw new Error("Dynamic port unavailable");
   await new Promise<void>((resolve) => server.close(() => resolve()));
   return address.port;
-}
-async function probeHttp(url: string) {
-  for (let attempt = 0; attempt < 120; attempt++) {
-    try {
-      if ((await fetch(url)).status < 500) return true;
-    } catch {
-      await delay(100);
-      continue;
-    }
-    await delay(100);
-  }
-  throw new Error(`Readiness probe failed: ${url}`);
 }
 
 export interface SystemHarness {
@@ -109,6 +98,8 @@ export interface SystemHarness {
     outcome: string;
   }>;
   receiveUnknown(): Promise<{ outcome: string }>;
+  // Fixture-only isolation of the calendar appointment guard, not a resource API operation.
+  relaxResourceHoursForCalendarGuardFixture(businessId: string, resourceId: string): Promise<void>;
   expireSessions(email: string): Promise<void>;
   expireLinkCode(email: string): Promise<void>;
   restartManager(): Promise<void>;
@@ -122,6 +113,10 @@ export interface SystemHarness {
     technical: Array<{ email: string; code: string; details: object }>;
     audit: Array<{ email: string; type: string; metadata: object }>;
     tenants: Array<{ email: string; messages: number }>;
+  }>;
+  agendaEvidence(email: string, providerMessageId: string): Promise<{
+    state: string; failureCode: string | null; clients: number; appointments: number;
+    receipts: number; effects: number; outbound: number;
   }>;
   summaryEvidence(): Promise<
     Array<{ email: string; version: number; coveredThrough: number }>
@@ -205,32 +200,40 @@ export async function startSystem(): Promise<SystemHarness> {
     );
     cleanup.push(() => worker.stop());
 
-    const logs: string[] = [];
-    const web = spawn(
+    const runtime = await createWebRuntime(process.cwd());
+    let web: ReturnType<typeof spawn> | undefined;
+    cleanup.push(async () => {
+      if (web && web.pid && web.exitCode === null && web.signalCode === null) {
+        const child = web;
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            child.kill("SIGKILL");
+            escalation = setTimeout(() => reject(new Error("Owned Next child did not exit; runtime retained")), 5_000);
+          }, 5_000);
+          let escalation: ReturnType<typeof setTimeout> | undefined;
+          child.once("exit", () => { clearTimeout(timer); clearTimeout(escalation); resolve(); });
+          child.kill("SIGTERM");
+        });
+      }
+      await runtime.dispose();
+    });
+    web = spawn(
       join(process.cwd(), "apps/web/node_modules/.bin/next"),
-      ["dev", "--hostname", "127.0.0.1", "--port", String(webPort)],
+      ["dev", "--webpack", "--hostname", "127.0.0.1", "--port", String(webPort)],
       {
-        cwd: join(process.cwd(), "apps/web"),
-        env: { ...process.env, AGENDIA_API_ORIGIN: apiOrigin },
+        cwd: runtime.cwd,
+        env: webRuntimeEnv(runtime.root, apiOrigin),
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
-    for (const stream of [web.stdout, web.stderr])
-      stream?.on("data", (chunk) => logs.push(String(chunk)));
-    cleanup.push(async () => {
-      if (web.exitCode !== null) return;
-      web.kill("SIGTERM");
-      await new Promise<void>((resolve) => {
-        web.once("exit", () => resolve());
-        setTimeout(resolve, 5_000);
-      });
-    });
+    const diagnostics = captureWebDiagnostics(web);
+    const logs = diagnostics.logs;
 
     const readiness = async () => {
       await database.sql`select 1`;
       await Promise.all([
         probeHttp(`${apiOrigin}/auth/session`),
-        probeHttp(webUrl),
+        probeHttp(webUrl, { diagnostics }),
       ]);
       await manager.pools.manager.run(undefined, (repo) =>
         repo.restorableWhatsApp(),
@@ -248,6 +251,7 @@ export async function startSystem(): Promise<SystemHarness> {
       };
     };
     await readiness();
+    await warmWebRoutes(webUrl, { diagnostics });
     const connection = async (email: string) => {
       for (let attempt = 0; attempt < 120; attempt++) {
         const row = (
@@ -445,6 +449,11 @@ export async function startSystem(): Promise<SystemHarness> {
             : "unknown_session",
         };
       },
+      relaxResourceHoursForCalendarGuardFixture: async (businessId, resourceId) => {
+        const rows = await database.sql`UPDATE resources SET weekly_schedule='{}'::jsonb
+          WHERE business_id=${businessId} AND id=${resourceId} RETURNING id`;
+        expect(rows).toEqual([{ id: resourceId }]);
+      },
       expireSessions: async (email) => {
         await database.sql`update web_sessions set absolute_expires_at=now()-interval '1 second' where identity_id in(select id from auth_identities where normalized_email=${email})`;
       },
@@ -475,6 +484,22 @@ export async function startSystem(): Promise<SystemHarness> {
           providers.deepSeek.fetcher as typeof fetch,
         );
       },
+      agendaEvidence: async (email, providerMessageId) => {
+        const rows = await database.sql<{
+          state: string; failureCode: string | null; clients: number; appointments: number;
+          receipts: number; effects: number; outbound: number;
+        }[]>`select j.state::text state,j.output->>'code' "failureCode",
+          (select count(*)::int from clients where business_id=m.business_id) clients,
+          (select count(*)::int from appointments where business_id=m.business_id) appointments,
+          (select count(*)::int from whatsapp_agenda_receipts where message_id=m.id) receipts,
+          (select count(*)::int from outbox_events where business_id=m.business_id and topic='appointment.changed') effects,
+          (select count(*)::int from outbound_commands where source_message_id=m.id) outbound
+          from messages m join auth_identities i on i.business_id=m.business_id
+          join pgboss.job j on j.data->>'messageId'=m.id::text and j.name='ai-generate'
+          where i.normalized_email=${email} and m.provider_message_id=${providerMessageId}`;
+        expect(rows).toHaveLength(1);
+        return rows[0]!;
+      },
       summaryEvidence: () =>
         database.sql`select i.normalized_email email,s.version,s.covered_through::int "coveredThrough" from conversation_summaries s join auth_identities i on i.business_id=s.business_id order by email,s.version`,
       deliveryEvidence: () =>
@@ -498,7 +523,11 @@ export async function startSystem(): Promise<SystemHarness> {
       stop,
     };
   } catch (error) {
-    await stop();
+    try {
+      await stop();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "System startup and cleanup failed");
+    }
     throw error;
   }
 }

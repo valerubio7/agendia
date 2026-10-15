@@ -9,6 +9,7 @@ import makeWASocket, {
 } from "@whiskeysockets/baileys";
 import type { BaileysLifecycleEvent } from "../../../apps/whatsapp-manager/src/lifecycle.ts";
 import type { BaileysAuthStore } from "./auth-store.ts";
+import { receivedSenderEvidence, type SenderEvidence } from "../../domain/src/whatsapp-agenda.ts";
 
 type Update = {
   qr?: string;
@@ -27,8 +28,12 @@ type RawMessage = {
   key?: {
     id?: string | null;
     remoteJid?: string | null;
+    remoteJidAlt?: string | null;
+    participant?: string | null;
+    participantAlt?: string | null;
     fromMe?: boolean | null;
   };
+  messageStubType?: number | null;
   message?: RawContent | null;
   messageTimestamp?: number | { toNumber(): number } | null;
 };
@@ -41,6 +46,7 @@ export type NormalizedInboundEvent = {
   kind: "text" | "image" | "audio" | "video" | "document";
   text: string | null;
   receivedAt: number;
+  senderEvidence?: SenderEvidence;
 };
 export type BaileysSocket = {
   user?: { id: string };
@@ -78,11 +84,12 @@ const jidPattern = /^[^@\s]+@(s\.whatsapp\.net|lid|g\.us)$/;
 export function normalizeBaileysMessage(
   sessionPublicId: string,
   raw: RawMessage,
+  receivedUpsert = true,
 ): NormalizedInboundEvent | null {
   const providerMessageId = raw.key?.id ?? "",
     remoteJid = raw.key?.remoteJid ?? "",
     message = raw.message;
-  if (!providerMessageId || !jidPattern.test(remoteJid) || !message)
+  if (!providerMessageId || !jidPattern.test(remoteJid) || !message || raw.messageStubType)
     return null;
   const text =
     typeof message.conversation === "string"
@@ -107,7 +114,9 @@ export function normalizeBaileysMessage(
     typeof raw.messageTimestamp === "object"
       ? raw.messageTimestamp?.toNumber()
       : raw.messageTimestamp;
+  const evidence = receivedUpsert && raw.key ? receivedSenderEvidence(raw.key) : null;
   return {
+    ...(evidence ? { senderEvidence: evidence } : {}),
     sessionPublicId,
     providerMessageId,
     remoteJid,
@@ -240,9 +249,11 @@ export class BaileysGateway {
     });
     socket.ev.on(
       "messages.upsert",
-      async ({ messages }: { messages?: RawMessage[] }) => {
+      async ({ messages, type }: { messages?: RawMessage[]; type?: string }) => {
         for (const raw of messages ?? []) {
-          const event = normalizeBaileysMessage(sessionPublicId, raw);
+          // Mapping-store updates happen before decryption. Only successful live
+          // receive upserts attest identity, never history/append or raw mappings.
+          const event = normalizeBaileysMessage(sessionPublicId, raw, type === "notify");
           if (event) await onInbound(event);
         }
       },

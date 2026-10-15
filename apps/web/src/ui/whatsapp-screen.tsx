@@ -123,8 +123,13 @@ export function WhatsAppScreen({
           </div>
           <div className="whatsapp-bridge__stage" aria-hidden="true">
             <div className="whatsapp-bridge__node whatsapp-bridge__node--agendia">
-              <span>agend</span>
-              <strong>IA</strong>
+              <span className="brand whatsapp-bridge__brand" aria-hidden="true">
+                <img
+                  className="brand__image"
+                  src="/brand/logo-symbol-inverse.svg"
+                  alt=""
+                />
+              </span>
             </div>
             <div className="whatsapp-bridge__signal">
               <i />

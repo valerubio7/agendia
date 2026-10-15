@@ -3,7 +3,6 @@ import { z } from "zod";
 const text = (max: number) => z.string().trim().max(max);
 export const BusinessProfileSchema = z.object({
   displayName: text(160).min(1), description: text(4_000), address: text(500),
-  businessHours: text(2_000), offerings: text(8_000),
 });
 export type BusinessProfile = z.infer<typeof BusinessProfileSchema>;
 export class InMemoryProfileRepository { readonly rows = new Map<string, BusinessProfile>(); }

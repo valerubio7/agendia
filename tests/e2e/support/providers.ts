@@ -1,4 +1,5 @@
 import type { SocketFactory } from "@agendia/whatsapp-baileys";
+import type { ReceptionistToolCommand, ReceptionistToolResult } from "../../../apps/message-worker/src/receptionist-tools.ts";
 
 type SendOutcome = "ack" | "rejected" | "crash";
 class DeterministicSocket {
@@ -149,7 +150,7 @@ export class DeterministicBaileysSystemDouble {
       (s) => !s.ended && s.user.id.startsWith(`${linkedNumber}:`),
     );
     if (!socket) throw new Error(`socket unavailable: ${linkedNumber}`);
-    await socket.emit("messages.upsert", { messages: [message] });
+    await socket.emit("messages.upsert", { type: "notify", messages: [message] });
     const id = (message.key as { id?: string } | undefined)?.id;
     if (id) this.ingressIds.push(id);
   }
@@ -170,6 +171,16 @@ export class DeterministicDeepSeekSystemDouble {
   active = false;
   next: "success" | "timeout" | "error" = "success";
   summaryNext: "success" | "timeout" | "error" = "success";
+  nativeCalls: ReceptionistToolCommand[] | ((messages: Array<{ role: string; content: string | null }>) => ReceptionistToolCommand[]) = [];
+  nativeFinal: ((results: ReceptionistToolResult[]) => string) | null = null;
+  private agendaTransport: "success" | "header-deadline" | "body-deadline" | "error" = "success";
+  private observedFailure?: () => void;
+  agendaAborts = 0;
+  configureAgendaTransport(mode: typeof this.agendaTransport): Promise<void> {
+    this.agendaTransport = mode;
+    if (mode === "success") return Promise.resolve();
+    return new Promise(resolve => { this.observedFailure = resolve; });
+  }
   readonly fetcher = async (
     _input: string | URL | Request,
     init?: RequestInit,
@@ -184,6 +195,41 @@ export class DeterministicDeepSeekSystemDouble {
     if (outcome === "timeout") throw new Error("deterministic timeout");
     if (outcome === "error")
       return new Response("provider unavailable", { status: 503 });
+    const payload = JSON.parse(body);
+    const agenda = !summary && Array.isArray(payload.tools);
+    if (agenda && this.agendaTransport === "error") {
+      this.observedFailure?.();
+      return new Response("provider unavailable", { status: 503 });
+    }
+    if (agenda && this.agendaTransport !== "success") {
+      const signal = init?.signal;
+      if (!signal) throw new Error("Deadline transport requires an abort signal");
+      if (this.agendaTransport === "header-deadline") return new Promise<Response>((_resolve, reject) => {
+        const abort = () => {
+          signal.removeEventListener("abort", abort);
+          this.agendaAborts++;
+          this.observedFailure?.();
+          reject(new Error("aborted header transport"));
+        };
+        if (signal.aborted) abort();
+        else signal.addEventListener("abort", abort, { once: true });
+      });
+      let abort: () => void;
+      const stream = new ReadableStream<Uint8Array>({
+        start: controller => {
+          abort = () => {
+            signal.removeEventListener("abort", abort);
+            this.agendaAborts++;
+            this.observedFailure?.();
+            controller.error(new Error("aborted body transport"));
+          };
+          if (signal.aborted) abort();
+          else signal.addEventListener("abort", abort, { once: true });
+        },
+        cancel: () => { signal.removeEventListener("abort", abort); },
+      });
+      return new Response(stream, { status: 200 });
+    }
     const content = summary
       ? JSON.stringify({
           facts: ["Resumen determinista"],
@@ -192,11 +238,33 @@ export class DeterministicDeepSeekSystemDouble {
           preferences: [],
           openItems: [],
         })
-      : `Respuesta determinista ${this.calls.length}`;
+      : "No se guardó ningún cambio de agenda.";
+    let message: Record<string, unknown> = { role: "assistant", content };
+    let finish_reason = "stop";
+    if (agenda) {
+      const messages = payload.messages as Array<{ role: string; content: string | null; tool_call_id?: string }>;
+      if (messages.at(-1)?.role === "tool") {
+        const firstResult = messages.findLastIndex(item => item.role !== "tool") + 1;
+        const results = messages.slice(firstResult).map(item => JSON.parse(item.content!) as ReceptionistToolResult);
+        const catalog = results[0]?.status === "data" ? results[0].data as { items?: Array<{ name: string; durationMinutes: number; priceArs: number }> } : null;
+        message.content = this.nativeFinal ? this.nativeFinal(results)
+          : catalog?.items ? catalog.items.map(item => `${item.name}: ${item.durationMinutes} minutos, ARS ${item.priceArs}`).join("\n") || "No hay servicios activos."
+          : content;
+      } else {
+        const calls = typeof this.nativeCalls === "function" ? this.nativeCalls(messages) : this.nativeCalls;
+        if (calls.length) {
+          message = { role: "assistant", content: null, tool_calls: calls.map((command, index) => ({
+            id: `system-${this.calls.length}-${index}`, type: "function",
+            function: { name: command.name, arguments: JSON.stringify(command.arguments) },
+          })) };
+          finish_reason = "tool_calls";
+        }
+      }
+    }
     return new Response(
       JSON.stringify({
         id: `deepseek-${this.calls.length}`,
-        choices: [{ message: { content } }],
+        choices: [{ message, finish_reason }],
         usage: { total_tokens: 3 },
       }),
       { status: 200 },
