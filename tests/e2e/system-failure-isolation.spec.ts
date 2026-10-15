@@ -351,7 +351,7 @@ test("contains hostile access and provider failures while preserving isolated re
   const recovered = await system.receiveText(tenants[0]!.email, agendaJid, "Consultar servicios");
   // Failed attempts retain the already released deadline: recovery must not need a second release.
   await expect.poll(() => system.providers.baileys.acks.length).toBe(1);
-  expect(system.providers.baileys.acks[0]).toMatchObject({ jid: agendaJid, text: "No hay servicios activos." });
+  expect(system.providers.baileys.acks[0]).toMatchObject({ jid: agendaJid, text: "No hay servicios activos registrados." });
   await expect.poll(() => system.agendaEvidence(tenants[0]!.email, recovered.providerMessageId)).toMatchObject({
     state: "completed", clients: 0, appointments: 0, receipts: 1, effects: 0, outbound: 1,
   });
