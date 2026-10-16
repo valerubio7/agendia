@@ -18,7 +18,7 @@ export async function createWebRuntime(repo: string) {
   const root = await mkdtemp(join(tmpdir(), "agendia-web-e2e-"));
   const cwd = join(root, "apps/web");
   // Ownership is captured, not supplied to cleanup by a caller.
-  const dispose = () => rm(root, { recursive: true, force: true });
+  const dispose = () => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   try {
     await mkdir(cwd, { recursive: true });
     for (const name of ["package.json", "tsconfig.json", "next.config.ts"])
