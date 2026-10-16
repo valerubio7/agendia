@@ -261,10 +261,10 @@ test("all eleven manifests and lock workspace versions agree", () => {
   // Bun omits the root version, but not its workspace identity.
   const workspaces = JSON.parse((workspaceSection + "}").replace(/,\s*([}\]])/g, "$1")).workspaces;
   expect(Object.keys(workspaces).sort()).toEqual([...paths].sort());
-  expect(workspaceSection.match(/"version": "0.7.1"/g)).toHaveLength(paths.length - 1);
+  expect(workspaceSection.match(/"version": "0.8.0"/g)).toHaveLength(paths.length - 1);
   for (const path of paths) {
     const manifest = JSON.parse(readFileSync(join(root, path, "package.json"), "utf8"));
-    expect(manifest.version).toBe("0.7.1");
+    expect(manifest.version).toBe("0.8.0");
     expect(workspaces[path].name).toBe(manifest.name);
     if (path) expect(workspaces[path].version).toBe(manifest.version);
     else expect(workspaces[path]).not.toHaveProperty("version");
