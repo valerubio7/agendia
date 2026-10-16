@@ -24,3 +24,4 @@ test-results
 **/*.dump
 **/*.backup
 backups
+/biz_cookies.txt

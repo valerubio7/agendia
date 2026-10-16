@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+import * as filesystem from "node:fs/promises";
 import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
 import { access, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -48,6 +49,24 @@ test("unique owned projects isolate cache, Next types and generated configuratio
       await runtime.dispose();
       await expect(access(runtime.root)).rejects.toThrow();
     }
+  }
+});
+
+test("owned runtime disposal requests bounded retries for transient filesystem races", async () => {
+  const runtime = await createWebRuntime(process.cwd());
+  const remove = filesystem.rm;
+  const cleanup = spyOn(filesystem, "rm").mockImplementation(async (path, options) => {
+    if (path === runtime.root) {
+      expect(options).toMatchObject({ recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+    await remove(path, options);
+  });
+  try {
+    await runtime.dispose();
+    await expect(access(runtime.root)).rejects.toThrow();
+  } finally {
+    cleanup.mockRestore();
+    await remove(runtime.root, { recursive: true, force: true });
   }
 });
 

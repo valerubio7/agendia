@@ -42,6 +42,25 @@ describe("encrypted Baileys authentication custody", () => {
     expect(await store.read("tenant-a", "connection-a", "creds")).toEqual({ registered: true });
   });
 
+  test("concurrent in-memory first writes share the DEK and same-name writes conflict", async () => {
+    const repository = new InMemoryAuthRecordRepository();
+    const kms = new InMemoryKms({ current: Buffer.alloc(32, 5) }, "current");
+    const store = new BaileysAuthStore(repository, kms);
+    await Promise.all([
+      store.write("tenant-a", "connection-a", "creds", { first: true }, 0),
+      store.write("tenant-a", "connection-a", "signal", { second: true }, 0),
+    ]);
+    const reloaded = new BaileysAuthStore(repository, kms);
+    expect(await reloaded.read("tenant-a", "connection-a", "creds")).toEqual({ first: true });
+    expect(await reloaded.read("tenant-a", "connection-a", "signal")).toEqual({ second: true });
+    const results = await Promise.allSettled([
+      store.write("tenant-a", "connection-a", "same", 1, 0),
+      store.write("tenant-a", "connection-a", "same", 2, 0),
+    ]);
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    expect(String((results.find(result => result.status === "rejected") as PromiseRejectedResult).reason)).toContain("version conflict");
+  });
+
   test("allows exactly one session owner and redacts credentials, QR and identifiers", () => {
     const locks = new ExclusiveSessionLocks();
     expect(locks.tryAcquire("connection-a", "manager-1")).toBe(true);

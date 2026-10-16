@@ -257,6 +257,7 @@ export class ApiClient {
         ...(body === undefined ? {} : { "content-type": "application/json" }),
         ...(operationKey === undefined ? {} : { "x-appointment-operation-key": operationKey }),
         ...(method === "GET" || !csrf ? {} : { "x-csrf-token": csrf }),
+        ...(path === "/auth/csrf" ? { "x-csrf-bootstrap": "1" } : {}),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
@@ -291,14 +292,22 @@ export class ApiClient {
     this.setCsrf(csrfToken);
     return this.session();
   }
-  session = () => this.call<Session>("/auth/session");
+  session = async () => {
+    const session = await this.call<Session>("/auth/session", "GET", undefined, "no-store");
+    const stored = this.csrf || (typeof sessionStorage === "undefined" ? "" : sessionStorage.getItem("agendia.csrf"));
+    if (!stored) {
+      const { csrfToken } = await this.call<{ csrfToken: string }>("/auth/csrf", "POST", undefined, "no-store");
+      this.setCsrf(csrfToken);
+    }
+    return session;
+  };
   async logout() {
     await this.call("/auth/logout", "POST");
     this.setCsrf("");
   }
   platformAiInstructions = () => this.call<PlatformAiInstructions>("/admin/ai-instructions");
-  savePlatformAiInstructions = (additionalInstructions: string) =>
-    this.call<PlatformAiInstructions>("/admin/ai-instructions", "PUT", { additionalInstructions });
+  savePlatformAiInstructions = (additionalInstructions: string, replyPacing?: PlatformAiInstructions["replyPacing"]) =>
+    this.call<PlatformAiInstructions>("/admin/ai-instructions", "PUT", { additionalInstructions, replyPacing });
   businesses = () => this.call<Business[]>("/admin/businesses");
   createBusiness = (body: {
     name: string;

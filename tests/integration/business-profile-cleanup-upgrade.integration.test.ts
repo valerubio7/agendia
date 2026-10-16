@@ -17,6 +17,12 @@ async function assistantColumns(db: TestPostgres) {
 }
 const retained = ["business_id", "display_name", "description", "address", "updated_at"];
 const obsoleteProfile = ["business_hours", "offerings"];
+const throttleTables = ["login_throttle_global", "login_throttle_accounts"];
+function throttleOwnerGrants(owner: string) {
+  return throttleTables.flatMap(table_name =>
+    ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"].map(privilege_type =>
+      ({ grantee: owner, table_name, privilege_type, is_grantable: "YES" })));
+}
 
 async function columns(db: TestPostgres) {
   const rows = await db.sql`select column_name from information_schema.columns
@@ -65,7 +71,16 @@ test("forward profile cleanup preserves structured catalog, calendars and resour
     for (const name of names.filter(name => name >= "0034"))
       await db.sql.unsafe(await readFile(join(directory, name), "utf8"));
     expect(await columns(db)).toEqual(retained);
-    expect(await snapshot()).toEqual(before);
+    const { security: beforeSecurity, ...beforeData } = before;
+    const { security: afterSecurity, ...afterData } = await snapshot();
+    expect(afterData).toEqual(beforeData);
+    expect(afterSecurity.rls).toEqual(beforeSecurity.rls);
+    expect(afterSecurity.policies).toEqual(beforeSecurity.policies);
+    const [owner] = await db.sql<{ owner: string }[]>`select current_user owner`;
+    const expectedGrants = [...beforeSecurity.grants, ...throttleOwnerGrants(owner!.owner)];
+    const key = (row: unknown) => JSON.stringify(row);
+    // Exact additions: owner-only table access, with no new runtime or PUBLIC grants.
+    expect(afterSecurity.grants.map(key).sort()).toEqual(expectedGrants.map(key).sort());
   } finally {
     await db.stop();
   }
@@ -209,6 +224,7 @@ test("populated upgrade consolidates every assistant text while preserving profi
         expectedGrants.push({ grantee, table_name, privilege_type, is_grantable });
     };
     grant(owner, newTables, ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"], "YES");
+    expectedGrants.push(...throttleOwnerGrants(owner));
     grant("agendia_runtime", newTables.slice(0, 5).concat("appointments"), ["SELECT", "INSERT", "UPDATE"]);
     grant("agendia_runtime", ["business_calendar_closures"], ["DELETE"]);
     grant("agendia_runtime", ["resource_services"], ["SELECT", "INSERT", "DELETE"]);

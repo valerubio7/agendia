@@ -1,6 +1,4 @@
-const INITIAL_MS = 600_000;
-const ACTIVE_MS = 90_000;
-const RESET_MS = 3_600_000;
+import { DEFAULT_REPLY_PACING, type ReplyPacing } from "@agendia/domain";
 
 /** Accepted activity, not provider timestamps, determines pacing. A burst never slides. */
 export function replyDeadline(
@@ -8,8 +6,9 @@ export function replyDeadline(
   lastReply: Date | null,
   lastExchange: Date | null,
   pendingDeadline: Date | null,
+  policy: ReplyPacing = DEFAULT_REPLY_PACING,
 ): Date {
   if (pendingDeadline) return pendingDeadline;
-  const initial = !lastReply || !lastExchange || now.getTime() - lastExchange.getTime() > RESET_MS;
-  return new Date(now.getTime() + (initial ? INITIAL_MS : ACTIVE_MS));
+  const initial = !lastReply || !lastExchange || now.getTime() - lastExchange.getTime() > policy.inactivityResetSeconds * 1000;
+  return new Date(now.getTime() + (initial ? policy.initialDelaySeconds : policy.activeDelaySeconds) * 1000);
 }

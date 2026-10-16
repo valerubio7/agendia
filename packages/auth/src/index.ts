@@ -11,6 +11,11 @@ export class InMemoryAuthStore {
 }
 
 export const digestOpaqueToken = (token: string) => createHash("sha256").update(token).digest("hex");
+// Separate the recoverable CSRF value from the stored session digest; no new secret storage.
+export const deriveSessionCsrf = (token: string) => createHash("sha256").update("agendia:session-csrf:v1\0").update(token).digest("hex");
+// Same Argon2id work for absent/disabled accounts; this is a public dummy PHC, not a credential.
+const DUMMY_PASSWORD_PHC = "$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHQxMjM0NTY3OA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+export const verifyLoginPassword = (phc: string | undefined, password: string) => verify(phc ?? DUMMY_PASSWORD_PHC, password);
 const normalizeEmail = (email: string) => email.trim().toLowerCase();
 const DEFAULTS = { absoluteTtlMs: 8 * 60 * 60_000, idleTtlMs: 30 * 60_000 };
 
@@ -37,9 +42,10 @@ export class AuthService {
 
   async login(email: string, password: string, now = Date.now()) {
     const identity = this.store.identities.find((item) => item.email === normalizeEmail(email));
-    if (!identity?.active || !(await verify(identity.passwordHash, password))) throw new Error("Invalid credentials");
+    const validPassword = await verifyLoginPassword(identity?.passwordHash, password);
+    if (!identity?.active || !validPassword) throw new Error("Invalid credentials");
     const token = randomBytes(32).toString("hex");
-    const csrfToken = randomBytes(32).toString("hex");
+    const csrfToken = deriveSessionCsrf(token);
     this.store.sessions.push({ tokenHash: digestOpaqueToken(token), identityId: identity.id, createdAt: now, lastSeenAt: now, absoluteExpiresAt: now + this.options.absoluteTtlMs, idleExpiresAt: now + this.options.idleTtlMs, revokedAt: null, csrfToken });
     return { token, csrfToken, identity };
   }
@@ -59,6 +65,7 @@ export class AuthService {
 }
 
 export function sessionCookie(value: string) { return { name: "__Host-agendia_session", value, secure: true, httpOnly: true, sameSite: "lax" as const, path: "/" }; }
-export function validateMutationRequest(input: { origin?: string; expectedOrigin: string; csrfHeader?: string; csrfSession?: string }): boolean {
-  return input.origin === input.expectedOrigin && Boolean(input.csrfHeader) && input.csrfHeader === input.csrfSession;
+export function validateMutationRequest(input: { origin?: string; expectedOrigin: string; csrfHeader?: string; csrfSession?: string; sessionToken?: string }): boolean {
+  return input.origin === input.expectedOrigin && Boolean(input.csrfHeader) &&
+    (input.csrfHeader === input.csrfSession || Boolean(input.sessionToken && input.csrfHeader === deriveSessionCsrf(input.sessionToken)));
 }

@@ -48,6 +48,12 @@ async function freePort() {
   return address.port;
 }
 
+type AgendaJobEvidence = {
+  id: string; outboxId: string; data: Record<string, unknown>; singletonKey: string;
+  state: string; retryCount: number; retryLimit: number; retryDelay: number;
+  retryBackoff: boolean; scheduled: boolean;
+};
+
 export interface SystemHarness {
   webUrl: string;
   apiUrl: string;
@@ -118,6 +124,8 @@ export interface SystemHarness {
     state: string; failureCode: string | null; clients: number; appointments: number;
     receipts: number; effects: number; outbound: number;
   }>;
+  agendaJobEvidence(email: string, providerMessageId: string): Promise<AgendaJobEvidence>;
+  releaseAgendaRetry(email: string, providerMessageId: string, jobId: string, retryCount: number): Promise<void>;
   summaryEvidence(): Promise<
     Array<{ email: string; version: number; coveredThrough: number }>
   >;
@@ -499,6 +507,32 @@ export async function startSystem(): Promise<SystemHarness> {
           where i.normalized_email=${email} and m.provider_message_id=${providerMessageId}`;
         expect(rows).toHaveLength(1);
         return rows[0]!;
+      },
+      agendaJobEvidence: async (email, providerMessageId) => {
+        const rows = await database.sql<AgendaJobEvidence[]>`select j.id,o.id "outboxId",j.data,
+          j.singleton_key "singletonKey",j.state::text state,j.retry_count "retryCount",
+          j.retry_limit "retryLimit",j.retry_delay "retryDelay",j.retry_backoff "retryBackoff",
+          j.start_after>now() scheduled
+          from messages m join auth_identities i on i.business_id=m.business_id
+          join outbox_events o on o.business_id=m.business_id and o.topic='ai.generate'
+            and o.payload->>'messageId'=m.id::text
+          join pgboss.job j on j.data->>'messageId'=m.id::text and j.name='ai-generate'
+          where i.normalized_email=${email} and m.provider_message_id=${providerMessageId}`;
+        expect(rows).toHaveLength(1);
+        return rows[0]!;
+      },
+      releaseAgendaRetry: async (email, providerMessageId, jobId, retryCount) => {
+        // Advance only the observed retry's eligibility; pg-boss still owns attempts/backoff.
+        const rows = await database.sql`update pgboss.job j set start_after=now()-interval '1 second'
+          where j.name='ai-generate' and j.id=${jobId} and j.state='retry'
+            and j.retry_count=${retryCount} and j.start_after>now()
+            and exists(select 1 from messages m join auth_identities i on i.business_id=m.business_id
+              join outbox_events o on o.business_id=m.business_id and o.topic='ai.generate'
+                and o.payload->>'messageId'=m.id::text and o.id=j.id
+              where i.normalized_email=${email} and m.provider_message_id=${providerMessageId}
+                and j.data->>'messageId'=m.id::text)
+          returning j.id`;
+        expect(rows).toEqual([{ id: jobId }]);
       },
       summaryEvidence: () =>
         database.sql`select i.normalized_email email,s.version,s.covered_through::int "coveredThrough" from conversation_summaries s join auth_identities i on i.business_id=s.business_id order by email,s.version`,

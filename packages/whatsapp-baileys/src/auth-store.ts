@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import type { RolePool, TenantContext } from "@agendia/db";
+import type { PostgresRepositories, RolePool, TenantContext } from "@agendia/db";
 
 interface WrappedKey {
   ciphertext: Buffer;
@@ -79,6 +79,8 @@ export class BaileysAuthStore {
     }
     const dek = randomBytes(32);
     const wrapped = await this.kms.wrapKey(connectionId, dek);
+    // Another in-memory writer may have initialized the envelope while KMS yielded.
+    if (this.repository.connections.has(connectionId)) return this.dek(businessId, connectionId);
     this.repository.connections.set(connectionId, { ...wrapped, businessId });
     return dek;
   }
@@ -90,6 +92,7 @@ export class BaileysAuthStore {
     const version = expectedVersion + 1;
     const encrypted = encrypt(await this.dek(businessId, connectionId), Buffer.from(JSON.stringify(value)), recordAad(businessId, connectionId, name, version));
     const record = { businessId, connectionId, name, version, ...encrypted };
+    if ((this.repository.records.get(key)?.version ?? 0) !== expectedVersion) throw new Error("authentication record version conflict");
     this.repository.records.set(key, record);
     return record;
   }
@@ -127,22 +130,30 @@ export class EnvironmentKms extends InMemoryKms {
 
 export class PostgresBaileysAuthStore {
   constructor(private readonly pool: RolePool, private readonly context: TenantContext, private readonly kms: KmsPort) {}
-  private async memory(connectionId: string, name: string) {
+  private async memory(repo: PostgresRepositories, connectionId: string, name: string) {
     const repository = new InMemoryAuthRecordRepository();
     const [connection, record] = await Promise.all([
-      this.pool.run(this.context, (repo) => repo.authEnvelope(connectionId)),
-      this.pool.run(this.context, (repo) => repo.authRecord(connectionId, name)),
+      repo.authEnvelope(connectionId),
+      repo.authRecord(connectionId, name),
     ]);
     if (connection) repository.connections.set(connectionId, connection);
     if (record) repository.records.set(`${connectionId}:${name}`, record);
     return { repository, store: new BaileysAuthStore(repository, this.kms) };
   }
   async write(businessId: string, connectionId: string, name: string, value: unknown, expectedVersion: number) {
-    const { repository, store } = await this.memory(connectionId, name), record = await store.write(businessId, connectionId, name, value, expectedVersion);
-    await this.pool.run(this.context, async (repo) => { await repo.saveAuthEnvelope(connectionId, repository.connections.get(connectionId)!); await repo.saveAuthRecord(record); });
-    return record;
+    return this.pool.run(this.context, async (repo) => {
+      await repo.lockAuthConnection(businessId, connectionId);
+      const { repository, store } = await this.memory(repo, connectionId, name);
+      const initialized = repository.connections.has(connectionId);
+      const record = await store.write(businessId, connectionId, name, value, expectedVersion);
+      if (!initialized) await repo.saveAuthEnvelope(connectionId, repository.connections.get(connectionId)!);
+      await repo.saveAuthRecord(record);
+      return record;
+    });
   }
-  async read(businessId: string, connectionId: string, name: string) { return (await this.memory(connectionId, name)).store.read(businessId, connectionId, name); }
+  async read(businessId: string, connectionId: string, name: string) {
+    return this.pool.run(this.context, async (repo) => (await this.memory(repo, connectionId, name)).store.read(businessId, connectionId, name));
+  }
   async version(connectionId: string, name: string) { return (await this.pool.run(this.context, (repo) => repo.authRecord(connectionId, name)))?.version ?? 0; }
 }
 

@@ -3525,6 +3525,10 @@ main.login-frame {
   margin: 0;
 }
 
+.admin-screen .admin-create.admin-instructions form {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .admin-screen .admin-create form > label,
 .admin-screen .admin-management form > label {
   min-width: 0;

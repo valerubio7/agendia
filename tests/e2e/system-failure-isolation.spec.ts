@@ -90,6 +90,7 @@ test("contains hostile access and provider failures while preserving isolated re
   page,
   system,
 }) => {
+  test.setTimeout(300_000);
   expect(await system.readiness()).toEqual({
     postgres: true,
     api: true,
@@ -335,14 +336,33 @@ test("contains hostile access and provider failures while preserving isolated re
       providerMessageId: id, remoteJid: `549112345678${index}@s.whatsapp.net`, text: "Consultar servicios",
     })).outcome).toBe("accepted");
     await system.releaseReply(tenants[0]!.email, id, 600, calls);
-    // Await the real adapter abort (5s headers / 30s body), not a fabricated timeout error.
+    // Observe the real abort (5s headers / enclosing 20s conversation deadline for body).
     await failure;
-    await expect.poll(() => system.agendaEvidence(tenants[0]!.email, id)).toEqual({
-      state: "failed", failureCode: mode === "error" ? "provider_unavailable" : "timeout",
+    const emptyFailure = {
+      failureCode: mode === "error" ? "provider_unavailable" : "timeout",
       clients: 0, appointments: 0, receipts: 0, effects: 0, outbound: 0,
+    };
+    await expect.poll(() => system.agendaEvidence(tenants[0]!.email, id)).toEqual({
+      ...emptyFailure, state: "retry",
     });
+    const job = await system.agendaJobEvidence(tenants[0]!.email, id);
+    expect(job).toMatchObject({
+      id: job.outboxId, singletonKey: `ai:${id}`, data: { correlationId: `ai:${id}` },
+      state: "retry", retryCount: 0, retryLimit: 2, retryDelay: 5, retryBackoff: true, scheduled: true,
+    });
+    // Drain this same published job before changing the double's global failure mode.
+    for (const retryCount of [0, 1, 2]) {
+      const state = retryCount === 2 ? "failed" : "retry";
+      await expect.poll(() => system.agendaJobEvidence(tenants[0]!.email, id), {
+        timeout: 30_000, intervals: [100, 250, 500],
+      }).toEqual({ ...job, state, retryCount, scheduled: state === "retry" });
+      expect(await system.agendaEvidence(tenants[0]!.email, id)).toEqual({ ...emptyFailure, state });
+      expect(system.providers.deepSeek.calls).toHaveLength(calls + retryCount + 1);
+      expect(system.providers.deepSeek.agendaAborts).toBe(aborted + (mode === "error" ? 0 : retryCount + 1));
+      expect(system.providers.baileys.acks).toHaveLength(0);
+      if (state === "retry") await system.releaseAgendaRetry(tenants[0]!.email, id, job.id, retryCount);
+    }
     expect(JSON.parse(system.providers.deepSeek.calls[calls]!).tools.some((tool: { function: { name: string } }) => tool.function.name === "read_catalog")).toBe(true);
-    expect(system.providers.deepSeek.agendaAborts).toBe(aborted + (mode === "error" ? 0 : 1));
     expect(system.providers.baileys.acks).toHaveLength(0);
   }
   // Agenda failures escape to the queue; they do not commit a terminal ai.failed message.
@@ -462,10 +482,15 @@ test("contains hostile access and provider failures while preserving isolated re
     );
   const evidence = await system.evidence();
   expect(evidence.tenants.every((row) => row.messages > 0)).toBe(true);
-  for (const mode of ["header-deadline", "body-deadline", "error"])
-    expect(await system.agendaEvidence(tenants[0]!.email, `agenda-${mode}`)).toMatchObject({
-      state: "failed", receipts: 0, effects: 0, outbound: 0,
+  for (const mode of ["header-deadline", "body-deadline", "error"]) {
+    expect(await system.agendaEvidence(tenants[0]!.email, `agenda-${mode}`)).toEqual({
+      state: "failed", failureCode: mode === "error" ? "provider_unavailable" : "timeout",
+      clients: 0, appointments: 0, receipts: 0, effects: 0, outbound: 0,
     });
+    expect(await system.agendaJobEvidence(tenants[0]!.email, `agenda-${mode}`)).toMatchObject({
+      state: "failed", retryCount: 2,
+    });
+  }
   const recoveryRequest = system.providers.deepSeek.calls.slice(callsBeforeRecovery)
     .map(call => JSON.parse(call))
     .find(payload => Array.isArray(payload.tools) && payload.messages.at(-1)?.role === "user"

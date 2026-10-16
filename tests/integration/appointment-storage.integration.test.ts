@@ -278,6 +278,69 @@ test("availability rejects hostile body fields before clock and resolves only ow
   expect(await effects(owner)).toEqual(before);
 });
 
+// Observe rows returned by the real occupancy SELECT, not elapsed time or raw date text.
+const measuredAvailability = async (owner: Owner, input: unknown, appointmentId?: string) => {
+  const occupancyRows: number[] = [];
+  const choices = await tenant(owner.business, async sql => {
+    const observed = new Proxy(sql, {
+      apply(target, receiver, args) {
+        const query = Reflect.apply(target, receiver, args);
+        if (Array.isArray(args[0]) && /select\s+resource_id/.test(args[0].join("")))
+          return query.then((rows: unknown[]) => { occupancyRows.push(rows.length); return rows; });
+        return query;
+      },
+    });
+    return new PostgresRepositories(observed).listAppointmentAvailability(owner.business, input,
+      { clock: () => now, ...(appointmentId ? { appointmentId } : {}) });
+  });
+  return { choices, occupancyRows };
+};
+
+test("availability bounds numeric occupancy despite distant historical volume", async () => {
+  const owner = await readyOwner();
+  const historyStart = parseInstantMs("1900-01-01T00:00:00Z")!;
+  await database.sql`insert into appointments(business_id,client_id,service_id,resource_id,service_label,resource_label,
+      price_ars,duration_minutes,start_raw,start_ms,end_ms,state,origin)
+    select ${owner.business},${owner.client},${owner.service},${owner.resource},'Old service','Old resource',0,15,
+      '9999-01-01T00:00:00Z',${historyStart}::bigint+n*900000,${historyStart}::bigint+(n+1)*900000,'confirmed','manual'
+    from generate_series(0,511) n`;
+  await insert(row(owner, { state: "confirmed", start_ms: 253402387139999 - 15 * minutes, end_ms: 253402387139999 }));
+  await insert(row(owner, { state: "confirmed" }));
+  await insert(row(owner, { state: "confirmed", resource_id: owner.alternate }));
+  const before = await effects(owner);
+  const result = await measuredAvailability(owner, { serviceId: owner.service, date: "2026-06-01", resourceId: owner.resource });
+  expect(result.choices).toHaveLength(55);
+  expect(result.occupancyRows).toEqual([1]);
+  expect(await effects(owner)).toEqual(before);
+});
+
+test("availability bounds include cross-midnight saved duration after catalog shortening", async () => {
+  const owner = await readyOwner();
+  await database.sql`update services set duration_minutes=120 where id=${owner.service}`;
+  const saved = await book(owner);
+  await database.sql`update services set duration_minutes=15 where id=${owner.service}`;
+  const lastStart = parseInstantMs("2026-06-01T23:45:00-03:00")!;
+  const blockerStart = parseInstantMs("2026-06-02T01:30:00-03:00")!;
+  const blocker = await insert(row(owner, { state: "confirmed", start_raw: "1900-01-01T00:00:00Z",
+    start_ms: blockerStart, end_ms: blockerStart + 15 * minutes }));
+  // Exact lower and upper touching rows are irrelevant even to the bounded SELECT.
+  await insert(row(owner, { state: "confirmed", start_ms: start - 15 * minutes, end_ms: start }));
+  await insert(row(owner, { state: "confirmed", start_ms: lastStart + 120 * minutes, end_ms: lastStart + 135 * minutes }));
+  const before = await effects(owner);
+  const query = { serviceId: owner.service, date: "2026-06-01", resourceId: owner.resource };
+  const result = await measuredAvailability(owner, query, saved.id);
+  expect(result.choices.find(choice => choice.startMs === start)?.terms).toEqual(saved.terms);
+  expect(result.choices.find(choice => choice.startMs === lastStart - 15 * minutes)?.endMs).toBe(blockerStart);
+  expect(result.choices.some(choice => choice.startMs === lastStart)).toBe(false);
+  expect(result.occupancyRows).toEqual([1]);
+  expect(await effects(owner)).toEqual(before);
+  await database.sql`update appointments set state='cancelled' where id=${blocker.id}`;
+  const unblocked = await measuredAvailability(owner, query, saved.id);
+  expect(unblocked.choices.at(-1)).toMatchObject({ startMs: lastStart, endMs: lastStart + 120 * minutes,
+    terms: { durationMinutes: 120 } });
+  expect(unblocked.occupancyRows).toEqual([0]);
+});
+
 test("availability consumes only numeric Confirmed selected-resource half-open occupancy", async () => {
   const owner = await readyOwner();
   // Deliberately incoherent raw dates: occupancy must use only SQL epochs.

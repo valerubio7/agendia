@@ -29,6 +29,36 @@ import {
   type TestPostgres,
 } from "../support/index.ts";
 
+test("independent cookie-only tabs recover CSRF during session lifecycle without replaying failed writes", async () => {
+  const clients: ApiClient[] = [];
+  let bootstraps = 0, writes = 0;
+  const transport: ApiTransport = async (path, init) => {
+    if (path === "/api/auth/session") return Response.json({ identityId: "i", role: "platform_admin", businessId: null });
+    if (path === "/api/auth/csrf") {
+      bootstraps++;
+      expect(init?.method).toBe("POST");
+      expect(init?.credentials).toBe("include");
+      expect(init?.cache).toBe("no-store");
+      expect(new Headers(init?.headers).get("x-csrf-bootstrap")).toBe("1");
+      return Response.json({ csrfToken: "stable-recovered-token" });
+    }
+    writes++;
+    expect(new Headers(init?.headers).get("x-csrf-token")).toBe("stable-recovered-token");
+    return Response.json({ code: "FORBIDDEN" }, { status: 403 });
+  };
+  for (let tab = 0; tab < 2; tab++) clients.push(new ApiClient(transport));
+  await Promise.all(clients.map(client => client.session()));
+  expect(bootstraps).toBe(2);
+  await expect(clients[0]!.logout()).rejects.toMatchObject({ status: 403 });
+  expect(writes).toBe(1);
+  expect(bootstraps).toBe(2);
+  const unauthenticated = new ApiClient(async path => {
+    expect(path).toBe("/api/auth/session");
+    return Response.json({ code: "UNAUTHENTICATED" }, { status: 401 });
+  });
+  await expect(unauthenticated.session()).rejects.toMatchObject({ status: 401 });
+});
+
 test("operation dispatch is one-write scoped and receipt/fence wrappers retain transport protections", async () => {
   const calls: { path: string; init?: RequestInit }[] = [];
   const signal = new AbortController().signal;
@@ -341,6 +371,7 @@ describe("Next web client against Fastify contracts", () => {
     let transportCalls = 0;
     const safeTransport: ApiTransport = async (input) => {
       transportCalls += 1;
+      if (input === "/api/auth/csrf") return Response.json({ csrfToken: "bootstrap-csrf" });
       expect(input).toBe("/api/auth/session");
       return Response.json({ role: "platform_admin", businessId: null, identityId: "admin-identity" });
     };
@@ -350,7 +381,7 @@ describe("Next web client against Fastify contracts", () => {
       businessId: null,
       identityId: "admin-identity",
     });
-    expect(transportCalls).toBe(1);
+    expect(transportCalls).toBe(2);
 
     for (const base of [
       "https://attacker.test/api",
@@ -380,7 +411,7 @@ describe("Next web client against Fastify contracts", () => {
     ]) {
       await expect(call(path)).rejects.toBeInstanceOf(TypeError);
     }
-    expect(transportCalls).toBe(1);
+    expect(transportCalls).toBe(2);
   });
 
   test("default browser transport only fetches normalized same-origin API paths", async () => {

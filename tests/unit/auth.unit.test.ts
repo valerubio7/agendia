@@ -40,11 +40,35 @@ describe("opaque authentication", () => {
     expect(validateMutationRequest({ origin: "https://evil.test", expectedOrigin: "https://panel.agendia.test", csrfHeader: "csrf", csrfSession: "csrf" })).toBe(false);
   });
 
+  test("unknown-account verification performs valid dummy Argon2id work", async () => {
+    const { verifyLoginPassword } = await import("../../packages/auth/src/index.ts");
+    await expect(verifyLoginPassword(undefined, "unknown account password")).resolves.toBe(false);
+  });
+
+  test("stable recovery tokens coexist with previously issued random CSRF tokens", async () => {
+    const { deriveSessionCsrf } = await import("../../packages/auth/src/index.ts");
+    const auth = new AuthService(new InMemoryAuthStore());
+    await auth.createIdentity({ email: "tabs@example.test", password: "correct horse battery staple", role: "platform_admin", businessId: null });
+    const login = await auth.login("tabs@example.test", "correct horse battery staple");
+    expect(deriveSessionCsrf(login.token)).toBe(login.csrfToken);
+    expect(deriveSessionCsrf(login.token)).not.toBe(login.token);
+    expect(deriveSessionCsrf(login.token)).not.toBe(deriveSessionCsrf("another-session"));
+    const old = "old-random-csrf";
+    for (const csrfHeader of [old, deriveSessionCsrf(login.token)]) {
+      expect(validateMutationRequest({ origin: "https://panel.test", expectedOrigin: "https://panel.test", csrfHeader, csrfSession: old, sessionToken: login.token })).toBe(true);
+      expect(validateMutationRequest({ origin: "https://evil.test", expectedOrigin: "https://panel.test", csrfHeader, csrfSession: old, sessionToken: login.token })).toBe(false);
+    }
+  });
+
   test("exposes login/logout/session but no registration or recovery", async () => {
     const api = buildApi(new AuthService(new InMemoryAuthStore()));
     expect((await api.inject({ method: "POST", url: "/auth/register" })).statusCode).toBe(404);
     expect((await api.inject({ method: "POST", url: "/auth/recover" })).statusCode).toBe(404);
     expect((await api.inject({ method: "GET", url: "/auth/session" })).statusCode).toBe(401);
+    const csrf = await api.inject({ method: "POST", url: "/auth/csrf" });
+    expect(csrf.statusCode).toBe(401);
+    expect(csrf.headers["cache-control"]).toBe("no-store");
+    expect(csrf.json()).not.toHaveProperty("csrfToken");
     await api.close();
   });
 });

@@ -2,7 +2,9 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { hash, Algorithm } from "@node-rs/argon2";
 import { join } from "node:path";
 import { buildApi } from "../../apps/api/src/app.ts";
+import { buildReceptionistMessages } from "../../apps/message-worker/src/receptionist.ts";
 import { createRuntimePools } from "@agendia/db";
+import type { PlatformAiInstructions } from "@agendia/contracts";
 import {
   applyPostgresMigrations,
   startTestPostgres,
@@ -79,6 +81,44 @@ afterAll(async () => {
   await pools?.end();
   await database?.stop();
 });
+
+const csrfBootstrapRegression = async () => {
+    const auth = await adminLogin();
+    const bootstrap = (origin?: string, header = true, cookie = auth.cookie) => app.inject({
+      method: "POST", url: "/auth/csrf", headers: {
+        cookie, ...(origin ? { origin } : {}), ...(header ? { "x-csrf-bootstrap": "1" } : {}),
+      },
+    });
+    for (const response of [await bootstrap(), await bootstrap("https://evil.test"), await bootstrap(ORIGIN, false)]) {
+      expect(response.statusCode).toBe(403);
+      expect(response.headers["cache-control"]).toBe("no-store");
+      expect(response.json()).not.toHaveProperty("csrfToken");
+      expect(response.headers["access-control-allow-origin"]).toBeUndefined();
+    }
+    expect((await bootstrap(ORIGIN, true, "")).statusCode).toBe(401);
+    // Model a session issued by the previous runtime; bootstrap must not rotate its random token.
+    const oldToken = "previously-issued-random-token";
+    const { digestOpaqueToken } = await import("@agendia/auth");
+    await database.sql`update web_sessions set csrf_sha256=${digestOpaqueToken(oldToken)} where token_sha256=${digestOpaqueToken(auth.cookie.split("=")[1]!)}`;
+    const tabs = await Promise.all([bootstrap(ORIGIN), bootstrap(ORIGIN)]);
+    for (const tab of tabs) {
+      expect(tab.statusCode).toBe(200);
+      expect(tab.headers["cache-control"]).toBe("no-store");
+      expect(tab.json().csrfToken).toMatch(/^[a-f0-9]{64}$/);
+      expect(JSON.stringify(tab.json())).not.toContain(auth.cookie.split("=")[1]!);
+    }
+    const recovered = tabs[0]!.json().csrfToken;
+    expect(tabs[1]!.json().csrfToken).toBe(recovered);
+    const save = (csrf: string, origin = ORIGIN) => request("PUT", "/admin/ai-instructions", {
+      cookie: auth.cookie, csrf, origin, body: { additionalInstructions: "" },
+    });
+    expect((await save(oldToken)).statusCode).toBe(200);
+    expect((await save(recovered)).statusCode).toBe(200);
+    expect((await save(recovered, "https://evil.test")).statusCode).toBe(403);
+    expect((await save("wrong")).statusCode).toBe(403);
+    expect((await request("POST", "/auth/logout", { cookie: auth.cookie, csrf: recovered, origin: ORIGIN })).statusCode).toBe(204);
+    expect((await bootstrap(ORIGIN)).statusCode).toBe(401);
+};
 
 describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
   test("sets a secure opaque cookie and enforces expiration, logout, CSRF and Origin", async () => {
@@ -529,8 +569,38 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
     const initial = await request("GET", url, admin);
     expect(initial.statusCode).toBe(200);
     expect(initial.json().additionalInstructions).toBe("");
-    const initialConfig = initial.json<{ baseInstructions: string; additionalInstructions: string }>();
-    const body = { additionalInstructions: "  Atención 😀\n\tfin  " };
+    const initialConfig = initial.json<PlatformAiInstructions>();
+    const privateData = {
+      business: "fixture-private-business", customer: "fixture-private-customer",
+      history: "fixture-private-history", summary: "fixture-private-summary",
+      assistant: "fixture-private-assistant", admin: "fixture-supplementary-guidance",
+      identity: "fixture-private-identity", quote: "fixture-private-quote",
+      evidenceReference: "a".repeat(64), quoteFingerprint: "b".repeat(64),
+    };
+    const runtimeMessages = buildReceptionistMessages({
+      raw_text: privateData.customer, sequence: "4",
+      profile: { display_name: privateData.business }, assistant: { style: privateData.assistant },
+      currentGroup: [{ id: "4", sequence: "4", raw_text: privateData.customer }],
+      turns: [{ id: "3", sequence: "3", direction: "outbound", processing_state: "sent", raw_text: privateData.history }],
+      summaries: [{ covered_through: "2", structured_summary: {
+        facts: [privateData.summary], requests: [], commitments: [], preferences: [], openItems: [],
+      } }],
+    }, privateData.admin, "2035-04-01T12:00:00Z", {
+      pending: { clientId: privateData.identity, quote: { id: privateData.quote } },
+      currentEvidence: privateData.customer,
+      naturalConfirmation: { evidenceReference: privateData.evidenceReference, quoteFingerprint: privateData.quoteFingerprint },
+    });
+    const systemMessages = runtimeMessages.filter(message => message.role === "system");
+    expect(systemMessages).toHaveLength(1);
+    for (const token of Object.values(privateData)) {
+      expect(JSON.stringify(runtimeMessages.slice(1))).toContain(token);
+      expect(initialConfig.baseInstructions).not.toContain(token);
+    }
+    expect(initialConfig.baseInstructions).toBe(systemMessages[0]!.content!);
+    const policy = { initialDelaySeconds: 0, activeDelaySeconds: 13, inactivityResetSeconds: 55 };
+    expect(initial.json().replyPacing).toEqual({ initialDelaySeconds: 600, activeDelaySeconds: 90, inactivityResetSeconds: 3600 });
+    const body = { additionalInstructions: "  Atención 😀\n\tfin  ", replyPacing: policy };
+    expect((await request("PUT", url, { ...user, origin: ORIGIN, body })).statusCode).toBe(404);
     for (const protection of [
       { origin: "https://evil.test", csrf: admin.csrf },
       { origin: ORIGIN, csrf: "wrong" },
@@ -544,6 +614,21 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
     }
     expect((await request("PUT", url, { ...admin, origin: ORIGIN, body })).json<typeof initialConfig>()).toEqual({ ...initialConfig, ...body });
     expect((await request("GET", url, await adminLogin())).json<typeof initialConfig>()).toEqual({ ...initialConfig, ...body });
-    expect((await request("PUT", url, { ...admin, origin: ORIGIN, body: { additionalInstructions: "" } })).statusCode).toBe(200);
+    const instructionOnly = { additionalInstructions: "instruction-only update" };
+    expect((await request("PUT", url, { ...admin, origin: ORIGIN, body: instructionOnly })).json<PlatformAiInstructions>()).toEqual({ ...initialConfig, ...body, ...instructionOnly });
+    for (const field of Object.keys(policy)) {
+      for (const value of [-1, 0.5, 604801, "90", null]) {
+        const invalid = { additionalInstructions: "must not persist", replyPacing: { ...policy, [field]: value } };
+        expect((await request("PUT", url, { ...admin, origin: ORIGIN, body: invalid })).statusCode).toBe(400);
+      }
+    }
+    for (const invalid of [null, {}, { ...policy, initialDelaySeconds: 86401 }, { ...policy, activeDelaySeconds: 86401 }, { ...policy, inactivityResetSeconds: 0 }, { ...policy, milliseconds: 600000 }]) {
+      expect((await request("PUT", url, { ...admin, origin: ORIGIN, body: { additionalInstructions: "must not persist", replyPacing: invalid } })).statusCode).toBe(400);
+    }
+    expect((await request("GET", url, await adminLogin())).json<PlatformAiInstructions>()).toEqual({ ...initialConfig, ...body, ...instructionOnly });
+    const cleared = await request("PUT", url, { ...admin, origin: ORIGIN, body: { additionalInstructions: "" } });
+    expect(cleared.statusCode).toBe(200);
+    expect(cleared.json().replyPacing).toEqual(policy);
   });
+  test("CSRF bootstrap is origin/header/session protected, stable across tabs and compatible with old tokens", csrfBootstrapRegression);
 });
