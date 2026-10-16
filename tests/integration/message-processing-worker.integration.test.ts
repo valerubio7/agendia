@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { PgBoss } from "pg-boss";
-import type { AiProvider, ToolConversationProvider } from '@agendia/domain';
+import type { AiProvider, ToolAssistantMessage, ToolConversationProvider } from '@agendia/domain';
 import { createRuntimePools, tenantContext, PostgresRepositories } from "@agendia/db";
 import {
   BaileysAuthStateAdapter,
@@ -34,6 +35,7 @@ const A = "11111111-1111-4111-8111-111111111111",
   B = "22222222-2222-4222-8222-222222222222";
 const CA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   CB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const OWNERSHIP = "cccccccc-1111-4111-8111-cccccccccccc";
 const SA = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
   SB = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb";
 // Each retired varchar(8000) can contain 8000 astral Unicode characters.
@@ -72,6 +74,7 @@ beforeAll(async () => {
   await db.sql`update business_profiles set description='RETAINED_DESCRIPTION',address='RETAINED_ADDRESS' where business_id=${A}`;
   await db.sql`insert into assistant_configs(business_id,active,style,business_instructions) values(${A},true,${maximumStyle},${maximumBusinessInstructions}),(${B},false,'STYLE-B','no usar')`;
   await db.sql`insert into whatsapp_connections(id,business_id,session_public_id,state,owner_id) values(${CA},${A},${SA},'CONNECTED','manager-1'),(${CB},${B},${SB},'CONNECTED','manager-2')`;
+  await db.sql`update whatsapp_connections set ownership_token=${OWNERSHIP} where id=${CA}`;
   const workerUrl = await createRoleLogin(
     db,
     "unit23_worker",
@@ -268,7 +271,7 @@ describe("PostgreSQL messaging workers", () => {
     await db.sql`update assistant_configs set style='Estilo A',business_instructions='Instrucciones A' where business_id=${A}`;
     await worker.process(job);
     expect(calls).toHaveLength(2);
-    expect(JSON.parse(calls[1]!).messages.at(-1)).toMatchObject({ role: 'tool', toolCallId: 'business', content: JSON.stringify({ status: 'data', data: { displayName: 'A', description: 'RETAINED_DESCRIPTION', address: 'RETAINED_ADDRESS' } }) });
+    expect(JSON.parse(calls[1]!).messages.at(-1)).toMatchObject({ role: 'tool', toolCallId: 'business', content: JSON.stringify({ status: 'data', data: { displayName: 'A', description: 'RETAINED_DESCRIPTION', address: 'RETAINED_ADDRESS' }, namesReference: null }) });
     for (const included of ['¿Dónde están ubicados?', 'RETAINED_ADDRESS', 'RETAINED_DESCRIPTION', 'cliente nuevo', 'Estilo A', 'Instrucciones A'])
       expect(calls[0]).toContain(included);
     for (const excluded of ['STYLE-B', 'SECRETO-B', 'no usar']) expect(calls[0]).not.toContain(excluded);
@@ -303,6 +306,7 @@ describe("PostgreSQL messaging workers", () => {
         },
       },
       "manager-1",
+      () => [OWNERSHIP],
     );
     expect(await ok.dispatchNext()).toBe(true);
     expect(sent).toEqual([
@@ -318,6 +322,7 @@ describe("PostgreSQL messaging workers", () => {
       pools,
       { send: async () => ({ outcome: "rejected" as const }) },
       "manager-1",
+      () => [OWNERSHIP],
     );
     expect(await rejected.dispatchNext()).toBe(true);
     await db.sql`insert into outbound_commands(business_id,conversation_id,connection_id,text,state) values(${A},${row.conversation_id},${CA},'ambigua','generated')`;
@@ -331,6 +336,7 @@ describe("PostgreSQL messaging workers", () => {
         },
       },
       "manager-1",
+      () => [OWNERSHIP],
     );
     expect(await crash.dispatchNext()).toBe(true);
     expect(await crash.dispatchNext()).toBe(false);
@@ -759,7 +765,7 @@ describe("PostgreSQL messaging workers", () => {
         command = await pools.worker.run(context, r => r.saveGenerated(first.id, A, 'prior'));
         if (kind === 'claimed') {
           await db.sql`update outbound_commands set state='failed' where state='generated' and outbound_id<>${command.outbound_id}`;
-          const claimed = await pools.manager.run(context, r => r.claimOwnedOutbound('manager-1'));
+          const claimed = await pools.manager.run(context, r => r.claimOwnedOutbound('manager-1', [OWNERSHIP]));
           expect(claimed?.outbound_id).toBe(command.outbound_id);
         }
       }
@@ -768,7 +774,7 @@ describe("PostgreSQL messaging workers", () => {
       }
       const latest = await accept('latest', ' \tcurrent\n ');
       if (kind === 'superseded-failure') await pools.worker.run(context, r => r.failAi(first.id, A, 'ai.timeout'));
-      if (kind === 'claimed') await pools.manager.run(context, r => r.finishOutbound(command.outbound_id, 'sent', 'delayed-ack'));
+      if (kind === 'claimed') await pools.manager.run(context, r => r.finishOutbound(command.outbound_id, 'sent', 'delayed-ack', OWNERSHIP));
       if (kind.startsWith('legacy')) await db.sql`insert into messages(business_id,conversation_id,connection_id,provider_message_id,sequence,direction,raw_text,received_at,processing_state) values(${A},${first.conversation_id},${CA},${kind === 'legacy' ? 'legacy-ack' : 'unknown-ack'},3,'outbound','prior',now(),'sent')`;
       await makeEligible();
       const source = await pools.worker.run(context, r => r.loadAiMessage(latest.id, true));
@@ -862,7 +868,7 @@ describe("PostgreSQL messaging workers", () => {
       // The atomic claim already happened: this new inbound cannot retract it.
       await accept('race-5', 'cinco');
       return { outcome: 'ack', providerMessageId: 'race-ack' };
-    } }, 'manager-1');
+    } }, 'manager-1', () => [OWNERSHIP]);
     // Older unrelated test commands are still generated; make this assertion isolated.
     await db.sql`update outbound_commands set state='failed' where state='generated' and source_message_id<>${latest.messageId}`;
     expect(await dispatcher.dispatchNext()).toBe(false);
@@ -888,4 +894,203 @@ describe("PostgreSQL messaging workers", () => {
     expect(await restarted.dispatchBatch()).toBe(1);
     expect(published).toHaveLength(1);
   });
+
+  test("live global policy changes affect new bursts, never pending deadlines or their outbox schedule", async () => {
+    const inbound = new PostgresInboundHandler(pools);
+    const remoteJid = "configured-pace@s.whatsapp.net";
+    const policy = { initialDelaySeconds: 17, activeDelaySeconds: 4, inactivityResetSeconds: 20 };
+    const read = async (providerId: string) => (await db.sql`select c.reply_due_at,c.last_exchange_at,o.next_attempt_at,o.published_at
+      from conversations c join messages m on m.conversation_id=c.id
+      join outbox_events o on o.payload->>'messageId'=m.id::text
+      where m.provider_message_id=${providerId}`)[0]!;
+    try {
+      await pools.admin.run(undefined, r => r.updatePlatformAiInstructions("", policy));
+      await inbound.handle(event({ remoteJid, providerMessageId: "configured-1", receivedAt: Date.parse("2099-01-01") }));
+      const first = await read("configured-1");
+      expect(first.reply_due_at.getTime() - first.last_exchange_at.getTime()).toBe(17_000);
+      expect(first.next_attempt_at).toEqual(first.reply_due_at);
+      expect(first.last_exchange_at.getUTCFullYear()).not.toBe(2099);
+      await pools.admin.run(undefined, r => r.updatePlatformAiInstructions("", { ...policy, initialDelaySeconds: 0, activeDelaySeconds: 0 }));
+      expect(await read("configured-1")).toEqual(first);
+      await inbound.handle(event({ remoteJid, providerMessageId: "configured-2", receivedAt: 0 }));
+      const pending = await read("configured-2");
+      expect(pending.reply_due_at).toEqual(first.reply_due_at);
+      expect(pending.next_attempt_at).toEqual(first.reply_due_at);
+      expect((await read("configured-1")).next_attempt_at).toEqual(first.next_attempt_at);
+      // A genuinely new conversation sees the zero wait immediately with the same long-lived handler.
+      await inbound.handle(event({ remoteJid: "configured-zero@s.whatsapp.net", providerMessageId: "configured-zero" }));
+      const zero = await read("configured-zero");
+      expect(zero.reply_due_at).toEqual(zero.last_exchange_at);
+      expect(zero.next_attempt_at).toEqual(zero.reply_due_at);
+      await pools.admin.run(undefined, r => r.updatePlatformAiInstructions("", policy));
+      for (const [suffix, gap, delay] of [["active", 10, 4_000], ["reset", 21, 17_000]] as const) {
+        const jid = `configured-${suffix}@s.whatsapp.net`;
+        await db.sql`insert into conversations(business_id,connection_id,remote_jid,last_reply_at,last_exchange_at)
+          values(${A},${CA},${jid},now()-interval '1 hour',clock_timestamp()-${gap}*interval '1 second')`;
+        await inbound.handle(event({ remoteJid: jid, providerMessageId: `configured-${suffix}`, receivedAt: 0 }));
+        const current = await read(`configured-${suffix}`);
+        expect(current.reply_due_at.getTime() - current.last_exchange_at.getTime()).toBe(delay);
+        expect(current.next_attempt_at).toEqual(current.reply_due_at);
+      }
+    } finally {
+      await pools.admin.run(undefined, r => r.updatePlatformAiInstructions("", { initialDelaySeconds: 600, activeDelaySeconds: 90, inactivityResetSeconds: 3600 }));
+      await db.sql`update outbox_events set published_at=now() where stable_key like 'ai:configured-%'`;
+    }
+  });
+});
+
+// One disposable database per case: never wake legacy fixtures or another source's job.
+describe("bounded generation retries through real pg-boss work", () => {
+  for (const mode of ["transient", "superseded", "permanent", "rejection"] as const) {
+    test(`${mode}: same published job, bounded attempts, atomic effects and source fence`, async () => {
+      const db = await startTestPostgres();
+      const pools = createRuntimePools(db.container.getConnectionUri());
+      const boss = new PgBoss({ connectionString: db.container.getConnectionUri(), schema: "pgboss", createSchema: false });
+      try {
+      await applyPostgresMigrations(db.sql, join(import.meta.dir, "../../packages/db/migrations"));
+      await boss.start();
+      const business = randomUUID(), connection = randomUUID(), session = randomUUID();
+      const service = randomUUID(), resource = randomUUID(), queue = `t8-${mode}`;
+      const phone = "+5491123456789", remoteJid = "5491123456789@s.whatsapp.net";
+      const text = "quería cancelar mi turno";
+      const schedule = Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map(day => [day, [{ startMinute: 540, endMinute: 1080 }]]));
+      await db.sql`insert into businesses(id,name) values(${business},'Retry fixture')`;
+      await db.sql`insert into assistant_configs(business_id,active,style,business_instructions) values(${business},true,'Breve','Agenda')`;
+      await db.sql`insert into business_profiles(business_id,display_name) values(${business},'Retry fixture')`;
+      await db.sql`insert into whatsapp_connections(id,business_id,session_public_id,state) values(${connection},${business},${session},'CONNECTED')`;
+      await db.sql`insert into business_calendars(business_id,weekly_schedule) values(${business},${db.sql.json(schedule)})`;
+      await db.sql`insert into services(id,business_id,name,duration_minutes,price_ars) values(${service},${business},'Corte',30,1500)`;
+      await db.sql`insert into resources(id,business_id,name,weekly_schedule) values(${resource},${business},'Ana',${db.sql.json(schedule)})`;
+      await db.sql`insert into resource_services(business_id,resource_id,service_id) values(${business},${resource},${service})`;
+      const context = tenantContext({ businessId: business, actorId: "test", role: "internal_worker", requestId: queue });
+      const appointment = await pools.api.run(context, r => r.createAppointment(business, {
+        serviceId: service, resourceId: resource, startRaw: "2035-04-02T11:00:00-03:00",
+        newClient: { firstName: "María", lastName: "Pérez", phone },
+      }, { now: "2035-04-01T08:00:00-03:00", origin: "manual" }));
+      const receive = async (suffix: string) => {
+        const providerMessageId = `${queue}-${suffix}`;
+        expect((await new PostgresInboundHandler(pools).handle(event({ sessionPublicId: session, providerMessageId,
+          remoteJid, text, senderEvidence: { phone, pnJid: remoteJid, lidJid: null } }))).outcome).toBe("accepted");
+        return (await db.sql`select id,conversation_id from messages where business_id=${business} and provider_message_id=${providerMessageId}`)[0]!;
+      };
+      const source = await receive("old"), correlationId = `ai:${queue}-old`;
+      await db.sql`update conversations set reply_due_at=now()-interval '1 second' where id=${source.conversation_id}`;
+      await db.sql`update outbox_events set next_attempt_at=now()-interval '1 second' where stable_key=${correlationId}`;
+      // Deliberately conflicting queue defaults prove send-level options win.
+      await boss.createQueue(queue, { retryLimit: 0, retryDelay: 99, retryBackoff: false });
+      expect(await new AiOutboxDispatcher(pools, boss, { queueName: queue, batchSize: 1 }).dispatchBatch()).toBe(1);
+      const outbox = (await db.sql`select id,payload,published_at,claim_token from outbox_events where stable_key=${correlationId}`)[0]!;
+      expect(outbox.published_at).not.toBeNull();
+      expect(outbox.claim_token).toBeNull();
+      const job = (await db.sql`select id,data,singleton_key,retry_limit,retry_delay,retry_backoff from pgboss.job where name=${queue} and id=${outbox.id}`)[0]!;
+      expect(job).toEqual({ id: outbox.id, data: { ...outbox.payload, correlationId }, singleton_key: correlationId,
+        retry_limit: 2, retry_delay: 5, retry_backoff: true });
+
+      const effects = async () => (await db.sql`select
+        (select count(*)::int from outbound_commands where source_message_id=${source.id}) outputs,
+        (select count(*)::int from whatsapp_agenda_receipts where message_id=${source.id}) receipts,
+        (select count(*)::int from outbox_events where topic='appointment.changed' and payload->>'sourceMessageId'=${source.id}) effects`)[0]!;
+      const attempts: { id: string; data: unknown; retry: number }[] = [];
+      const staged: string[] = [], correlations: string[] = [];
+      let enter!: () => void;
+      const entered = new Promise<void>(resolve => { enter = resolve; });
+      const provider: AiProvider & ToolConversationProvider = {
+        generate: async () => { throw new Error("Unexpected generate"); },
+        converse: async request => {
+          correlations.push(request.correlationId);
+          const last = request.messages.at(-1)!;
+          const call = (id: string, name: string, args: NonNullable<ToolAssistantMessage["toolCalls"]>[number]["arguments"]) => ({ message: { role: "assistant" as const, content: null,
+            toolCalls: [{ id, name, arguments: args }] }, providerId: "retry-double", usageTokens: 1 });
+          if (last.role !== "tool") return mode === "rejection"
+            ? call("cancel", "cancel", { appointmentId: randomUUID() })
+            : call("inspect", "owned_appointment", { appointmentId: appointment.id });
+          const result = JSON.parse(last.content!);
+          if (last.toolCallId === "inspect") return call("cancel", "cancel", { appointmentId: appointment.id,
+            binding: { evidence: text, evidenceReference: result.data.cancellationReference } });
+          staged.push(result.status);
+          if (mode !== "rejection" && (attempts.length === 1 || mode === "permanent"))
+            throw new Error("isolated provider failure after staged cancellation");
+          return { message: { role: "assistant", content: '{"kind":"reply","ask":"clarify"}', toolCalls: [] }, providerId: "retry-double", usageTokens: 1 };
+        },
+      };
+      const processor = new PostgresAiJobProcessor(pools, provider);
+      const workerId = await boss.work<{ businessId: string; messageId: string; correlationId: string }, void,
+        { includeMetadata: true; pollingIntervalSeconds: number }>(queue,
+        { includeMetadata: true, pollingIntervalSeconds: 60 }, async jobs => {
+          const current = jobs[0]!;
+          attempts.push({ id: current.id, data: current.data, retry: current.retryCount });
+          enter();
+          await processor.process(current.data); // pg-boss itself catches throws and schedules retries.
+        });
+      const state = async (expected: string, retryCount?: number) => {
+        const deadline = Date.now() + 4_000;
+        let current;
+        do {
+          current = (await db.sql`select state,retry_count,start_after>now() scheduled from pgboss.job where name=${queue} and id=${job.id}`)[0]!;
+          if (current.state === expected && (retryCount === undefined || current.retry_count === retryCount)) return current;
+          await Bun.sleep(10);
+        } while (Date.now() < deadline);
+        throw new Error(`Expected ${expected}, observed ${JSON.stringify(current)}`);
+      };
+      const retry = async (count: number) => {
+        const waiting = await state("retry", count);
+        expect(waiting).toMatchObject({ retry_count: count, scheduled: true });
+        const changed = await db.sql`update pgboss.job set start_after=now()-interval '1 second'
+          where name=${queue} and id=${job.id} and state='retry' returning id`;
+        expect(changed.map(r => r.id)).toEqual([job.id]);
+        boss.notifyWorker(workerId); // 12.28.0 takes work()'s worker ID, not the queue name.
+      };
+      try {
+        await Promise.race([entered, Bun.sleep(4_000).then(() => { throw new Error("Worker did not enter"); })]);
+        let newer: Awaited<ReturnType<typeof receive>> | undefined;
+        if (mode !== "rejection") {
+          await state("retry");
+          expect(staged).toEqual(["staged_action"]);
+          expect(await effects()).toEqual({ outputs: 0, receipts: 0, effects: 0 });
+          expect((await db.sql`select state from appointments where id=${appointment.id}`)[0]!.state).toBe("confirmed");
+          expect((await db.sql`select processing_state from messages where id=${source.id}`)[0]!.processing_state).toBe("pending");
+          if (mode === "superseded") newer = await receive("new");
+          await retry(0);
+          if (mode === "permanent") await retry(1);
+        }
+        const terminal = await state(mode === "permanent" ? "failed" : "completed");
+        const count = mode === "permanent" ? 3 : mode === "rejection" ? 1 : 2;
+        expect(terminal.retry_count).toBe(count - 1);
+        expect(attempts).toEqual(Array.from({ length: count }, (_, retry) => ({ id: job.id, data: job.data, retry })));
+        expect(correlations.every(value => value === correlationId)).toBe(true);
+        expect(staged).toEqual(mode === "permanent" ? ["staged_action", "staged_action", "staged_action"]
+          : mode === "transient" ? ["staged_action", "staged_action"] : mode === "rejection" ? ["rejected"] : ["staged_action"]);
+        const saved = mode === "transient";
+        expect(await effects()).toEqual({ outputs: saved || mode === "rejection" ? 1 : 0, receipts: saved || mode === "rejection" ? 1 : 0, effects: saved ? 1 : 0 });
+        expect(await db.sql`select id from audit_events where business_id=${business} and event_type='whatsapp.agenda.saved'`).toHaveLength(saved ? 1 : 0);
+        expect((await db.sql`select state from appointments where id=${appointment.id}`)[0]!.state).toBe(saved ? "cancelled" : "confirmed");
+        expect((await db.sql`select processing_state from messages where id=${source.id}`)[0]!.processing_state)
+          .toBe(saved || mode === "rejection" ? "generated" : mode === "superseded" ? "superseded" : "pending");
+        if (newer) {
+          expect(correlations).toHaveLength(3); // Only the first attempt's inspect/cancel/failure; retry never calls provider.
+          expect(await db.sql`select outbound_id from outbound_commands where source_message_id=${newer.id}`).toHaveLength(0);
+          expect((await db.sql`select processing_state from messages where id=${newer.id}`)[0]!.processing_state).toBe("pending");
+          expect(await db.sql`select id from pgboss.job where data->>'messageId'=${newer.id}`).toHaveLength(0);
+        }
+        if (saved || mode === "rejection") {
+          const before = correlations.length;
+          await processor.process(job.data); // Receipt/source fence also suppresses a duplicate delivery.
+          expect(correlations).toHaveLength(before);
+          expect(await effects()).toEqual({ outputs: 1, receipts: 1, effects: saved ? 1 : 0 });
+          expect((await db.sql`select operation from whatsapp_agenda_receipts where message_id=${source.id}`)[0]!.operation).toBe(saved ? "cancel" : "receptionist");
+          expect((await db.sql`select text from outbound_commands where source_message_id=${source.id}`)[0]!.text).toBe(saved
+            ? `Cancelación guardada. Turno ${appointment.id}.`
+            : "Indicá explícitamente si querés cancelar tu turno.");
+        }
+        expect(await db.sql`select id from pgboss.job where name=${queue}`).toHaveLength(1);
+      } finally {
+        await boss.offWork(queue, { id: workerId, wait: true });
+      }
+      } finally {
+        await boss.stop();
+        await pools.end();
+        await db.stop();
+      }
+    }, 120_000);
+  }
 });

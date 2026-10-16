@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import Fastify from "fastify";
+import { PostgresWhatsAppManager } from "../../apps/whatsapp-manager/src/lifecycle.ts";
 import { normalizeBaileysMessage } from "../../packages/whatsapp-baileys/src/baileys-gateway.ts";
 import { classifyInbound } from "../../apps/whatsapp-manager/src/inbound-handler.ts";
 import {
@@ -36,6 +37,75 @@ function harness(events: Parameters<DeterministicBaileysDouble["script"]>[0]) {
     ),
   };
 }
+
+describe("PostgreSQL manager acquired-lock cleanup", () => {
+  for (const failure of ["clearLinkCode", "clearWhatsAppAuth", "takeOverWhatsApp", "recordRuntimeEvent", "currentLinkCode", "connect-and-audit", "pending-event"] as const) {
+    test(`releases ownership after ${failure} fails`, async () => {
+      let released = 0, closed = 0;
+      const businessId = "11111111-1111-4111-8111-111111111111";
+      const fail = () => { throw new Error("injected lifecycle failure"); };
+      const repo = {
+        claimWhatsAppLink: async () => ({ business_id: businessId, command_id: "command-a" }),
+        admitWhatsAppLink: async () => {
+          await repo.clearLinkCode();
+          await repo.clearWhatsAppAuth();
+          return true;
+        },
+        completeWhatsAppLink: async () => true,
+        lockWhatsAppOwnership: async () => true,
+        releaseWhatsApp: async () => undefined,
+        saveConnection: async () => undefined,
+        connection: async () => ({ id: "connection-a", sessionPublicId: "session-a", linkPending: true, linkCommandId: "command-a" }),
+        restorableWhatsApp: async () => [{ business_id: businessId, id: "connection-a" }],
+        clearLinkCode: async () => { if (failure === "clearLinkCode") fail(); },
+        clearWhatsAppAuth: async () => { if (failure === "clearWhatsAppAuth") fail(); },
+        takeOverWhatsApp: async () => { if (failure === "takeOverWhatsApp") fail(); },
+        recordRuntimeEvent: async () => { if (failure === "recordRuntimeEvent") fail(); },
+        currentLinkCode: async () => { if (failure === "currentLinkCode") fail(); return null; },
+        setWhatsAppState: async () => { if (failure === "connect-and-audit" || failure === "pending-event") fail(); },
+      };
+      const pools = { manager: {
+        run: async (_context: unknown, work: (value: typeof repo) => unknown) => work(repo),
+        reserveAdvisoryLock: async () => async () => { released++; },
+      } } as unknown as ConstructorParameters<typeof PostgresWhatsAppManager>[0];
+      const manager = new PostgresWhatsAppManager(pools, "owner", () => ({
+        connect: async (_id, emit) => {
+          if (failure === "connect-and-audit") fail();
+          if (failure === "pending-event") {
+            void Promise.resolve(emit({ type: "corrupt" })).catch(() => undefined);
+          }
+          return { closed: new Promise<void>(() => {}), close: () => { closed++; } };
+        },
+      }));
+      const work = failure.startsWith("clear") ? manager.processNext() : manager.restart();
+      await expect(work).rejects.toThrow("injected lifecycle failure");
+      expect(released).toBe(1);
+      expect(closed).toBe(failure === "pending-event" ? 1 : 0);
+      await manager.stop();
+    });
+  }
+
+  test("releases the held lock even when shutdown bookkeeping fails", async () => {
+    let released = 0, close!: () => void;
+    const closed = new Promise<void>(resolve => { close = resolve; });
+    const repo = {
+      restorableWhatsApp: async () => [{ business_id: "11111111-1111-4111-8111-111111111111", id: "connection-a" }],
+      connection: async () => ({ id: "connection-a" }),
+      takeOverWhatsApp: async () => undefined,
+      recordRuntimeEvent: async () => undefined,
+      currentLinkCode: async () => null,
+      releaseWhatsApp: async () => { throw new Error("shutdown bookkeeping failed"); },
+    };
+    const pools = { manager: {
+      run: async (_context: unknown, work: (value: typeof repo) => unknown) => work(repo),
+      reserveAdvisoryLock: async () => async () => { released++; },
+    } } as unknown as ConstructorParameters<typeof PostgresWhatsAppManager>[0];
+    const manager = new PostgresWhatsAppManager(pools, "owner", () => ({ connect: async () => ({ closed, close }) }));
+    expect(await manager.restart()).toEqual(["connection-a"]);
+    await expect(manager.stop()).rejects.toThrow("shutdown bookkeeping failed");
+    expect(released).toBe(1);
+  });
+});
 
 describe("live customer identity classification", () => {
   test("only the customer branch can hand provider evidence to agenda ingestion", () => {

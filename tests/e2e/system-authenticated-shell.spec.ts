@@ -168,6 +168,26 @@ test("role-aware authenticated shells recover safely and expose only valid navig
     );
     await expect(businessShell).toHaveCount(1);
 
+    // A separately created tab shares only the HttpOnly cookie, not sessionStorage.
+    const freshTab = await businessContext.newPage();
+    try {
+      await freshTab.goto(`${system.webUrl}/profile`);
+      await expect(freshTab.getByLabel("Nombre comercial", { exact: true })).toBeVisible();
+      await freshTab.getByLabel("Nombre comercial", { exact: true }).fill("Perfil desde otra pestaña");
+      const freshSave = freshTab.waitForResponse(response => response.url().endsWith("/api/me/business-profile") && response.request().method() === "PUT");
+      await freshTab.getByRole("button", { name: "Guardar perfil", exact: true }).click();
+      expect((await freshSave).status()).toBe(200);
+      // Bootstrap in the new tab must not invalidate the first tab's already issued token.
+      await businessPage.getByLabel("Nombre comercial", { exact: true }).fill("Perfil desde pestaña original");
+      const originalSave = businessPage.waitForResponse(response => response.url().endsWith("/api/me/business-profile") && response.request().method() === "PUT");
+      await businessPage.getByRole("button", { name: "Guardar perfil", exact: true }).click();
+      expect((await originalSave).status()).toBe(200);
+    } finally { await freshTab.close(); }
+    // Recover again in the original tab; the existing logout flow below uses that recovered token.
+    await businessPage.evaluate(() => sessionStorage.clear());
+    await businessPage.reload();
+    await expect(businessShell).toHaveCount(1);
+
     const businessNavigation = businessShell.getByRole("navigation", {
       name: "Navegación del negocio",
       exact: true,

@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import postgres, { type Sql, type TransactionSql } from "postgres";
 import type { TenantContext } from "./tenant-context.ts";
 import { replyDeadline } from "./reply-pacing.ts";
+import { ReplyPacingSchema, type ReplyPacing } from "@agendia/domain";
 import { validSenderEvidence, emptyAgendaDialogue, type SenderEvidence, type AgendaDialogue } from "../../domain/src/whatsapp-agenda.ts";
 import { z } from "zod";
 import { ClientInputSchema, InstantSchema, AppointmentOriginSchema, captureAppointmentTerms,
@@ -14,6 +15,13 @@ import { BusinessClosureInputSchema, CalendarDateSchema, materializeArgentinaDay
   ResourceInputSchema, isResourceScheduleWithinBusiness, normalizeWeeklySchedule, isStructurallyAvailable,
   isEpochIntervalWithinWeeklySchedule, isEpochIntervalOpenForClosures, type EpochInterval, type ResourceInput,
   type BusinessClosure, type BusinessClosureInput, type WeeklySchedule } from "@agendia/domain";
+
+type PlatformAiSettingsRow = ReplyPacing & { additionalInstructions: string };
+function platformAiSettings(row: PlatformAiSettingsRow | undefined) {
+  if (!row) throw new Error("Platform AI instructions singleton missing");
+  const { additionalInstructions, ...replyPacing } = row;
+  return { additionalInstructions, replyPacing: ReplyPacingSchema.parse(replyPacing) };
+}
 
 type ClosureRow = { id: string; kind: string; date: string | null; start: string | null; end: string | null };
 const closureDto = (row: ClosureRow): BusinessClosure => ({ id: row.id,
@@ -402,12 +410,6 @@ export class PostgresRepositories {
       resource !== null && isResourceEligibleForService(resource, service));
     if (!eligible.length) return [];
     const calendar = await this.getBusinessCalendar(businessId), closures = await this.listBusinessClosures(businessId);
-    // Numeric occupancy only: raw busy strings need not be coherent or positive-year ISO.
-    // Fetch once for all selected resources, never once per grid point or with a choice limit.
-    const busy = await this.db<{ resourceId: string; startMs: string; endMs: string }[]>`
-      select resource_id "resourceId",start_ms "startMs",end_ms "endMs" from appointments
-      where business_id=${businessId} and state='confirmed' and resource_id in ${this.db(eligible.map(resource => resource.id))}
-        and (${current?.id ?? null}::uuid is null or id<>${current?.id ?? null}::uuid)`;
     const choices: AppointmentAvailabilityOption[] = [];
     for (const point of materializeArgentinaDayGrid(value.date)) {
       for (const resource of eligible) {
@@ -424,12 +426,29 @@ export class PostgresRepositories {
         // Even a planner no-op must be a live, structurally available alternative here.
         if (!Number.isSafeInteger(endMs) || point.startMs < -62135683140000 || endMs <= point.startMs || endMs > 253402387139999
           || !isStructurallyAvailable(interval)
-          || ((!current || point.startMs !== current.startMs) && !isNewStartAllowed(interval, now))
-          || busy.some(row => row.resourceId === resource.id && Number(row.startMs) < endMs && Number(row.endMs) > point.startMs)) continue;
+          || ((!current || point.startMs !== current.startMs) && !isNewStartAllowed(interval, now))) continue;
         choices.push({ start: startRaw, startMs: point.startMs, endMs, resourceId: resource.id, terms });
       }
     }
-    return choices;
+    if (!choices.length) return choices;
+    // Bound actual planned intervals: unchanged-service reschedules retain saved duration,
+    // and the last candidate may end after midnight (or near the supported epoch limit).
+    const earliestStart = choices.reduce((earliest, choice) => Math.min(earliest, choice.startMs), Infinity);
+    const latestEnd = choices.reduce((latest, choice) => Math.max(latest, choice.endMs), -Infinity);
+    // Numeric occupancy only: raw busy strings need not be coherent or positive-year ISO.
+    const busy = await this.db<{ resourceId: string; startMs: string; endMs: string }[]>`
+      select resource_id "resourceId",start_ms "startMs",end_ms "endMs" from appointments
+      where business_id=${businessId} and state='confirmed' and resource_id in ${this.db(eligible.map(resource => resource.id))}
+        and (${current?.id ?? null}::uuid is null or id<>${current?.id ?? null}::uuid)
+        and start_ms<${latestEnd} and end_ms>${earliestStart}`;
+    const busyByResource = new Map<string, EpochInterval[]>();
+    for (const row of busy) {
+      const intervals = busyByResource.get(row.resourceId) ?? [];
+      intervals.push({ startMs: Number(row.startMs), endMs: Number(row.endMs) });
+      busyByResource.set(row.resourceId, intervals);
+    }
+    return choices.filter(choice => !busyByResource.get(choice.resourceId)?.some(interval =>
+      interval.startMs < choice.endMs && interval.endMs > choice.startMs));
   }
   private async appointmentPreference(businessId: string, previous: string | null, expression?: CustomerResourcePreferenceExpression) {
     const preference = resolveCustomerResourcePreference(previous, expression);
@@ -735,17 +754,32 @@ export class PostgresRepositories {
     return this.retireCatalogItem(businessId, id, "resources");
   }
   async platformAiInstructions() {
-    const [row] = await this.db<{ additional_instructions: string }[]>`
-      select additional_instructions from operational_controls where singleton`;
-    if (!row) throw new Error("Platform AI instructions singleton missing");
-    return { additionalInstructions: row.additional_instructions };
+    const [row] = await this.db<PlatformAiSettingsRow[]>`
+      select additional_instructions "additionalInstructions", initial_delay_seconds "initialDelaySeconds",
+        active_delay_seconds "activeDelaySeconds", inactivity_reset_seconds "inactivityResetSeconds"
+      from operational_controls where singleton`;
+    return platformAiSettings(row);
   }
-  async updatePlatformAiInstructions(additionalInstructions: string) {
-    const [row] = await this.db<{ additional_instructions: string }[]>`
-      update operational_controls set additional_instructions=${additionalInstructions}
-      where singleton returning additional_instructions`;
-    if (!row) throw new Error("Platform AI instructions singleton missing");
-    return { additionalInstructions: row.additional_instructions };
+  async updatePlatformAiInstructions(additionalInstructions: string, replyPacing?: ReplyPacing) {
+    const policy = replyPacing === undefined ? undefined : ReplyPacingSchema.parse(replyPacing);
+    // Omitted policy columns are not written, including under concurrent instruction-only saves.
+    const values = { additional_instructions: additionalInstructions, ...(policy === undefined ? {} : {
+      initial_delay_seconds: policy.initialDelaySeconds,
+      active_delay_seconds: policy.activeDelaySeconds,
+      inactivity_reset_seconds: policy.inactivityResetSeconds,
+    }) };
+    const [row] = await this.db<PlatformAiSettingsRow[]>`
+      update operational_controls set ${this.db(values)} where singleton
+      returning additional_instructions "additionalInstructions", initial_delay_seconds "initialDelaySeconds",
+        active_delay_seconds "activeDelaySeconds", inactivity_reset_seconds "inactivityResetSeconds"`;
+    return platformAiSettings(row);
+  }
+  async globalReplyPacing(): Promise<ReplyPacing> {
+    const [row] = await this.db<ReplyPacing[]>`
+      select initial_delay_seconds "initialDelaySeconds", active_delay_seconds "activeDelaySeconds",
+        inactivity_reset_seconds "inactivityResetSeconds" from operational_controls where singleton`;
+    if (!row) throw new Error("Global reply pacing singleton missing");
+    return ReplyPacingSchema.parse(row);
   }
   saveBusiness(row: { id: string; name: string }) {
     return this
@@ -767,6 +801,9 @@ export class PostgresRepositories {
         >`select business_id from auth_identities where normalized_email=${email}`
       )[0] ?? null
     );
+  }
+  async admitLogin(accountHash: string): Promise<boolean> {
+    return (await this.db<{ admitted: boolean }[]>`select admit_login(${accountHash}) admitted`)[0]?.admitted === true;
   }
   async authIdentity(email: string) {
     return (
@@ -932,8 +969,8 @@ export class PostgresRepositories {
     return (
       (
         await this.db<
-          { id: string; sessionPublicId: string }[]
-        >`select id,session_public_id "sessionPublicId" from whatsapp_connections limit 1`
+          { id: string; sessionPublicId: string; linkCommandId: string | null; linkPending: boolean }[]
+        >`select id,session_public_id "sessionPublicId",link_command_id "linkCommandId",link_pending "linkPending" from whatsapp_connections limit 1`
       )[0] ?? null
     );
   }
@@ -970,6 +1007,10 @@ export class PostgresRepositories {
     await this
       .db`update whatsapp_connections set wrapped_dek=null,wrapped_dek_nonce=null,wrapped_dek_tag=null,kek_version=null where id=${id}`;
   }
+  async lockAuthConnection(businessId: string, id: string) {
+    const rows = await this.db`select id from whatsapp_connections where id=${id} and business_id=${businessId} for update`;
+    if (!rows.length) throw new Error("authentication connection unavailable");
+  }
   async authEnvelope(id: string) {
     return (
       await this.db<
@@ -983,12 +1024,13 @@ export class PostgresRepositories {
       >`select business_id "businessId",wrapped_dek ciphertext,wrapped_dek_nonce iv,wrapped_dek_tag tag,kek_version "kekVersion" from whatsapp_connections where id=${id} and wrapped_dek is not null`
     )[0];
   }
-  saveAuthEnvelope(
+  async saveAuthEnvelope(
     id: string,
     value: { ciphertext: Buffer; iv: Buffer; tag: Buffer; kekVersion: string },
   ) {
-    return this
-      .db`update whatsapp_connections set wrapped_dek=${value.ciphertext},wrapped_dek_nonce=${value.iv},wrapped_dek_tag=${value.tag},kek_version=${value.kekVersion} where id=${id}`;
+    const rows = await this
+      .db`update whatsapp_connections set wrapped_dek=${value.ciphertext},wrapped_dek_nonce=${value.iv},wrapped_dek_tag=${value.tag},kek_version=${value.kekVersion} where id=${id} and wrapped_dek is null returning id`;
+    if (!rows.length) throw new Error("authentication envelope already initialized or unavailable");
   }
   async authRecord(id: string, name: string) {
     return (
@@ -1018,12 +1060,12 @@ export class PostgresRepositories {
       .db`insert into whatsapp_auth_records(business_id,connection_id,record_name,version,ciphertext,nonce,auth_tag) values(${value.businessId},${value.connectionId},${value.name},${value.version},${value.ciphertext},${value.iv},${value.tag}) on conflict(business_id,connection_id,record_name) do update set version=excluded.version,ciphertext=excluded.ciphertext,nonce=excluded.nonce,auth_tag=excluded.auth_tag where whatsapp_auth_records.version=excluded.version-1 returning version`;
     if (!rows.length) throw new Error("authentication record version conflict");
   }
-  async claimWhatsAppLink() {
+  async claimWhatsAppLink(token: string) {
     return (
       (
         await this.db<
           { command_id: string; business_id: string }[]
-        >`select * from claim_whatsapp_link_command()`
+        >`select * from claim_whatsapp_link_command(${token})`
       )[0] ?? null
     );
   }
@@ -1032,17 +1074,53 @@ export class PostgresRepositories {
       { id: string; business_id: string }[]
     >`select * from restorable_whatsapp_connections()`;
   }
-  heartbeatWhatsApp(id: string, owner: string, now: Date) {
-    return this
-      .db`update whatsapp_connections set owner_id=${owner},heartbeat_at=${now},version=version+1 where id=${id}`;
+  async admitWhatsAppLink(id: string, commandId: string, claim: string): Promise<boolean> {
+    const [connection] = await this.db`select id from whatsapp_connections where id=${id} for update`;
+    if (!connection) return false;
+    const [command] = await this.db`select o.id,o.link_admitted_at from outbox_events o
+      join whatsapp_connections w on w.business_id=o.business_id
+      where w.id=${id} and o.id=${commandId} and o.topic='whatsapp.link_requested'
+        and o.published_at is null and o.claim_token=${claim}
+        and o.claimed_at>now()-interval '30 seconds' for update of o`;
+    if (!command) return false;
+    if (!command.link_admitted_at) {
+      await this.clearLinkCode(id);
+      await this.clearWhatsAppAuth(id);
+      await this.db`update whatsapp_connections set link_command_id=${commandId},link_pending=true,state='LINKING',version=version+1 where id=${id}`;
+      await this.db`update outbox_events set link_admitted_at=now() where id=${commandId}`;
+    }
+    return true;
   }
-  releaseWhatsApp(id: string, owner: string) {
+  async completeWhatsAppLink(commandId: string, claim: string, ownership: string) {
+    return (await this.db<{ completed: boolean }[]>`select complete_whatsapp_link_command(${commandId},${claim},${ownership}) completed`)[0]!.completed;
+  }
+  async takeOverWhatsApp(id: string, owner: string, token: string, now: Date) {
+    // Match claim/finish lock ordering, then fence the old socket before reconciliation.
+    await this.db`select id from conversations where connection_id=${id} order by created_at,id for update`;
+    await this.db`update whatsapp_connections set owner_id=${owner},ownership_token=${token},heartbeat_at=${now},version=version+1 where id=${id}`;
+    const abandoned = await this.db<{ outbound_id: string; business_id: string }[]>`
+      update outbound_commands set state='delivery_unknown',failure_code='delivery_unknown',updated_at=now()
+      where connection_id=${id} and state='sending' returning outbound_id,business_id`;
+    for (const row of abandoned) await this.recordRuntimeEvent(row.business_id, {
+      code: 'whatsapp.delivery_unknown', outcome: 'failure', source: 'whatsapp-manager',
+      requestId: `outbound:${row.outbound_id}`, severity: 'error',
+    });
+  }
+  async lockWhatsAppOwnership(id: string, token: string): Promise<boolean> {
+    const rows = await this.db`select id from whatsapp_connections where id=${id} and ownership_token=${token} for update`;
+    return rows.length > 0;
+  }
+  heartbeatWhatsApp(id: string, owner: string, now: Date, token?: string) {
     return this
-      .db`update whatsapp_connections set owner_id=null,heartbeat_at=null,version=version+1 where id=${id} and owner_id=${owner}`;
+      .db`update whatsapp_connections set owner_id=${owner},heartbeat_at=${now},version=version+1 where id=${id} and (${token ?? null}::uuid is null or ownership_token=${token ?? null})`;
+  }
+  releaseWhatsApp(id: string, owner: string, token: string) {
+    return this
+      .db`update whatsapp_connections set owner_id=null,ownership_token=null,heartbeat_at=null,version=version+1 where id=${id} and owner_id=${owner} and ownership_token=${token}`;
   }
   setWhatsAppState(id: string, state: string, now: Date, number?: string) {
     return this
-      .db`update whatsapp_connections set state=${state},linked_number=coalesce(${number ?? null},linked_number),linked_at=case when ${state}='CONNECTED' then coalesce(linked_at,${now}) else linked_at end,last_connected_at=case when ${state}='CONNECTED' then ${now} else last_connected_at end,version=version+1 where id=${id}`;
+      .db`update whatsapp_connections set state=${state},link_pending=case when ${state} in ('CONNECTED','LINK_REQUIRED') then false else link_pending end,linked_number=coalesce(${number ?? null},linked_number),linked_at=case when ${state}='CONNECTED' then coalesce(linked_at,${now}) else linked_at end,last_connected_at=case when ${state}='CONNECTED' then ${now} else last_connected_at end,version=version+1 where id=${id}`;
   }
   /** Serialize collisions across PN and LID within this specific business connection. */
   async bindReceivedSender(businessId: string, connectionId: string, remoteJid: string, evidence: SenderEvidence): Promise<string | null> {
@@ -1177,7 +1255,8 @@ export class PostgresRepositories {
     )[0]!;
     if (senderPhone) await this.db`insert into whatsapp_received_senders(business_id,message_id,connection_id,phone)
       values(${input.businessId},${message.id},${input.connectionId},${senderPhone})`;
-    const due = replyDeadline(conversation.accepted_at, conversation.last_reply_at, conversation.last_exchange_at, conversation.reply_due_at);
+    const policy = await this.globalReplyPacing();
+    const due = replyDeadline(conversation.accepted_at, conversation.last_reply_at, conversation.last_exchange_at, conversation.reply_due_at, policy);
     await this.db`update conversations set latest_inbound_id=${message.id},reply_due_at=${due},last_exchange_at=${conversation.accepted_at} where id=${conversation.id}`;
     await this.db`update messages set processing_state='superseded' where conversation_id=${conversation.id} and direction='inbound' and id<>${message.id} and processing_state in ('pending','generated')`;
     await this.db`update outbound_commands set state='failed',failure_code='superseded',updated_at=now() where conversation_id=${conversation.id} and state='generated'`;
@@ -1314,7 +1393,7 @@ export class PostgresRepositories {
       )[0] ?? null
     );
   }
-  async claimOwnedOutbound(owner: string) {
+  async claimOwnedOutbound(owner: string, ownership: string[]) {
     return (
       (
         await this.db<
@@ -1325,17 +1404,22 @@ export class PostgresRepositories {
             connection_id: string;
             remote_jid: string;
             text: string;
+            ownership_token: string;
           }[]
-        >`select * from claim_owned_outbound(${owner})`
+        >`select * from claim_owned_outbound(${owner},${ownership})`
       )[0] ?? null
     );
   }
   async finishOutbound(
     id: string,
     state: "sent" | "failed" | "delivery_unknown",
-    providerId?: string,
+    providerId: string | undefined,
+    ownership: string,
   ) {
     await this.db`select c.id from conversations c join outbound_commands o on o.conversation_id=c.id where o.outbound_id=${id} for update of c`;
+    const [connection] = await this.db`select w.id from whatsapp_connections w join outbound_commands o
+      on o.connection_id=w.id and o.business_id=w.business_id where o.outbound_id=${id} for update of w`;
+    if (!connection || !await this.lockWhatsAppOwnership(connection.id, ownership)) return false;
     const row = (
       await this.db<
         {
@@ -1344,7 +1428,7 @@ export class PostgresRepositories {
           connection_id: string;
           text: string;
         }[]
-      >`update outbound_commands set state=${state},provider_message_id=${providerId ?? null},acknowledged_at=case when ${state}='sent' then now() end,failure_code=case when ${state}='sent' then null else ${state} end,updated_at=now() where outbound_id=${id} and state='sending' returning business_id,conversation_id,connection_id,text`
+      >`update outbound_commands set state=${state},provider_message_id=${providerId ?? null},acknowledged_at=case when ${state}='sent' then now() end,failure_code=case when ${state}='sent' then null else ${state} end,updated_at=now() where outbound_id=${id} and state='sending' and ownership_token=${ownership} returning business_id,conversation_id,connection_id,text`
     )[0];
     if (!row) return false;
     const code =
@@ -1496,9 +1580,13 @@ export class PostgresRepositories {
 }
 
 export class RolePool {
+  private readonly lockSessions = new Set<Sql>();
+  private ending = false;
+  private shutdown?: Promise<void>;
   constructor(
     private readonly sql: Sql,
     readonly role: RuntimeRole,
+    private readonly lockUrl?: string,
   ) {}
   run<T>(
     context: TenantContext | undefined,
@@ -1521,32 +1609,56 @@ export class RolePool {
     key: string,
     wait = false,
   ): Promise<(() => Promise<void>) | null> {
-    const connection = await this.sql.reserve();
-    await connection.unsafe(`set role ${this.role}`);
-    const acquired = (
-      await connection<
-        { acquired: boolean }[]
-      >`select pg_try_advisory_lock(hashtextextended(${key},0)) acquired`
-    )[0]?.acquired;
-    if (!acquired) {
-      await connection.unsafe("reset role");
-      connection.release();
-      if (wait) {
-        // Do not hold a pooled connection while waiting: the lock owner must
-        // still be able to acquire a connection to save its generation.
-        await new Promise((resolve) => setTimeout(resolve, 25));
-        return this.reserveAdvisoryLock(key, true);
+    for (;;) {
+      if (this.ending) throw new Error("RolePool is closed");
+      if (!this.lockUrl) throw new Error("Advisory locks require a dedicated connection URL");
+      // Lifetime locks must not occupy the transaction pool, even when all sockets are live.
+      let disconnected = false;
+      const session = postgres(this.lockUrl, { max: 1, onclose: () => { disconnected = true; } });
+      this.lockSessions.add(session);
+      let connection: Awaited<ReturnType<Sql["reserve"]>> | undefined;
+      const close = async () => {
+        try {
+          if (connection) {
+            try { if (!disconnected && !this.ending) await connection.unsafe("reset role"); }
+            finally { connection.release(); }
+          }
+        } finally {
+          try { await session.end({ timeout: 0 }); }
+          finally { this.lockSessions.delete(session); }
+        }
+      };
+      let acquired: boolean | undefined;
+      try {
+        connection = await session.reserve();
+        await connection.unsafe(`set role ${this.role}`);
+        acquired = (
+          await connection<{ acquired: boolean }[]>`select pg_try_advisory_lock(hashtextextended(${key},0)) acquired`
+        )[0]?.acquired;
+      } catch (error) {
+        await close().catch(() => undefined);
+        throw error;
       }
-      return null;
+      if (acquired) {
+        let released: Promise<void> | undefined;
+        return () => released ??= (async () => {
+          try {
+            if (disconnected || this.ending) throw new Error("Advisory lock connection closed");
+            await connection!`select pg_advisory_unlock(hashtextextended(${key},0))`;
+          } finally { await close(); }
+        })();
+      }
+      await close();
+      if (!wait) return null;
+      await new Promise((resolve) => setTimeout(resolve, 25));
     }
-    return async () => {
-      await connection`select pg_advisory_unlock(hashtextextended(${key},0))`;
-      await connection.unsafe("reset role");
-      connection.release();
-    };
   }
   end() {
-    return this.sql.end();
+    this.ending = true;
+    return this.shutdown ??= Promise.all([
+      this.sql.end(),
+      ...[...this.lockSessions].map((session) => session.end({ timeout: 0 }).finally(() => this.lockSessions.delete(session))),
+    ]).then(() => undefined);
   }
 }
 
@@ -1558,10 +1670,10 @@ export function createRuntimePools(
   const url = (key: "api" | "admin" | "manager" | "worker") =>
     typeof input === "string" ? input : input[key];
   const pools = {
-    api: new RolePool(postgres(url("api")), "agendia_runtime"),
-    admin: new RolePool(postgres(url("admin")), "agendia_admin_runtime"),
-    manager: new RolePool(postgres(url("manager")), "agendia_whatsapp_runtime"),
-    worker: new RolePool(postgres(url("worker")), "agendia_worker_runtime"),
+    api: new RolePool(postgres(url("api")), "agendia_runtime", url("api")),
+    admin: new RolePool(postgres(url("admin")), "agendia_admin_runtime", url("admin")),
+    manager: new RolePool(postgres(url("manager")), "agendia_whatsapp_runtime", url("manager")),
+    worker: new RolePool(postgres(url("worker")), "agendia_worker_runtime", url("worker")),
   };
   return {
     ...pools,

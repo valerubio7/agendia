@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { tenantContext, AppointmentError, type createRuntimePools, type PostgresRepositories,
-  type StoredAppointment, type AppointmentAvailabilityOption } from "@agendia/db";
+  type StoredAppointment, type AppointmentAvailabilityOption, type CatalogResource } from "@agendia/db";
 import {
   argentinaDate, nearbyDate, agendaTime, customerTemporalSelection, emptyAgendaDialogue, explicitQuoteConfirmation,
-  explicitCustomerNames, explicitCancel, structuralChangeIntent, customerChangeChoice, explicitNotes, explicitPreference, expressedBookingPreference,
+  explicitCustomerNames, explicitCancel, explicitNotes, explicitPreference, expressedBookingPreference,
   quoteTermsEqual, quoteText, missingFieldText, type AgendaDialogue, type AgendaQuote,
 } from "../../../packages/domain/src/whatsapp-agenda.ts";
 import type { PostgresAiJob } from "./ai-job.ts";
@@ -15,7 +15,10 @@ import { buildReceptionistMessages } from "./receptionist.ts";
 
 type Pools = ReturnType<typeof createRuntimePools>;
 type Source = NonNullable<Awaited<ReturnType<PostgresRepositories["loadAiMessage"]>>>;
-type Reply = { text: string; dialogue: AgendaDialogue; saved?: StoredAppointment; renderedQuote?: string };
+type PreparationOutcome = "prepared" | "retained-noop" | "rejected";
+type Reply = { text: string; dialogue: AgendaDialogue; saved?: StoredAppointment; renderedQuote?: string;
+  preparation?: PreparationOutcome;
+  data?: { pending: "retained" | "unchanged" } };
 const unchanged = (text: string, dialogue: AgendaDialogue, awaiting?: readonly string[]): Reply => ({
   text, dialogue: awaiting ? { ...dialogue, awaiting } : dialogue,
 });
@@ -27,12 +30,12 @@ const summaryReply = (dialogue: AgendaDialogue, prefix = ""): Reply => {
     renderedQuote: JSON.stringify(dialogue.quote),
   };
 };
-/** Resource authority comes from customer expressions and retained state, never model arguments. */
+/** Persistent preference comes from customer expressions/retained state, not query or assignment arguments. */
 const trustedPreference = (text: string, resources: readonly { id: string; name: string }[],
-  previous?: string | null, unresolved = false) => {
+  previous?: string | null, unresolved = false, selectedResourceId?: string) => {
   const preferred = resources.find(resource => expressedBookingPreference(text, resource.name));
   const removePreference = explicitPreference(text, null);
-  const unknownPreference = /\bprefiero\b/iu.test(text) && !preferred;
+  const unknownPreference = /\bprefiero\b/iu.test(text) && !preferred && !selectedResourceId;
   return {
     preferred, removePreference, unknownPreference,
     preference: removePreference ? null : preferred?.id ?? previous,
@@ -44,6 +47,11 @@ const snapshot = (appointment: StoredAppointment): string => JSON.stringify({
   preference: appointment.customerResourcePreference,
 });
 const actionContext = (now: string) => ({ actor: "customer" as const, channel: "ai" as const, now });
+const namePrompt = (dialogue: AgendaDialogue) => {
+  const fields = dialogue.bookingNameFields ?? dialogue.bookingNames;
+  return missingFieldText(!fields?.firstName && !fields?.lastName ? ["names"]
+    : [...(!fields?.firstName ? ["firstName"] : []), ...(!fields?.lastName ? ["lastName"] : [])]);
+};
 type GuardedMutation = Extract<ReceptionistToolCommand, { name: "cancel" | "notes" | "preference" }>;
 
 export class PostgresWhatsAppAgenda {
@@ -71,12 +79,56 @@ export class PostgresWhatsAppAgenda {
         const actions: { operation: string; appointmentId: string }[] = [];
         let quoteNeedsDelivery = false;
         let backendReply: string | undefined;
+        const rejectPreparation = () => {
+          if (actions.length) return; // A staged action reply survives subsequent refusals until outer commit.
+          dialogue.quote = null;
+          dialogue.awaitingNames = false;
+          if (dialogue.awaiting?.includes("names")) {
+            dialogue.awaiting = dialogue.awaiting.filter(field => field !== "names");
+            if (!dialogue.awaiting.length) delete dialogue.awaiting;
+          }
+          quoteNeedsDelivery = false;
+          backendReply = undefined;
+          namesRevision++;
+        };
         // Opaque bindings commit to the trusted runtime scope and the whole quote,
         // including operation, appointment, terms, names and delivery provenance.
         // These are context checks, NOT proof that free text semantically consents.
         const fingerprint = (kind: string, value: unknown) => createHash("sha256").update(JSON.stringify({
           kind, businessId: job.businessId, connectionId: source.connection_id, phone, value,
         })).digest("hex");
+        const cancellationReferences = new Map<string, string>();
+        const cancellationReference = (ap: StoredAppointment) => fingerprint("cancellation", {
+          sourceMessageId: source.id, text: source.raw_text, appointment: this.receptionistAppointment(ap),
+        });
+        const metadataReferences = { notes: new Map<string, string>(), preference: new Map<string, string>() };
+        const metadataReference = (operation: "notes" | "preference", ap: StoredAppointment) => fingerprint(operation, {
+          sourceMessageId: source.id, text: source.raw_text, nameSources, appointment: this.receptionistAppointment(ap),
+        });
+        const inspectAppointment = (ap: StoredAppointment) => {
+          const reference = cancellationReference(ap), notesReference = metadataReference("notes", ap), preferenceReference = metadataReference("preference", ap);
+          cancellationReferences.set(ap.id, reference);
+          metadataReferences.notes.set(ap.id, notesReference);
+          metadataReferences.preference.set(ap.id, preferenceReference);
+          return { ...this.receptionistAppointment(ap), cancellationReference: reference, notesReference, preferenceReference };
+        };
+        const resourceReferences = new Map<string, string>();
+        const resourceReference = (resource: CatalogResource) => fingerprint("preference_resource", { sourceMessageId: source.id, text: source.raw_text, resource });
+        const inspectResource = (resource: CatalogResource) => {
+          const reference = resourceReference(resource);
+          resourceReferences.set(resource.id, reference);
+          return { ...resource, resourceReference: reference };
+        };
+        const nameSources: { messageId: string; text: string }[] = [];
+        for (const member of source.currentGroup) {
+          if (phone && await repo.agendaSender(member.id) === phone)
+            nameSources.push({ messageId: member.id, text: member.raw_text });
+        }
+        const knownClient = phone ? await repo.findClientByCanonicalPhone(phone) : null;
+        let namesRevision = 0;
+        const namesReference = () => phone && !knownClient && !dialogue.change && !dialogue.reschedule
+          && (dialogue.quote?.kind === "book" || dialogue.awaiting?.length)
+          ? fingerprint("booking_names", { inbound: source.id, text: source.raw_text, nameSources, draft: dialogue, namesRevision }) : null;
         const initialQuoteSnapshot = dialogue.quote ? JSON.stringify(dialogue.quote) : null;
         const naturalConfirmation = phone && dialogue.quote && !dialogue.awaitingNames
           && dialogue.quote.sourceMessageId !== source.id
@@ -88,6 +140,7 @@ export class PostgresWhatsAppAgenda {
         const pendingPresentation = canonicalReceptionistDate(dialogue.quote?.startsAt, RECEPTIONIST_CALENDAR_TIME_ZONE);
         const messages = buildReceptionistMessages(source, settings.additionalInstructions, now, {
           pending: structuredClone(dialogue), pendingPresentation, naturalConfirmation, currentEvidence: source.raw_text,
+          namesReference: namesReference(), nameSources,
           calendarTimeZone: RECEPTIONIST_CALENDAR_TIME_ZONE,
           serverPresentation: canonicalReceptionistDate(now, RECEPTIONIST_CALENDAR_TIME_ZONE),
         });
@@ -105,13 +158,79 @@ export class PostgresWhatsAppAgenda {
               || fingerprint("quote", dialogue.quote) !== args.quoteFingerprint)
               return { status: "rejected", code: "INVALID_CONFIRMATION_BINDING" };
           }
+          if (command.name === "cancel" && command.arguments.binding) {
+            const { appointmentId, binding } = command.arguments;
+            if (binding.evidence !== source.raw_text || cancellationReferences.get(appointmentId) !== binding.evidenceReference)
+              return { status: "rejected", code: "INVALID_CANCELLATION_BINDING" };
+          }
           try {
             const result = await repo.appointmentOperationSavepoint(async inner => {
-              if (reading) return { result: await this.receptionistRead(inner, job, source, phone, command, dialogue) };
+              if (reading) return { result: await this.receptionistRead(inner, job, source, phone, command, dialogue, inspectAppointment, inspectResource) };
               const draft = structuredClone(dialogue);
               let reply: Reply;
               if (command.name === "clear_pending") {
                 reply = unchanged("No se guardó ningún turno nuevo ni se cambió un turno existente.", emptyAgendaDialogue());
+              } else if (command.name === "collect_booking_names") {
+                const args = command.arguments, reference = namesReference();
+                if (!reference || args.namesReference !== reference || await inner.findClientByCanonicalPhone(phone!))
+                  return { result: { status: "rejected", code: "INVALID_NAMES_BINDING" } as const };
+                const previousFields = draft.bookingNameFields ?? draft.bookingNames ?? {};
+                const fields = { ...previousFields };
+                for (const key of ["firstName", "lastName"] as const) {
+                  const patch = args[key];
+                  if (!patch) continue;
+                  const member = nameSources.find(row => row.messageId === patch.messageId);
+                  if (!member || await inner.agendaSender(patch.messageId) !== phone
+                    || member.text.slice(patch.start, patch.start + patch.value.length) !== patch.value)
+                    return { result: { status: "rejected", code: "INVALID_NAME_SOURCE" } as const };
+                  fields[key] = patch.value;
+                }
+                if (fields.firstName === previousFields.firstName && fields.lastName === previousFields.lastName) {
+                  // Repeated names are data, not a corrected proposal or consent.
+                  if (fields.firstName && fields.lastName)
+                    return { result: { status: "data", data: { bookingNameFields: fields } } as const };
+                  const message = namePrompt(draft);
+                  return { result: { status: "clarification", code: "CUSTOMER_INPUT_REQUIRED", message } as const,
+                    reply: unchanged(message, draft) };
+                }
+                draft.bookingNameFields = fields;
+                draft.bookingNames = fields.firstName && fields.lastName ? { firstName: fields.firstName, lastName: fields.lastName } : null;
+                if (draft.quote?.kind === "book") {
+                  draft.quote.names = draft.bookingNames;
+                  draft.quote.sourceMessageId = source.id;
+                  draft.quote.outboundId = null;
+                  draft.awaitingNames = !draft.bookingNames;
+                  if (!draft.awaitingNames) delete draft.awaiting;
+                }
+                reply = draft.awaitingNames ? unchanged(namePrompt(draft), draft, ["names"])
+                  : draft.quote ? summaryReply(draft) : unchanged(missingFieldText(draft.awaiting ?? ["time"]), draft);
+              } else if ((command.name === "notes" || command.name === "preference") && command.arguments.binding) {
+                const args = command.arguments, binding = args.binding!;
+                const member = nameSources.find(row => row.messageId === binding.messageId);
+                const ap = await this.owned(inner, job.businessId, phone!, args.appointmentId);
+                if (metadataReferences[command.name].get(ap.id) !== binding.evidenceReference
+                  || metadataReference(command.name, ap) !== binding.evidenceReference || !member || member.text !== binding.evidence
+                  || await inner.agendaSender(binding.messageId) !== phone)
+                  return { result: { status: "rejected", code: "INVALID_METADATA_BINDING" } as const };
+                let saved: StoredAppointment;
+                if (command.name === "notes") {
+                  const { notes, binding } = command.arguments;
+                  if (notes !== null && (binding!.start! + notes.length > member.text.length
+                    || member.text.slice(binding!.start!, binding!.start! + notes.length) !== notes))
+                    return { result: { status: "rejected", code: "INVALID_NOTE_SPAN" } as const };
+                  saved = await inner.setAppointmentNotes(job.businessId, ap.id, { notes }, actionContext(this.clock()));
+                } else {
+                  const { resourceId, binding } = command.arguments;
+                  if (resourceId !== null) {
+                    const resource = await inner.getResource(job.businessId, resourceId);
+                    if (!resource || resourceReferences.get(resourceId) !== binding!.resourceReference
+                      || resourceReference(resource) !== binding!.resourceReference)
+                      return { result: { status: "rejected", code: "INVALID_RESOURCE_BINDING" } as const };
+                  }
+                  saved = await inner.setAgendaPreference(job.businessId, ap.id, resourceId, this.clock());
+                }
+                reply = { text: command.name === "notes" ? "Nota guardada." : "Preferencia guardada. No cambia la asignación ni garantiza disponibilidad.",
+                  dialogue: emptyAgendaDialogue(), saved };
               } else if (command.name === "prepare_booking" || command.name === "prepare_change") {
                 reply = await this.prepareReceptionistQuote(inner, job, source, phone!, draft, command);
               } else {
@@ -121,27 +240,36 @@ export class PostgresWhatsAppAgenda {
                 // consent. Delivery, ownership, terms, capacity and persistence still
                 // follow the same guarded branch; other linguistic guards stay intact.
                 reply = await this.respond(inner, job, source, phone!, draft, mutation,
-                  command.name === "confirm_quote_naturally" ? { sourceMessageId: source.id, quoteSnapshot: initialQuoteSnapshot! } : undefined);
+                  command.name === "confirm_quote_naturally" ? { sourceMessageId: source.id, quoteSnapshot: initialQuoteSnapshot! } : undefined,
+                  command.name === "cancel" && command.arguments.binding
+                    ? ap => cancellationReference(ap) === command.arguments.binding!.evidenceReference : undefined);
               }
               const result: ReceptionistToolResult = command.name === "clear_pending" ? { status: "data", data: { pending: null } }
+                : reply.data ? { status: "data", data: reply.data }
                 : reply.saved
                 ? { status: "staged_action", operation: command.name, appointment: this.receptionistAppointment(reply.saved) }
                 : reply.renderedQuote && reply.dialogue.quote
                   ? { status: "prepared_quote", quote: structuredClone(reply.dialogue.quote), message: reply.text,
                     presentation: canonicalReceptionistDate(reply.dialogue.quote.startsAt, RECEPTIONIST_CALENDAR_TIME_ZONE) }
-                  : { status: command.name === "confirm_quote" || command.name === "confirm_quote_naturally" || command.name.startsWith("prepare_") ? "clarification" : "rejected",
+                  : { status: command.name === "confirm_quote" || command.name === "confirm_quote_naturally" || command.name === "collect_booking_names" || command.name.startsWith("prepare_") ? "clarification" : "rejected",
                     code: "CUSTOMER_INPUT_REQUIRED", message: reply.text };
               return { result, reply };
             });
-            if (result.reply) {
+            if (result.reply?.preparation === "rejected") {
+              // Preparation refusals carry customer context, never rejected selection fields.
+              dialogue = result.reply.dialogue;
+              rejectPreparation();
+              backendReply = result.reply.text;
+            } else if (result.reply) {
               const previouslyQuoted = quoteNeedsDelivery && dialogue.quote ? JSON.stringify(dialogue.quote) : null;
               dialogue = result.reply.dialogue;
+              namesRevision++;
               backendReply = command.name === "clear_pending" ? undefined : result.reply.text;
               quoteNeedsDelivery = Boolean(dialogue.quote && (result.reply.renderedQuote === JSON.stringify(dialogue.quote)
                 || previouslyQuoted === JSON.stringify(dialogue.quote)));
               if (result.reply.saved) actions.push({ operation: command.name, appointmentId: result.reply.saved.id });
             }
-            return result.result;
+            return { ...result.result, namesReference: namesReference() };
           } catch (error) {
             if (!(error instanceof AppointmentError)) throw error;
             const errorCode = ["INVALID_INPUT", "UNKNOWN_OWNED_ID", "INELIGIBLE_CATALOG", "UNAVAILABLE", "BUSY", "CLIENT_CONFLICT",
@@ -152,7 +280,8 @@ export class PostgresWhatsAppAgenda {
             return { status: "rejected", code: "AGENDA_REJECTED" };
           }
         }, { message: source.raw_text, recent: source.turns.slice(-12).map(turn => turn.raw_text.slice(0, 2000)),
-          pending: structuredClone(dialogue), pendingPresentation, naturalConfirmation, messages }, this.diagnose);
+          pending: structuredClone(dialogue), pendingPresentation, naturalConfirmation, messages,
+          namesReference: namesReference(), nameSources: structuredClone(nameSources) }, this.diagnose, rejectPreparation);
         completedSession = session;
         let text: string;
         try {
@@ -160,8 +289,8 @@ export class PostgresWhatsAppAgenda {
           await session.drain();
         } finally { session.close(); await session.drain(); }
         if (typeof text !== "string" || !text.trim() || text.length > 12000) throw new Error("Invalid receptionist response");
-        // Neither free prose nor provider-authored proof can enter the outbox.
-        // A quote/action reply comes only from the guarded backend branch above.
+        // Valid informational prose cannot replace a backend quote, name request or action reply.
+        // Otherwise the renderer validates the final act and gives current tool failures priority.
         text = backendReply ?? session.renderResponse(text);
         if (dialogue.quote && quoteNeedsDelivery && !text.includes(quoteText(dialogue.quote)))
           text += "\n\n" + quoteText(dialogue.quote);
@@ -194,7 +323,9 @@ export class PostgresWhatsAppAgenda {
       presentation: canonicalReceptionistDate(ap.startsAt, RECEPTIONIST_CALENDAR_TIME_ZONE) };
   }
   private async receptionistRead(repo: PostgresRepositories, job: PostgresAiJob, source: Source,
-    phone: string | null, command: ReceptionistToolCommand, dialogue: AgendaDialogue): Promise<ReceptionistToolResult> {
+    phone: string | null, command: ReceptionistToolCommand, dialogue: AgendaDialogue,
+    inspectAppointment: (ap: StoredAppointment) => unknown,
+    inspectResource: (resource: CatalogResource) => unknown): Promise<ReceptionistToolResult> {
     const bounded = <T>(items: T[]) => {
       const selected = items.slice(0, 50);
       while (selected.length && new TextEncoder().encode(JSON.stringify(selected)).byteLength > 12000) selected.pop();
@@ -209,7 +340,7 @@ export class PostgresWhatsAppAgenda {
       }
       case "read_catalog": return { status: "data", data: bounded((await repo.listServices()).filter(item => item.status === "active")
         .map(({ id, name, description, durationMinutes, priceArs }) => ({ id, name, description, durationMinutes, priceArs }))) };
-      case "read_resources": return { status: "data", data: bounded((await repo.listResources(job.businessId)).filter(item => item.status === "active")) };
+      case "read_resources": return { status: "data", data: bounded((await repo.listResources(job.businessId)).filter(item => item.status === "active").map(inspectResource)) };
       case "read_calendar": {
         const calendar = await repo.getBusinessCalendar(job.businessId);
         if (!calendar.weeklySchedule) return { status: "unavailable_data", code: "BUSINESS_CALENDAR_MISSING" };
@@ -218,7 +349,7 @@ export class PostgresWhatsAppAgenda {
           establishesAvailability: false } };
       }
       case "availability": {
-        const args = command.arguments;
+        const args = command.arguments, serviceId = args.serviceId.toLowerCase(), resourceId = args.resourceId?.toLowerCase();
         const referenceFailure = (kind: "service" | "resource" | "appointment_context",
           errorCode: AppointmentError["code"] = "UNKNOWN_OWNED_ID"): ReceptionistToolResult => {
           emitReceptionistDiagnostic(this.diagnose, { code: "receptionist.tool_rejected", toolName: "availability",
@@ -231,12 +362,12 @@ export class PostgresWhatsAppAgenda {
                 ? "Consultá read_resources y reintentá con el ID devuelto del mismo recurso elegido; si no está o es ambiguo, preguntá sin elegir otro ni quitar la preferencia."
                 : "No se pudo verificar la consulta; no se guardó nada. Actualizá read_catalog/read_resources sin cambiar la elección. Para reprogramar, consultá owned_appointments del remitente actual y usá solo un turno propio elegible; nunca inventes IDs ni borres el contexto retenido. Para una búsqueda nueva, no envíes appointmentId." };
         };
-        if (!(await repo.listServices()).some(item => item.id === args.serviceId && item.status === "active"))
+        if (!(await repo.listServices()).some(item => item.id === serviceId && item.status === "active"))
           return referenceFailure("service");
-        if (args.resourceId && (await repo.getResource(job.businessId, args.resourceId))?.status !== "active")
+        if (resourceId && (await repo.getResource(job.businessId, resourceId))?.status !== "active")
           return referenceFailure("resource");
         const binding = dialogue.reschedule;
-        const appointmentId = binding?.appointmentId ?? args.appointmentId;
+        const appointmentId = binding?.appointmentId ?? args.appointmentId?.toLowerCase();
         if (appointmentId) {
           if (!phone) return referenceFailure("appointment_context");
           let current: StoredAppointment;
@@ -248,13 +379,13 @@ export class PostgresWhatsAppAgenda {
           if (current.state !== "confirmed" || Date.parse(this.clock()) >= current.startMs)
             return referenceFailure("appointment_context", "STATE_LOCKED");
           if (binding && (binding.previous !== snapshot(current) || binding.serviceId !== current.terms.serviceId
-            || args.serviceId !== binding.serviceId || (args.appointmentId && args.appointmentId !== binding.appointmentId)))
+            || serviceId !== binding.serviceId || (args.appointmentId && args.appointmentId.toLowerCase() !== binding.appointmentId)))
             return referenceFailure("appointment_context");
         }
         const resources = await repo.listResources(job.businessId);
         const resolved = trustedPreference(source.raw_text, resources,
           binding ? binding.preference : dialogue.bookingPreference,
-          binding ? binding.unresolvedPreference : dialogue.bookingUnresolvedPreference);
+          binding ? binding.unresolvedPreference : dialogue.bookingUnresolvedPreference, resourceId);
         if (binding) {
           if (resolved.preference === undefined) delete binding.preference;
           else binding.preference = resolved.preference;
@@ -264,138 +395,98 @@ export class PostgresWhatsAppAgenda {
           else dialogue.bookingPreference = resolved.preference;
           dialogue.bookingUnresolvedPreference = resolved.unresolved;
         }
-        const selection = customerTemporalSelection(source.raw_text, this.clock());
-        const retainedScope = binding || dialogue.bookingPreference !== undefined || dialogue.bookingUnresolvedPreference
-          || dialogue.requestedDate !== undefined;
-        const date = selection.date ?? (retainedScope ? dialogue.requestedDate ?? args.date : args.date);
-        if (selection.date) dialogue.requestedDate = selection.date;
-        if (resolved.unresolved) return { status: "clarification", code: "UNKNOWN_RESOURCE", message: missingFieldText(["resource"]) };
-        const options = await this.alternatives(repo, job.businessId, args.serviceId, date,
-          resolved.preference ?? undefined, appointmentId);
-        if (options[0] && dialogue.requestedDate) dialogue.requestedDate = argentinaDate(options[0].start);
-        const resourceName = resources.find(item => item.id === resolved.preference)?.name;
+        if (resolved.unresolved && !resourceId) return { status: "clarification", code: "UNKNOWN_RESOURCE", message: missingFieldText(["resource"]) };
+        const queryResource = resourceId ?? resolved.preference ?? undefined;
+        const options = await repo.listAppointmentAvailability(job.businessId, { serviceId, date: args.date,
+          ...(queryResource ? { resourceId: queryResource } : {}) }, { clock: this.clock, ...(appointmentId ? { appointmentId } : {}) });
+        const resourceName = resources.find(item => item.id === queryResource)?.name;
         return { status: "data", data: { ...bounded(options.map(option => ({ startsAt: option.start, resourceId: option.resourceId,
           serviceId: option.terms.serviceId, durationMinutes: option.terms.durationMinutes, priceArs: option.terms.priceArs,
           presentation: canonicalReceptionistDate(option.start, RECEPTIONIST_CALENDAR_TIME_ZONE) }))),
-          message: this.slotsText(options, resourceName) } };
+          message: options.length ? this.slotsText(options, resourceName)
+            : `No hay horarios disponibles${resourceName ? ` con ${resourceName}` : ""} para ${args.date}. ¿Querés consultar otro día?` } };
       }
       case "owned_appointments": {
         const client = await repo.findClientByCanonicalPhone(phone!);
         const appointments = client ? await repo.listAppointments(job.businessId, { clientId: client.id }) : [];
-        return { status: "data", data: bounded(appointments.filter(ap => ap.client.phone === phone).map(ap => this.receptionistAppointment(ap))) };
+        return { status: "data", data: bounded(appointments.filter(ap => ap.client.phone === phone).map(inspectAppointment)) };
       }
-      case "owned_appointment": return { status: "data", data: this.receptionistAppointment(await this.owned(repo, job.businessId, phone!, command.arguments.appointmentId)) };
+      case "owned_appointment": return { status: "data", data: inspectAppointment(await this.owned(repo, job.businessId, phone!, command.arguments.appointmentId)) };
       default: throw new Error("Non-reading tool reached read handler");
     }
   }
-  /** Model selections can propose alternatives, never override customer-selected
-   * fields or authorize a mutation. This is not conversation admission: relative
-   * requests may receive a disclosed quote without an exact literal clock time.
-   * Confirmation still uses actual subsequent input and delivered quote evidence.
+  /** Native arguments propose alternatives, never authorize a mutation.
+   * Actual preference/name context stays separate. Confirmation still requires
+   * actual subsequent input and delivered quote evidence.
    */
   private async prepareReceptionistQuote(repo: PostgresRepositories, job: PostgresAiJob, source: Source, phone: string,
-    dialogue: AgendaDialogue, command: Extract<ReceptionistToolCommand, { name: "prepare_booking" | "prepare_change" }>): Promise<Reply> {
+    dialogue: AgendaDialogue, command: Extract<ReceptionistToolCommand, { name: "prepare_booking" | "prepare_change" }>): Promise<Reply & { preparation: PreparationOutcome }> {
+    const outcome = (preparation: PreparationOutcome, reply: Reply) => ({ ...reply, preparation });
     const args = command.arguments;
     const current = command.name === "prepare_change" ? await this.owned(repo, job.businessId, phone, command.arguments.appointmentId) : null;
     if (current && (current.state !== "confirmed" || Date.parse(this.clock()) >= current.startMs)) throw new AppointmentError("STATE_LOCKED");
-    const serviceId = args.serviceId ?? current!.terms.serviceId;
-    const startsAt = args.startsAt ?? current!.startsAt;
+    const bookingContext = !dialogue.reschedule && !dialogue.change && dialogue.quote?.kind !== "change";
+    const pending = dialogue.quote?.kind === (current ? "change" : "book") && (current || bookingContext) ? dialogue.quote : null;
+    const retained = current ? dialogue.reschedule ?? dialogue.change : undefined;
+    if (current && ((pending && pending.appointmentId !== current.id) || (retained && retained.appointmentId !== current.id)))
+      return outcome("rejected", unchanged("La propuesta corresponde a otro turno. Pedí el cambio por separado; no se guardó nada.", dialogue));
+    if (current && ((pending && pending.previous !== snapshot(current)) || (retained && retained.previous !== snapshot(current)))) {
+      const next = { ...dialogue };
+      delete next.change;
+      delete next.reschedule;
+      return outcome("rejected", unchanged("El turno cambió desde tu solicitud. Pedí el cambio nuevamente; no se guardó nada.", next));
+    }
+    const serviceId = (args.serviceId ?? pending?.terms.serviceId ?? current!.terms.serviceId).toLowerCase();
+    const startsAt = args.startsAt ?? pending?.startsAt ?? current?.startsAt!;
     if (!(await repo.listServices()).some(item => item.id === serviceId && item.status === "active")) throw new AppointmentError("UNKNOWN_OWNED_ID");
     const resources = await repo.listResources(job.businessId);
-    if (args.resourceId && !resources.some(item => item.id === args.resourceId && item.status === "active")) throw new AppointmentError("UNKNOWN_OWNED_ID");
-    if (current && dialogue.reschedule && dialogue.reschedule.appointmentId !== current.id
-      && structuralChangeIntent(source.raw_text) === undefined)
-      return unchanged("La propuesta cambia un turno que no pediste. No se guardó ningún cambio.", dialogue);
+    if (args.resourceId && !resources.some(item => item.id === args.resourceId!.toLowerCase() && item.status === "active")) throw new AppointmentError("UNKNOWN_OWNED_ID");
     const binding = current && dialogue.reschedule?.appointmentId === current.id ? dialogue.reschedule : undefined;
-    const previousPreference = current ? binding?.preference !== undefined ? binding.preference : current.customerResourcePreference : dialogue.bookingPreference;
+    const previousPreference = current ? binding?.preference !== undefined ? binding.preference : pending ? pending.preference : current.customerResourcePreference : bookingContext ? dialogue.bookingPreference : undefined;
+    const repeatBook = !current && pending && pending.terms.serviceId === serviceId && Date.parse(pending.startsAt) === Date.parse(startsAt);
     const resolved = trustedPreference(source.raw_text, resources, previousPreference,
-      current ? binding?.unresolvedPreference : dialogue.bookingUnresolvedPreference);
+      current ? binding?.unresolvedPreference : bookingContext && dialogue.bookingUnresolvedPreference, args.resourceId);
     const next: AgendaDialogue = { ...emptyAgendaDialogue(),
-      ...(dialogue.bookingNames !== undefined ? { bookingNames: dialogue.bookingNames } : {}),
+      ...(!current && bookingContext && dialogue.bookingNames !== undefined ? { bookingNames: dialogue.bookingNames } : {}),
+      ...(!current && bookingContext && dialogue.bookingNameFields ? { bookingNameFields: dialogue.bookingNameFields } : {}),
       ...(resolved.preference !== undefined ? { bookingPreference: resolved.preference } : {}),
       bookingUnresolvedPreference: resolved.unresolved };
-    const receivedSelection = customerTemporalSelection(source.raw_text, this.clock());
-    const requestedDate = receivedSelection.date ?? dialogue.requestedDate;
-    const requestedTime = receivedSelection.time ?? dialogue.requestedTime;
-    if (requestedDate) next.requestedDate = requestedDate;
-    if (requestedTime) next.requestedTime = requestedTime;
     if (current) next.reschedule = {
       appointmentId: current.id, previous: snapshot(current), serviceId: current.terms.serviceId, resourceId: null,
       ...(resolved.preference !== undefined ? { preference: resolved.preference } : {}), unresolvedPreference: resolved.unresolved,
-      ...(receivedSelection.date ?? binding?.date ? { date: receivedSelection.date ?? binding!.date! } : {}),
-      ...(receivedSelection.time ?? binding?.time ? { time: receivedSelection.time ?? binding!.time! } : {}),
+      ...(binding?.date ? { date: binding.date } : {}), ...(binding?.time ? { time: binding.time } : {}),
     };
-    if (resolved.unresolved) return unchanged(missingFieldText(["resource"]), next, ["resource"]);
-    if (current) {
-      const intent = structuralChangeIntent(source.raw_text);
-      const pendingChange = dialogue.change?.appointmentId === current.id ? dialogue.change : undefined;
-      const kind = intent ?? pendingChange?.kind ?? "temporal";
-      // Preparation does not require keyword admission, but a different received
-      // operation cannot be laundered into a structural quote by model arguments.
-      const unsupportedDirective = intent === undefined && /^(?:(?:quiero|necesito|por favor)\s+)?(?:cambiar|cambia|cambiá|reprogramar|reprogramá|mover|mové|pasar)(?:\s|[.!]|$)/iu.test(source.raw_text.trim());
-      if (explicitNotes(source.raw_text) !== undefined || explicitCancel(source.raw_text) || unsupportedDirective)
-        return unchanged("Indicá qué cambio de horario, servicio o recurso querés. No se preparó ningún cambio.", { ...dialogue, quote: null });
-      const retained = pendingChange ?? binding;
-      if (intent === undefined && retained && retained.previous !== snapshot(current))
-        return unchanged("El turno cambió desde tu solicitud. Pedí el cambio nuevamente; no se guardó nada.", emptyAgendaDialogue());
-      if (kind !== "temporal") {
-        const catalog = kind === "service" ? (await repo.listServices()).filter(item => item.status === "active")
-          : resources.filter(item => item.status === "active");
-        const chosen = customerChangeChoice(source.raw_text, kind, catalog, intent === undefined)
-          ?? (kind === "resource" ? resolved.preferred?.id : undefined);
-        next.change = { appointmentId: current.id, previous: snapshot(current), kind };
-        delete next.reschedule;
-        if (!chosen) return unchanged(missingFieldText([kind]), next, [kind]);
-        const incompatible = Date.parse(startsAt) !== current.startMs
-          || (kind === "service" && ((args.resourceId !== undefined && args.resourceId !== current.terms.resourceId)
-            || serviceId !== chosen))
-          || (kind === "resource" && (serviceId !== current.terms.serviceId || args.resourceId !== chosen));
-        if (incompatible) return unchanged("La propuesta cambia campos que no pediste. No se guardó ningún cambio.", next);
-        if (kind === "service" && chosen === current.terms.serviceId)
-          return unchanged("Ese ya es el servicio del turno. ¿Qué servicio querés?", next, ["service"]);
-      } else {
-        if (serviceId !== current.terms.serviceId)
-          return unchanged("La propuesta cambia un servicio que no pediste. No se guardó ningún cambio.", next);
-        if (args.resourceId !== undefined && args.resourceId !== current.terms.resourceId && !resolved.preferred && !binding?.preference)
-          return unchanged("La propuesta cambia un recurso que no pediste. No se guardó ningún cambio.", next);
-        const selection = customerTemporalSelection(source.raw_text, this.clock());
-        const date = selection.date ?? (intent === undefined ? binding?.date : undefined);
-        const time = selection.time ?? (intent === undefined ? binding?.time : undefined);
-        if ((date && date !== argentinaDate(startsAt)) || (time && time !== agendaTime(startsAt)))
-          return unchanged("La propuesta no coincide con el día y hora que pediste. Indicá nuevamente el día y la hora; no se guardó nada.", { ...next, reschedule: { ...next.reschedule!, ...(date ? { date } : {}), ...(time ? { time } : {}) } }, ["date", "time"]);
-        // Retain only received selections, never promote a proposed model slot
-        // into customer intent for a later preparation.
-        next.reschedule = { ...next.reschedule!, ...(date ? { date } : {}), ...(time ? { time } : {}) };
-        if (intent !== undefined || binding) {
-          const missing = [...(!date ? ["date"] : []), ...(!time ? ["time"] : [])];
-          if (missing.length) return unchanged(missingFieldText(missing), next, missing);
-        }
-      }
-    }
-    const resourceId = current && next.change ? next.change.kind === "service" ? current.terms.resourceId : args.resourceId
-      : resolved.preference ?? args.resourceId;
-    const preferredName = resources.find(item => item.id === resolved.preference)?.name;
-    if (!current && requestedDate && !requestedTime)
-      return this.bookingAlternatives(repo, job.businessId, serviceId, requestedDate, next, resourceId, preferredName);
-    if (!current && ((requestedDate && requestedDate !== argentinaDate(startsAt)) || (requestedTime && requestedTime !== agendaTime(startsAt))))
-      return unchanged("La propuesta no coincide con el día y hora que pediste. Indicá nuevamente el día y la hora; no se guardó nada.", next);
+    if (resolved.unresolved && (current || (!args.resourceId && (!repeatBook || resolved.unknownPreference))))
+      return outcome("rejected", unchanged(missingFieldText(["resource"]), { ...dialogue, ...next }, ["resource"]));
+    // Assignment/query choices are not persistent preference or temporal evidence.
+    const resourceId = current ? args.resourceId?.toLowerCase()
+      ?? (resolved.preferred || resolved.removePreference ? resolved.preference ?? undefined : pending?.terms.resourceId ?? resolved.preference ?? undefined)
+      : args.resourceId?.toLowerCase() ?? (repeatBook && !resolved.preferred && !resolved.removePreference ? pending.terms.resourceId : resolved.preference ?? undefined);
+    const preferredName = resources.find(item => item.id === resourceId)?.name;
     const options = await repo.listAppointmentAvailability(job.businessId, { serviceId, date: argentinaDate(startsAt),
       ...(resourceId ? { resourceId } : {}) }, { clock: this.clock, ...(current ? { appointmentId: current.id } : {}) });
     const selected = options.find(option => option.startMs === Date.parse(startsAt) && option.resourceId === current?.terms.resourceId)
       ?? options.find(option => option.startMs === Date.parse(startsAt));
-    if (!selected) return unchanged(this.slotsText(await this.alternatives(repo, job.businessId, serviceId,
-      argentinaDate(startsAt), resourceId, current?.id), preferredName), next, ["time"]);
+    if (!selected) return outcome("rejected", unchanged(this.slotsText(await this.alternatives(repo, job.businessId, serviceId,
+      argentinaDate(startsAt), resourceId, current?.id), preferredName), { ...dialogue, ...next }, ["time"]));
     if (current && selected.startMs === current.startMs && serviceId === current.terms.serviceId
-      && selected.resourceId === current.terms.resourceId && (resolved.preference ?? null) === current.customerResourcePreference)
-      return unchanged("La propuesta no cambia el turno. Indicá qué querés cambiar.", next);
+      && selected.resourceId === current.terms.resourceId)
+      return outcome("retained-noop", { text: "El turno ya tiene esos datos. No se guardó ningún cambio.", dialogue: emptyAgendaDialogue(), data: { pending: "unchanged" } });
     const client = await repo.findClientByCanonicalPhone(phone);
-    const names = explicitCustomerNames(source.raw_text) ?? dialogue.bookingNames ?? null;
-    next.bookingNames = names;
+    const names = current || client ? null : explicitCustomerNames(source.raw_text) ?? (bookingContext ? dialogue.bookingNames : null) ?? null;
+    if (pending && Date.parse(pending.startsAt) === selected.startMs && quoteTermsEqual(pending.terms, selected.terms)
+      && pending.preference === (resolved.preference ?? null) && pending.names?.firstName === names?.firstName && pending.names?.lastName === names?.lastName) {
+      if (!current && !client && !names) return outcome("retained-noop", unchanged(namePrompt(dialogue), dialogue));
+      const retainedDialogue = current ? dialogue : { ...dialogue, bookingUnresolvedPreference: resolved.unresolved,
+        ...(resolved.preference !== undefined ? { bookingPreference: resolved.preference } : {}) };
+      return outcome("retained-noop", { text: "La propuesta pendiente no cambió. Todavía no se guardó ningún cambio.", dialogue: retainedDialogue, data: { pending: "retained" } });
+    }
+    if (!current) { next.bookingNames = names; if (names) next.bookingNameFields = { ...names }; }
     next.quote = { kind: current ? "change" : "book", appointmentId: current?.id ?? null, startsAt: selected.start,
       terms: selected.terms, preference: resolved.preference ?? null, previous: current ? snapshot(current) : null,
       names: current ? null : names, sourceMessageId: source.id, outboundId: null };
     next.awaitingNames = !current && !client && !names;
-    return next.awaitingNames ? unchanged(missingFieldText(["names"]), next, ["names"]) : summaryReply(next);
+    return outcome("prepared", next.awaitingNames ? unchanged(namePrompt(next), next, ["names"]) : summaryReply(next));
   }
   private async owned(repo: PostgresRepositories, businessId: string, phone: string, id: string): Promise<StoredAppointment> {
     const current = await repo.getAppointment(businessId, id);
@@ -444,28 +535,32 @@ export class PostgresWhatsAppAgenda {
   }
   private async respond(repo: PostgresRepositories, job: PostgresAiJob, source: Source, phone: string,
     dialogue: AgendaDialogue, mutation: GuardedMutation | null,
-    naturalConfirmation?: { sourceMessageId: string; quoteSnapshot: string }): Promise<Reply> {
+    naturalConfirmation?: { sourceMessageId: string; quoteSnapshot: string },
+    validateCancellation?: (ap: StoredAppointment) => boolean): Promise<Reply> {
     const now = this.clock();
     const selection = customerTemporalSelection(source.raw_text, now);
     if (selection.date) dialogue.requestedDate = selection.date;
     if (selection.time) dialogue.requestedTime = selection.time;
     const client = await repo.findClientByCanonicalPhone(phone);
-    if (dialogue.quote && dialogue.awaitingNames) {
+    if (!mutation && dialogue.quote && dialogue.awaitingNames) {
       const names = explicitCustomerNames(source.raw_text);
       if (names) {
         dialogue.quote.names = names;
         dialogue.bookingNames = names;
+        dialogue.bookingNameFields = { ...names };
         dialogue.awaitingNames = false;
+        delete dialogue.awaiting;
         dialogue.quote.sourceMessageId = source.id;
+        dialogue.quote.outboundId = null;
         return summaryReply(dialogue);
       }
-      return unchanged(missingFieldText(["names"]), dialogue);
+      return unchanged(namePrompt(dialogue), dialogue);
     }
     // Runtime binding establishes authentic context only; semantics are model risk.
     // Literal confirmation remains an independent received-answer guard.
     const boundInterpretation = naturalConfirmation?.sourceMessageId === source.id
       && naturalConfirmation.quoteSnapshot === JSON.stringify(dialogue.quote);
-    if (dialogue.quote && (explicitQuoteConfirmation(source.raw_text) || boundInterpretation)) {
+    if (!mutation && dialogue.quote && (explicitQuoteConfirmation(source.raw_text) || boundInterpretation)) {
       const quote = dialogue.quote;
       if (!await repo.agendaQuoteDelivered(quote.outboundId, source.connection_id, phone))
         return summaryReply(dialogue, "Primero necesitás recibir el detalle de la propuesta. ");
@@ -515,8 +610,10 @@ export class PostgresWhatsAppAgenda {
     if (!mutation) return unchanged("¿Qué servicio y día querés consultar?", dialogue);
     switch (mutation.name) {
       case "cancel": {
-        if (!explicitCancel(source.raw_text)) return unchanged("Indicá explícitamente si querés cancelar tu turno.", dialogue);
+        if (!validateCancellation && !explicitCancel(source.raw_text)) return unchanged("Indicá explícitamente si querés cancelar tu turno.", dialogue);
         const ap = await this.owned(repo, job.businessId, phone, mutation.arguments.appointmentId);
+        // Fresh ownership and snapshot checks are independent of interpreted intent.
+        if (validateCancellation && !validateCancellation(ap)) throw new AppointmentError("CONFIRMATION_REQUIRED");
         const saved = await repo.transitionAppointment(job.businessId, ap.id, "cancelled", actionContext(now));
         return { text: `Cancelación guardada. Turno ${saved.id}.`, dialogue: emptyAgendaDialogue(), saved };
       }

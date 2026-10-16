@@ -15,7 +15,7 @@ export class AiOutboxDispatcher{
     for(const row of rows){
       try{
         const data={...(row.payload as object),correlationId:row.stable_key};
-        await this.publisher.send(this.queueName,data,{id:row.id,singletonKey:row.stable_key,retryLimit:0});
+        await this.publisher.send(this.queueName,data,{id:row.id,singletonKey:row.stable_key,retryLimit:2,retryDelay:5,retryBackoff:true});
         published+=await this.pools.manager.run(undefined,r=>r.completeAiOutbox(row.id,token));
       }catch{
         const delay=Math.min(60_000,this.retryBaseMs*2**Math.min(row.publish_attempts-1,6));

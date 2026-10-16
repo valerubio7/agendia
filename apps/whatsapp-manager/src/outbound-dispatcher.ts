@@ -17,10 +17,11 @@ export class PostgresOutboundDispatcher {
     private pools: Pools,
     private gateway: OutboundGateway,
     private managerId: string,
+    private ownershipTokens: () => string[],
   ) {}
   async dispatchNext(): Promise<boolean> {
     const row = await this.pools.manager.run(undefined, (r) =>
-      r.claimOwnedOutbound(this.managerId),
+      r.claimOwnedOutbound(this.managerId, this.ownershipTokens()),
     );
     if (!row) return false;
     const context = tenantContext({
@@ -41,11 +42,12 @@ export class PostgresOutboundDispatcher {
           row.outbound_id,
           result.outcome === "ack" ? "sent" : "failed",
           result.outcome === "ack" ? result.providerMessageId : undefined,
+          row.ownership_token,
         ),
       );
     } catch {
       await this.pools.manager.run(context, (r) =>
-        r.finishOutbound(row.outbound_id, "delivery_unknown"),
+        r.finishOutbound(row.outbound_id, "delivery_unknown", undefined, row.ownership_token),
       );
     }
     return true;

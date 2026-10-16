@@ -120,6 +120,100 @@ async function expectOfficialSignalBrand(page: Page, shell: Locator) {
   console.log("Assistant official symbol bounds", JSON.stringify(bounds));
 }
 
+test("assistant save preserves newer activation draft and advances the next revision", async ({ page, system }) => {
+  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await expect(page.locator('[data-ui="admin-screen"]')).toBeVisible();
+  await page.getByLabel("Nombre", { exact: true }).fill("Asistente concurrente");
+  await page.getByLabel("Correo del usuario", { exact: true }).fill("assistant-draft@example.test");
+  await page.getByLabel("Contraseña inicial", { exact: true }).fill(tenant.password);
+  await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
+  await expect(page.getByRole("status")).toHaveText("Negocio creado");
+  await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await login(page, system.webUrl, "assistant-draft@example.test", tenant.password);
+  await expect(page).toHaveURL(/\/profile$/);
+  await page.goto(`${system.webUrl}/assistant`);
+  const active = page.getByRole("checkbox", { name: "Respuestas automáticas activas", exact: true });
+  await expect(active).not.toBeChecked();
+  const submitted: Array<{ active: boolean; expectedRevision: number }> = [];
+  let release!: () => void;
+  let observed!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const mutationObserved = new Promise<void>(resolve => { observed = resolve; });
+  await page.route("**/me/assistant", async route => {
+    if (route.request().method() !== "PUT") return route.continue();
+    submitted.push(route.request().postDataJSON());
+    const response = await route.fetch();
+    expect(response.ok()).toBe(true);
+    if (submitted.length === 1) {
+      observed();
+      await held;
+    }
+    await route.fulfill({ response });
+  });
+  await active.check();
+  await page.getByRole("button", { name: "Guardar y activar", exact: true }).click();
+  await mutationObserved;
+  try {
+    await expect(page.getByRole("button", { name: "Guardando…", exact: true })).toBeDisabled();
+    await expect(active).toBeEnabled();
+    await active.uncheck();
+    await page.getByLabel("Estilo de atención", { exact: true }).fill("Borrador posterior al envío");
+  } finally { release(); }
+  await expect(page.getByRole("status")).toHaveText("Asistente guardado");
+  await expect(active).not.toBeChecked();
+  await expect(page.getByText("Pausa pendiente", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Estilo de atención", { exact: true })).toHaveValue("Borrador posterior al envío");
+  await page.getByRole("button", { name: "Guardar configuración", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Guardar configuración", exact: true })).toBeEnabled();
+  expect(submitted).toHaveLength(2);
+  expect(submitted[0]!.active).toBe(true);
+  expect(submitted[1]).toMatchObject({ active: false, expectedRevision: submitted[0]!.expectedRevision + 1 });
+  await page.reload();
+  await expect(active).not.toBeChecked();
+  await expect(page.getByLabel("Estilo de atención", { exact: true })).toHaveValue("Borrador posterior al envío");
+  await page.unroute("**/me/assistant");
+  await page.route("**/me/assistant", route => route.request().method() === "PUT"
+    ? route.fulfill({ status: 409, json: { code: "CONFLICT" } }) : route.continue());
+  await active.check();
+  await page.getByRole("button", { name: "Guardar y activar", exact: true }).click();
+  await expect(page.locator('[data-ui="assistant-screen"]').getByRole("alert")).toHaveText("Los datos cambiaron. Recargá y volvé a intentar.");
+  await expect(active).toBeChecked();
+  await page.getByRole("button", { name: "Recargar configuración", exact: true }).click();
+  await expect(active).not.toBeChecked();
+  await page.unroute("**/me/assistant");
+
+  let releaseLate!: () => void;
+  let observeLate!: () => void;
+  let deliverLate!: () => void;
+  const lateHeld = new Promise<void>(resolve => { releaseLate = resolve; });
+  const lateObserved = new Promise<void>(resolve => { observeLate = resolve; });
+  const lateDelivered = new Promise<void>(resolve => { deliverLate = resolve; });
+  await page.route("**/me/assistant", async route => {
+    if (route.request().method() !== "PUT") return route.continue();
+    const response = await route.fetch();
+    expect(response.ok()).toBe(true);
+    observeLate();
+    await lateHeld;
+    await route.fulfill({ response });
+    deliverLate();
+  });
+  await active.check();
+  await page.getByRole("button", { name: "Guardar y activar", exact: true }).click();
+  await lateObserved;
+  try {
+    await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
+    await expect(page).toHaveURL(/\/$/);
+    await login(page, system.webUrl, system.admin.email, system.admin.password);
+    await expect(page.locator('[data-ui="admin-screen"]')).toBeVisible();
+  } finally { releaseLate(); }
+  await lateDelivered;
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect(page.locator('[data-ui="admin-screen"]')).toBeVisible();
+  await expect(page.locator('[data-ui="admin-screen"]').getByRole("status")).toHaveCount(0);
+  await expect(page.getByRole("cell", { name: "Asistente concurrente", exact: true })).toBeVisible();
+});
+
 test("the redesigned Assistant screen preserves the real configuration workflow responsively", async ({
   browser,
   page,

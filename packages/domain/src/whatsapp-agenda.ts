@@ -73,6 +73,8 @@ export interface AgendaDialogue {
   bookingPreference?: string | null;
   bookingUnresolvedPreference?: boolean;
   bookingNames?: AgendaQuote["names"];
+  /** Draft-local literal fields; omitted patches retain previously supplied values. */
+  bookingNameFields?: { firstName?: string; lastName?: string };
   /** Missing service/resource choices are scoped to an inspected owned appointment. */
   change?: { appointmentId: string; previous: string; kind: "service" | "resource" };
   /** Owned appointment and inspected structure bind a multi-turn reschedule selection. */
@@ -219,7 +221,8 @@ export function missingFieldText(fields: readonly string[]): string {
   const prompts: Record<string, string> = {
     service: "¿Qué servicio querés?", date: "¿Para qué día?", time: "¿A qué hora?",
     resource: "No reconocí el recurso solicitado. ¿Cuál querés?",
-    appointment: "¿Qué turno querés modificar?", names: "Decime «mi nombre es Nombre Apellido».",
+    appointment: "¿Qué turno querés modificar?", names: "Decime tu nombre y apellido.",
+    firstName: "Decime tu nombre.", lastName: "Decime tu apellido.",
   };
   return fields.map(field => prompts[field]).filter(Boolean).join(" ");
 }

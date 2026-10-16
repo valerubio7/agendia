@@ -11,6 +11,7 @@ import {
   type BusinessClosureRequest,
   type WeeklySchedule,
   type Profile,
+  type PlatformAiInstructions,
   type Session,
   type Service,
   type Resource,
@@ -52,6 +53,7 @@ const assistantFields = [
   "businessInstructions",
   "active",
 ] as const;
+type AdminData = { businesses: Business[]; instructions: PlatformAiInstructions };
 const WHATSAPP_QR_LIFECYCLE_MS = 5 * 60_000;
 
 export type WhatsAppLinkMonitorEvent =
@@ -168,6 +170,10 @@ export function LivePanel({ mode }: { mode: Mode }) {
   const assistantPendingRef = useRef(false);
   const assistantSaveAttemptRef = useRef(0);
   const loadAttemptRef = useRef(0);
+  const adminRequestRef = useRef<number | null>(null);
+  const adminAttemptRef = useRef(0);
+  const [adminPending, setAdminPending] = useState(false);
+  const [adminWarning, setAdminWarning] = useState(false);
   const closureOwnerRef = useRef<{ businessId: string; generation: number } | null>(null);
   // Reads and mutations share synchronous session/request ownership.
   const closureRequestRef = useRef<AbortController | null>(null);
@@ -288,6 +294,12 @@ export function LivePanel({ mode }: { mode: Mode }) {
   const load = async () => {
     if (mode === "login") return;
     const attempt = ++loadAttemptRef.current;
+    adminRequestRef.current = null;
+    setAdminPending(false);
+    setAdminWarning(false);
+    assistantSaveAttemptRef.current += 1;
+    assistantPendingRef.current = false;
+    setAssistantPending(false);
     closureOwnerRef.current = null;
     closureRequestRef.current?.abort();
     closureRequestRef.current = null;
@@ -397,6 +409,7 @@ export function LivePanel({ mode }: { mode: Mode }) {
     } else void load();
     return () => {
       loadAttemptRef.current += 1;
+      adminRequestRef.current = null;
       closureOwnerRef.current = null;
       closureRequestRef.current?.abort();
       closureRequestRef.current = null;
@@ -480,21 +493,49 @@ export function LivePanel({ mode }: { mode: Mode }) {
       if (monitorRef.current === controller) monitorRef.current = null;
     }
   };
-  const runAdminMutation = async (
-    work: () => Promise<unknown>,
-    success: "Negocio creado" | "Negocio actualizado" | "Instrucciones guardadas",
-  ) => {
+  // Without work this only retries GETs; a confirmed write is never replayed.
+  const runAdminMutation = async <T,>(
+    work?: () => Promise<T>,
+    success = "",
+    reconcile?: (state: AdminData, saved: T) => AdminData,
+  ): Promise<boolean> => {
+    if (adminRequestRef.current || logoutPendingRef.current) return false;
+    const request = ++adminAttemptRef.current;
+    const generation = loadAttemptRef.current;
+    adminRequestRef.current = request;
+    const current = () => adminAttemptRef.current === request &&
+      loadAttemptRef.current === generation && !logoutPendingRef.current;
+    setAdminPending(true);
     setError("");
-    setNotice("");
+    if (work) setNotice("");
     try {
-      await work();
-      const businesses = await api.businesses();
-      setData({ businesses, instructions: await api.platformAiInstructions() });
-      setNotice(success);
-      return true;
-    } catch (cause) {
-      setError(await api.errorMessage(cause));
-      return false;
+      if (work) {
+        try {
+          const saved = await work();
+          if (!current()) return false;
+          if (reconcile) setData((state: unknown) => current() ? reconcile(state as AdminData, saved) : state);
+          setNotice(success);
+        } catch (cause) {
+          if (current()) setError(api.errorMessage(cause));
+          return false;
+        }
+      }
+      const [businesses, instructions] = await Promise.allSettled([
+        api.businesses(), api.platformAiInstructions(),
+      ]);
+      if (!current()) return false;
+      setData((state: unknown) => !current() ? state : {
+        ...(state as AdminData),
+        ...(businesses.status === "fulfilled" ? { businesses: businesses.value } : {}),
+        ...(instructions.status === "fulfilled" ? { instructions: instructions.value } : {}),
+      });
+      setAdminWarning(businesses.status === "rejected" || instructions.status === "rejected");
+      return true; // Failed refreshes cannot undo the confirmed write.
+    } finally {
+      if (current()) {
+        adminRequestRef.current = null;
+        setAdminPending(false);
+      }
     }
   };
   const submitLogin = async (event: FormEvent<HTMLFormElement>) => {
@@ -550,9 +591,12 @@ export function LivePanel({ mode }: { mode: Mode }) {
   };
   const submitAssistant = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (assistantPendingRef.current) return;
+    if (assistantPendingRef.current || logoutPendingRef.current) return;
 
     const attempt = ++assistantSaveAttemptRef.current;
+    const generation = loadAttemptRef.current;
+    const current = () => assistantSaveAttemptRef.current === attempt &&
+      loadAttemptRef.current === generation && !logoutPendingRef.current;
     assistantPendingRef.current = true;
     setAssistantPending(true);
     setAssistantConflict(false);
@@ -566,18 +610,18 @@ export function LivePanel({ mode }: { mode: Mode }) {
         ...(formValues(form, assistantFields) as Omit<Assistant, "revision">),
         expectedRevision: assistant.revision ?? 0,
       });
-      if (assistantSaveAttemptRef.current !== attempt) return;
+      if (!current()) return;
       setData(savedAssistant);
       setAssistantConflict(false);
       setNotice("Asistente guardado");
     } catch (cause) {
-      if (assistantSaveAttemptRef.current !== attempt) return;
+      if (!current()) return;
       setAssistantConflict(
         cause instanceof ApiError && cause.code === "CONFLICT",
       );
       setError(await api.errorMessage(cause));
     } finally {
-      if (assistantSaveAttemptRef.current === attempt) {
+      if (current()) {
         assistantPendingRef.current = false;
         setAssistantPending(false);
       }
@@ -586,6 +630,12 @@ export function LivePanel({ mode }: { mode: Mode }) {
   const logout = async () => {
     if (logoutPendingRef.current) return;
     logoutPendingRef.current = true;
+    adminAttemptRef.current += 1;
+    adminRequestRef.current = null;
+    setAdminPending(false);
+    assistantSaveAttemptRef.current += 1;
+    assistantPendingRef.current = false;
+    setAssistantPending(false);
     const interruptedClosure = closureRequestRef.current;
     const closureOwner = closureOwnerRef.current;
     interruptedClosure?.abort();
@@ -601,6 +651,7 @@ export function LivePanel({ mode }: { mode: Mode }) {
       logoutPendingRef.current = false;
       setLogoutPending(false);
       // Only the aborted request's still-mounted session may regain manual GET recovery.
+      if (mode === "admin") setAdminWarning(true);
       if (interruptedClosure && closureOwner) setClosures(state =>
         closureOwnerRef.current === closureOwner && loadAttemptRef.current === closureOwner.generation &&
         !closureRequestRef.current
@@ -696,8 +747,13 @@ export function LivePanel({ mode }: { mode: Mode }) {
   if (mode === "admin") {
     const { businesses, instructions } = data as {
       businesses: Business[];
-      instructions: Awaited<ReturnType<typeof api.platformAiInstructions>>;
+      instructions: PlatformAiInstructions;
     };
+    const reconcileBusiness = (state: AdminData, saved: Business): AdminData => ({
+      ...state, businesses: state.businesses.some(row => row.id === saved.id)
+        ? state.businesses.map(row => row.id === saved.id ? saved : row)
+        : [...state.businesses, saved],
+    });
     return (
       <AuthenticatedShell
         variant="admin"
@@ -708,18 +764,22 @@ export function LivePanel({ mode }: { mode: Mode }) {
         <AdminBusinessesScreen
           businesses={businesses}
           instructions={instructions}
-          saveInstructionsAction={(text) => runAdminMutation(
-            () => api.savePlatformAiInstructions(text), "Instrucciones guardadas",
+          saveInstructionsAction={(text, replyPacing) => runAdminMutation(
+            () => api.savePlatformAiInstructions(text, replyPacing), "Instrucciones guardadas",
+            (state, instructions) => ({ ...state, instructions }),
           )}
           notice={notice}
           error={error}
+          refreshWarning={adminWarning}
+          refreshPending={adminPending}
+          retryRefreshAction={() => void runAdminMutation()}
           createAction={(input) =>
-            runAdminMutation(() => api.createBusiness(input), "Negocio creado")
+            runAdminMutation(() => api.createBusiness(input), "Negocio creado", reconcileBusiness)
           }
           renameAction={(id, name) =>
             runAdminMutation(
               () => api.renameBusiness(id, name),
-              "Negocio actualizado",
+              "Negocio actualizado", reconcileBusiness,
             )
           }
           replacePasswordAction={(id, password) =>
@@ -731,7 +791,7 @@ export function LivePanel({ mode }: { mode: Mode }) {
           setStatusAction={(id, status) =>
             runAdminMutation(
               () => api.setBusinessStatus(id, status),
-              "Negocio actualizado",
+              "Negocio actualizado", reconcileBusiness,
             )
           }
         />

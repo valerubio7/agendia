@@ -8,7 +8,7 @@ import { PostgresAiJobProcessor } from "../../apps/message-worker/src/ai-job.ts"
 import { AiOutboxDispatcher } from "../../apps/whatsapp-manager/src/ai-outbox-dispatcher.ts";
 import { createRoleLogin, startTestPostgres, type TestPostgres } from "../support/index.ts";
 
-const A = randomUUID(), B = randomUUID(), connection = randomUUID();
+const A = randomUUID(), B = randomUUID(), connection = randomUUID(), ownership = randomUUID();
 const directory = join(import.meta.dir, "../../packages/db/migrations");
 let db: TestPostgres, pools: ReturnType<typeof createRuntimePools>;
 const groups: Array<{
@@ -66,9 +66,10 @@ beforeAll(async () => {
     await tx.unsafe(await readFile(join(directory, '0021_whatsapp_reply_pacing.sql'), 'utf8'));
   });
   // Preserve the historical upgrade above, then align the current runtime schema.
-  for (const name of ['0022_business_profile_cleanup.sql', '0023_assistant_config_consolidation.sql']) {
+  for (const name of ['0022_business_profile_cleanup.sql', '0023_assistant_config_consolidation.sql', '0035_global_ai_reply_pacing.sql', '0036_whatsapp_recovery.sql']) {
     await db.sql.unsafe(await readFile(join(directory, name), 'utf8'));
   }
+  await db.sql`update whatsapp_connections set ownership_token=${ownership} where id=${connection}`;
   const managerUrl = await createRoleLogin(db, 'upgrade_manager', 'agendia_whatsapp_runtime');
   const workerUrl = await createRoleLogin(db, 'upgrade_worker', 'agendia_worker_runtime');
   pools = createRuntimePools({ api: managerUrl, admin: managerUrl, manager: managerUrl, worker: workerUrl });
@@ -102,7 +103,7 @@ describe('populated WhatsApp pacing upgrade', () => {
     const before = (await db.sql`select reply_due_at from conversations where id=${groups[0]!.id}`)[0]!.reply_due_at;
     const claimed: string[] = [];
     for (let i = 0; i < 4; i++) {
-      const row = await pools.manager.run(undefined, r => r.claimOwnedOutbound('upgrade-manager'));
+      const row = await pools.manager.run(undefined, r => r.claimOwnedOutbound('upgrade-manager', [ownership]));
       if (!row) break;
       claimed.push(row.outbound_id);
     }
@@ -120,12 +121,12 @@ describe('populated WhatsApp pacing upgrade', () => {
     await db.sql`insert into outbound_commands(outbound_id,business_id,conversation_id,connection_id,text,state) values(${unknown},${A},${group.id},${connection},'unknown alongside latest','generated')`;
     const saved = await pools.worker.run(context(), r => r.saveGenerated(group.latest, A, 'latest reply'));
     expect(saved).not.toBeNull();
-    const row = await pools.manager.run(undefined, r => r.claimOwnedOutbound('upgrade-manager'));
+    const row = await pools.manager.run(undefined, r => r.claimOwnedOutbound('upgrade-manager', [ownership]));
     expect(row?.outbound_id).toBe(saved!.outbound_id);
     expect((await db.sql`select state from outbound_commands where outbound_id=${unknown}`)[0]!.state).toBe('failed');
     expect((await db.sql`select reply_due_at from conversations where id=${group.id}`)[0]!.reply_due_at).toBeNull();
-    await pools.manager.run(context(), r => r.finishOutbound(row!.outbound_id, 'delivery_unknown'));
-    expect(await pools.manager.run(undefined, r => r.claimOwnedOutbound('upgrade-manager'))).toBeNull();
+    await pools.manager.run(context(), r => r.finishOutbound(row!.outbound_id, 'delivery_unknown', undefined, ownership));
+    expect(await pools.manager.run(undefined, r => r.claimOwnedOutbound('upgrade-manager', [ownership]))).toBeNull();
   });
 
   test('accepted post-upgrade input supersedes source-less legacy output atomically', async () => {
@@ -139,7 +140,7 @@ describe('populated WhatsApp pacing upgrade', () => {
     expect((await db.sql`select state,failure_code from outbound_commands where outbound_id=${unknown}`)[0]).toMatchObject({ state: 'failed', failure_code: 'superseded' });
     const conversation = (await db.sql`select reply_due_at,last_exchange_at,latest_inbound_id from conversations where id=${id}`)[0]!;
     expect(new Date(conversation.reply_due_at).getTime()-new Date(conversation.last_exchange_at).getTime()).toBe(600_000);
-    expect(await pools.manager.run(undefined, r => r.claimOwnedOutbound('upgrade-manager'))).toBeNull();
+    expect(await pools.manager.run(undefined, r => r.claimOwnedOutbound('upgrade-manager', [ownership]))).toBeNull();
     expect((await db.sql`select reply_due_at from conversations where id=${id}`)[0]!.reply_due_at).toEqual(conversation.reply_due_at);
   });
 
@@ -170,8 +171,8 @@ describe('populated WhatsApp pacing upgrade', () => {
     expect(Number((await db.sql`select count(*) n from pg_policies where schemaname='public'`)[0]!.n)).toBe(policyCount);
     expect(await pools.worker.run(context(B), r => r.loadAiMessage(groups[2]!.latest))).toBeNull();
     const grants = (await db.sql`select
-      has_function_privilege('agendia_whatsapp_runtime','claim_owned_outbound(text)','EXECUTE') manager_claim,
-      has_function_privilege('agendia_worker_runtime','claim_owned_outbound(text)','EXECUTE') worker_claim,
+      has_function_privilege('agendia_whatsapp_runtime','claim_owned_outbound(text,uuid[])','EXECUTE') manager_claim,
+      has_function_privilege('agendia_worker_runtime','claim_owned_outbound(text,uuid[])','EXECUTE') worker_claim,
       has_column_privilege('agendia_worker_runtime','conversations','reply_due_at','UPDATE') worker_lock,
       has_column_privilege('agendia_worker_runtime','conversations','last_reply_at','UPDATE') worker_activity,
       has_column_privilege('agendia_whatsapp_runtime','outbox_events','published_at','UPDATE') manager_publish,

@@ -10,16 +10,15 @@ const questions = {
   booking: "¿Querés reservar? Decime el servicio, día y horario.", greeting: "Hola, ¿en qué puedo ayudarte?",
   start: "¿Qué servicio y día querés consultar?",
 } as const;
-const response = z.object({
+const response = z.discriminatedUnion("kind", [z.object({
   kind: z.literal("reply"),
   facts: z.array(z.enum(factNames)).max(7).optional(),
   ask: z.enum(["service", "date", "time", "resource", "names", "change", "clarify", "start", "booking", "greeting"]).optional(),
   businessFields: z.array(z.enum(["displayName", "description", "address"])).max(3).optional(),
-}).strict();
-export const RECEPTIONIST_RESPONSE_INSTRUCTIONS = `Final output must be a JSON object only:
-{"kind":"reply","facts":["read_business"],"ask":"date"}.
-facts optionally selects any subset of current-turn read tools: read_business, read_catalog, read_resources, read_calendar, availability, owned_appointments, owned_appointment. The backend renders their latest actual results, never model-supplied facts. ask optionally selects service, date, time, resource, names, change, clarify, start, booking or greeting. businessFields optionally selects displayName, description or address from read_business. No text, intro, suffix, claim, IDs, proof or values are allowed in this object. For a prepared quote, saved action or backend request for missing input, return {"kind":"reply"}; the backend renders the actual outcome. Call prepare_booking for a chosen slot; if full names are missing ask for actual first and last names, then call confirm_quote with the received name answer to render the quote. DNI, insurance and profile display names are not full names. Never substitute prose for preparing or saving an appointment.`;
-
+}).strict(), z.object({
+  kind: z.literal("informational_prose"),
+  text: z.string().min(1).max(4000).refine(value => Boolean(value.trim())),
+}).strict()]);
 export interface ReceptionistFact {
   name: ReceptionistToolCommand["name"];
   result: ReceptionistToolResult;
@@ -34,8 +33,8 @@ const items = (value: unknown): RecordValue[] => Array.isArray(record(value).ite
 const label = (value: RecordValue) => text(record(value.presentation).label);
 const terms = (value: RecordValue) => `${text(value.serviceName)}, ${numeric(value.durationMinutes)} minutos, ARS ${numeric(value.priceArs)}`;
 
-// Only repository/tool-owned fields are displayed. Opaque IDs, bindings, provider
-// prose and arbitrary object serialization never become customer-facing content.
+// Selector facts display only repository/tool-owned fields, never opaque bindings
+// or arbitrary object serialization.
 function renderFact({ name, result }: ReceptionistFact, businessFields = ["displayName", "description", "address"]): string {
   if (result.status === "unavailable_data") return "Ese dato no está registrado en el negocio.";
   if (result.status !== "data") return "";
@@ -86,22 +85,27 @@ function renderFact({ name, result }: ReceptionistFact, businessFields = ["displ
 }
 
 /** This receives only transaction-local tool evidence, never model proof objects.
- * Invalid/legacy prose has no fallback authority, even under a chat/info label. */
+ * The prose schema validates shape, not factual truth or operation authority. */
 export function renderReceptionistResponse(raw: string, evidence: readonly ReceptionistFact[]): string {
   let act: z.infer<typeof response> | undefined;
   try { act = response.parse(JSON.parse(raw)); } catch { /* Closed contract: discard all unbound content. */ }
+  const last = evidence.at(-1)?.result;
+  const failure = last && (last.status === "rejected" || last.status === "clarification")
+    // Only audited public backend messages may replace fixed diagnostic responses.
+    ? (last.code === "UNKNOWN_RESOURCE" || last.code === "CUSTOMER_INPUT_REQUIRED")
+      && typeof last.message === "string" && last.message.length <= 4000 && last.message.trim()
+      ? last.message.trim()
+      : last.code === "UNVERIFIED_SENDER" ? "No pude verificar tu número. No se guardó ningún cambio."
+      : last.code === "UNKNOWN_RESOURCE" ? "No reconocí el recurso solicitado. ¿Cuál querés?"
+      : last.code === "SERVICE_REFERENCE_REQUIRED" ? "No pude verificar el servicio. ¿Qué servicio querés consultar?"
+      : last.code === "RESOURCE_REFERENCE_REQUIRED" ? "No pude verificar el profesional. ¿Con quién querés atenderte?"
+      : "No se guardó ningún cambio. No pude verificar la operación. ¿Podés aclarar qué necesitás?" : "";
+  if (act?.kind === "informational_prose") return failure || act.text;
   const latest = new Map(evidence.filter(item => factNames.includes(item.name as typeof factNames[number]))
     .map(item => [item.name, item]));
   const selected = act?.facts ?? [...latest.keys()];
   const facts = [...new Set(selected)].map(name => latest.get(name)).filter((item): item is ReceptionistFact => Boolean(item))
     .map(item => renderFact(item, act?.businessFields)).filter(Boolean);
   const question = act?.ask ? questions[act.ask] : "";
-  const last = evidence.at(-1)?.result;
-  const failure = last && (last.status === "rejected" || last.status === "clarification")
-    ? last.code === "UNVERIFIED_SENDER" ? "No pude verificar tu número. No se guardó ningún cambio."
-      : last.code === "UNKNOWN_RESOURCE" ? "No reconocí el recurso solicitado. ¿Cuál querés?"
-      : last.code === "SERVICE_REFERENCE_REQUIRED" ? "No pude verificar el servicio. ¿Qué servicio querés consultar?"
-      : last.code === "RESOURCE_REFERENCE_REQUIRED" ? "No pude verificar el profesional. ¿Con quién querés atenderte?"
-      : "No se guardó ningún cambio. No pude verificar la operación. ¿Podés aclarar qué necesitás?" : "";
   return [...facts, question].filter(Boolean).join("\n\n") || failure || questions.start;
 }

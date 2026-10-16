@@ -153,10 +153,11 @@ export const createMessagingRuntime = (
   queue: JobPublisher,
   gateway: OutboundGateway,
   ownerId: string,
+  ownershipTokens: () => string[],
 ) => ({
   inbound: new PostgresInboundHandler(pools),
   aiOutbox: new AiOutboxDispatcher(pools, queue),
-  outbound: new PostgresOutboundDispatcher(pools, gateway, ownerId),
+  outbound: new PostgresOutboundDispatcher(pools, gateway, ownerId, ownershipTokens),
 });
 export async function startWhatsAppManager(
   env: NodeJS.ProcessEnv = process.env,
@@ -182,6 +183,7 @@ export async function startWhatsAppManager(
     boss,
     runtime.outboundGateway,
     runtime.ownerId,
+    () => runtime.manager.ownershipTokens(),
   );
   inbound = messaging.inbound;
   await runtime.manager.restart();

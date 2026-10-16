@@ -18,11 +18,14 @@ export interface RestoreDrillReport {
   operationalMetadataMatchesBackup: boolean;
   historicalKekVersions: string[];
   plaintextCredentialFound: boolean;
+  restoredThrottle: Awaited<ReturnType<typeof throttleSnapshot>>;
+  throttleStateMatchesBackup: boolean | null;
+  legacyThrottleAdmissionAllowed: boolean | null;
 }
 
-async function migrate(sql: Sql): Promise<void> {
+async function migrate(sql: Sql, before?: string): Promise<void> {
   const migrationDir = join(import.meta.dir, "../packages/db/migrations");
-  for (const name of readdirSync(migrationDir).filter((file) => file.endsWith(".sql")).sort()) {
+  for (const name of readdirSync(migrationDir).filter((file) => file.endsWith(".sql") && (!before || file < before)).sort()) {
     await sql.unsafe(readFileSync(join(migrationDir, name), "utf8"));
   }
 }
@@ -64,6 +67,8 @@ async function dumpData(container: StartedPostgreSqlContainer): Promise<string> 
 
 async function restoreData(container: StartedPostgreSqlContainer, dump: string, sql: Sql): Promise<void> {
   await sql`delete from operational_controls`;
+  // Only clear the migration-seeded singleton in this disposable restore target.
+  await sql`delete from login_throttle_global where singleton`;
   await container.copyContentToContainer([{ content: dump, target: "/tmp/agendia-restore.sql" }]);
   const restored = await container.exec([
     "sh",
@@ -71,6 +76,8 @@ async function restoreData(container: StartedPostgreSqlContainer, dump: string, 
     "PGPASSWORD=\"$POSTGRES_PASSWORD\" psql --set ON_ERROR_STOP=1 --username=\"$POSTGRES_USER\" --dbname=\"$POSTGRES_DB\" --file=/tmp/agendia-restore.sql",
   ]);
   if (restored.exitCode !== 0) throw new Error(`Backup restore failed: ${restored.stderr}`);
+  // Pre-0037 backups have no throttle tables; never overwrite a restored budget.
+  await sql`insert into login_throttle_global values (true, 0, clock_timestamp()) on conflict (singleton) do nothing`;
 }
 
 interface EncryptedAuthSnapshot {
@@ -94,7 +101,18 @@ async function encryptedAuthSnapshot(sql: Sql): Promise<EncryptedAuthSnapshot[]>
   `;
 }
 
-export async function runRestoreDrill(): Promise<RestoreDrillReport> {
+async function throttleSnapshot(sql: Sql) {
+  const global = await sql<{ singleton: boolean; attempts: number; resets_at: Date }[]>`
+    select singleton, attempts, resets_at from login_throttle_global order by singleton`;
+  const accounts = await sql<{ account_hash: string; attempts: number; resets_at: Date }[]>`
+    select account_hash, attempts, resets_at from login_throttle_accounts order by account_hash`;
+  return {
+    global: global.map(row => ({ ...row, resets_at: row.resets_at.toISOString() })),
+    accounts: accounts.map(row => ({ ...row, resets_at: row.resets_at.toISOString() })),
+  };
+}
+
+export async function runRestoreDrill(options: { legacyBackup?: boolean } = {}): Promise<RestoreDrillReport> {
   let source: StartedPostgreSqlContainer | undefined;
   let target: StartedPostgreSqlContainer | undefined;
   let sourceSql: Sql | undefined;
@@ -102,8 +120,15 @@ export async function runRestoreDrill(): Promise<RestoreDrillReport> {
   try {
     source = await new PostgreSqlContainer("postgres:16-alpine").start();
     sourceSql = postgres(source.getConnectionUri(), { max: 2 });
-    await migrate(sourceSql);
+    await migrate(sourceSql, options.legacyBackup ? "0037" : undefined);
     await seed(sourceSql);
+    if (!options.legacyBackup) {
+      await sourceSql`update login_throttle_global set attempts=87, resets_at='2099-01-01T00:01:00Z' where singleton`;
+      await sourceSql`insert into login_throttle_accounts (account_hash, attempts, resets_at) values
+        (${"a".repeat(64)}, 20, '2099-01-01T00:15:00Z'),
+        (${"b".repeat(64)}, 7, '2099-01-02T00:15:00Z')`;
+    }
+    const sourceThrottle = options.legacyBackup ? null : await throttleSnapshot(sourceSql);
     const sourceAuth = await encryptedAuthSnapshot(sourceSql);
     const sourceControls = await sourceSql`select singleton,automation_disabled,incident_reference,updated_at from operational_controls`;
     const sourceInstructions = await sourceSql`select additional_instructions from operational_controls where singleton`;
@@ -128,6 +153,11 @@ export async function runRestoreDrill(): Promise<RestoreDrillReport> {
     const targetAuth = await encryptedAuthSnapshot(targetSql);
     const targetControls = await targetSql`select singleton,automation_disabled,incident_reference,updated_at from operational_controls`;
     const targetInstructions = await targetSql`select additional_instructions from operational_controls where singleton`;
+    const restoredThrottle = await throttleSnapshot(targetSql);
+    const legacyAdmission = options.legacyBackup ? await targetSql.begin(async tx => {
+      await tx`set local role agendia_runtime`;
+      return tx<{ allowed: boolean }[]>`select admit_login(${"c".repeat(64)}) as allowed`;
+    }) : null;
 
     return {
       tenantMessageCounts: Object.fromEntries(counts.map((row) => [row.business_id, Number(row.count)])),
@@ -141,6 +171,10 @@ export async function runRestoreDrill(): Promise<RestoreDrillReport> {
       operationalMetadataMatchesBackup: JSON.stringify(targetControls) === JSON.stringify(sourceControls),
       historicalKekVersions: kekVersions.map((row) => row.kek_version),
       plaintextCredentialFound: dump.includes("plain-baileys-secret"),
+      restoredThrottle,
+      throttleStateMatchesBackup: sourceThrottle === null ? null :
+        JSON.stringify(restoredThrottle) === JSON.stringify(sourceThrottle),
+      legacyThrottleAdmissionAllowed: legacyAdmission?.[0]?.allowed ?? null,
     };
   } finally {
     await sourceSql?.end();

@@ -1,8 +1,8 @@
 import { z } from "zod";
 
 export const ServiceInputSchema = z.object({
-  name: z.string().trim().min(1),
-  description: z.string().optional(),
+  name: z.string().trim().min(1).refine(text => !text.includes("\u0000")),
+  description: z.string().refine(text => !text.includes("\u0000")).optional(),
   durationMinutes: z.number().int().positive().multipleOf(15),
   priceArs: z.number().finite().nonnegative(),
 });

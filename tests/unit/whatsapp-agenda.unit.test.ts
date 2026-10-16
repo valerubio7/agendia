@@ -147,6 +147,9 @@ describe("native commands and guarded customer responses", () => {
     expect(nearbyDate("2030-04-01", -1)).toBe("2030-03-31");
     expect(missingFieldText(["date"])).toBe("¿Para qué día?");
     expect(missingFieldText(["names"])).not.toContain("teléfono");
+    expect(missingFieldText(["names"])).toBe("Decime tu nombre y apellido.");
+    expect(missingFieldText(["firstName"])).toBe("Decime tu nombre.");
+    expect(missingFieldText(["lastName"])).toBe("Decime tu apellido.");
   });
   test("requested dates and times come from customer text rather than model-selected arguments", () => {
     const now = "2035-04-01T08:00:00-03:00";

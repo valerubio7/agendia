@@ -100,6 +100,22 @@ test("rejects invalid input, IDs/status and foreign edits with no catalog audit 
   expect(await effects()).toEqual(before);
 });
 
+for (const method of ["POST", "PUT"] as const) {
+  for (const field of ["name", "description"] as const) {
+    test(`${method} rejects NUL service ${field} with 400 and no storage/effects`, async () => {
+      const id = randomUUID();
+      await database.sql`insert into services(id,business_id,name,duration_minutes,price_ars)
+        values(${id},${a.businessId},${`NUL target ${id}`},30,0)`;
+      const before = await database.sql`select * from services order by id`, counts = await effects();
+      const response = await request(method, method === "POST" ? "/me/services" : `/me/services/${id}`, a,
+        { ...input, name: `NUL input ${id}`, [field]: "before\u0000after" });
+      expect(response.statusCode).toBe(400);
+      expect([...(await database.sql`select * from services order by id`)]).toEqual([...before]);
+      expect(await effects()).toEqual(counts);
+    });
+  }
+}
+
 test("database-normalized names match JS trim/lowercase and preserve inner spaces", async () => {
   const whitespace = "\u0009\u000a\u000b\u000c\u000d \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
   for (const name of ["MiXeD", "ÉCOLE", "İstanbul", "ΟΣ", "Straße", "A  B", "Back\\\\slash é"]) {

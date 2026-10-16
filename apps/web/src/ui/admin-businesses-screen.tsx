@@ -2,6 +2,8 @@
 
 import { useRef, useState, type FormEvent } from "react";
 import type { Business, PlatformAiInstructions } from "../api-client";
+// The domain barrel also exports server-only administration code.
+import { MAX_REPLY_DELAY_SECONDS, MAX_INACTIVITY_RESET_SECONDS, ReplyPacingSchema } from "../../../../packages/domain/src/reply-pacing.ts";
 
 type CreateBusinessInput = {
   name: string;
@@ -12,9 +14,12 @@ type CreateBusinessInput = {
 type AdminBusinessesScreenProps = {
   businesses: Business[];
   instructions: PlatformAiInstructions;
-  saveInstructionsAction: (text: string) => Promise<boolean>;
+  saveInstructionsAction: (text: string, replyPacing: PlatformAiInstructions["replyPacing"]) => Promise<boolean>;
   notice: string;
   error: string;
+  refreshWarning: boolean;
+  refreshPending: boolean;
+  retryRefreshAction: () => void;
   createAction: (input: CreateBusinessInput) => Promise<boolean>;
   renameAction: (id: string, name: string) => Promise<boolean>;
   replacePasswordAction: (id: string, password: string) => Promise<boolean>;
@@ -72,6 +77,9 @@ export function AdminBusinessesScreen({
   saveInstructionsAction,
   notice,
   error,
+  refreshWarning,
+  refreshPending,
+  retryRefreshAction,
   createAction,
   renameAction,
   replacePasswordAction,
@@ -81,8 +89,15 @@ export function AdminBusinessesScreen({
     null,
   );
   const [failedAction, setFailedAction] = useState<PendingAction | null>(null);
+  const [instructionsValidationError, setInstructionsValidationError] = useState("");
   const pendingRef = useRef(false);
-  const anyPending = pendingAction !== null;
+  const anyPending = pendingAction !== null || refreshPending;
+  const clearSubmitted = (form: HTMLFormElement, submitted: FormData) => {
+    submitted.forEach((value, name) => {
+      const input = form.elements.namedItem(name);
+      if (input instanceof HTMLInputElement && input.value === value) input.value = input.defaultValue;
+    });
+  };
 
   const runAction = async (
     action: PendingAction,
@@ -113,7 +128,7 @@ export function AdminBusinessesScreen({
         initialPassword: String(form.get("initialPassword")),
       }),
     );
-    if (succeeded) formElement.reset();
+    if (succeeded) clearSubmitted(formElement, form);
   };
 
   const submitRename =
@@ -125,7 +140,7 @@ export function AdminBusinessesScreen({
         { kind: "rename", businessId: business.id },
         () => renameAction(business.id, String(form.get("name"))),
       );
-      if (succeeded) formElement.reset();
+      if (succeeded) clearSubmitted(formElement, form);
     };
 
   const submitPassword =
@@ -137,7 +152,7 @@ export function AdminBusinessesScreen({
         { kind: "password", businessId: business.id },
         () => replacePasswordAction(business.id, String(form.get("password"))),
       );
-      if (succeeded) formElement.reset();
+      if (succeeded) clearSubmitted(formElement, form);
     };
 
   const changeStatus = async (business: Business) => {
@@ -204,22 +219,50 @@ export function AdminBusinessesScreen({
 
       <div className="admin-feedback" aria-label="Estado de la operación">
         {notice && <p role="status">{notice}</p>}
+        {refreshWarning && <>
+          <p role="alert">No se pudo actualizar la información. Reintentá solo la consulta.</p>
+          <button type="button" disabled={anyPending} onClick={retryRefreshAction}>Reintentar consulta</button>
+        </>}
       </div>
 
-      <section className="admin-create" aria-labelledby="platform-instructions-title">
+      <section className="admin-create admin-instructions" aria-labelledby="platform-instructions-title">
         <h2 id="platform-instructions-title">Instrucciones de IA de la plataforma</h2>
         <form onSubmit={async (event) => {
           event.preventDefault();
           const form = new FormData(event.currentTarget);
+          const parsed = ReplyPacingSchema.safeParse(Object.fromEntries(
+            ["initialDelaySeconds", "activeDelaySeconds", "inactivityResetSeconds"].map(key => {
+              const value = form.get(key);
+              return [key, value === null || value === "" ? NaN : Number(value)];
+            }),
+          ));
+          setInstructionsValidationError(parsed.success ? "" : "Ingresá tiempos enteros dentro de los límites indicados.");
+          if (!parsed.success) return;
           await runAction({ kind: "instructions" }, () =>
-            saveInstructionsAction(String(form.get("additionalInstructions"))));
+            saveInstructionsAction(String(form.get("additionalInstructions")), parsed.data));
         }} aria-busy={pendingAction?.kind === "instructions"}>
-          <label htmlFor="platform-base-instructions">Instrucciones base</label>
+          <label htmlFor="platform-base-instructions">Instrucciones base del recepcionista</label>
           <textarea id="platform-base-instructions" value={instructions.baseInstructions} readOnly rows={5} />
-          <p>El texto base se modifica desde el código</p>
-          <label htmlFor="platform-additional-instructions">Instrucciones adicionales</label>
-          <textarea id="platform-additional-instructions" name="additionalInstructions" defaultValue={instructions.additionalInstructions} rows={6} />
-          <button type="submit" disabled={anyPending}>Guardar</button>
+          <p>Sistema activo del recepcionista de WhatsApp, de solo lectura. Se modifica únicamente desde el código; no incluye datos de conversaciones.</p>
+          <label htmlFor="platform-additional-instructions">Indicaciones administrativas complementarias</label>
+          <textarea id="platform-additional-instructions" name="additionalInstructions" defaultValue={instructions.additionalInstructions} rows={6} disabled={anyPending} />
+          <p>Se envían como contexto complementario, no como instrucciones de sistema. No reemplazan las reglas base ni las herramientas; su cumplimiento no está garantizado.</p>
+          <h3>Tiempos de respuesta para todos los negocios</h3>
+          <p>Las esperas se expresan en segundos. Cero significa respuesta inmediata. Los cambios no modifican las esperas ya programadas.</p>
+          <label htmlFor="platform-initial-wait">Espera inicial (segundos)</label>
+          <input id="platform-initial-wait" name="initialDelaySeconds" type="number" required min={0} max={MAX_REPLY_DELAY_SECONDS} step={1}
+            defaultValue={instructions.replyPacing.initialDelaySeconds} disabled={anyPending} />
+          <p>Antes de la primera respuesta o después de un período de inactividad. Entre 0 y 86400 segundos.</p>
+          <label htmlFor="platform-active-wait">Espera activa (segundos)</label>
+          <input id="platform-active-wait" name="activeDelaySeconds" type="number" required min={0} max={MAX_REPLY_DELAY_SECONDS} step={1}
+            defaultValue={instructions.replyPacing.activeDelaySeconds} disabled={anyPending} />
+          <p>Durante una conversación en curso. Entre 0 y 86400 segundos.</p>
+          <label htmlFor="platform-inactivity-reset">Reinicio por inactividad (segundos)</label>
+          <input id="platform-inactivity-reset" name="inactivityResetSeconds" type="number" required min={1} max={MAX_INACTIVITY_RESET_SECONDS} step={1}
+            defaultValue={instructions.replyPacing.inactivityResetSeconds} disabled={anyPending} />
+          <p>Si la inactividad supera este tiempo, vuelve a aplicarse la espera inicial. Entre 1 y 604800 segundos.</p>
+          <button type="submit" disabled={anyPending}>{pendingAction?.kind === "instructions" ? "Guardando…" : "Guardar"}</button>
+          {instructionsValidationError && <p role="alert">{instructionsValidationError}</p>}
           {failedAction?.kind === "instructions" && <p role="alert">{error}</p>}
         </form>
       </section>
