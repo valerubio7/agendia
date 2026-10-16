@@ -194,9 +194,9 @@ if [[ "$*" == *environments/production* ]]; then
     *) echo '{"protection_rules":[{"type":"required_reviewers","reviewers":[{"type":"User","reviewer":{"id":1,"type":"User","login":"human"}}]}]}' ;;
   esac
 elif [[ "$*" == *contents/package.json* ]]; then
-  if [[ "$MODE" == version ]]; then echo '{"version":"0.7.0"}'; else echo '{"version":"0.7.1"}'; fi
+  if [[ "$MODE" == version ]]; then printf '{"version":"%s"}\\n' "$FIXTURE_VERSION"; else echo '{"version":"0.8.0"}'; fi
 elif [[ "$*" == *releases/tags/* ]]; then
-  echo '{"tag_name":"v0.7.1","target_commitish":"${sha}","draft":false,"prerelease":false,"published_at":"2026-01-01"}'
+  echo '{"tag_name":"v0.8.0","target_commitish":"${sha}","draft":false,"prerelease":false,"published_at":"2026-01-01"}'
 elif [[ "$*" == *git/ref/tags/* ]]; then
   echo '{"object":{"type":"commit","sha":"${sha}"}}'
 elif [[ "$*" == *compare/* ]]; then echo ahead
@@ -236,21 +236,27 @@ for (const mode of ["missing", "forbidden", "unknown", "malformed", "none", "noh
   });
 }
 
-test("backup waiver requires manual normal 0.7.1 release and defaults false", () => {
+test("backup waiver requires manual normal 0.8.0 release and defaults false", () => {
   const workflow = workflowYaml(".github/workflows/deploy.yml");
   expect(workflow.on?.workflow_dispatch?.inputs?.skip_backup).toMatchObject({ type: "boolean", default: false, required: false });
+  expect(workflow.on?.workflow_call?.inputs?.skip_backup).toMatchObject({ type: "boolean", default: false, required: false });
   for (const overrides of [{ EVENT_NAME: "workflow_call" }, { CONNECTION_ONLY: "true" }, { SKIP_BACKUP: "invalid" }]) {
     const f = preflight("success", { SKIP_BACKUP: "true", ...overrides });
     expect(f.result.exitCode).not.toBe(0);
     expect(f.log).toBe("");
   }
-  const wrongVersion = preflight("version", { SKIP_BACKUP: "true" });
-  expect(wrongVersion.result.exitCode).not.toBe(0);
-  expect(wrongVersion.output).toBe("");
+  for (const version of ["0.7.0", "0.7.1", "0.8.1"]) {
+    const wrongVersion = preflight("version", { SKIP_BACKUP: "true", FIXTURE_VERSION: version });
+    expect(wrongVersion.result.exitCode).toBe(1);
+    expect(wrongVersion.result.stderr.toString()).toBe("");
+    expect(wrongVersion.log).not.toContain("releases/tags/");
+    expect(wrongVersion.output).toBe("");
+  }
   const approved = preflight("success", { SKIP_BACKUP: "true" });
   expect(approved.result.exitCode).toBe(0);
   expect(approved.output).toBe(`backup_flag=--skip-backup-for-release=${sha}\n`);
   expect(preflight("success").output).toBe("");
+  expect(workflow.on?.workflow_dispatch?.inputs?.skip_backup?.description).toContain("manual 0.8.0");
   const ssh = workflow.jobs.deploy!.steps.find((step) => step.name === "Transfer and execute over pinned SSH")!;
   expect(ssh.env?.BACKUP_FLAG).toBe("${{ needs.preflight.outputs.backup_flag }}");
   expect(ssh.run).toContain('"--skip-backup-for-release=$RELEASE"');
