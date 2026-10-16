@@ -41,7 +41,15 @@ describe("service input", () => {
       expect(ServiceInputSchema.parse({ ...valid, description }).description).toBe(description);
     }
     expect(ServiceInputSchema.safeParse({ ...valid, description: 123 }).success).toBe(false);
+    expect(ServiceInputSchema.safeParse({ ...valid, description: null }).success).toBe(false);
   });
+
+  for (const field of ["name", "description"] as const) {
+    test(`rejects NUL in service ${field}`, () => {
+      for (const text of ["\u0000", "before\u0000after", "\u0000leading", "trailing\u0000"])
+        expect(ServiceInputSchema.safeParse({ ...valid, [field]: text }).success).toBe(false);
+    });
+  }
 
   for (const durationMinutes of [0, -15, 15.5, 1, 16, 29, NaN, Infinity, "30"]) {
     test(`rejects invalid duration in minutes: ${String(durationMinutes)}`, () => {

@@ -247,7 +247,7 @@ async function changeEvidence(h: Fixture, response: Turn, saved: boolean) {
 }
 async function prepare(h: Fixture, start = startsAt) {
   const initial = await turn(h, `Reservar Corte el ${start.slice(0, 10)} a las ${start.slice(11, 16)}`, book(h, start));
-  expect(initial.text).toContain("mi nombre es");
+  expect(initial.text).toBe("Decime tu nombre y apellido.");
   expect((await counts(h)).clients).toBe(0);
   const quote = await turn(h, "Mi nombre es María Pérez");
   expect(quote.text).toContain("Reserva propuesta");
@@ -273,9 +273,9 @@ async function pendingFrozenReschedule() {
       startRaw: startsAt, clientId: client!.id }, { now: h.now, origin: "manual" });
   });
   await db.sql`update services set duration_minutes=15,price_ars=9999 where id=${h.service}`;
-  const proposal: ReceptionistToolCommand = { name: "prepare_change", arguments: { appointmentId: appointment.id, serviceId: h.service } };
+  const proposal: ReceptionistToolCommand = { name: "prepare_change", arguments: { appointmentId: appointment.id, serviceId: h.service, startsAt: later } };
   const pending = await turn(h, "Reprogramar mi turno, prefiero Ana", proposal);
-  expect(pending.text).toContain("¿Para qué día?");
+  expect(pending.text).toContain("Cambio propuesto");
   expect((await appointments(h))[0]).toEqual(appointment);
   expect((await counts(h)).effects).toBe(0);
   return { h, appointment, proposal };
@@ -300,7 +300,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     ["Consultar horarios del Corte mañana", "2026-10-15", "jueves"],
     ["Proba el viernes 16", "2026-10-16", "viernes"],
   ] as const) {
-    test(`current customer date overrides wrong model date in fresh and retained scope: ${weekday}`, async () => {
+    test(`native date scope is disclosed despite raw or retained ${weekday}`, async () => {
       const h = await fixture();
       h.now = "2026-10-14T19:30:00-03:00";
       const proposal: ReceptionistToolCommand = { name: "availability", arguments: {
@@ -309,11 +309,11 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
       for (const retained of [false, true]) {
         if (retained) await turn(h, "Consultar horarios el 2026-10-20, prefiero Beatriz", proposal);
         const response = await turn(h, text, proposal);
-        expect(response.text).toContain(`${date}: 09:00`);
-        expect(response.text).not.toContain("2026-10-19");
+        expect(response.text).toContain("2026-10-19: 09:00");
+        expect(response.text).not.toContain(date);
         expect(response.text).not.toContain("2026-10-20");
         const followup = await turn(h, "¿Qué horarios hay?", proposal);
-        expect(followup.text).toContain(`${date}: 09:00`);
+        expect(followup.text).toContain("2026-10-19: 09:00");
       }
       expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
     });
@@ -421,54 +421,54 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
   });
 
   for (const modelResource of ["other", "omitted"] as const) {
-    test(`availability honors explicit and retained Ana despite ${modelResource} model resource`, async () => {
+    test(`availability scopes ${modelResource} resource separately from retained preference`, async () => {
       const h = await fixture();
       const proposal: ReceptionistToolCommand = { name: "availability", arguments: {
         serviceId: h.service, date: "2035-04-02", ...(modelResource === "other" ? { resourceId: h.alternate } : {}),
       } };
       await db.sql`update resources set weekly_schedule='{}'::jsonb where id=${h.resource}`;
       const unavailable = await turn(h, "Consultar horarios del Corte mañana, prefiero Ana", proposal);
-      expect(unavailable.text).toContain("No hay horarios disponibles con Ana");
-      expect(unavailable.text).not.toContain("09:00");
+      expect(unavailable.text).toContain(modelResource === "other" ? "Horarios disponibles con Beatriz" : "No hay horarios disponibles con Ana");
+      expect(unavailable.text.includes("09:00")).toBe(modelResource === "other");
       h.agenda = new PostgresWhatsAppAgenda(pools, () => h.now);
       const retained = await turn(h, "Consultar horarios del Corte", proposal);
-      expect(retained.text).toContain("No hay horarios disponibles con Ana");
+      expect(retained.text).toContain(modelResource === "other" ? "Horarios disponibles con Beatriz" : "No hay horarios disponibles con Ana");
       const replaced = await turn(h, "Prefiero Beatriz", proposal);
       expect(replaced.text).toContain("Horarios disponibles con Beatriz: 2035-04-02: 09:00");
       const removed = await turn(h, "Sin preferencia", proposal);
-      expect(removed.text).toContain("Horarios disponibles: 2035-04-02: 09:00");
-      expect(removed.text).not.toContain("con Beatriz");
-      const unknown = await turn(h, "Prefiero Desconocido", proposal);
+      expect(removed.text).toContain(modelResource === "other" ? "Horarios disponibles con Beatriz: 2035-04-02: 09:00" : "Horarios disponibles: 2035-04-02: 09:00");
+      const noChoice: ReceptionistToolCommand = { name: "availability", arguments: { serviceId: h.service, date: "2035-04-03" } };
+      const unknown = await turn(h, "Prefiero Desconocido", noChoice);
       expect(unknown.text).toBe("No reconocí el recurso solicitado. ¿Cuál querés?");
       h.agenda = new PostgresWhatsAppAgenda(pools, () => h.now);
-      const unresolved = await turn(h, "El 2035-04-03", proposal);
+      const unresolved = await turn(h, "El 2035-04-03", noChoice);
       expect(unresolved.text).toBe(unknown.text);
       const resolved = await turn(h, "Prefiero Beatriz", proposal);
-      expect(resolved.text).toContain("Horarios disponibles con Beatriz: 2035-04-03");
+      expect(resolved.text).toContain("Horarios disponibles con Beatriz: 2035-04-02");
       expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
     });
   }
 
-  test("availability ignores invented model restriction and preserves quote and owned reschedule binding", async () => {
+  test("native availability honors supplied scope and preserves quote and owned reschedule binding", async () => {
     const h = await fixture();
     const proposal: ReceptionistToolCommand = { name: "availability", arguments: { serviceId: h.service, date: "2035-04-02", resourceId: h.resource } };
     await db.sql`update resources set weekly_schedule='{}'::jsonb where id=${h.resource}`;
     const unrestricted = await turn(h, "Consultar horarios del Corte mañana", proposal);
-    expect(unrestricted.text).toContain("Horarios disponibles: 2035-04-02: 09:00");
+    expect(unrestricted.text).toContain("No hay horarios disponibles con Ana para 2035-04-02");
     await prepare(h);
     const [quoted] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
     const scoped = await turn(h, "Consultar horarios del Corte, prefiero Beatriz", proposal);
-    expect(scoped.text).toContain("Horarios disponibles con Beatriz");
+    expect(scoped.text).toContain("No hay horarios disponibles con Ana");
     const [afterQuote] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
     expect(afterQuote!.dialogue.quote).toEqual(quoted!.dialogue.quote);
     expect((await counts(h)).effects).toBe(0);
     await turn(h, "confirmo");
     const original = (await appointments(h))[0]!;
-    await turn(h, "Reprogramar mi turno, prefiero Beatriz", { name: "prepare_change", arguments: { appointmentId: original.id, serviceId: h.service } });
+    await turn(h, "Reprogramar mi turno, prefiero Beatriz", { name: "prepare_change", arguments: { appointmentId: original.id, serviceId: h.service, startsAt: later } });
     const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
     h.agenda = new PostgresWhatsAppAgenda(pools, () => h.now);
     const retained = await turn(h, "Consultar horarios del Corte el 2035-04-03", proposal);
-    expect(retained.text).toContain("Horarios disponibles con Beatriz");
+    expect(retained.text).toContain("No hay horarios disponibles con Ana para 2035-04-02");
     const [afterBinding] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
     expect(afterBinding!.dialogue.reschedule).toEqual(pending!.dialogue.reschedule);
     expect((await appointments(h))[0]).toEqual(original);
@@ -483,7 +483,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     const before = await appointments(h);
     h.agenda = new PostgresWhatsAppAgenda(pools, () => h.now);
     const available = await turn(h, "Consultar horarios del Corte el 2035-04-02", {
-      name: "availability", arguments: { serviceId: h.service, date: "2035-04-02", resourceId: h.alternate },
+      name: "availability", arguments: { serviceId: h.service, date: "2035-04-02", resourceId: h.resource },
     });
     expect(available.text).toContain("Horarios disponibles con Ana");
     expect(available.text).toContain("10:00");
@@ -509,7 +509,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     expect((await counts(h)).effects).toBe(1);
   });
 
-  test("nearby reschedule availability also uses frozen duration and retained resource eligibility", async () => {
+  test("explicit alternate-day reschedule query uses frozen duration and retained resource eligibility", async () => {
     const { h, appointment } = await pendingFrozenReschedule();
     await db.sql`insert into business_calendar_closures(business_id,kind,closed_date) values(${h.business},'date','2035-04-02')`;
     await pools.api.run(context(h), repo => repo.createAppointment(h.business, {
@@ -518,7 +518,9 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     const before = await appointments(h);
     h.agenda = new PostgresWhatsAppAgenda(pools, () => h.now);
     const proposal: ReceptionistToolCommand = { name: "availability", arguments: { serviceId: h.service, date: "2035-04-02" } };
-    const available = await turn(h, "Consultar horarios del Corte el 2035-04-02", proposal);
+    expect((await turn(h, "Consultar horarios del Corte el 2035-04-02", proposal)).text).toContain("No hay horarios disponibles con Ana para 2035-04-02");
+    proposal.arguments.date = "2035-04-03";
+    const available = await turn(h, "¿Y el otro día?", proposal);
     expect(available.text).toContain("Horarios disponibles con Ana: 2035-04-03");
     expect(available.text).toContain("10:00");
     expect(available.text).not.toContain("10:15");
@@ -562,7 +564,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     });
   }
 
-  test("missing requested fields are prompted even when the model supplies a complete hallucinated booking", async () => {
+  test("complete native selections prepare only and do not prove customer intent or acceptance", async () => {
     const h = await fixture();
     const missingDate = await factoryTurn(h, "Reservar Corte", [book(h), { name: "clear_pending", arguments: {} }],
       ["clarification", "data"], JSON.stringify({ kind: "reply", ask: "date", facts: [] }));
@@ -571,14 +573,12 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     expect(cleared!.dialogue.quote).toBeNull();
     expect((await counts(h)).clients).toBe(0);
     const dayOnly = await turn(h, "El 2035-04-02", book(h));
-    expect(dayOnly.text).toContain("Horarios disponibles");
-    expect(dayOnly.text).toContain("2035-04-02");
-    expect(dayOnly.text).not.toContain("Nombre Apellido");
+    expect(dayOnly.text).toBe("Decime tu nombre y apellido.");
     const wrongTime = await turn(h, "a las 11:00", book(h));
-    expect(wrongTime.text).toContain("no coincide");
+    expect(wrongTime.text).toBe("Decime tu nombre y apellido.");
     expect((await counts(h)).appointments).toBe(0);
     const selected = await turn(h, "a las 10:00", book(h));
-    expect(selected.text).toContain("Nombre Apellido");
+    expect(selected.text).toBe("Decime tu nombre y apellido.");
     expect((await counts(h)).clients).toBe(0);
     const unconfirmed = await turn(h, "sí pero cambia el precio", book(h));
     expect(unconfirmed.text).not.toContain("Guardado:");
@@ -623,18 +623,18 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     const initial = await factoryTurn(h, "Reservar Corte el 2035-04-02 a las 10:00", [
       { name: "prepare_booking", arguments: { serviceId: h.service, startsAt } },
     ], ["clarification"], toolReply);
-    expect(initial.text).toContain("Nombre Apellido");
+    expect(initial.text).toBe("Decime tu nombre y apellido.");
     expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
     const modelNames = await factoryTurn(h, "El perfil dice María Pérez", [{ name: "confirm_quote", arguments: {} }],
       ["clarification"], "Necesito tu respuesta: mi nombre es Nombre Apellido.");
-    expect(modelNames.text).toContain("mi nombre es");
+    expect(modelNames.text).toBe("Decime tu nombre y apellido.");
     expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
     await factoryTurn(h, "Mi nombre es María", [{ name: "confirm_quote", arguments: {} }],
       ["clarification"], "Necesito también tu apellido.");
     expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
     for (const answer of ["Mi DNI es 12345678", "Mi obra social es Salud"]) {
       const missing = await factoryTurn(h, answer, [{ name: "confirm_quote", arguments: {} }], ["clarification"], "Tu turno está confirmado.");
-      expect(missing.text).toContain("mi nombre es Nombre Apellido");
+      expect(missing.text).toBe("Decime tu nombre y apellido.");
       expect(missing.text).not.toContain("confirmado");
       expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
     }
@@ -685,7 +685,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
       { name: "prepare_booking", arguments: { serviceId: h.service, startsAt } },
     ], ["prepared_quote"], toolReply);
     expect(quote.text).toContain("Reserva propuesta");
-    expect(quote.text).not.toContain("Nombre Apellido");
+    expect(quote.text).not.toContain("Decime tu nombre y apellido.");
     expect(await counts(h)).toMatchObject({ clients: 1, appointments: 0, effects: 0 });
     const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
     expect(pending!.dialogue.quote.outboundId).toBe(quote.outboundId);
@@ -931,7 +931,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     expect((await appointments(h))[0]!.notes).toBe("voy con mi hija");
   });
 
-  test("notes, metadata and ambiguous changes cannot authorize model-selected structural mutations", async () => {
+  test("native mismatched operations may disclose proposals but cannot authorize structural saves", async () => {
     const h = await fixture();
     const appointment = await booked(h);
     const proposal: ReceptionistToolCommand = { name: "prepare_change", arguments: { appointmentId: appointment.id, resourceId: h.alternate } };
@@ -941,7 +941,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
       expect((await appointments(h))[0]).toEqual(appointment);
       expect(rejected.text).not.toContain("Cambio guardado");
       await changeEvidence(h, rejected, false);
-      if (text === "Cambiar horario") expect(rejected.text).toContain("¿A qué hora?");
+      if (text === "Cambiar horario") expect(rejected.text).not.toContain("Respondé «confirmo»");
     }
     await turn(h, "Reprogramar mi turno", proposal);
     const pendingNotes = await turn(h, "Cambiar nota: el 2035-04-02 a las 11:00", proposal);
@@ -959,7 +959,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     await changeEvidence(h, changed, true);
   });
 
-  test("change categories reject model-invented or cross-category fields without quotes or saved effects", async () => {
+  test("native combined fields are disclosed without saving or claiming semantic agreement", async () => {
     const h = await fixture();
     const appointment = await booked(h);
     const cases = [
@@ -975,11 +975,15 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
       expect((await appointments(h))[0]).toEqual(appointment);
       await changeEvidence(h, rejected, false);
       const [state] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
-      expect(state!.dialogue.quote).toBeNull();
+      expect(state!.dialogue.quote).toMatchObject({ kind: "change", appointmentId: appointment.id });
+      expect(rejected.text).not.toContain("Guardado:");
+      if ("serviceId" in fields) expect(state!.dialogue.quote.terms.serviceId).toBe(fields.serviceId);
+      if ("resourceId" in fields) expect(state!.dialogue.quote.terms.resourceId).toBe(fields.resourceId);
+      if ("startsAt" in fields) expect(Date.parse(state!.dialogue.quote.startsAt)).toBe(Date.parse(fields.startsAt));
     }
   });
 
-  test("missing and unknown change choices remain category-bound through restart and stale inspected structure", async () => {
+  test("native selections survive arbitrary answers/restart but reject stale inspected structure", async () => {
     for (const kind of ["service", "resource"] as const) {
       const h = await fixture();
       const appointment = await booked(h);
@@ -988,14 +992,14 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
       const proposal: ReceptionistToolCommand = { name: "prepare_change", arguments: { appointmentId: appointment.id,
         ...(kind === "service" ? { serviceId: h.otherService } : { resourceId: h.alternate }),
       } };
-      await turn(h, `Cambiar ${field}`, proposal);
+      const initial = await turn(h, `Cambiar ${field}`, proposal);
       h.agenda = new PostgresWhatsAppAgenda(pools, () => h.now);
       for (const answer of ["11:00", "Desconocido", kind === "service" ? "Beatriz" : "Color"]) {
         const missing = await turn(h, answer, proposal);
         expect((await appointments(h))[0]).toEqual(appointment);
         await changeEvidence(h, missing, false);
         const [state] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
-        expect(state!.dialogue.quote).toBeNull();
+        expect(state!.dialogue.quote).toMatchObject({ kind: "change", appointmentId: appointment.id, sourceMessageId: initial.messageId });
       }
       await db.sql`update appointments set customer_resource_preference_id=${h.alternate} where id=${appointment.id}`;
       const inspected = (await appointments(h))[0]!;
@@ -1003,37 +1007,38 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
       expect(stale.text).toContain("El turno cambió");
       expect((await appointments(h))[0]).toEqual(inspected);
       await changeEvidence(h, stale, false);
-      await turn(h, `Cambiar ${field}`, proposal);
+      const prepared = await turn(h, `Cambiar ${field}`, proposal);
       h.agenda = new PostgresWhatsAppAgenda(pools, () => h.now);
       const selected = await turn(h, name, proposal);
       if (kind === "service") {
         expect((await appointments(h))[0]).toEqual(inspected);
-        expect(selected.text).toContain("45 minutos, ARS 2500");
+        expect(prepared.text).toContain("45 minutos, ARS 2500");
+        expect(selected.text).toContain("pendiente no cambió");
         const premature = await turn(h, "confirmo");
         expect(premature.text).toContain("Primero necesitás recibir");
         await delivered(premature);
         await accept(h);
       } else {
-        await delivered(selected);
+        await delivered(prepared);
         await accept(h, "dale cambialo");
       }
       const saved = (await appointments(h))[0]!;
       expect(saved.startsAt).toBe(appointment.startsAt);
       expect(saved.terms.serviceId).toBe(kind === "service" ? h.otherService : h.service);
-      expect(saved.terms.resourceId).toBe(kind === "resource" ? h.alternate : h.resource);
+      expect(saved.terms.resourceId).toBe(h.alternate); // Omitted assignment preserves the existing preference constraint.
       expect(saved.customerResourcePreference).toBe(h.alternate);
     }
   });
 
-  test("reschedule without customer date and time asks rather than executing a model-selected target", async () => {
+  test("native complete instants disclose a proposal without executing a model-selected target", async () => {
     const h = await fixture();
     const appointment = await booked(h);
     const requested = await turn(h, "Reprogramar mi turno", {
       name: "prepare_change", arguments: { appointmentId: appointment.id, startsAt: later },
     });
     expect((await appointments(h))[0]).toEqual(appointment);
-    expect(requested.text).toContain("¿Para qué día?");
-    expect(requested.text).toContain("¿A qué hora?");
+    expect(requested.text).toContain("Cambio propuesto");
+    expect(requested.text).toContain("2035-04-02 a las 11:00");
     expect(await counts(h)).toMatchObject({ clients: 1, appointments: 1, effects: 1 });
     await changeEvidence(h, requested, false);
   });
@@ -1045,7 +1050,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
       name: "prepare_change", arguments: { appointmentId: appointment.id, startsAt: "2035-04-02T12:00:00-03:00" },
     });
     expect((await appointments(h))[0]).toEqual(appointment);
-    expect(mismatched.text).toContain("no coincide");
+    expect(mismatched.text).toContain("Cambio propuesto: Corte, 2035-04-02 a las 12:00");
     expect((await counts(h)).effects).toBe(1);
     await changeEvidence(h, mismatched, false);
   });
@@ -1073,13 +1078,16 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     expect((await appointments(h))[0]).toEqual(appointment);
     await changeEvidence(h, missing, false);
     const date = await turn(h, "El 2035-04-02", proposal);
-    expect(date.text).toContain("¿A qué hora?");
+    expect(date.text).toContain("pendiente no cambió");
     expect(date.text).not.toContain("¿Para qué día?");
     expect((await appointments(h))[0]).toEqual(appointment);
     await changeEvidence(h, date, false);
     // Use a new executor instance to prove the binding is persisted, not process memory.
     h.agenda = new PostgresWhatsAppAgenda(pools, () => h.now);
-    const time = await changeSaved(h, "a las 11:00", proposal);
+    const retained = await turn(h, "a las 11:00", proposal);
+    expect(retained.text).not.toContain("Cambio propuesto");
+    await delivered(missing);
+    const time = await accept(h, "dale cambialo");
     expect(time.text).toContain("Guardado:");
     const current = (await appointments(h))[0]!;
     expect(current.startMs).toBe(Date.parse(later));
@@ -1201,7 +1209,9 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     expect(unavailable.text).not.toContain("2035-04-03");
     await db.sql`insert into business_calendar_closures(business_id,kind,closed_date) values(${h.business},'date','2035-04-02')`;
     const nearby = await turn(h, "Consultar horarios el 2035-04-02", { name: "availability", arguments: { serviceId: h.service, date: "2035-04-02" } });
-    expect(nearby.text).toContain("2035-04-03");
+    expect(nearby.text).toContain("No hay horarios disponibles para 2035-04-02");
+    expect(nearby.text).not.toContain("2035-04-03");
+    expect((await turn(h, "Otro día", { name: "availability", arguments: { serviceId: h.service, date: "2035-04-03" } })).text).toContain("2035-04-03: 09:00");
     expect((await counts(h)).clients).toBe(0);
   });
 
@@ -1310,7 +1320,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
   test("explicit booking preference is persisted but unknown expressed resources are clarified", async () => {
     const h = await fixture();
     const proposed: ReceptionistToolCommand = { name: "prepare_booking", arguments: { serviceId: h.service, resourceId: h.alternate, startsAt } };
-    const unknown = await turn(h, "Reservar Corte el 2035-04-02 a las 10:00, prefiero Desconocido", proposed);
+    const unknown = await turn(h, "Reservar Corte el 2035-04-02 a las 10:00, prefiero Desconocido", book(h));
     expect(unknown.text).toContain("No reconocí el recurso");
     expect((await counts(h)).clients).toBe(0);
     await turn(h, "Reservar Corte el 2035-04-02 a las 10:00, prefiero Beatriz", proposed);
@@ -1426,7 +1436,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     const initial = await factoryTurn(h, "Reservar Corte el 2035-04-02 a las 10:00", [
       { name: "prepare_booking", arguments: { serviceId: h.service, startsAt } },
     ], ["clarification"], toolReply);
-    expect(initial.text).toContain("Nombre Apellido");
+    expect(initial.text).toBe("Decime tu nombre y apellido.");
     const quote = await factoryTurn(h, "Mi nombre es María Pérez", [{ name: "confirm_quote", arguments: {} }], ["prepared_quote"], toolReply);
     expect(quote.text).toContain("Reserva propuesta");
     expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
@@ -1449,7 +1459,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     const initial = await factoryTurn(h, "Reservar Corte el 2035-04-02 a las 10:00", [
       { name: "prepare_booking", arguments: { serviceId: h.service, startsAt } },
     ], ["clarification"], toolReply);
-    expect(initial.text).toContain("Nombre Apellido");
+    expect(initial.text).toBe("Decime tu nombre y apellido.");
     const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
     const first = await factoryTurn(h, "¿Dónde están ubicados?", [{ name: "read_business", arguments: {} }], ["data"], addressReply);
     expect(first.text).toBe('Dirección registrada: "Avenida Central 123".');
@@ -1484,7 +1494,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
       expect(request.messages.some(message => message.content?.includes("El 2035-04-02"))).toBe(true);
       return [{ name: "prepare_booking", arguments: { serviceId: h.service, startsAt } }];
     }, ["clarification"], toolReply);
-    expect(selected.text).toContain("Nombre Apellido");
+    expect(selected.text).toBe("Decime tu nombre y apellido.");
     const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
     expect(Date.parse(pending!.dialogue.quote.startsAt)).toBe(Date.parse(startsAt));
     expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
@@ -1568,7 +1578,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
   });
 
-  test("offered booking slots retain Ana across restart and unrelated detour despite a model selecting Beatriz", async () => {
+  test("native booking assigns Beatriz while retaining Ana preference across restart and detour", async () => {
     const h = await fixture();
     const weekday = new Date("2035-04-02T12:00:00Z").getUTCDay();
     const schedule: WeeklySchedule = { [weekday]: [{ startMinute: 630, endMinute: 690 }] };
@@ -1583,16 +1593,16 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     const selected = await factoryTurn(h, "10:30", [{ name: "prepare_booking", arguments: {
       serviceId: h.service, resourceId: h.alternate, startsAt: "2035-04-02T10:30:00-03:00",
     } }], ["clarification"], toolReply);
-    expect(selected.text).toContain("Nombre Apellido");
+    expect(selected.text).toBe("Decime tu nombre y apellido.");
     const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
-    expect(pending!.dialogue.quote.terms.resourceId).toBe(h.resource);
+    expect(pending!.dialogue.quote.terms.resourceId).toBe(h.alternate);
     expect(pending!.dialogue.quote.preference).toBe(h.resource);
     const quote = await factoryTurn(h, "Mi nombre es María Pérez", [{ name: "confirm_quote", arguments: {} }], ["prepared_quote"], toolReply);
     await delivered(quote);
     const saved = await factoryTurn(h, "dale reservame ese", factoryAcceptance, ["staged_action"], "Guardado:");
     expect(saved.text).toContain("Guardado:");
     const appointment = (await appointments(h))[0]!;
-    expect(appointment.terms.resourceId).toBe(h.resource);
+    expect(appointment.terms.resourceId).toBe(h.alternate);
     expect(appointment.customerResourcePreference).toBe(h.resource);
     expect(appointment.startMs).toBe(Date.parse("2035-04-02T10:30:00-03:00"));
     expect(appointment.client).toMatchObject({ firstName: "María", lastName: "Pérez", phone });
@@ -1616,7 +1626,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
       serviceId: h.service, resourceId: h.alternate, startsAt: "2035-04-02T10:30:00-03:00",
     } });
     expect(fresh.text).toContain("Reserva propuesta");
-    expect(fresh.text).not.toContain("Nombre Apellido");
+    expect(fresh.text).not.toContain("Decime tu nombre y apellido.");
     expect(fresh.outboundId).not.toBe(originalQuote.outboundId);
     expect((await counts(h)).appointments).toBe(1);
     await delivered(fresh);
@@ -1624,7 +1634,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     expect(saved.text).toContain("Guardado:");
     const appointment = (await appointments(h)).find(ap => ap.client.phone === phone)!;
     expect(appointment.startMs).toBe(Date.parse("2035-04-02T10:30:00-03:00"));
-    expect(appointment.terms.resourceId).toBe(h.resource);
+    expect(appointment.terms.resourceId).toBe(h.alternate);
     expect(appointment.customerResourcePreference).toBe(h.resource);
     expect(await counts(h)).toMatchObject({ clients: 2, appointments: 2, effects: 1 });
   });
@@ -1634,23 +1644,23 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
       const h = await fixture();
       await turn(h, "Reservar Corte el 2035-04-02, prefiero Ana", book(h));
       const changed = await turn(h, expression, book(h));
-      expect(changed.text).toContain("Horarios disponibles");
+      expect(changed.text).toBe("Decime tu nombre y apellido.");
       const selected = await turn(h, "10:30", { name: "prepare_booking", arguments: {
         serviceId: h.service, resourceId: expression === "Prefiero Beatriz" ? h.resource : h.alternate,
         startsAt: "2035-04-02T10:30:00-03:00",
       } });
-      expect(selected.text).toContain("Nombre Apellido");
+      expect(selected.text).toBe("Decime tu nombre y apellido.");
       const quote = await turn(h, "Mi nombre es María Pérez");
       await delivered(quote);
       await turn(h, "confirmo");
       const appointment = (await appointments(h))[0]!;
-      expect(appointment.terms.resourceId).toBe(h.alternate);
+      expect(appointment.terms.resourceId).toBe(expression === "Prefiero Beatriz" ? h.resource : h.alternate);
       expect(appointment.customerResourcePreference).toBe(expression === "Prefiero Beatriz" ? h.alternate : null);
       expect(await counts(h)).toMatchObject({ clients: 1, appointments: 1, effects: 1 });
     }
   });
 
-  test("existing reschedule preference survives missing fields, restart and conflicting or omitted model resource", async () => {
+  test("native explicit assignment stays separate from retained preference through restart", async () => {
     for (const scenario of ["omitted", "conflicting", "changed", "removed"] as const) {
       const h = await fixture();
       const appointment = await booked(h);
@@ -1658,22 +1668,27 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
       const before = (await appointments(h))[0]!;
       const proposal: ReceptionistToolCommand = { name: "prepare_change", arguments: { appointmentId: appointment.id, resourceId: h.alternate, startsAt: later } };
       const missing = await turn(h, "Reprogramar mi turno, prefiero Ana", proposal);
+      let deliveredProposal = missing;
       expect((await appointments(h))[0]).toEqual(before);
       await changeEvidence(h, missing, false);
       h.agenda = new PostgresWhatsAppAgenda(pools, () => h.now);
       if (scenario === "changed" || scenario === "removed") {
         const expression = scenario === "changed" ? "Prefiero Beatriz" : "Sin preferencia";
         const pending = await turn(h, expression, proposal);
+        deliveredProposal = pending;
         expect((await appointments(h))[0]).toEqual(before);
         await changeEvidence(h, pending, false);
       }
-      const saved = await changeSaved(h, "El 2035-04-02 a las 11:00", { name: "prepare_change", arguments: {
+      const retained = await turn(h, "El 2035-04-02 a las 11:00", { name: "prepare_change", arguments: {
         appointmentId: appointment.id, startsAt: later,
         ...(scenario === "conflicting" ? { resourceId: h.alternate } : {}),
       } });
+      expect(retained.text).toContain("pendiente no cambió");
+      await delivered(deliveredProposal);
+      const saved = await accept(h, "dale cambialo");
       const current = (await appointments(h))[0]!;
       const expected = scenario === "changed" || scenario === "removed" ? h.alternate : h.resource;
-      expect(current.terms.resourceId).toBe(expected);
+      expect(current.terms.resourceId).toBe(h.alternate);
       expect(current.customerResourcePreference).toBe(scenario === "removed" ? null : expected);
       expect(current.startMs).toBe(Date.parse(later));
       expect(current.terms.durationMinutes).toBe(before.terms.durationMinutes);
@@ -1687,7 +1702,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     const h = await fixture();
     const appointment = await booked(h);
     const proposal: ReceptionistToolCommand = { name: "prepare_change", arguments: { appointmentId: appointment.id, resourceId: h.alternate, startsAt: later } };
-    const unknown = await turn(h, "Reprogramar mi turno, prefiero Desconocido", proposal);
+    const unknown = await turn(h, "Reprogramar mi turno, prefiero Desconocido", { name: "prepare_change", arguments: { appointmentId: appointment.id, startsAt: later } });
     expect(unknown.text).toContain("No reconocí el recurso");
     expect((await appointments(h))[0]).toEqual(appointment);
     await changeEvidence(h, unknown, false);
@@ -1699,11 +1714,11 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     expect((await counts(h)).effects).toBe(1);
     const resolved = await changeSaved(h, "Prefiero Ana", proposal);
     expect((await appointments(h))[0]!.customerResourcePreference).toBe(h.resource);
-    expect((await appointments(h))[0]!.terms.resourceId).toBe(h.resource);
+    expect((await appointments(h))[0]!.terms.resourceId).toBe(h.alternate); // Explicit assignment is not preference metadata.
     await changeEvidence(h, resolved, true);
   });
 
-  test("unknown booking resource survives restart and model selection until explicit resolution or removal", async () => {
+  test("unknown booking resource survives restart without a supplied choice until explicit resolution or removal", async () => {
     for (const expression of ["Prefiero Ana", "Sin preferencia"] as const) {
       const h = await fixture();
       // Cover an existing time prompt and a fresh unknown-resource request.
@@ -1714,7 +1729,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
       const proposal: ReceptionistToolCommand = { name: "prepare_booking", arguments: {
         serviceId: h.service, resourceId: h.alternate, startsAt: "2035-04-02T10:30:00-03:00",
       } };
-      const blocked = await turn(h, "10:30", proposal);
+      const blocked = await turn(h, "10:30", book(h, "2035-04-02T10:30:00-03:00"));
       expect(blocked.text).toContain("No reconocí el recurso");
       const [state] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
       expect(state!.dialogue.quote).toBeNull();
@@ -1722,14 +1737,14 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
       const [receipt] = await db.sql`select outbound_id from whatsapp_agenda_receipts where message_id=${blocked.messageId}`;
       expect(receipt!.outbound_id).toBe(blocked.outboundId);
       const resolved = await turn(h, expression, proposal);
-      expect(resolved.text).toContain("Nombre Apellido");
+      expect(resolved.text).toBe("Decime tu nombre y apellido.");
       const quote = await turn(h, "Mi nombre es María Pérez");
       expect(quote.text).toContain("Reserva propuesta");
       await delivered(quote);
       const saved = await turn(h, "confirmo");
       expect(saved.text).toContain("Guardado:");
       const appointment = (await appointments(h))[0]!;
-      expect(appointment.terms.resourceId).toBe(expression === "Prefiero Ana" ? h.resource : h.alternate);
+      expect(appointment.terms.resourceId).toBe(h.alternate);
       expect(appointment.customerResourcePreference).toBe(expression === "Prefiero Ana" ? h.resource : null);
       expect(await counts(h)).toMatchObject({ clients: 1, appointments: 1, effects: 1 });
     }
@@ -1783,13 +1798,14 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
         ...(kind === "service" ? { serviceId: h.otherService } : { resourceId: h.alternate }),
       } };
       const before = await appointments(h);
-      await factoryTurn(h, kind === "service" ? "Cambiar servicio" : "Cambiar recurso", [command], ["clarification"], toolReply);
-      const reply = await factoryTurn(h, "Hola", [command], ["prepared_quote"], toolReply);
-      expect(reply.text).toContain(kind === "service" ? "Cambio propuesto: Hola" : "Cambio propuesto: Corte");
+      const prepared = await factoryTurn(h, kind === "service" ? "Cambiar servicio" : "Cambiar recurso", [command], ["prepared_quote"], toolReply);
+      const reply = await factoryTurn(h, "Hola", [command], ["data"], '{"kind":"reply"}');
+      expect(prepared.text).toContain(kind === "service" ? "Cambio propuesto: Hola" : "Cambio propuesto: Corte");
+      expect(reply.text).toContain("pendiente no cambió");
       const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
       expect(pending!.dialogue.quote.terms[kind === "service" ? "serviceId" : "resourceId"]).toBe(kind === "service" ? h.otherService : h.alternate);
       expect(await appointments(h)).toEqual(before);
-      await delivered(reply);
+      await delivered(prepared);
       await factoryTurn(h, "dale cambialo", factoryAcceptance, ["staged_action"], "Cambio guardado");
       expect((await appointments(h))[0]!.terms[kind === "service" ? "serviceId" : "resourceId"]).toBe(kind === "service" ? h.otherService : h.alternate);
       expect(await counts(h)).toMatchObject({ clients: 1, appointments: 1, effects: 2 });

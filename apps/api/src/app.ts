@@ -1,18 +1,20 @@
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import cookie from "@fastify/cookie";
-import { Algorithm, hash, verify } from "@node-rs/argon2";
+import { Algorithm, hash } from "@node-rs/argon2";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   AuthService,
   digestOpaqueToken,
+  deriveSessionCsrf,
+  verifyLoginPassword,
   sessionCookie,
   validateMutationRequest,
 } from "@agendia/auth";
 import { makeSafeError, PlatformAiInstructionsInputSchema, AppointmentListQuerySchema, AppointmentRecordSchema, AppointmentAvailabilityQuerySchema, AvailabilitySlotSchema, ManualAppointmentCreateSchema, ManualAppointmentChangeSchema, ManualAppointmentNotesSchema, ManualAppointmentStateSchema, AppointmentOperationKeySchema, AppointmentOperationContextSchema, AppointmentOperationReceiptSchema } from "@agendia/contracts";
 import {
   parseInstantMs,
-  AI_SYSTEM_INSTRUCTIONS,
+  RECEPTIONIST_SYSTEM_INSTRUCTIONS,
   AssistantConfigInputSchema,
   BusinessProfileSchema,
   ServiceInputSchema,
@@ -68,6 +70,8 @@ function legacyApi(auth: AuthService) {
     }
   });
   app.post("/auth/logout", async (_request, reply) => reply.code(204).send());
+  // The legacy in-memory HTTP adapter never issues/authenticates cookies; do not expose recovery.
+  app.post("/auth/csrf", async (_request, reply) => reply.header("cache-control", "no-store").code(401).send({ code: "UNAUTHENTICATED" }));
   app.get("/auth/session", async (_request, reply) =>
     reply.code(401).send({ code: "UNAUTHENTICATED" }),
   );
@@ -122,6 +126,7 @@ export function buildApi(input: AuthService | ApiOptions) {
         origin: request.headers.origin ?? "",
         expectedOrigin,
         csrfHeader: csrf ?? "",
+        sessionToken: request.cookies[COOKIE]!,
         csrfSession:
           csrf && auth.csrf_sha256 === digestOpaqueToken(csrf) ? csrf : "",
       })
@@ -209,13 +214,20 @@ export function buildApi(input: AuthService | ApiOptions) {
     try {
       const body = credentials.parse(request.body),
         normalized = body.email.trim().toLowerCase();
+      // Origin was checked first. Database failure and exhaustion both fail closed before hash work.
+      const admitted = await pools.api.run(undefined, repo => repo.admitLogin(digestOpaqueToken(normalized))).catch(() => false);
+      if (!admitted) {
+        reply.header("retry-after", "900");
+        return fail(reply, request, 429, "FORBIDDEN", "Too many login attempts");
+      }
       const identity = await pools.api.run(undefined, (repo) =>
         repo.authIdentity(normalized),
       );
+      const validPassword = await verifyLoginPassword(identity?.password_phc, body.password);
       if (
         !identity?.active ||
         identity.business_status === "suspended" ||
-        !(await verify(identity.password_phc, body.password))
+        !validPassword
       ) {
         await pools.api.run(
           identity?.business_id
@@ -244,7 +256,7 @@ export function buildApi(input: AuthService | ApiOptions) {
         );
       }
       const token = randomBytes(32).toString("hex"),
-        csrf = randomBytes(32).toString("hex"),
+        csrf = deriveSessionCsrf(token),
         now = Date.now();
       await pools.api.run(
         identity.business_id
@@ -285,7 +297,17 @@ export function buildApi(input: AuthService | ApiOptions) {
       );
     }
   });
+  app.post("/auth/csrf", async (request, reply) => {
+    reply.header("cache-control", "no-store");
+    if (!originOk(request) || request.headers["x-csrf-bootstrap"] !== "1")
+      return fail(reply, request, 403, "FORBIDDEN", "Origin or bootstrap header rejected");
+    if (!await session(request))
+      return fail(reply, request, 401, "UNAUTHENTICATED", "Authentication required");
+    // No rotation: legacy random tokens remain valid alongside this stable per-session value.
+    return { csrfToken: deriveSessionCsrf(request.cookies[COOKIE]!) };
+  });
   app.get("/auth/session", async (request, reply) => {
+    reply.header("cache-control", "no-store");
     const auth = await session(request);
     return auth
       ? { role: auth.role, businessId: auth.business_id, identityId: auth.identity_id }
@@ -338,7 +360,7 @@ export function buildApi(input: AuthService | ApiOptions) {
   app.get("/admin/ai-instructions", async (request, reply) => {
     if (!(await requireAdmin(request, reply))) return;
     return {
-      baseInstructions: AI_SYSTEM_INSTRUCTIONS,
+      baseInstructions: RECEPTIONIST_SYSTEM_INSTRUCTIONS,
       ...await pools.admin.run(undefined, (repo) => repo.platformAiInstructions()),
     };
   });
@@ -348,9 +370,9 @@ export function buildApi(input: AuthService | ApiOptions) {
     if (!body.success)
       return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid instructions");
     return {
-      baseInstructions: AI_SYSTEM_INSTRUCTIONS,
+      baseInstructions: RECEPTIONIST_SYSTEM_INSTRUCTIONS,
       ...await pools.admin.run(undefined, (repo) =>
-        repo.updatePlatformAiInstructions(body.data.additionalInstructions)),
+        repo.updatePlatformAiInstructions(body.data.additionalInstructions, body.data.replyPacing)),
     };
   });
   app.get("/admin/businesses", async (request, reply) =>

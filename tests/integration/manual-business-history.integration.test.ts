@@ -8,6 +8,7 @@ const A = "11111111-1111-4111-8111-111111111111";
 const B = "22222222-2222-4222-8222-222222222222";
 const CA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const CB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const OWNERSHIP = "cccccccc-1111-4111-8111-cccccccccccc";
 const SA = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa";
 const SB = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb";
 let db: TestPostgres, pools: ReturnType<typeof createRuntimePools>, handler: PostgresInboundHandler;
@@ -36,6 +37,7 @@ beforeAll(async () => {
   await db.sql`insert into businesses(id,name,status) values(${A},'A','active'),(${B},'B','active')`;
   await db.sql`insert into assistant_configs(business_id,active) values(${A},true),(${B},false)`;
   await db.sql`insert into whatsapp_connections(id,business_id,session_public_id,state,owner_id) values(${CA},${A},${SA},'CONNECTED','manual-manager'),(${CB},${B},${SB},'CONNECTED','other-manager')`;
+  await db.sql`update whatsapp_connections set ownership_token=${OWNERSHIP} where id=${CA}`;
   pools = createRuntimePools(db.container.getConnectionUri());
   handler = new PostgresInboundHandler(pools);
 }, 120_000);
@@ -73,22 +75,22 @@ describe("manual business history and pending automation", () => {
     const id = await generate(key);
     await send(key, "generated-manual", { fromMe: true });
     expect((await db.sql`select state from outbound_commands where outbound_id=${id}`)[0]!.state).toBe("failed");
-    expect(await pools.manager.run(undefined, r => r.claimOwnedOutbound("manual-manager"))).toBeNull();
+    expect(await pools.manager.run(undefined, r => r.claimOwnedOutbound("manual-manager", [OWNERSHIP]))).toBeNull();
   });
 
   test("recognizes pre-confirmation and confirmed echoes without cancelling a newer customer burst", async () => {
     const key = "echo";
     await send(key, "echo-customer");
     const id = await generate(key);
-    expect((await pools.manager.run(undefined, r => r.claimOwnedOutbound("manual-manager")))?.outbound_id).toBe(id);
+    expect((await pools.manager.run(undefined, r => r.claimOwnedOutbound("manual-manager", [OWNERSHIP])))?.outbound_id).toBe(id);
     await send(key, "echo-new-customer");
     const before = await conversation(key);
     // Generated ID, not text, determines echo identity.
     expect((await send(key, id, { fromMe: true, text: "different text" })).outcome).toBe("generated_echo");
     expect((await conversation(key)).latest_inbound_id).toBe(before.latest_inbound_id);
     expect((await conversation(key)).reply_due_at).toEqual(before.reply_due_at);
-    expect(await pools.manager.run(context(), r => r.finishOutbound(id, "sent", id))).toBe(true);
-    expect(await pools.manager.run(context(), r => r.finishOutbound(id, "sent", id))).toBe(false);
+    expect(await pools.manager.run(context(), r => r.finishOutbound(id, "sent", id, OWNERSHIP))).toBe(true);
+    expect(await pools.manager.run(context(), r => r.finishOutbound(id, "sent", id, OWNERSHIP))).toBe(false);
     expect((await send(key, id, { fromMe: true })).outcome).toBe("duplicate");
     // A confirmed legacy provider ID is also recognized, without an inbox entry.
     await db.sql`update outbound_commands set provider_message_id='legacy-echo' where outbound_id=${id}`;
@@ -104,13 +106,13 @@ describe("manual business history and pending automation", () => {
     const key = "claimed";
     await send(key, "claimed-customer");
     const id = await generate(key);
-    expect((await pools.manager.run(undefined, r => r.claimOwnedOutbound("manual-manager")))?.outbound_id).toBe(id);
+    expect((await pools.manager.run(undefined, r => r.claimOwnedOutbound("manual-manager", [OWNERSHIP])))?.outbound_id).toBe(id);
     await send(key, "claimed-next");
     await send(key, "claimed-manual", { fromMe: true, text: "generated reply" });
     expect((await db.sql`select state from outbound_commands where outbound_id=${id}`)[0]!.state).toBe("sending");
     expect((await conversation(key)).reply_due_at).toBeNull();
-    expect(await pools.manager.run(context(), r => r.finishOutbound(id, "delivery_unknown"))).toBe(true);
-    expect(await pools.manager.run(undefined, r => r.claimOwnedOutbound("manual-manager"))).toBeNull();
+    expect(await pools.manager.run(context(), r => r.finishOutbound(id, "delivery_unknown", undefined, OWNERSHIP))).toBe(true);
+    expect(await pools.manager.run(undefined, r => r.claimOwnedOutbound("manual-manager", [OWNERSHIP]))).toBeNull();
     expect((await history(key)).filter(m => m.direction === "outbound")).toHaveLength(1);
   });
 
@@ -118,8 +120,8 @@ describe("manual business history and pending automation", () => {
     const key = "late-failed-echo";
     await send(key, "late-failed-customer");
     const id = await generate(key);
-    expect((await pools.manager.run(undefined, r => r.claimOwnedOutbound("manual-manager")))?.outbound_id).toBe(id);
-    expect(await pools.manager.run(context(), r => r.finishOutbound(id, "failed"))).toBe(true);
+    expect((await pools.manager.run(undefined, r => r.claimOwnedOutbound("manual-manager", [OWNERSHIP])))?.outbound_id).toBe(id);
+    expect(await pools.manager.run(context(), r => r.finishOutbound(id, "failed", undefined, OWNERSHIP))).toBe(true);
     await send(key, "late-failed-next");
     const before = await conversation(key);
     expect((await send(key, id, { fromMe: true })).outcome).toBe("generated_echo");
@@ -151,7 +153,7 @@ describe("manual business history and pending automation", () => {
     });
     await entered;
     const save = pools.worker.run(context(), r => r.saveGenerated(c.latest_inbound_id, A, "stale"));
-    const claim = pools.manager.run(undefined, r => r.claimOwnedOutbound("manual-manager"));
+    const claim = pools.manager.run(undefined, r => r.claimOwnedOutbound("manual-manager", [OWNERSHIP]));
     release();
     await manual;
     expect(await save).toBeNull();

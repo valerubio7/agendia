@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useRef,
   useState,
   type FormEventHandler,
   type ReactNode,
@@ -63,11 +64,13 @@ export function AssistantScreen({
   reloadAction,
 }: AssistantScreenProps) {
   const [active, setActive] = useState(Boolean(assistant.active));
+  const activationEdits = useRef(0);
+  const submittedEdits = useRef(0);
   const savedActive = Boolean(assistant.active);
   const activationChanged = active !== savedActive;
 
   useEffect(() => {
-    setActive(Boolean(assistant.active));
+    if (activationEdits.current === submittedEdits.current) setActive(Boolean(assistant.active));
   }, [assistant.revision, assistant.active]);
 
   return (
@@ -144,7 +147,10 @@ export function AssistantScreen({
         <form
           id="assistant-configuration-form"
           className="assistant-form"
-          onSubmit={submitAction}
+          onSubmit={(event) => {
+            if (!savePending) submittedEdits.current = activationEdits.current;
+            submitAction(event);
+          }}
           aria-busy={savePending}
         >
           <section
@@ -244,7 +250,10 @@ export function AssistantScreen({
                 name="active"
                 type="checkbox"
                 checked={active}
-                onChange={(event) => setActive(event.target.checked)}
+                onChange={(event) => {
+                  activationEdits.current += 1;
+                  setActive(event.target.checked);
+                }}
               />
               <span className="assistant-activation__track" aria-hidden="true">
                 <span />

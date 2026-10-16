@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ReplyPacingSchema, type ReplyPacing } from "../../domain/src/reply-pacing.ts";
 import { ClientInputSchema } from "@agendia/domain/client-registry";
 import { CalendarDateSchema, InstantSchema, parseInstantMs } from "@agendia/domain/calendar-values";
 import { AppointmentTermsSnapshotSchema, AppointmentStateSchema, AppointmentOriginSchema } from "@agendia/domain/appointment-lifecycle";
@@ -126,10 +127,12 @@ export const PRODUCT_HTTP_ROUTES = Object.freeze([
 
 export const PlatformAiInstructionsInputSchema = z.object({
   additionalInstructions: z.string(),
+  replyPacing: ReplyPacingSchema.optional(),
 }).strict();
 export type PlatformAiInstructions = {
   baseInstructions: string;
   additionalInstructions: string;
+  replyPacing: ReplyPacing;
 };
 
 export const ErrorCodeSchema = z.enum([
