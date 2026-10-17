@@ -145,8 +145,36 @@ describe("audit credential and advisory session regressions", () => {
       await expect(bounded(disconnectedRelease())).rejects.toThrow("connection closed");
       expect(await count()).toBe(0);
       const shutdownRelease = (await local.reserveAdvisoryLock("shutdown"))!;
+      const endStarted = performance.now();
       await bounded(local.end());
-      expect(await count()).toBe(0);
+      const endFinished = performance.now();
+      // Capture the original sample first: diagnostic queries must not turn a shutdown failure green.
+      const originalCount = await count();
+      const countFinished = performance.now();
+      let snapshot: postgres.Row[] | null = null;
+      let snapshotError: { name: string; code: string | null } | null = null;
+      if (originalCount !== 0) {
+        try {
+          snapshot = await bounded(database.sql<postgres.Row[]>`
+            select a.pid, a.state, a.wait_event_type, a.wait_event,
+                   l.mode, l.granted, l.classid, l.objid, l.objsubid
+            from pg_stat_activity a
+            left join pg_locks l on l.pid = a.pid and l.locktype = 'advisory'
+            where a.application_name = 'audit-lock-cleanup'
+            order by a.pid, l.classid, l.objid, l.objsubid, l.mode
+          `);
+        } catch (error) {
+          snapshotError = {
+            name: error instanceof postgres.PostgresError ? "PostgresError" : "Error",
+            code: error instanceof postgres.PostgresError && /^[0-9A-Z]{5}$/.test(error.code) ? error.code : null,
+          };
+        }
+      }
+      console.error("advisory-shutdown-diagnostic " + JSON.stringify({
+        originalCount, endMs: endFinished - endStarted, countMs: countFinished - endFinished,
+        snapshot, snapshotError,
+      }));
+      expect(originalCount).toBe(0);
       await expect(bounded(shutdownRelease())).rejects.toThrow("connection closed");
       await expect(local.reserveAdvisoryLock("after-shutdown")).rejects.toThrow();
     } finally { await sql.end({ timeout: 0 }); await local.end(); }
