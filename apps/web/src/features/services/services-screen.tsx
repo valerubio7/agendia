@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { api, type Service, type ServiceInput } from "../api-client";
+import { api, type Service, type ServiceInput } from "../../api/api-client";
 
 const priceFormatter = new Intl.NumberFormat("es-AR", {
   style: "currency",

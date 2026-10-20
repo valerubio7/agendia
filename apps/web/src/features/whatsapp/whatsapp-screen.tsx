@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { WhatsAppStatus } from "../api-client";
+import type { WhatsAppStatus } from "../../api/api-client";
 
 type WhatsAppScreenProps = {
   status: WhatsAppStatus | null | undefined;

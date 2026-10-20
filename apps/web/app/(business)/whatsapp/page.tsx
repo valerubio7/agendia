@@ -1,2 +1,2 @@
-import { WhatsAppView } from "../../../src/whatsapp-view";
+import { WhatsAppView } from "../../../src/features/whatsapp/whatsapp-view";
 export default WhatsAppView;

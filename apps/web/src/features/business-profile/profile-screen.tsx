@@ -1,5 +1,5 @@
 import type { FormEventHandler, ReactNode } from "react";
-import type { Profile } from "../api-client";
+import type { Profile } from "../../api/api-client";
 
 type ProfileScreenProps = {
   profile: Partial<Profile>;

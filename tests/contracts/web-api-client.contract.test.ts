@@ -11,13 +11,13 @@ import {
   type ApiTransport,
   type BusinessClosure,
   type BusinessClosureRequest,
-} from "../../apps/web/src/api-client.ts";
+} from "../../apps/web/src/api/api-client.ts";
 import {
   formatActivityTimestamp,
   runWhatsAppLinkMonitor,
-} from "../../apps/web/src/live-panel.tsx";
-import { renderWhatsAppQrDataUrl } from "../../apps/web/src/qr-code.ts";
-import { formatArgentinaClosureDate, formatArgentinaClosureInstant } from "../../apps/web/src/ui/argentina-closure-time.ts";
+} from "../../apps/web/src/shell/live-panel.tsx";
+import { renderWhatsAppQrDataUrl } from "../../apps/web/src/features/whatsapp/qr-code.ts";
+import { formatArgentinaClosureDate, formatArgentinaClosureInstant } from "../../apps/web/src/features/business-calendar/argentina-closure-time.ts";
 import { createRuntimePools } from "@agendia/db";
 import {
   createWhatsAppManager,
@@ -445,7 +445,7 @@ describe("Next web client against Fastify contracts", () => {
 
   test("login uses Next router replacement with static role destinations", async () => {
     const panel = await readFile(
-      join(import.meta.dir, "../../apps/web/src/live-panel.tsx"),
+      join(import.meta.dir, "../../apps/web/src/shell/live-panel.tsx"),
       "utf8",
     );
     expect(panel).toContain('import { useRouter } from "next/navigation"');
@@ -490,7 +490,7 @@ describe("Next web client against Fastify contracts", () => {
     const adminScreen = await readFile(
       join(
         import.meta.dir,
-        "../../apps/web/src/ui/admin-businesses-screen.tsx",
+        "../../apps/web/src/features/administration/admin-businesses-screen.tsx",
       ),
       "utf8",
     );

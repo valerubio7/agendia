@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { api, ApiError, type AppointmentRecord, type AppointmentOperationContext, type AppointmentOperationReceipt, type Service, type Resource } from "../api-client";
+import { api, ApiError, type AppointmentRecord, type AppointmentOperationContext, type AppointmentOperationReceipt, type Service, type Resource } from "../../api/api-client";
 import { TurnosBookingForm } from "./turnos-booking-form";
 import { TurnosDetail } from "./turnos-detail";
 import { addDays, argentinaDate, calendarRows, dateLabel, dayBounds, monthDays, shiftMonth, turnoStates, turnoTime } from "./turnos-calendar";

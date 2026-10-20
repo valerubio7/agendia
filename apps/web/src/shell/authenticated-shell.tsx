@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { Brand, BrandedName } from "./brand";
+import { Brand, BrandedName } from "../components/brand";
 
 type ShellVariant = "business" | "admin";
 type NavigationItem = { href: string; label: string };

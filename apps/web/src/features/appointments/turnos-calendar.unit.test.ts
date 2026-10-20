@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { argentinaDate, addDays, monthDays, shiftMonth, dayBounds, calendarRows } from "../../apps/web/src/ui/turnos-calendar";
+import { argentinaDate, addDays, monthDays, shiftMonth, dayBounds, calendarRows } from "./turnos-calendar";
 
 test("Turnos dates use Argentina rather than the host day", () => {
   expect(argentinaDate(Date.parse("2026-01-01T02:59:59Z"))).toBe("2025-12-31");

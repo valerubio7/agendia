@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { api, type Resource, type ResourceInput, type Service } from "../api-client";
+import { api, type Resource, type ResourceInput, type Service } from "../../api/api-client";
 
 import {
   ControlledWeeklyScheduleEditor, scheduleDays, formatScheduleClock, serializeScheduleDraft,
   type WeeklyScheduleDraft,
-} from "./weekly-schedule-editor";
+} from "../../components/weekly-schedule-editor";
 
 type LifecycleAction = Resource["status"] | "retire";
 

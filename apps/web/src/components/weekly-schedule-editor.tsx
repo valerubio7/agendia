@@ -1,4 +1,4 @@
-import type { WeeklySchedule } from "../api-client";
+import type { WeeklySchedule } from "../api/api-client";
 
 export const scheduleDays = [
   [1, "Lunes"], [2, "Martes"], [3, "Miércoles"], [4, "Jueves"],

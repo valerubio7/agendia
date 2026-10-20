@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { resolveWhatsAppStatusView } from "../../apps/web/src/ui/whatsapp-screen";
+import { resolveWhatsAppStatusView } from "./whatsapp-screen";
 
 describe("resolveWhatsAppStatusView", () => {
   test("preserves known channel states", () => {

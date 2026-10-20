@@ -16,25 +16,25 @@ import {
   type Service,
   type Resource,
   type WhatsAppStatus,
-} from "./api-client";
-import { renderWhatsAppQrDataUrl } from "./qr-code";
-import { Brand } from "./ui/brand";
+} from "../api/api-client";
+import { renderWhatsAppQrDataUrl } from "../features/whatsapp/qr-code";
+import { Brand } from "../components/brand";
 import {
   AuthenticatedShell,
   TerminalAuthenticatedState,
-} from "./ui/authenticated-shell";
-import { AdminBusinessesScreen } from "./ui/admin-businesses-screen";
-import { AssistantScreen } from "./ui/assistant-screen";
-import { ProfileScreen } from "./ui/profile-screen";
-import { ServicesScreen } from "./ui/services-screen";
-import { ClientsScreen } from "./ui/clients-screen";
-import { TurnosScreen } from "./ui/turnos-screen";
-import { ResourcesScreen } from "./ui/resources-screen";
-import { BusinessCalendarScreen } from "./ui/business-calendar-screen";
-import type { ClosureReadState } from "./ui/business-closures-section";
-import { WhatsAppScreen } from "./ui/whatsapp-screen";
+} from "./authenticated-shell";
+import { AdminBusinessesScreen } from "../features/administration/admin-businesses-screen";
+import { AssistantScreen } from "../features/agent-settings/assistant-screen";
+import { ProfileScreen } from "../features/business-profile/profile-screen";
+import { ServicesScreen } from "../features/services/services-screen";
+import { ClientsScreen } from "../features/clients/clients-screen";
+import { TurnosScreen } from "../features/appointments/turnos-screen";
+import { ResourcesScreen } from "../features/resources/resources-screen";
+import { BusinessCalendarScreen } from "../features/business-calendar/business-calendar-screen";
+import type { ClosureReadState } from "../features/business-calendar/business-closures-section";
+import { WhatsAppScreen } from "../features/whatsapp/whatsapp-screen";
 
-export { formatActivityTimestamp } from "./ui/admin-businesses-screen";
+export { formatActivityTimestamp } from "../features/administration/admin-businesses-screen";
 
 type Mode = "login" | "admin" | "profile" | "services" | "resources" | "business-calendar" | "clients" | "turnos" | "assistant" | "whatsapp";
 type AuthenticatedViewState =

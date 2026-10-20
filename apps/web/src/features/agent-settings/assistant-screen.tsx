@@ -7,8 +7,8 @@ import {
   type FormEventHandler,
   type ReactNode,
 } from "react";
-import type { Assistant } from "../api-client";
-import { ASSISTANT_STYLE_LIMIT, ASSISTANT_BUSINESS_INSTRUCTIONS_LIMIT } from "../../../../packages/domain/src/assistant-config";
+import type { Assistant } from "../../api/api-client";
+import { ASSISTANT_STYLE_LIMIT, ASSISTANT_BUSINESS_INSTRUCTIONS_LIMIT } from "../../../../../packages/domain/src/assistant-config";
 
 type AssistantScreenProps = {
   assistant: Partial<Assistant>;

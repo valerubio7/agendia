@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { api, type AppointmentRecord, type AvailabilitySlot, type Client, type ClientInput, type Resource, type Service } from "../api-client";
+import { api, type AppointmentRecord, type AvailabilitySlot, type Client, type ClientInput, type Resource, type Service } from "../../api/api-client";
 import type { TurnosMutation } from "./turnos-screen";
 import { argentinaDate, dateLabel, turnoMoney, turnoTime } from "./turnos-calendar";
 

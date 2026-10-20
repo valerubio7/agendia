@@ -1,4 +1,4 @@
-import { LivePanel } from "../../../src/live-panel";
+import { LivePanel } from "../../../src/shell/live-panel";
 
 export default function ClientsPage() {
   return <LivePanel mode="clients" />;

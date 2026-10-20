@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import type { BusinessCalendar, BusinessClosureRequest, WeeklySchedule } from "../api-client";
+import type { BusinessCalendar, BusinessClosureRequest, WeeklySchedule } from "../../api/api-client";
 import { BusinessClosuresSection, type ClosureReadState } from "./business-closures-section";
 import { ControlledWeeklyScheduleEditor, formatScheduleClock, scheduleDays,
-  serializeScheduleDraft, type WeeklyScheduleDraft } from "./weekly-schedule-editor";
+  serializeScheduleDraft, type WeeklyScheduleDraft } from "../../components/weekly-schedule-editor";
 
 const weekdays = [
   [1, "Lunes"], [2, "Martes"], [3, "Miércoles"], [4, "Jueves"],
