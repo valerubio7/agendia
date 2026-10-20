@@ -15,8 +15,6 @@ import { makeSafeError, PlatformAiInstructionsInputSchema, AppointmentListQueryS
 import {
   parseInstantMs,
   RECEPTIONIST_SYSTEM_INSTRUCTIONS,
-  AssistantConfigInputSchema,
-  BusinessProfileSchema,
   ServiceInputSchema,
   ResourceInputSchema,
   ClientInputSchema,
@@ -24,7 +22,6 @@ import {
   BusinessClosureInputSchema,
 } from "@agendia/domain";
 import {
-  openLinkCode,
   tenantContext,
   TenantUnitOfWork,
   ResourceCatalogError,
@@ -34,15 +31,13 @@ import {
   type createRuntimePools,
 } from "@agendia/db";
 
+import { registerBusinessProfileRoutes } from "./routes/business-profile.ts";
+import { registerAgentSettingsRoutes } from "./routes/agent-settings.ts";
+import { registerWhatsappRoutes } from "./routes/whatsapp.ts";
+import type { Session } from "./routes/context.ts";
+
 const COOKIE = "__Host-agendia_session";
 type Pools = ReturnType<typeof createRuntimePools>;
-type Session = {
-  session_id: string;
-  identity_id: string;
-  role: "platform_admin" | "business_user";
-  business_id: string | null;
-  csrf_sha256: string;
-};
 export interface ApiOptions {
   pools: Pools;
   expectedOrigin: string;
@@ -1012,134 +1007,8 @@ export function buildApi(input: AuthService | ApiOptions) {
       return serviceFailure(error, request, reply);
     }
   });
-  app.get("/me/business-profile", async (request, reply) => {
-    const auth = await requireTenant(request, reply);
-    return auth
-      ? ((await pools.api.run(context(auth, request), (repo) =>
-          repo.profile(),
-        )) ?? {})
-      : undefined;
-  });
-  app.put("/me/business-profile", async (request, reply) => {
-    const auth = await requireTenant(request, reply, true);
-    if (!auth) return;
-    try {
-      const profile = BusinessProfileSchema.parse(request.body);
-      await tenantWrite(auth, request, "profile.updated", (repo) =>
-        repo.saveFullProfile(auth.business_id!, profile),
-      );
-      return profile;
-    } catch {
-      return fail(
-        reply,
-        request,
-        400,
-        "VALIDATION_FAILED",
-        "Invalid profile fields",
-      );
-    }
-  });
-  app.get("/me/assistant", async (request, reply) => {
-    const auth = await requireTenant(request, reply);
-    return auth
-      ? ((await pools.api.run(context(auth, request), (repo) =>
-          repo.assistant(),
-        )) ?? {})
-      : undefined;
-  });
-  app.put("/me/assistant", async (request, reply) => {
-    const auth = await requireTenant(request, reply, true);
-    if (!auth) return;
-    try {
-      const parsed = AssistantConfigInputSchema.parse(request.body),
-        { expectedRevision, ...fields } = parsed;
-      const saved = await tenantWrite<object | null>(
-        auth,
-        request,
-        "assistant.updated",
-        (repo) =>
-          repo.saveFullAssistant(auth.business_id!, fields, expectedRevision),
-      );
-      return (
-        saved ?? fail(reply, request, 409, "CONFLICT", "Revision conflict")
-      );
-    } catch {
-      return fail(
-        reply,
-        request,
-        400,
-        "VALIDATION_FAILED",
-        "Invalid assistant fields",
-      );
-    }
-  });
-  const whatsapp = async (request: FastifyRequest, reply: FastifyReply) => {
-    const auth = await requireTenant(request, reply);
-    if (!auth) return;
-    return (
-      (await pools.api.run(context(auth, request), (repo) =>
-        repo.whatsapp(),
-      )) ?? {
-        id: null,
-        status: "link_required",
-        linkedNumber: null,
-        linkedAt: null,
-        lastConnectedAt: null,
-      }
-    );
-  };
-  app.get("/me/whatsapp", whatsapp);
-  app.get("/me/whatsapp/status", whatsapp);
-  app.post("/me/whatsapp/link", async (request, reply) => {
-    const auth = await requireTenant(request, reply, true);
-    if (!auth) return;
-    const assistant = await pools.api.run(context(auth, request), (repo) =>
-      repo.assistant(),
-    );
-    if (!assistant || assistant.active !== true)
-      return fail(
-        reply,
-        request,
-        409,
-        "CONFLICT",
-        "Activate the assistant before linking WhatsApp",
-      );
-    const current = await pools.api.run(context(auth, request), (repo) =>
-      repo.whatsapp(),
-    );
-    if (
-      current &&
-      !["link_required", "error"].includes(current.status as string)
-    )
-      return fail(
-        reply,
-        request,
-        409,
-        "CONFLICT",
-        "WhatsApp connection already linked",
-      );
-    await tenantWrite(
-      auth,
-      request,
-      "whatsapp.link_requested",
-      async () => undefined,
-    );
-    return reply.code(202).send({ status: "linking" });
-  });
-  app.get("/me/whatsapp/link", async (request, reply) => {
-    reply.header("Cache-Control", "no-store");
-    const auth = await requireTenant(request, reply);
-    if (!auth) return;
-    const code = await pools.api.run(context(auth, request), (repo) =>
-      repo.currentLinkCode(new Date()),
-    );
-    if (!code || !linkCodeKey)
-      return fail(reply, request, 404, "NOT_FOUND", "Link code not available");
-    try {
-      return { qr: openLinkCode(linkCodeKey, code) };
-    } catch {
-      return fail(reply, request, 404, "NOT_FOUND", "Link code not available");
-    }
-  });
+  registerBusinessProfileRoutes(app, { pools, requireTenant, context, fail, tenantWrite });
+  registerAgentSettingsRoutes(app, { pools, requireTenant, context, fail, tenantWrite });
+  registerWhatsappRoutes(app, { pools, requireTenant, context, fail, tenantWrite, linkCodeKey });
   return app;
 }
