@@ -3,7 +3,7 @@ import type { Sql } from "postgres";
 import {
   applyPostgresMigrations,
   startTestPostgres,
-} from "../../tests/support/postgres.ts";
+} from "../../../tests/support/postgres.ts";
 
 const schemaQuery = `
   select kind, identity, definition from (

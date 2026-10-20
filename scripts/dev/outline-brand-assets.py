@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate lettering from supplied SVGs with already-installed native tools.
 
-Run from the repository: python3 -B scripts/outline-brand-assets.py checks fresh
+Run from the repository: python3 -B scripts/dev/outline-brand-assets.py checks fresh
 bytes against public assets; --write promotes only four generated SVGs and their
 manifest after all checks. Runtime evidence remains in test-results/brand-outlining.
 No installation, global font configuration, axis overrides or UI changes occur.
@@ -18,7 +18,7 @@ import subprocess
 import uuid
 import xml.etree.ElementTree as ET
 
-ROOT = Path(__file__).absolute().parent.parent
+ROOT = Path(__file__).absolute().parent.parent.parent
 PUBLIC = ROOT / 'apps/web/public'
 NAMES = ('primary', 'inverse', 'mono', 'wordmark')
 NS = '{http://www.w3.org/2000/svg}'

@@ -9,7 +9,7 @@ import {
   type DevStackDependencies,
 } from "./dev-stack.ts";
 
-const projectRoot = fileURLToPath(new URL("..", import.meta.url));
+const projectRoot = fileURLToPath(new URL("../..", import.meta.url));
 const delay = (milliseconds: number) =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 const shellQuote = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`;
@@ -80,17 +80,17 @@ const fakeDependencies = (databaseReady: boolean, migrated = false) => {
 describe("local development supervisor", () => {
   test("root development commands load secrets only from the external config file", async () => {
     const packageJson = (await Bun.file(
-      new URL("../package.json", import.meta.url),
+      new URL("../../package.json", import.meta.url),
     ).json()) as {
       scripts: Record<string, string>;
     };
     const externalEnvOption = '--env-file="$HOME/.config/agendia/dev.env"';
 
     expect(packageJson.scripts.dev).toBe(
-      `bun ${externalEnvOption} run scripts/dev-stack.ts`,
+      `bun ${externalEnvOption} run scripts/dev/dev-stack.ts`,
     );
     expect(packageJson.scripts["bootstrap:admin"]).toBe(
-      `bun ${externalEnvOption} run scripts/bootstrap-admin.ts`,
+      `bun ${externalEnvOption} run scripts/db/bootstrap-admin.ts`,
     );
     expect(
       Object.values(packageJson.scripts).some((command) =>
@@ -211,8 +211,8 @@ describe("local development supervisor", () => {
     expect(events).toEqual([
       "run:docker compose up -d postgres",
       "run:bun run db:migrate:dev",
-      "run:bun run scripts/bootstrap-admin.ts",
-      "spawn:api:bun run scripts/start-api.ts",
+      "run:bun run scripts/db/bootstrap-admin.ts",
+      "spawn:api:bun run scripts/dev/start-api.ts",
       "spawn:web:bun run --cwd apps/web dev --hostname 127.0.0.1 --port 3000",
       "spawn:whatsapp-manager:bun run --cwd apps/whatsapp-manager start",
       "spawn:message-worker:bun run --cwd apps/message-worker start",

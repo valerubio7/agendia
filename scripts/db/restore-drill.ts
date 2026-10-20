@@ -24,7 +24,7 @@ export interface RestoreDrillReport {
 }
 
 async function migrate(sql: Sql, before?: string): Promise<void> {
-  const migrationDir = join(import.meta.dir, "../packages/db/migrations");
+  const migrationDir = join(import.meta.dir, "../../packages/db/migrations");
   for (const name of readdirSync(migrationDir).filter((file) => file.endsWith(".sql") && (!before || file < before)).sort()) {
     await sql.unsafe(readFileSync(join(migrationDir, name), "utf8"));
   }

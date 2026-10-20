@@ -9,10 +9,10 @@ test("validates only the reviewed base migration's presence", () => {
 });
 
 test("standard unit runner includes scripts and exposes only honest DB commands", async () => {
-  const { scripts } = await Bun.file(new URL("../package.json", import.meta.url)).json();
+  const { scripts } = await Bun.file(new URL("../../package.json", import.meta.url)).json();
   expect(scripts["test:unit"].split(" ")).toContain("scripts");
-  expect(scripts["db:validate"]).toBe("bun run scripts/db-validate.ts");
-  expect(scripts["db:migrate:dev"]).toBe("bun run scripts/db-migrate.ts");
+  expect(scripts["db:validate"]).toBe("bun run scripts/db/db-validate.ts");
+  expect(scripts["db:migrate:dev"]).toBe("bun run scripts/db/db-migrate.ts");
   expect(scripts["db:generate"]).toBeUndefined();
   expect(scripts["db:migrate"]).toBeUndefined();
 });

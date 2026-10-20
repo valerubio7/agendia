@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { PRODUCT_HTTP_ROUTES } from "../packages/contracts/src/http.ts";
+import { PRODUCT_HTTP_ROUTES } from "../../packages/contracts/src/http.ts";
 import { checkV1Scope } from "./policy-checks.ts";
 
 function pathsBelow(path: string): string[] {

@@ -227,9 +227,9 @@ export async function runDevStack(
     }
     if (!(await dependencies.isMigrated?.(database.toString())))
       await dependencies.run("bun", ["run", "db:migrate:dev"]);
-    await dependencies.run("bun", ["run", "scripts/bootstrap-admin.ts"]);
+    await dependencies.run("bun", ["run", "scripts/db/bootstrap-admin.ts"]);
     const specs: [string, string, string[]][] = [
-      ["api", "bun", ["run", "scripts/start-api.ts"]],
+      ["api", "bun", ["run", "scripts/dev/start-api.ts"]],
       [
         "web",
         "bun",

@@ -38,13 +38,13 @@ services:
 
   migrate:
     <<: *setup
-    command: [bun, run, scripts/provision-production-db.ts, migrate]
+    command: [bun, run, scripts/db/provision-production-db.ts, migrate]
     environment:
       DATABASE_URL: postgres://agendia_migrator:${POSTGRES_PASSWORD:?required}@db:5432/agendia
 
   provision:
     <<: *setup
-    command: [bun, run, scripts/provision-production-db.ts]
+    command: [bun, run, scripts/db/provision-production-db.ts]
     environment:
       DATABASE_URL: postgres://agendia_migrator:${POSTGRES_PASSWORD:?required}@db:5432/agendia
       API_DB_PASSWORD: ${API_DB_PASSWORD:?required}
@@ -54,7 +54,7 @@ services:
 
   bootstrap-admin:
     <<: *setup
-    command: [bun, run, scripts/bootstrap-admin.ts]
+    command: [bun, run, scripts/db/bootstrap-admin.ts]
     environment:
       DATABASE_URL: postgres://agendia_migrator:${POSTGRES_PASSWORD:?required}@db:5432/agendia
       AGENDIA_ADMIN_EMAIL: ${AGENDIA_ADMIN_EMAIL:?required}

@@ -53,8 +53,8 @@ for (const url of ["", "   "]) {
 }
 
 test("CLI exits nonzero for empty DATABASE_URL despite automatic env loading", async () => {
-  const child = Bun.spawn([process.execPath, "run", "scripts/db-migrate.ts"], {
-    cwd: new URL("..", import.meta.url).pathname,
+  const child = Bun.spawn([process.execPath, "run", "scripts/db/db-migrate.ts"], {
+    cwd: new URL("../..", import.meta.url).pathname,
     env: { ...process.env, DATABASE_URL: "" },
     stdout: "pipe",
     stderr: "pipe",

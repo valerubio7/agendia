@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { verifyPostgresMigrations } from "./support/postgres-migrations.ts";
 
 const result = await verifyPostgresMigrations({
-  migrationDirectory: join(import.meta.dir, "../packages/db/migrations"),
+  migrationDirectory: join(import.meta.dir, "../../packages/db/migrations"),
 });
 
 console.log(

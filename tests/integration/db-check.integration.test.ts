@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { verifyPostgresMigrations } from "../../scripts/support/postgres-migrations.ts";
+import { verifyPostgresMigrations } from "../../scripts/db/support/postgres-migrations.ts";
 
 const temporaryDirectories: string[] = [];
 const migrations = join(import.meta.dir, "../../packages/db/migrations");

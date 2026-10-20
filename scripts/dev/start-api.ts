@@ -1,4 +1,4 @@
-import { startApi } from "../apps/api/src/index.ts";
+import { startApi } from "../../apps/api/src/index.ts";
 
 export async function runApi(env: NodeJS.ProcessEnv = process.env) {
   const runtime = await startApi({
