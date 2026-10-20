@@ -6,10 +6,11 @@ Buscá cada pantalla por capacidad en `src/features/`. `app/` conserva las rutas
 
 | Ubicación | Responsabilidad |
 | --- | --- |
-| `src/shell/live-panel.tsx` | Composición de pantallas y estado compartido: sesión, permisos, generaciones de solicitudes, recuperación, cancelación, logout y coordinación de mutaciones. También conserva el login y el monitor de vinculación de WhatsApp. |
+| `src/shell/live-panel.tsx` | Composición de pantallas y estado compartido: sesión, permisos, generaciones de solicitudes, recuperación, cancelación, logout y coordinación de mutaciones. Conserva el handler y el estado del login y el monitor de vinculación de WhatsApp. |
 | `src/shell/authenticated-shell.tsx` | Navegación autenticada y estados terminales del panel. |
 | `src/components/` | Marca y editor semanal compartido por recursos y horario del negocio. |
 | `src/api/api-client.ts` | Cliente HTTP, transporte, CSRF y tipos usados por las pantallas. |
+| `src/features/auth/login-screen.tsx` | Presentación del login: formulario, marca y mensajes recibidos por props; usa el handler y el estado pendiente de `LivePanel`. |
 | `src/features/appointments/` | Pantalla, formulario, detalle y calendario de turnos. |
 | `src/features/clients/` | Clientes e historial de turnos del cliente. |
 | `src/features/services/` | Catálogo de servicios. |
@@ -21,7 +22,7 @@ Buscá cada pantalla por capacidad en `src/features/`. `app/` conserva las rutas
 | `src/features/administration/` | Vista y pantalla de administración de negocios. |
 | `app/styles.css`, `public/` | Estilos globales y recursos estáticos. |
 
-Los handlers y helpers compartidos siguen siendo propiedad de `LivePanel`; las carpetas de capacidad no redistribuyen ese estado. La extracción del login a `features/auth` queda para T2: todavía no existe una carpeta vacía de autenticación.
+Los handlers y helpers compartidos siguen siendo propiedad de `LivePanel`; las carpetas de capacidad no redistribuyen ese estado. `LoginScreen` solo renderiza la presentación: no realiza solicitudes ni maneja credenciales o sesiones.
 
 ## Pruebas
 

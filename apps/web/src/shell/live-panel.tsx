@@ -18,7 +18,7 @@ import {
   type WhatsAppStatus,
 } from "../api/api-client";
 import { renderWhatsAppQrDataUrl } from "../features/whatsapp/qr-code";
-import { Brand } from "../components/brand";
+import { LoginScreen } from "../features/auth/login-screen";
 import {
   AuthenticatedShell,
   TerminalAuthenticatedState,
@@ -670,70 +670,11 @@ export function LivePanel({ mode }: { mode: Mode }) {
 
   if (mode === "login")
     return (
-      <main className="login-frame" data-ui="login-frame">
-        <section
-          className="login-form-panel"
-          data-ui="login-form-panel"
-          aria-labelledby="login-title"
-        >
-          <div className="login-card">
-            <Brand />
-            <h1 id="login-title">Iniciar sesión</h1>
-            {feedback}
-            <form onSubmit={submitLogin} aria-busy={loginPending}>
-              <label className="login-field">
-                Correo
-                <input
-                  name="email"
-                  type="email"
-                  autoComplete="email"
-                  autoCapitalize="none"
-                  required
-                />
-              </label>
-              <label className="login-field">
-                Contraseña
-                <input
-                  name="password"
-                  type="password"
-                  autoComplete="current-password"
-                  minLength={16}
-                  required
-                />
-              </label>
-              <button
-                className="login-submit"
-                type="submit"
-                disabled={loginPending}
-              >
-                {loginPending ? "Ingresando…" : "Ingresar"}
-              </button>
-            </form>
-          </div>
-        </section>
-        <aside
-          className="login-story"
-          data-ui="login-story"
-          aria-labelledby="login-story-title"
-        >
-          <Brand className="login-story__brand" inverse />
-          <div className="login-story__content">
-            <p className="login-story__eyebrow">
-              Tu asistente inteligente para WhatsApp
-            </p>
-            <h2 id="login-story-title">
-              <span data-ui="login-story-heading-primary">Atendé mejor.</span>{" "}
-              <span data-ui="login-story-heading-accent">
-                Sin estar pendiente.
-              </span>
-            </h2>
-            <p className="login-story__copy">
-              Menos tiempo pendiente del teléfono. Más tiempo para dedicarle a
-              tu negocio.
-            </p>
-          </div>
-        </aside>
-      </main>
+      <LoginScreen
+        feedback={feedback}
+        loginPending={loginPending}
+        submitAction={submitLogin}
+      />
     );
   if (viewState !== "ready")
     return (
