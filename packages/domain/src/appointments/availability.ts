@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { calendarMs, parseCalendarDateMs as parseDate, parseInstantMs as parseInstant } from "./calendar-values.ts";
-import { BusinessClosureInputSchema, type BusinessClosureInput } from "./business-calendar.ts";
+import { calendarMs, parseCalendarDateMs as parseDate, parseInstantMs as parseInstant } from "../business-calendar/values.ts";
+import { BusinessClosureInputSchema, type BusinessClosureInput } from "../business-calendar/calendar.ts";
 
 const DAY_MINUTES = 1440;
 const WEEK_MINUTES = 7 * DAY_MINUTES;

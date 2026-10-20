@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ReplyPacingSchema, type ReplyPacing } from "../../domain/src/reply-pacing.ts";
+import { ReplyPacingSchema, type ReplyPacing } from "../../domain/src/messaging/reply-pacing.ts";
 import { ClientInputSchema } from "@agendia/domain/client-registry";
 import { CalendarDateSchema, InstantSchema, parseInstantMs } from "@agendia/domain/calendar-values";
 import { AppointmentTermsSnapshotSchema, AppointmentStateSchema, AppointmentOriginSchema } from "@agendia/domain/appointment-lifecycle";

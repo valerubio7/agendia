@@ -8,9 +8,9 @@ import {
   captureAppointmentTerms,
   type AppointmentState,
   type AppointmentActionContext,
-} from "../../packages/domain/src/appointment-lifecycle.ts";
+} from "./lifecycle.ts";
 
-import * as domain from "../../packages/domain/src/index.ts";
+import * as domain from "../index.ts";
 
 const states = ["confirmed", "done", "cancelled", "no_show"] as const;
 const origins = ["manual", "ai"] as const;

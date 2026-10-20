@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CalendarDateSchema, OrderedInstantIntervalSchema } from "./calendar-values.ts";
+import { CalendarDateSchema, OrderedInstantIntervalSchema } from "./values.ts";
 
 /** Business-only closures form a union; duplicates, overlaps and adjacency are valid.
  * Strict keys prevent an unsupported resource scope from becoming a global closure.

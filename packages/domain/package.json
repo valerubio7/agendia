@@ -5,11 +5,11 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./client-registry": "./src/client-registry.ts",
-    "./calendar-values": "./src/calendar-values.ts",
-    "./appointment-lifecycle": "./src/appointment-lifecycle.ts",
-    "./business-calendar": "./src/business-calendar.ts",
-    "./agenda-availability": "./src/agenda-availability.ts",
-    "./resource-catalog": "./src/resource-catalog.ts"
+    "./client-registry": "./src/clients.ts",
+    "./calendar-values": "./src/business-calendar/values.ts",
+    "./appointment-lifecycle": "./src/appointments/lifecycle.ts",
+    "./business-calendar": "./src/business-calendar/calendar.ts",
+    "./agenda-availability": "./src/appointments/availability.ts",
+    "./resource-catalog": "./src/resources.ts"
   }
 }

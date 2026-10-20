@@ -1,6 +1,6 @@
-import { normalizeClientPhone } from "./client-registry.ts";
-import { parseCalendarDateMs } from "./calendar-values.ts";
-import type { AppointmentTermsSnapshot } from "./appointment-lifecycle.ts";
+import { normalizeClientPhone } from "../clients.ts";
+import { parseCalendarDateMs } from "../business-calendar/values.ts";
+import type { AppointmentTermsSnapshot } from "../appointments/lifecycle.ts";
 
 /** Only the received-message adapter may create this evidence. Never parse user prose as an address. */
 export interface SenderEvidence {

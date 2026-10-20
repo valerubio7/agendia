@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { parseInstantMs, type Instant } from "./calendar-values.ts";
-import { ServiceInputSchema, type ServiceInput } from "./service-catalog.ts";
-import type { ResourceInput } from "./resource-catalog.ts";
+import { parseInstantMs, type Instant } from "../business-calendar/values.ts";
+import { ServiceInputSchema, type ServiceInput } from "../services.ts";
+import type { ResourceInput } from "../resources.ts";
 
 export const AppointmentStateSchema = z.enum(["confirmed", "done", "cancelled", "no_show"]);
 export const AppointmentOriginSchema = z.enum(["manual", "ai"]);

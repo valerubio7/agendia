@@ -2,12 +2,12 @@
   "compilerOptions": {
     "baseUrl": "../..",
     "paths": {
-      "@agendia/domain/client-registry": ["packages/domain/src/client-registry.ts"],
-      "@agendia/domain/calendar-values": ["packages/domain/src/calendar-values.ts"],
-      "@agendia/domain/appointment-lifecycle": ["packages/domain/src/appointment-lifecycle.ts"],
-      "@agendia/domain/business-calendar": ["packages/domain/src/business-calendar.ts"],
-      "@agendia/domain/agenda-availability": ["packages/domain/src/agenda-availability.ts"],
-      "@agendia/domain/resource-catalog": ["packages/domain/src/resource-catalog.ts"],
+      "@agendia/domain/client-registry": ["packages/domain/src/clients.ts"],
+      "@agendia/domain/calendar-values": ["packages/domain/src/business-calendar/values.ts"],
+      "@agendia/domain/appointment-lifecycle": ["packages/domain/src/appointments/lifecycle.ts"],
+      "@agendia/domain/business-calendar": ["packages/domain/src/business-calendar/calendar.ts"],
+      "@agendia/domain/agenda-availability": ["packages/domain/src/appointments/availability.ts"],
+      "@agendia/domain/resource-catalog": ["packages/domain/src/resources.ts"],
       "@agendia/*": ["packages/*/src/index.ts"]
     },
     "target": "ES2017",

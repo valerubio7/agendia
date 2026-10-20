@@ -5,10 +5,10 @@ import {
   type AppointmentCatalogService,
   type AppointmentLifecycleFacts,
   type AppointmentTermsSnapshot,
-} from "./appointment-lifecycle.ts";
-import { parseInstantMs } from "./calendar-values.ts";
-import { isNewStartAllowed, isStructurallyAvailable, type AvailabilityInput } from "./agenda-availability.ts";
-import { ResourceInputSchema, isResourceEligibleForService } from "./resource-catalog.ts";
+} from "./lifecycle.ts";
+import { parseInstantMs } from "../business-calendar/values.ts";
+import { isNewStartAllowed, isStructurallyAvailable, type AvailabilityInput } from "./availability.ts";
+import { ResourceInputSchema, isResourceEligibleForService } from "../resources.ts";
 
 export interface AppointmentChangeFacts extends AppointmentLifecycleFacts {
   readonly terms: AppointmentTermsSnapshot;

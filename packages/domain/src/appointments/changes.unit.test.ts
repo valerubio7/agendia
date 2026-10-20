@@ -5,9 +5,9 @@ import {
   type AppointmentChangeCandidate,
   type AppointmentChangeContext,
   type AppointmentChangeFacts,
-} from "../../packages/domain/src/appointment-changes.ts";
-import * as domain from "../../packages/domain/src/index.ts";
-import { captureAppointmentTerms, type WeeklySchedule } from "../../packages/domain/src/index.ts";
+} from "./changes.ts";
+import * as domain from "../index.ts";
+import { captureAppointmentTerms, type WeeklySchedule } from "../index.ts";
 
 const serviceId = "a1234567-89ab-4cde-8fab-0123456789ab";
 const resourceId = "b1234567-89ab-4cde-8fab-0123456789ab";

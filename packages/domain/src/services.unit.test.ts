@@ -5,7 +5,7 @@ import {
   normalizeServiceName,
   type ServiceInput,
   type ServiceNameEntry,
-} from "../../packages/domain/src/index.ts";
+} from "./index.ts";
 
 const valid: ServiceInput = {
   name: "Facial Treatment",

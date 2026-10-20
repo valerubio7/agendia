@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { AuthService, InMemoryAuthStore } from "../../packages/auth/src/index.ts";
-import { AdministrationService, InMemoryAdministrationStore } from "../../packages/domain/src/administration.ts";
+import { AuthService, InMemoryAuthStore } from "../../auth/src/index.ts";
+import { AdministrationService, InMemoryAdministrationStore } from "./administration.ts";
 
 describe("business administration", () => {
   test("creates a business and its single user with atomic audit/outbox", async () => {

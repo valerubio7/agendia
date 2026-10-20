@@ -3,7 +3,7 @@
 import { useRef, useState, type FormEvent } from "react";
 import type { Business, PlatformAiInstructions } from "../../api/api-client";
 // The domain barrel also exports server-only administration code.
-import { MAX_REPLY_DELAY_SECONDS, MAX_INACTIVITY_RESET_SECONDS, ReplyPacingSchema } from "../../../../../packages/domain/src/reply-pacing.ts";
+import { MAX_REPLY_DELAY_SECONDS, MAX_INACTIVITY_RESET_SECONDS, ReplyPacingSchema } from "../../../../../packages/domain/src/messaging/reply-pacing.ts";
 
 type CreateBusinessInput = {
   name: string;

@@ -1,11 +1,11 @@
 import { z } from "zod";
-import { WeeklyScheduleSchema } from "./agenda-availability.ts";
+import { WeeklyScheduleSchema } from "./appointments/availability.ts";
 import {
   ServiceInputSchema,
   isServiceNameAvailable,
   normalizeServiceName,
   type ServiceNameEntry,
-} from "./service-catalog.ts";
+} from "./services.ts";
 
 export const ResourceInputSchema = z.object({
   name: ServiceInputSchema.shape.name,

@@ -5,7 +5,7 @@ import {
   explicitCancel, explicitChange, explicitNotes, explicitPreference, expressedBookingPreference,
   quoteTermsEqual, quoteText, argentinaDate, nearbyDate, agendaTime, customerTemporalSelection, missingFieldText,
   type AgendaQuote,
-} from "../../packages/domain/src/whatsapp-agenda.ts";
+} from "../../packages/domain/src/whatsapp/agenda.ts";
 import { hasToolConversationProvider } from "@agendia/domain";
 import { parseReceptionistTool } from "../../apps/message-worker/src/agent/tools.ts";
 
@@ -180,7 +180,7 @@ describe("native commands and guarded customer responses", () => {
     }
   });
   test("change choices require exact customer targets or category-bound answers, never incidental catalog mentions", async () => {
-    const choose = Reflect.get(await import("../../packages/domain/src/whatsapp-agenda.ts"), "customerChangeChoice");
+    const choose = Reflect.get(await import("../../packages/domain/src/whatsapp/agenda.ts"), "customerChangeChoice");
     const catalog = [{ id: serviceId, name: "Color" }, { id: resourceId, name: "Beatriz" }];
     expect(choose?.("Cambiar servicio del turno a Color", "service", catalog, false)).toBe(serviceId);
     expect(choose?.("Cambiar recurso a Beatriz", "resource", catalog, false)).toBe(resourceId);

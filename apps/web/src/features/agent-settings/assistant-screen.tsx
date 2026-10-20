@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import type { Assistant } from "../../api/api-client";
-import { ASSISTANT_STYLE_LIMIT, ASSISTANT_BUSINESS_INSTRUCTIONS_LIMIT } from "../../../../../packages/domain/src/assistant-config";
+import { ASSISTANT_STYLE_LIMIT, ASSISTANT_BUSINESS_INSTRUCTIONS_LIMIT } from "../../../../../packages/domain/src/agent/config";
 
 type AssistantScreenProps = {
   assistant: Partial<Assistant>;

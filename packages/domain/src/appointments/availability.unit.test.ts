@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import * as agenda from "../../packages/domain/src/index.ts";
+import * as agenda from "../index.ts";
 import {
   WeeklyScheduleSchema,
   normalizeWeeklySchedule,
@@ -8,7 +8,7 @@ import {
   isNewStartAllowed,
   type AvailabilityInput,
   type WeeklySchedule,
-} from "../../packages/domain/src/index.ts";
+} from "../index.ts";
 
 const span = (startMinute: number, endMinute: number) => ({ startMinute, endMinute });
 const monday: WeeklySchedule = { 1: [span(540, 720), span(780, 1080)] };

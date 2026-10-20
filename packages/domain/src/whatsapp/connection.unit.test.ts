@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { InMemoryWhatsAppConnections, WhatsAppConnectionService, projectWhatsAppStatus } from "../../packages/domain/src/whatsapp/connection.ts";
+import { InMemoryWhatsAppConnections, WhatsAppConnectionService, projectWhatsAppStatus } from "./connection.ts";
 
 describe("single WhatsApp connection state machine", () => {
   test("creates one link-required connection and rejects a second", () => {

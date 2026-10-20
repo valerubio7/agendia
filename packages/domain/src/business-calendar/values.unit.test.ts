@@ -5,7 +5,7 @@ import {
   OrderedInstantIntervalSchema,
   parseCalendarDateMs,
   parseInstantMs,
-} from "../../packages/domain/src/index.ts";
+} from "../index.ts";
 
 describe("shared calendar dates", () => {
   test("preserves valid Gregorian dates including leap days and early positive years", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { BusinessProfileSchema, InMemoryProfileRepository, ProfileService, serializeProfileForAi } from "../../packages/domain/src/business-profile.ts";
+import { BusinessProfileSchema, InMemoryProfileRepository, ProfileService, serializeProfileForAi } from "./business-profile.ts";
 
 const valid = { displayName: "Estética Bella", description: "Tratamientos faciales", address: "Av. Siempre Viva 123" };
 const legacy = { businessHours: "LEGACY_HOURS", offerings: "LEGACY_OFFERINGS", contact: "LEGACY_CONTACT", faq: "LEGACY_FAQ", policies: "LEGACY_POLICIES", additionalInfo: "LEGACY_ADDITIONAL_INFO" };

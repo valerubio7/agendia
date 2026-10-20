@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { DeepSeekAdapter } from "../../packages/ai-deepseek/src/deepseek-adapter.ts";
-import type { ToolConversationRequest } from "../../packages/domain/src/ai-provider.ts";
+import type { ToolConversationRequest } from "../../packages/domain/src/agent/provider.ts";
 import { DeterministicDeepSeekSystemDouble } from "../e2e/support/providers.ts";
 
 const request: ToolConversationRequest = {

@@ -7,7 +7,7 @@ import {
   normalizeResourceName,
   type ResourceInput,
   type ResourceNameEntry,
-} from "../../packages/domain/src/index.ts";
+} from "./index.ts";
 
 const serviceId = "a1234567-89ab-4cde-8fab-0123456789ab";
 const otherId = "b1234567-89ab-4cde-8fab-0123456789ab";

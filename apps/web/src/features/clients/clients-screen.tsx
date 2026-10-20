@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, ApiError, type Client, type ClientInput, type AppointmentRecord } from "../../api/api-client";
-import { normalizeClientPhone } from "../../../../../packages/domain/src/client-registry";
+import { normalizeClientPhone } from "../../../../../packages/domain/src/clients";
 import { formatArgentinaClosureInstant } from "../business-calendar/argentina-closure-time";
 
 type ReadState<T> = { rows: T[]; pending: boolean; error: string };

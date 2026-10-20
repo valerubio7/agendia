@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   ConversationContextBuilder,
   InMemoryConversationHistory,
-} from "../../packages/domain/src/messaging/conversation-context-builder.ts";
+} from "./conversation-context-builder.ts";
 
 function history() {
   const repository = new InMemoryConversationHistory();

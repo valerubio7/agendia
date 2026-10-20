@@ -3,7 +3,7 @@ import postgres, { type Sql, type TransactionSql } from "postgres";
 import type { TenantContext } from "./tenant-context.ts";
 import { replyDeadline } from "./reply-pacing.ts";
 import { ReplyPacingSchema, type ReplyPacing } from "@agendia/domain";
-import { validSenderEvidence, emptyAgendaDialogue, type SenderEvidence, type AgendaDialogue } from "../../domain/src/whatsapp-agenda.ts";
+import { validSenderEvidence, emptyAgendaDialogue, type SenderEvidence, type AgendaDialogue } from "../../domain/src/whatsapp/agenda.ts";
 import { z } from "zod";
 import { ClientInputSchema, InstantSchema, AppointmentOriginSchema, captureAppointmentTerms,
   isNewStartAllowed, isResourceEligibleForService, type AppointmentTermsSnapshot,

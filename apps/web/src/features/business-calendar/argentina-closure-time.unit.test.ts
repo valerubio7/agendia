@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseInstantMs } from "../../../../../packages/domain/src/calendar-values";
+import { parseInstantMs } from "../../../../../packages/domain/src/business-calendar/values";
 import * as argentina from "./argentina-closure-time";
 
 test("projects stored instants to exact Argentina datetime-local values", () => {

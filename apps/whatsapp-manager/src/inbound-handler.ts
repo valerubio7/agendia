@@ -1,5 +1,5 @@
 import { tenantContext, type createRuntimePools } from "@agendia/db";
-import type { SenderEvidence } from "../../../packages/domain/src/whatsapp-agenda.ts";
+import type { SenderEvidence } from "../../../packages/domain/src/whatsapp/agenda.ts";
 
 export type InboundMessageKind =
   | "text"

@@ -5,7 +5,7 @@ import {
   argentinaDate, nearbyDate, agendaTime, customerTemporalSelection, emptyAgendaDialogue, explicitQuoteConfirmation,
   explicitCustomerNames, explicitCancel, explicitNotes, explicitPreference, expressedBookingPreference,
   quoteTermsEqual, quoteText, missingFieldText, type AgendaDialogue, type AgendaQuote,
-} from "../../../../../packages/domain/src/whatsapp-agenda.ts";
+} from "../../../../../packages/domain/src/whatsapp/agenda.ts";
 import type { PostgresAiJob } from "../../jobs/ai-job.ts";
 import { ReceptionistToolSession, canonicalReceptionistDate, RECEPTIONIST_CALENDAR_TIME_ZONE, emitReceptionistDiagnostic,
   type ReceptionistToolCommand, type ReceptionistToolResult,

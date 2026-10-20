@@ -4,7 +4,7 @@ import {
   ClientInputSchema,
   normalizeClientPhone,
   type ClientInput,
-} from "../../packages/domain/src/index.ts";
+} from "./index.ts";
 
 const valid: ClientInput = {
   firstName: "María",

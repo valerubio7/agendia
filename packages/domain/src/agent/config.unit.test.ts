@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { AssistantConfigService, InMemoryAssistantRepository, isAutomationEligible } from "../../packages/domain/src/assistant-config.ts";
+import { AssistantConfigService, InMemoryAssistantRepository, isAutomationEligible } from "./config.ts";
 
 // Headed legacy sections use "Label:\ntext", separated by two newlines.
 const styleLimit = 32_000 + "Personalidad:\n".length + "Tono:\n".length + 2;
