@@ -9,6 +9,12 @@ export type Session = {
   csrf_sha256: string;
 };
 
+export type RouteFailure = (
+  error: unknown,
+  request: FastifyRequest,
+  reply: FastifyReply,
+) => FastifyReply;
+
 export interface TenantRouteContext {
   pools: ReturnType<typeof createRuntimePools>;
   requireTenant: (

@@ -15,11 +15,6 @@ import { makeSafeError, PlatformAiInstructionsInputSchema, AppointmentListQueryS
 import {
   parseInstantMs,
   RECEPTIONIST_SYSTEM_INSTRUCTIONS,
-  ServiceInputSchema,
-  ResourceInputSchema,
-  ClientInputSchema,
-  WeeklyScheduleSchema,
-  BusinessClosureInputSchema,
 } from "@agendia/domain";
 import {
   tenantContext,
@@ -34,6 +29,10 @@ import {
 import { registerBusinessProfileRoutes } from "./routes/business-profile.ts";
 import { registerAgentSettingsRoutes } from "./routes/agent-settings.ts";
 import { registerWhatsappRoutes } from "./routes/whatsapp.ts";
+import { registerClientRoutes } from "./routes/clients.ts";
+import { registerServiceRoutes } from "./routes/services.ts";
+import { registerResourceRoutes } from "./routes/resources.ts";
+import { registerBusinessClosureRoutes, registerBusinessCalendarRoutes } from "./routes/business-calendar.ts";
 import type { Session } from "./routes/context.ts";
 
 const COOKIE = "__Host-agendia_session";
@@ -715,51 +714,8 @@ export function buildApi(input: AuthService | ApiOptions) {
       return fail(reply, request, 500, "INTERNAL_ERROR", "Appointment read failed");
     }
   });
-  app.get("/me/business-calendar/closures", async (request, reply) => {
-    const auth = await requireTenant(request, reply);
-    if (!auth) return;
-    try {
-      return await pools.api.run(context(auth, request), repo => repo.listBusinessClosures(auth.business_id!));
-    } catch (error) { return closureFailure(error, request, reply); }
-  });
-  app.post("/me/business-calendar/closures", async (request, reply) => {
-    const auth = await requireTenant(request, reply, true);
-    if (!auth) return;
-    const parsed = BusinessClosureInputSchema.safeParse(request.body);
-    if (!parsed.success) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid closure fields");
-    try {
-      const saved = await tenantWrite(auth, request, "business_closure.created", async repo => {
-        // Repository owns the early lock and future-Confirmed closure guard.
-        return repo.createBusinessClosure(auth.business_id!, parsed.data);
-      });
-      return reply.code(201).send(saved);
-    } catch (error) { return closureFailure(error, request, reply); }
-  });
-  app.put("/me/business-calendar/closures/:id", async (request, reply) => {
-    const auth = await requireTenant(request, reply, true);
-    if (!auth) return;
-    const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-    const parsed = BusinessClosureInputSchema.safeParse(request.body);
-    if (!params.success || !parsed.success) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid closure fields");
-    try {
-      return await tenantWrite(auth, request, "business_closure.updated", async repo => {
-        const saved = await repo.updateBusinessClosure(auth.business_id!, params.data.id, parsed.data);
-        if (!saved) throw closureMissing;
-        return saved;
-      });
-    } catch (error) { return closureFailure(error, request, reply); }
-  });
-  app.delete("/me/business-calendar/closures/:id", async (request, reply) => {
-    const auth = await requireTenant(request, reply, true);
-    if (!auth) return;
-    const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-    if (!params.success) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid closure ID");
-    try {
-      await tenantWrite(auth, request, "business_closure.deleted", async repo => {
-        if (!await repo.deleteBusinessClosure(auth.business_id!, params.data.id)) throw closureMissing;
-      });
-      return reply.code(204).send();
-    } catch (error) { return closureFailure(error, request, reply); }
+  registerBusinessClosureRoutes(app, {
+    pools, requireTenant, context, fail, tenantWrite, closureFailure, closureMissing,
   });
   const resourceMissing = Symbol("resource not found");
   const resourceFailure = (error: unknown, request: FastifyRequest, reply: FastifyReply) => {
@@ -777,96 +733,11 @@ export function buildApi(input: AuthService | ApiOptions) {
       return fail(reply, request, 400, "VALIDATION_FAILED", "Resource value cannot be stored");
     return fail(reply, request, 500, "INTERNAL_ERROR", "Resource operation failed");
   };
-  app.get("/me/resources", async (request, reply) => {
-    const auth = await requireTenant(request, reply);
-    if (!auth) return;
-    try {
-      return await pools.api.run(context(auth, request), repo => repo.listResources(auth.business_id!));
-    } catch (error) { return resourceFailure(error, request, reply); }
+  registerResourceRoutes(app, {
+    pools, requireTenant, context, fail, tenantWrite, resourceFailure, resourceMissing,
   });
-  app.post("/me/resources", async (request, reply) => {
-    const auth = await requireTenant(request, reply, true);
-    if (!auth) return;
-    const parsed = ResourceInputSchema.safeParse(request.body);
-    if (!parsed.success) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid resource fields");
-    try {
-      const saved = await tenantWrite(auth, request, "resource.created", async repo => {
-        await repo.acquireBusinessCalendarLock(context(auth, request));
-        return repo.createResource(auth.business_id!, parsed.data);
-      });
-      return reply.code(201).send(saved);
-    } catch (error) { return resourceFailure(error, request, reply); }
-  });
-  app.put("/me/resources/:id", async (request, reply) => {
-    const auth = await requireTenant(request, reply, true);
-    if (!auth) return;
-    const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-    const parsed = ResourceInputSchema.safeParse(request.body);
-    if (!params.success || !parsed.success) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid resource fields");
-    try {
-      return await tenantWrite(auth, request, "resource.updated", async repo => {
-        await repo.acquireBusinessCalendarLock(context(auth, request));
-        const saved = await repo.updateResource(auth.business_id!, params.data.id, parsed.data);
-        if (!saved) throw resourceMissing;
-        return saved;
-      });
-    } catch (error) { return resourceFailure(error, request, reply); }
-  });
-  app.delete("/me/resources/:id", async (request, reply) => {
-    const auth = await requireTenant(request, reply, true);
-    if (!auth) return;
-    const params = z.object({ id: z.string().uuid().transform(id => id.toLowerCase()) }).safeParse(request.params);
-    if (!params.success) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid resource ID");
-    try {
-      await tenantWrite(auth, request, "resource.deleted", async repo => {
-        if (!await repo.deleteResource(auth.business_id!, params.data.id)) throw resourceMissing;
-      }, { id: params.data.id });
-      return { id: params.data.id };
-    } catch (error) { return resourceFailure(error, request, reply); }
-  });
-  app.put("/me/resources/:id/status", async (request, reply) => {
-    const auth = await requireTenant(request, reply, true);
-    if (!auth) return;
-    const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-    const parsed = z.object({ status: z.enum(["active", "suspended"]) }).safeParse(request.body);
-    if (!params.success || !parsed.success) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid resource status");
-    try {
-      return await tenantWrite(auth, request, "resource.status_changed", async repo => {
-        await repo.acquireBusinessCalendarLock(context(auth, request));
-        const saved = await repo.setResourceStatus(auth.business_id!, params.data.id, parsed.data.status);
-        if (!saved) throw resourceMissing;
-        return saved;
-      });
-    } catch (error) { return resourceFailure(error, request, reply); }
-  });
-  const calendarBody = z.object({ weeklySchedule: WeeklyScheduleSchema });
-  app.get("/me/business-calendar", async (request, reply) => {
-    const auth = await requireTenant(request, reply);
-    if (!auth) return;
-    try {
-      return await pools.api.run(context(auth, request), repo => repo.getBusinessCalendar(auth.business_id!));
-    } catch {
-      return fail(reply, request, 500, "INTERNAL_ERROR", "Calendar operation failed");
-    }
-  });
-  app.put("/me/business-calendar", async (request, reply) => {
-    const auth = await requireTenant(request, reply, true);
-    if (!auth) return;
-    const parsed = calendarBody.safeParse(request.body);
-    if (!parsed.success)
-      return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid weekly schedule");
-    try {
-      return await tenantWrite(auth, request, "business_calendar.updated", async repo => {
-        await repo.acquireBusinessCalendarLock(context(auth, request));
-        // Repository guards configured resource hours and future Confirmed intervals.
-        return repo.saveBusinessCalendar(auth.business_id!, parsed.data.weeklySchedule);
-      });
-    } catch (error) {
-      if (error instanceof ResourceCatalogError && error.code === "FUTURE_APPOINTMENT_CONFLICT")
-        return closureFailure(error, request, reply);
-      if (error instanceof ResourceCatalogError) return resourceFailure(error, request, reply);
-      return fail(reply, request, 500, "INTERNAL_ERROR", "Calendar operation failed");
-    }
+  registerBusinessCalendarRoutes(app, {
+    pools, requireTenant, context, fail, tenantWrite, closureFailure, resourceFailure,
   });
   const clientNotFound = Symbol("client not found");
   const clientFailure = (error: unknown, request: FastifyRequest, reply: FastifyReply) => {
@@ -881,48 +752,8 @@ export function buildApi(input: AuthService | ApiOptions) {
       return fail(reply, request, 400, "VALIDATION_FAILED", "Client value cannot be stored");
     return fail(reply, request, 500, "INTERNAL_ERROR", "Client operation failed");
   };
-  app.get("/me/clients", async (request, reply) => {
-    const auth = await requireTenant(request, reply);
-    if (!auth) return;
-    const parsed = z.object({ q: z.string().optional() }).safeParse(request.query);
-    if (!parsed.success)
-      return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid client search");
-    try {
-      return await pools.api.run(context(auth, request), repo => repo.listClients(parsed.data.q));
-    } catch (error) {
-      return clientFailure(error, request, reply);
-    }
-  });
-  app.post("/me/clients", async (request, reply) => {
-    const auth = await requireTenant(request, reply, true);
-    if (!auth) return;
-    const parsed = ClientInputSchema.safeParse(request.body);
-    if (!parsed.success)
-      return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid client fields");
-    try {
-      const saved = await tenantWrite(auth, request, "client.created", repo =>
-        repo.createClient(auth.business_id!, parsed.data));
-      return reply.code(201).send(saved);
-    } catch (error) {
-      return clientFailure(error, request, reply);
-    }
-  });
-  app.put("/me/clients/:id", async (request, reply) => {
-    const auth = await requireTenant(request, reply, true);
-    if (!auth) return;
-    const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-    const parsed = ClientInputSchema.safeParse(request.body);
-    if (!params.success || !parsed.success)
-      return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid client fields");
-    try {
-      return await tenantWrite(auth, request, "client.updated", async repo => {
-        const saved = await repo.updateClient(auth.business_id!, params.data.id, parsed.data);
-        if (!saved) throw clientNotFound;
-        return saved;
-      });
-    } catch (error) {
-      return clientFailure(error, request, reply);
-    }
+  registerClientRoutes(app, {
+    pools, requireTenant, context, fail, tenantWrite, clientFailure, clientNotFound,
   });
   const serviceNotFound = Symbol("service not found");
   const serviceFailure = (error: unknown, request: FastifyRequest, reply: FastifyReply) => {
@@ -938,74 +769,8 @@ export function buildApi(input: AuthService | ApiOptions) {
       return fail(reply, request, 400, "VALIDATION_FAILED", "Service value cannot be stored");
     return fail(reply, request, 500, "INTERNAL_ERROR", "Service operation failed");
   };
-  app.get("/me/services", async (request, reply) => {
-    const auth = await requireTenant(request, reply);
-    if (!auth) return;
-    try {
-      return await pools.api.run(context(auth, request), repo => repo.listServices());
-    } catch (error) {
-      return serviceFailure(error, request, reply);
-    }
-  });
-  app.post("/me/services", async (request, reply) => {
-    const auth = await requireTenant(request, reply, true);
-    if (!auth) return;
-    const parsed = ServiceInputSchema.safeParse(request.body);
-    if (!parsed.success)
-      return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid service fields");
-    try {
-      const saved = await tenantWrite(auth, request, "service.created", repo =>
-        repo.createService(auth.business_id!, parsed.data));
-      return reply.code(201).send(saved);
-    } catch (error) {
-      return serviceFailure(error, request, reply);
-    }
-  });
-  app.put("/me/services/:id", async (request, reply) => {
-    const auth = await requireTenant(request, reply, true);
-    if (!auth) return;
-    const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-    const parsed = ServiceInputSchema.safeParse(request.body);
-    if (!params.success || !parsed.success)
-      return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid service fields");
-    try {
-      return await tenantWrite(auth, request, "service.updated", async repo => {
-        const saved = await repo.updateService(auth.business_id!, params.data.id, parsed.data);
-        if (!saved) throw serviceNotFound;
-        return saved;
-      });
-    } catch (error) {
-      return serviceFailure(error, request, reply);
-    }
-  });
-  app.delete("/me/services/:id", async (request, reply) => {
-    const auth = await requireTenant(request, reply, true);
-    if (!auth) return;
-    const params = z.object({ id: z.string().uuid().transform(id => id.toLowerCase()) }).safeParse(request.params);
-    if (!params.success) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid service ID");
-    try {
-      await tenantWrite(auth, request, "service.deleted", async repo => {
-        if (!await repo.deleteService(auth.business_id!, params.data.id)) throw serviceNotFound;
-      }, { id: params.data.id });
-      return { id: params.data.id };
-    } catch (error) { return serviceFailure(error, request, reply); }
-  });
-  app.put("/me/services/:id/status", async (request, reply) => {
-    const auth = await requireTenant(request, reply, true);
-    if (!auth) return;
-    const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-    const parsed = z.object({ status: z.enum(["active", "suspended"]) }).safeParse(request.body);
-    if (!params.success || !parsed.success)
-      return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid service status");
-    try {
-      return await tenantWrite(auth, request, "service.status_changed", async repo => {
-        const saved = await repo.setServiceStatus(auth.business_id!, params.data.id, parsed.data.status);
-        if (!saved) throw serviceNotFound;
-        return saved;
-      });
-    } catch (error) {
-      return serviceFailure(error, request, reply);
-    }
+  registerServiceRoutes(app, {
+    pools, requireTenant, context, fail, tenantWrite, serviceFailure, serviceNotFound,
   });
   registerBusinessProfileRoutes(app, { pools, requireTenant, context, fail, tenantWrite });
   registerAgentSettingsRoutes(app, { pools, requireTenant, context, fail, tenantWrite });
