@@ -1,5 +1,5 @@
 import type { SocketFactory } from "@agendia/whatsapp-baileys";
-import type { ReceptionistToolCommand, ReceptionistToolResult } from "../../../apps/message-worker/src/receptionist-tools.ts";
+import type { ReceptionistToolCommand, ReceptionistToolResult } from "../../../apps/message-worker/src/agent/tools.ts";
 
 type SendOutcome = "ack" | "rejected" | "crash";
 class DeterministicSocket {

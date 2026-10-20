@@ -10,7 +10,7 @@ import {
   InMemoryAiJobRepository,
 } from "../support/message-worker/ai-job.ts";
 import { AI_SYSTEM_INSTRUCTIONS, type AiGenerateRequest, type ToolConversationRequest } from "../../packages/domain/src/ai-provider.ts";
-import { parseReceptionistTool } from "../../apps/message-worker/src/receptionist-tools.ts";
+import { parseReceptionistTool } from "../../apps/message-worker/src/agent/tools.ts";
 
 const request: AiGenerateRequest = {
   business: { commercialName: "Tienda", services: "Envíos" },

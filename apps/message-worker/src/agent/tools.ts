@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { renderReceptionistResponse, type ReceptionistFact } from "./receptionist-response.ts";
+import { renderReceptionistResponse, type ReceptionistFact } from "./response.ts";
 import { CalendarDateSchema, InstantSchema, type ToolConversationMessage, type ToolConversationRequest } from "@agendia/domain";
 
 // The calendar engine in domain/agenda-availability.ts uses this fixed IANA zone;

@@ -5,13 +5,13 @@ import {
   argentinaDate, nearbyDate, agendaTime, customerTemporalSelection, emptyAgendaDialogue, explicitQuoteConfirmation,
   explicitCustomerNames, explicitCancel, explicitNotes, explicitPreference, expressedBookingPreference,
   quoteTermsEqual, quoteText, missingFieldText, type AgendaDialogue, type AgendaQuote,
-} from "../../../packages/domain/src/whatsapp-agenda.ts";
-import type { PostgresAiJob } from "./ai-job.ts";
+} from "../../../../../packages/domain/src/whatsapp-agenda.ts";
+import type { PostgresAiJob } from "../../jobs/ai-job.ts";
 import { ReceptionistToolSession, canonicalReceptionistDate, RECEPTIONIST_CALENDAR_TIME_ZONE, emitReceptionistDiagnostic,
   type ReceptionistToolCommand, type ReceptionistToolResult,
-  type ReceptionistSessionOutcome, type ReceptionistToolDiagnostics } from "./receptionist-tools.ts";
+  type ReceptionistSessionOutcome, type ReceptionistToolDiagnostics } from "../tools.ts";
 
-import { buildReceptionistMessages } from "./receptionist.ts";
+import { buildReceptionistMessages } from "../context.ts";
 
 type Pools = ReturnType<typeof createRuntimePools>;
 type Source = NonNullable<Awaited<ReturnType<PostgresRepositories["loadAiMessage"]>>>;

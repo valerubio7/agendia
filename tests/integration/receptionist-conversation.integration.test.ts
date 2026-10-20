@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { createRuntimePools } from "@agendia/db";
 import type { AiProvider, ToolConversationProvider, ToolConversationRequest, ToolAssistantMessage } from "@agendia/domain";
-import { PostgresAiJobProcessor } from "../../apps/message-worker/src/ai-job.ts";
+import { PostgresAiJobProcessor } from "../../apps/message-worker/src/jobs/ai-job.ts";
 import { PostgresInboundHandler } from "../../apps/whatsapp-manager/src/inbound-handler.ts";
 import { normalizeBaileysMessage } from "../../packages/whatsapp-baileys/src/baileys-gateway.ts";
 import { applyPostgresMigrations, startTestPostgres, type TestPostgres } from "../support/index.ts";

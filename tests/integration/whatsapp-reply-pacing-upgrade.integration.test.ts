@@ -4,7 +4,7 @@ import type { AiProvider, ToolConversationProvider } from '@agendia/domain';
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createRuntimePools, tenantContext } from "@agendia/db";
-import { PostgresAiJobProcessor } from "../../apps/message-worker/src/ai-job.ts";
+import { PostgresAiJobProcessor } from "../../apps/message-worker/src/jobs/ai-job.ts";
 import { AiOutboxDispatcher } from "../../apps/whatsapp-manager/src/ai-outbox-dispatcher.ts";
 import { createRoleLogin, startTestPostgres, type TestPostgres } from "../support/index.ts";
 

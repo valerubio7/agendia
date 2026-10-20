@@ -23,5 +23,5 @@ export * from "./whatsapp/connection.ts";
 export * from "./messaging/conversation-context-builder.ts";
 export * from "./messaging/outbound-delivery.ts";
 export * from "./ai-provider.ts";
-export { RECEPTIONIST_SYSTEM_INSTRUCTIONS } from "./receptionist-instructions.ts";
+export { RECEPTIONIST_SYSTEM_INSTRUCTIONS } from "./agent/instructions.ts";
 export * from "./unit-of-work.ts";

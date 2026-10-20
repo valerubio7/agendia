@@ -6,8 +6,8 @@ import {
   type ConversationSummaryContent,
 } from "@agendia/domain";
 import { tenantContext, type createRuntimePools } from "@agendia/db";
-import { PostgresWhatsAppAgenda } from "./whatsapp-agenda.ts";
-import { converseReceptionist } from "./receptionist.ts";
+import { PostgresWhatsAppAgenda } from "../agent/adapters/agenda.ts";
+import { converseReceptionist } from "../agent/runtime.ts";
 import { AiProviderError } from "@agendia/ai-deepseek";
 
 type Pools = ReturnType<typeof createRuntimePools>;

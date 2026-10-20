@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { renderReceptionistResponse, type ReceptionistFact } from "../../apps/message-worker/src/receptionist-response.ts";
+import { renderReceptionistResponse, type ReceptionistFact } from "../../apps/message-worker/src/agent/response.ts";
 
 const render = (act: unknown, evidence: ReceptionistFact[] = []) => renderReceptionistResponse(JSON.stringify(act), evidence);
 const business: ReceptionistFact = { name: "read_business", result: { status: "data", data: {

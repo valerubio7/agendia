@@ -7,7 +7,7 @@ import {
   type AgendaQuote,
 } from "../../packages/domain/src/whatsapp-agenda.ts";
 import { hasToolConversationProvider } from "@agendia/domain";
-import { parseReceptionistTool } from "../../apps/message-worker/src/receptionist-tools.ts";
+import { parseReceptionistTool } from "../../apps/message-worker/src/agent/tools.ts";
 
 const pn = "5491123456789@s.whatsapp.net";
 const lid = "123456789@lid";
@@ -194,7 +194,7 @@ describe("native commands and guarded customer responses", () => {
     expect(choose?.("Color", "service", [...catalog, { id: appointmentId, name: "Color" }], true)).toBeUndefined();
   });
   test("obsolete factual admission and rendering exports are absent", async () => {
-    const module = await import("../../apps/message-worker/src/whatsapp-agenda.ts");
+    const module = await import("../../apps/message-worker/src/agent/adapters/agenda.ts");
     for (const name of ["factualQuestion", "renderFactualReply", "isAgendaMessage"])
       expect(Reflect.has(module, name)).toBe(false);
     expect(Reflect.has(module.PostgresWhatsAppAgenda.prototype, "process")).toBe(false);

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ReceptionistToolCommand, ReceptionistToolResult } from "./receptionist-tools.ts";
+import type { ReceptionistToolCommand, ReceptionistToolResult } from "./tools.ts";
 
 const factNames = ["read_business", "read_catalog", "read_resources", "read_calendar", "availability",
   "owned_appointments", "owned_appointment"] as const;
