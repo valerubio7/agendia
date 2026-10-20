@@ -1,20 +1,9 @@
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import cookie from "@fastify/cookie";
-import { Algorithm, hash } from "@node-rs/argon2";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
-import {
-  AuthService,
-  digestOpaqueToken,
-  deriveSessionCsrf,
-  verifyLoginPassword,
-  sessionCookie,
-  validateMutationRequest,
-} from "@agendia/auth";
-import { makeSafeError, PlatformAiInstructionsInputSchema, AppointmentRecordSchema, AvailabilitySlotSchema, ManualAppointmentCreateSchema, ManualAppointmentChangeSchema, ManualAppointmentNotesSchema, ManualAppointmentStateSchema, AppointmentOperationKeySchema, AppointmentOperationReceiptSchema } from "@agendia/contracts";
-import {
-  RECEPTIONIST_SYSTEM_INSTRUCTIONS,
-} from "@agendia/domain";
+import { AuthService } from "@agendia/auth";
+import { makeSafeError, AppointmentRecordSchema, AvailabilitySlotSchema, ManualAppointmentCreateSchema, ManualAppointmentChangeSchema, ManualAppointmentNotesSchema, ManualAppointmentStateSchema, AppointmentOperationKeySchema, AppointmentOperationReceiptSchema } from "@agendia/contracts";
 import {
   tenantContext,
   TenantUnitOfWork,
@@ -33,9 +22,12 @@ import { registerServiceRoutes } from "./routes/services.ts";
 import { registerResourceRoutes } from "./routes/resources.ts";
 import { registerBusinessClosureRoutes, registerBusinessCalendarRoutes } from "./routes/business-calendar.ts";
 import { registerAppointmentOperationRoutes, registerAppointmentListRoute, registerAppointmentRoutes } from "./routes/appointments.ts";
+import { registerAuthRoutes } from "./routes/auth.ts";
+import { registerAdministrationRoutes } from "./routes/administration.ts";
+import { createHttpAuth } from "./auth/http-auth.ts";
+import { legacyApi } from "./auth/legacy-api.ts";
 import type { Session } from "./routes/context.ts";
 
-const COOKIE = "__Host-agendia_session";
 type Pools = ReturnType<typeof createRuntimePools>;
 export interface ApiOptions {
   pools: Pools;
@@ -48,29 +40,6 @@ const credentials = z.object({
   email: z.string().email(),
   password: z.string().min(16),
 });
-
-function legacyApi(auth: AuthService) {
-  const app = Fastify({ logger: false });
-  app.post("/auth/login", async (request, reply) => {
-    const body = request.body as { email?: string; password?: string };
-    if (!body?.email || !body.password)
-      return reply.code(400).send({ code: "VALIDATION_FAILED" });
-    try {
-      return reply.send({
-        csrfToken: (await auth.login(body.email, body.password)).csrfToken,
-      });
-    } catch {
-      return reply.code(401).send({ code: "UNAUTHENTICATED" });
-    }
-  });
-  app.post("/auth/logout", async (_request, reply) => reply.code(204).send());
-  // The legacy in-memory HTTP adapter never issues/authenticates cookies; do not expose recovery.
-  app.post("/auth/csrf", async (_request, reply) => reply.header("cache-control", "no-store").code(401).send({ code: "UNAUTHENTICATED" }));
-  app.get("/auth/session", async (_request, reply) =>
-    reply.code(401).send({ code: "UNAUTHENTICATED" }),
-  );
-  return app;
-}
 
 export function buildApi(input: AuthService | ApiOptions) {
   if (input instanceof AuthService) return legacyApi(input);
@@ -92,44 +61,7 @@ export function buildApi(input: AuthService | ApiOptions) {
       | "INTERNAL_ERROR",
     message: string,
   ) => reply.code(status).send(makeSafeError(code, message, request.id));
-  const originOk = (request: FastifyRequest) =>
-    request.headers.origin === expectedOrigin;
-  const session = async (request: FastifyRequest): Promise<Session | null> => {
-    const token = request.cookies[COOKIE];
-    if (!token) return null;
-    const found = await pools.api.run(
-      undefined,
-      (repo) =>
-        repo.session(digestOpaqueToken(token)) as Promise<Session | null>,
-    );
-    if (found)
-      await pools.api.run(undefined, (repo) =>
-        repo.touchSession(found.session_id, new Date(Date.now() + idleTtl)),
-      );
-    return found;
-  };
-  const mutation = async (request: FastifyRequest, reply: FastifyReply) => {
-    const auth = await session(request);
-    const csrf = request.headers["x-csrf-token"] as string | undefined;
-    if (!auth) {
-      fail(reply, request, 401, "UNAUTHENTICATED", "Authentication required");
-      return null;
-    }
-    if (
-      !validateMutationRequest({
-        origin: request.headers.origin ?? "",
-        expectedOrigin,
-        csrfHeader: csrf ?? "",
-        sessionToken: request.cookies[COOKIE]!,
-        csrfSession:
-          csrf && auth.csrf_sha256 === digestOpaqueToken(csrf) ? csrf : "",
-      })
-    ) {
-      fail(reply, request, 403, "FORBIDDEN", "Mutation protection failed");
-      return null;
-    }
-    return auth;
-  };
+  const { originOk, session, mutation } = createHttpAuth({ pools, expectedOrigin, idleTtl, fail });
   const context = (auth: Session, request: FastifyRequest) =>
     tenantContext({
       businessId: auth.business_id!,
@@ -202,134 +134,8 @@ export function buildApi(input: AuthService | ApiOptions) {
       work,
     ) as Promise<T>;
 
-  app.post("/auth/login", async (request, reply) => {
-    if (!originOk(request))
-      return fail(reply, request, 403, "FORBIDDEN", "Origin rejected");
-    try {
-      const body = credentials.parse(request.body),
-        normalized = body.email.trim().toLowerCase();
-      // Origin was checked first. Database failure and exhaustion both fail closed before hash work.
-      const admitted = await pools.api.run(undefined, repo => repo.admitLogin(digestOpaqueToken(normalized))).catch(() => false);
-      if (!admitted) {
-        reply.header("retry-after", "900");
-        return fail(reply, request, 429, "FORBIDDEN", "Too many login attempts");
-      }
-      const identity = await pools.api.run(undefined, (repo) =>
-        repo.authIdentity(normalized),
-      );
-      const validPassword = await verifyLoginPassword(identity?.password_phc, body.password);
-      if (
-        !identity?.active ||
-        identity.business_status === "suspended" ||
-        !validPassword
-      ) {
-        await pools.api.run(
-          identity?.business_id
-            ? tenantContext({
-                businessId: identity.business_id,
-                actorId: identity.id,
-                role: identity.role,
-                requestId: request.id,
-              })
-            : undefined,
-          (repo) =>
-            repo.appendRuntimeAudit(identity?.business_id ?? null, {
-              code: "auth.login_failed",
-              outcome: "denied",
-              source: "api",
-              ...(identity?.id ? { actorId: identity.id } : {}),
-              requestId: request.id,
-            }),
-        );
-        return fail(
-          reply,
-          request,
-          401,
-          "UNAUTHENTICATED",
-          "Invalid credentials",
-        );
-      }
-      const token = randomBytes(32).toString("hex"),
-        csrf = deriveSessionCsrf(token),
-        now = Date.now();
-      await pools.api.run(
-        identity.business_id
-          ? tenantContext({
-              businessId: identity.business_id,
-              actorId: identity.id,
-              role: identity.role,
-              requestId: request.id,
-            })
-          : undefined,
-        async (repo) => {
-          await repo.createSession({
-            identityId: identity.id,
-            tokenHash: digestOpaqueToken(token),
-            csrfHash: digestOpaqueToken(csrf),
-            absolute: new Date(now + absoluteTtl),
-            idle: new Date(now + Math.min(idleTtl, absoluteTtl)),
-          });
-          await repo.appendRuntimeAudit(identity.business_id, {
-            code: "auth.login",
-            outcome: "success",
-            source: "api",
-            actorId: identity.id,
-            requestId: request.id,
-          });
-        },
-      );
-      const c = sessionCookie(token);
-      reply.setCookie(c.name, c.value, c);
-      return { csrfToken: csrf };
-    } catch {
-      return fail(
-        reply,
-        request,
-        401,
-        "UNAUTHENTICATED",
-        "Invalid credentials",
-      );
-    }
-  });
-  app.post("/auth/csrf", async (request, reply) => {
-    reply.header("cache-control", "no-store");
-    if (!originOk(request) || request.headers["x-csrf-bootstrap"] !== "1")
-      return fail(reply, request, 403, "FORBIDDEN", "Origin or bootstrap header rejected");
-    if (!await session(request))
-      return fail(reply, request, 401, "UNAUTHENTICATED", "Authentication required");
-    // No rotation: legacy random tokens remain valid alongside this stable per-session value.
-    return { csrfToken: deriveSessionCsrf(request.cookies[COOKIE]!) };
-  });
-  app.get("/auth/session", async (request, reply) => {
-    reply.header("cache-control", "no-store");
-    const auth = await session(request);
-    return auth
-      ? { role: auth.role, businessId: auth.business_id, identityId: auth.identity_id }
-      : fail(reply, request, 401, "UNAUTHENTICATED", "Authentication required");
-  });
-  app.post("/auth/logout", async (request, reply) => {
-    const auth = await mutation(request, reply);
-    if (!auth) return;
-    await pools.api.run(
-      auth.business_id ? context(auth, request) : undefined,
-      async (repo) => {
-        await repo.revokeSession(digestOpaqueToken(request.cookies[COOKIE]!));
-        await repo.appendRuntimeAudit(auth.business_id, {
-          code: "auth.logout",
-          outcome: "success",
-          source: "api",
-          actorId: auth.identity_id,
-          requestId: request.id,
-        });
-      },
-    );
-    reply.clearCookie(COOKIE, {
-      path: "/",
-      secure: true,
-      httpOnly: true,
-      sameSite: "lax",
-    });
-    return reply.code(204).send();
+  registerAuthRoutes(app, {
+    pools, context, fail, originOk, session, mutation, absoluteTtl, idleTtl, credentials,
   });
 
   const requireAdmin = async (
@@ -351,140 +157,7 @@ export function buildApi(input: AuthService | ApiOptions) {
     }
     return auth;
   };
-  app.get("/admin/ai-instructions", async (request, reply) => {
-    if (!(await requireAdmin(request, reply))) return;
-    return {
-      baseInstructions: RECEPTIONIST_SYSTEM_INSTRUCTIONS,
-      ...await pools.admin.run(undefined, (repo) => repo.platformAiInstructions()),
-    };
-  });
-  app.put("/admin/ai-instructions", async (request, reply) => {
-    if (!(await requireAdmin(request, reply, true))) return;
-    const body = PlatformAiInstructionsInputSchema.safeParse(request.body);
-    if (!body.success)
-      return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid instructions");
-    return {
-      baseInstructions: RECEPTIONIST_SYSTEM_INSTRUCTIONS,
-      ...await pools.admin.run(undefined, (repo) =>
-        repo.updatePlatformAiInstructions(body.data.additionalInstructions, body.data.replyPacing)),
-    };
-  });
-  app.get("/admin/businesses", async (request, reply) =>
-    (await requireAdmin(request, reply))
-      ? pools.admin.run(undefined, (repo) => repo.listBusinesses())
-      : undefined,
-  );
-  app.post("/admin/businesses", async (request, reply) => {
-    const auth = await requireAdmin(request, reply, true);
-    if (!auth) return;
-    try {
-      const body = z
-        .object({
-          name: z.string().trim().min(1).max(160),
-          userEmail: z.string().email(),
-          initialPassword: z.string().min(16),
-        })
-        .parse(request.body);
-      const id = randomUUID();
-      const phc = await hash(body.initialPassword, {
-        algorithm: Algorithm.Argon2id,
-      });
-      await adminWrite(auth, request, id, "business.created", (repo) =>
-        repo.createBusinessUser({
-          id,
-          name: body.name,
-          email: body.userEmail.trim().toLowerCase(),
-          passwordPhc: phc,
-        }),
-      );
-      return reply
-        .code(201)
-        .send(await pools.admin.run(undefined, (repo) => repo.business(id)));
-    } catch {
-      return fail(
-        reply,
-        request,
-        400,
-        "VALIDATION_FAILED",
-        "Invalid business data",
-      );
-    }
-  });
-  app.put("/admin/businesses/:id", async (request, reply) => {
-    const auth = await requireAdmin(request, reply, true);
-    if (!auth) return;
-    try {
-      const { id } = request.params as { id: string };
-      const { name } = z
-        .object({ name: z.string().trim().min(1).max(160) })
-        .parse(request.body);
-      const changed = await adminWrite<unknown[]>(
-        auth,
-        request,
-        id,
-        "business.updated",
-        (repo) => repo.renameBusiness(id, name),
-      );
-      return changed.length
-        ? pools.admin.run(undefined, (repo) => repo.business(id))
-        : fail(reply, request, 404, "NOT_FOUND", "Resource not found");
-    } catch {
-      return fail(
-        reply,
-        request,
-        400,
-        "VALIDATION_FAILED",
-        "Invalid business data",
-      );
-    }
-  });
-  app.put("/admin/businesses/:id/user", async (request, reply) => {
-    const auth = await requireAdmin(request, reply, true);
-    if (!auth) return;
-    try {
-      const { id } = request.params as { id: string };
-      const { password } = z
-        .object({ password: z.string().min(16) })
-        .parse(request.body);
-      const phc = await hash(password, { algorithm: Algorithm.Argon2id });
-      const ok = await adminWrite<boolean>(
-        auth,
-        request,
-        id,
-        "business_user.password_replaced",
-        (repo) => repo.replaceBusinessPassword(id, phc),
-      );
-      return ok
-        ? { replaced: true }
-        : fail(reply, request, 404, "NOT_FOUND", "Resource not found");
-    } catch {
-      return fail(
-        reply,
-        request,
-        400,
-        "VALIDATION_FAILED",
-        "Invalid user data",
-      );
-    }
-  });
-  app.put("/admin/businesses/:id/status", async (request, reply) => {
-    const auth = await requireAdmin(request, reply, true);
-    if (!auth) return;
-    try {
-      const { id } = request.params as { id: string };
-      const { status } = z
-        .object({ status: z.enum(["active", "suspended"]) })
-        .parse(request.body);
-      if (!(await pools.admin.run(undefined, (repo) => repo.business(id))))
-        return fail(reply, request, 404, "NOT_FOUND", "Resource not found");
-      await adminWrite(auth, request, id, `business.${status}`, (repo) =>
-        repo.setBusinessStatus(id, status),
-      );
-      return pools.admin.run(undefined, (repo) => repo.business(id));
-    } catch {
-      return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid status");
-    }
-  });
+  registerAdministrationRoutes(app, { pools, fail, requireAdmin, adminWrite });
 
   const requireTenant = async (
     request: FastifyRequest,
