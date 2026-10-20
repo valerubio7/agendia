@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { converseReceptionist } from "../../apps/message-worker/src/agent/runtime.ts";
-import { buildReceptionistMessages } from "../../apps/message-worker/src/agent/context.ts";
-import { ReceptionistToolSession, receptionistToolDefinitions } from "../../apps/message-worker/src/agent/tools.ts";
+import { converseReceptionist } from "./runtime.ts";
+import { buildReceptionistMessages } from "./context.ts";
+import { ReceptionistToolSession, receptionistToolDefinitions } from "./tools.ts";
 import { RECEPTIONIST_SYSTEM_INSTRUCTIONS, TOOL_CONVERSATION_LIMITS, type ToolConversationProvider, type ToolConversationRequest, type ToolAssistantMessage } from "@agendia/domain";
 
 const final = (content = "¿Qué día te sirve?"): ToolAssistantMessage => ({ role: "assistant", content, toolCalls: [] });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { AiOutboxDispatcher, type JobPublisher } from "../../apps/whatsapp-manager/src/ai-outbox-dispatcher.ts";
+import { AiOutboxDispatcher, type JobPublisher } from "./ai-outbox.ts";
 import type { createRuntimePools } from "@agendia/db";
 
 const row = (publish_attempts = 1) => ({

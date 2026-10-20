@@ -2,7 +2,7 @@ import type { WhatsAppConnectionService } from "@agendia/domain";
 import type {
   BaileysLifecycleEvent,
   WhatsAppGateway,
-} from "../../../apps/whatsapp-manager/src/lifecycle.ts";
+} from "../../../apps/whatsapp-manager/src/connection.ts";
 
 export class DeterministicBaileysDouble implements WhatsAppGateway {
   private events: BaileysLifecycleEvent[] = [];

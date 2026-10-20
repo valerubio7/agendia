@@ -15,7 +15,7 @@ import {
   type TestPostgres,
 } from "../support/index.ts";
 import { createWhatsAppManager } from "../../apps/whatsapp-manager/src/index.ts";
-import type { WhatsAppGateway } from "../../apps/whatsapp-manager/src/lifecycle.ts";
+import type { WhatsAppGateway } from "../../apps/whatsapp-manager/src/connection.ts";
 
 const A = "11111111-1111-4111-8111-111111111111";
 const B = "22222222-2222-4222-8222-222222222222";

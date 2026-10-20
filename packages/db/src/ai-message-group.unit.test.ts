@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { PostgresRepositories } from "../../packages/db/src/repositories.ts";
+import { PostgresRepositories } from "./repositories.ts";
 
 const turn = (sequence: number, closesGroup = false) => ({
   id: `message-${sequence}`,

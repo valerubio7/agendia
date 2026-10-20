@@ -7,7 +7,7 @@ import makeWASocket, {
   type SignalDataSet,
   type SignalDataTypeMap,
 } from "@whiskeysockets/baileys";
-import type { BaileysLifecycleEvent } from "../../../apps/whatsapp-manager/src/lifecycle.ts";
+import type { BaileysLifecycleEvent } from "../../../apps/whatsapp-manager/src/connection.ts";
 import type { BaileysAuthStore } from "./auth-store.ts";
 import { receivedSenderEvidence, type SenderEvidence } from "../../domain/src/whatsapp/agenda.ts";
 

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   MIN_RECONNECT_INTERVAL_MS,
   createReconnectThrottle,
-} from "../../apps/whatsapp-manager/src/index.ts";
+} from "./index.ts";
 
 describe("WhatsApp manager reconnect throttle", () => {
   test("enforces a minimum reconnect interval of 15 seconds", () => {

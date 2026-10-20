@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { replyDeadline } from "../../packages/db/src/reply-pacing.ts";
+import { replyDeadline } from "./reply-pacing.ts";
 
 describe("persisted reply deadline policy", () => {
   const now = new Date("2026-01-01T23:59:00Z");

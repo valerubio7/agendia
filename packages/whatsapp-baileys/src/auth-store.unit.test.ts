@@ -5,7 +5,7 @@ import {
   InMemoryAuthRecordRepository,
   InMemoryKms,
   redactBaileysDetails,
-} from "../../packages/whatsapp-baileys/src/auth-store.ts";
+} from "./auth-store.ts";
 
 describe("encrypted Baileys authentication custody", () => {
   test("round-trips AES-256-GCM records and enforces optimistic versions", async () => {

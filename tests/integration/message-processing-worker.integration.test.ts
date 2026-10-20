@@ -189,7 +189,7 @@ describe("PostgreSQL messaging workers", () => {
       await readFile(
         join(
           import.meta.dir,
-          "../../apps/whatsapp-manager/src/inbound-handler.ts",
+          "../../apps/whatsapp-manager/src/inbound.ts",
         ),
         "utf8",
       ),

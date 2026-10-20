@@ -4,7 +4,7 @@ import {
   tenantContext,
   type createRuntimePools,
 } from "@agendia/db";
-import type { InboundWhatsAppEvent } from "./inbound-handler.ts";
+import type { InboundWhatsAppEvent } from "./inbound.ts";
 
 export type BaileysLifecycleEvent =
   | { type: "qr"; value: string }

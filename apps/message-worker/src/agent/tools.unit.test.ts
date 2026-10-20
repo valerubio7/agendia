@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { ReceptionistToolSession, receptionistToolDefinitions, parseReceptionistTool } from "../../apps/message-worker/src/agent/tools.ts";
+import { ReceptionistToolSession, receptionistToolDefinitions, parseReceptionistTool } from "./tools.ts";
 
-import { canonicalReceptionistDate as canonicalDate } from "../../apps/message-worker/src/agent/tools.ts";
+import { canonicalReceptionistDate as canonicalDate } from "./tools.ts";
 const id = "123e4567-e89b-42d3-a456-426614174000";
 describe("canonical receptionist date presentation", () => {
   const zone = "America/Argentina/Buenos_Aires";

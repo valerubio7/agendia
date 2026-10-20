@@ -5,7 +5,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createRuntimePools, tenantContext } from "@agendia/db";
 import { PostgresAiJobProcessor } from "../../apps/message-worker/src/jobs/ai-job.ts";
-import { AiOutboxDispatcher } from "../../apps/whatsapp-manager/src/ai-outbox-dispatcher.ts";
+import { AiOutboxDispatcher } from "../../apps/whatsapp-manager/src/ai-outbox.ts";
 import { createRoleLogin, startTestPostgres, type TestPostgres } from "../support/index.ts";
 
 const A = randomUUID(), B = randomUUID(), connection = randomUUID(), ownership = randomUUID();
