@@ -305,7 +305,7 @@ test("POST waits on actual calendar lock; source binds its single clock after ac
     expect((await effects(o)).appointments).toEqual([]);
   } finally { release(); await holder; }
   expect((await pending).statusCode).toBe(201);
-  const source = await readFile(join(import.meta.dir, "../../apps/api/src/app.ts"), "utf8");
+  const source = await readFile(join(import.meta.dir, "../../apps/api/src/routes/appointments.ts"), "utf8");
   const handler = source.slice(source.indexOf('app.post("/me/appointments"'), source.indexOf('app.get("/me/appointments/availability"'));
   expect(handler).toMatch(/await repo\.acquireBusinessCalendarLock\(context\(auth, request\)\);\s*const now = new Date\(\)\.toISOString\(\);/);
   expect(handler).toContain("{ clock: () => now }"); expect(handler).toContain('{ origin: "manual", now }');
@@ -483,7 +483,7 @@ test("PATCH P0001 UPDATE/audit/outbox failures roll back every old field and eff
       expect(await effects(o)).toEqual(before);
     } finally { await database.sql`drop trigger fail_patch on ${database.sql(table)}`; }
   }
-  const source = await readFile(join(import.meta.dir, "../../apps/api/src/app.ts"), "utf8");
+  const source = await readFile(join(import.meta.dir, "../../apps/api/src/routes/appointments.ts"), "utf8");
   const handler = source.slice(source.indexOf('app.patch("/me/appointments/:appointmentId"'), source.indexOf('app.get("/me/appointments/availability"'));
   expect(handler).toMatch(/await repo\.acquireBusinessCalendarLock\(context\(auth, request\)\);\s*const now = new Date\(\)\.toISOString\(\);/);
   expect(handler).toContain("{ appointmentId, clock: () => now }"); expect(handler).toContain("{ now }");
