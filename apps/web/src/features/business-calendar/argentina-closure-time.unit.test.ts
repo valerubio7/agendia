@@ -57,7 +57,7 @@ describe("Argentina closure wall time conversion", () => {
     expect(convert("2000-02-29T09:00").ok).toBe(true);
   });
 
-  // Actual gap/fold dates also covered by agenda-availability.unit.test.ts.
+  // Actual gap/fold dates also covered by packages/domain/src/appointments/availability.unit.test.ts.
   test("rejects the skipped midnight hour rather than shifting it", () => {
     expect(convert("2007-12-30T00:30")).toEqual({ ok: false, error: "nonexistent_wall_time", candidates: [] });
     expect(convert("2007-12-30T01:00")).toEqual({ ok: true, candidates: [

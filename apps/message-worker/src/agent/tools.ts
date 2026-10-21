@@ -2,7 +2,7 @@ import { z } from "zod";
 import { renderReceptionistResponse, type ReceptionistFact } from "./response.ts";
 import { CalendarDateSchema, InstantSchema, type ToolConversationMessage, type ToolConversationRequest } from "@agendia/domain";
 
-// The calendar engine in domain/agenda-availability.ts uses this fixed IANA zone;
+// The calendar engine in packages/domain/src/appointments/availability.ts uses this fixed IANA zone;
 // it is not a profile setting or a model-selected timezone.
 export const RECEPTIONIST_CALENDAR_TIME_ZONE = "America/Argentina/Buenos_Aires";
 export interface ReceptionistDatePresentation {
