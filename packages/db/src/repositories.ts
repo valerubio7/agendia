@@ -1,8 +1,16 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import type { Sql, TransactionSql } from "postgres";
-import type { Db } from "./repositories/shared.ts";
+import type { TransactionSql } from "postgres";
+import { appointmentId, asDbJson, type Db } from "./repositories/shared.ts";
 import * as identity from "./repositories/identity.ts";
 import * as business from "./repositories/business.ts";
+import * as clients from "./repositories/clients.ts";
+import * as catalog from "./repositories/catalog.ts";
+import type { ClientRegistryInput, RegistryClient } from "./repositories/clients.ts";
+import { ResourceCatalogError, appointmentInterval, type SavedAppointmentInterval,
+  type CatalogResource, type ServiceCatalogInput, type CatalogService } from "./repositories/catalog.ts";
+export type { ClientRegistryInput, RegistryClient } from "./repositories/clients.ts";
+export { ResourceCatalogError } from "./repositories/catalog.ts";
+export type { CatalogResource, ServiceCatalogInput, CatalogService } from "./repositories/catalog.ts";
 import type { TenantContext } from "./tenant-context.ts";
 import { replyDeadline } from "./reply-pacing.ts";
 import { ReplyPacingSchema, type ReplyPacing } from "@agendia/domain";
@@ -15,7 +23,7 @@ import { ClientInputSchema, InstantSchema, AppointmentOriginSchema, captureAppoi
   canEditAppointmentNotes, canTransitionAppointment, AppointmentStateSchema, AppointmentTermsSnapshotSchema,
   type AppointmentActionContext } from "@agendia/domain";
 import { BusinessClosureInputSchema, CalendarDateSchema, materializeArgentinaDayGrid, parseInstantMs, WeeklyScheduleSchema,
-  ResourceInputSchema, isResourceScheduleWithinBusiness, normalizeWeeklySchedule, isStructurallyAvailable,
+  isResourceScheduleWithinBusiness, isStructurallyAvailable,
   isEpochIntervalWithinWeeklySchedule, isEpochIntervalOpenForClosures, type EpochInterval, type ResourceInput,
   type BusinessClosure, type BusinessClosureInput, type WeeklySchedule } from "@agendia/domain";
 
@@ -40,24 +48,6 @@ function closureValues(input: BusinessClosureInput) {
 }
 
 export type BusinessCalendar = { weeklySchedule: WeeklySchedule };
-export type CatalogResource = Omit<ResourceInput, "description"> & {
-  id: string; description: string | null; status: "active" | "suspended";
-};
-/** B2 maps these domain conflicts to safe HTTP errors; no persistence details escape. */
-export class ResourceCatalogError extends Error {
-  constructor(readonly code: "UNKNOWN_SERVICE" | "HOURS_CONFLICT" | "FUTURE_APPOINTMENT_CONFLICT") { super(code); }
-}
-
-type SavedAppointmentInterval = { startRaw: string; startMs: string; endMs: string; durationMinutes: number };
-function appointmentInterval(row: SavedAppointmentInterval): EpochInterval {
-  const startMs = Number(row.startMs), endMs = Number(row.endMs);
-  if (parseInstantMs(row.startRaw) !== startMs || !Number.isSafeInteger(endMs) || endMs <= startMs
-    || endMs > 253402387139999 || !Number.isSafeInteger(row.durationMinutes) || row.durationMinutes <= 0
-    || row.durationMinutes % 15 !== 0 || endMs !== startMs + row.durationMinutes * 60000)
-    throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
-  return { startMs, endMs };
-}
-
 /** Acquire inside the tenant UoW BEFORE reads/guards/mutations (also when no row exists).
  * C/T05/T09 must use this same namespace. Hash collisions only serialize businesses;
  * tenant identity remains enforced by context and RLS, never by the hash.
@@ -116,29 +106,6 @@ export function openLinkCode(key: Buffer, value: SealedLinkCode) {
   ]).toString("utf8");
 }
 
-export type ServiceCatalogInput = {
-  name: string;
-  description?: string | undefined;
-  durationMinutes: number;
-  priceArs: number;
-};
-export type CatalogService = {
-  id: string;
-  name: string;
-  description: string | null;
-  durationMinutes: number;
-  priceArs: number;
-  status: "active" | "suspended";
-};
-
-export type ClientRegistryInput = {
-  firstName: string;
-  lastName: string;
-  phone: string;
-};
-export type RegistryClient = ClientRegistryInput & { id: string };
-
-const appointmentId = z.uuid().transform(id => id.toLowerCase());
 const appointmentCommand = z.object({
   serviceId: appointmentId, resourceId: appointmentId, startRaw: InstantSchema,
   notes: z.string().nullable().optional(), clientId: appointmentId.optional(),
@@ -199,19 +166,6 @@ export class AppointmentError extends Error {
   }
 }
 
-// LIKE metacharacters are data, never a caller-controlled search pattern.
-const literalSearch = (value: string) => `%${value.replace(/[\\%_]/g, "\\$&")}%`;
-
-type DbJson = Parameters<Sql["json"]>[0];
-function asDbJson(value: unknown): DbJson {
-  try {
-    const encoded = JSON.stringify(value);
-    if (encoded === undefined) throw new Error("not JSON serializable");
-    return JSON.parse(encoded) as DbJson;
-  } catch {
-    throw new Error("Value must be JSON serializable");
-  }
-}
 export type { RuntimeRole } from "./runtime-pools.ts";
 export type SafeRuntimeEvent = {
   code: string;
@@ -587,163 +541,52 @@ export class PostgresRepositories {
     return rows.length > 0;
   }
   listResources(businessId: string) {
-    return this.db<CatalogResource[]>`select r.id,r.name,r.description,r.status,r.weekly_schedule "weeklySchedule",
-      array(select rs.service_id::text from resource_services rs join services s on (s.business_id,s.id)=(rs.business_id,rs.service_id)
-        where rs.business_id=r.business_id and rs.resource_id=r.id and s.deleted_at is null order by rs.service_id) "serviceIds"
-      from resources r where r.business_id=${businessId} and r.deleted_at is null order by r.normalized_name,r.id`;
+    return catalog.listResources(this.db, businessId);
   }
   async getResource(businessId: string, id: string) {
-    const [row] = await this.db<CatalogResource[]>`select r.id,r.name,r.description,r.status,r.weekly_schedule "weeklySchedule",
-      array(select rs.service_id::text from resource_services rs join services s on (s.business_id,s.id)=(rs.business_id,rs.service_id)
-        where rs.business_id=r.business_id and rs.resource_id=r.id and s.deleted_at is null order by rs.service_id) "serviceIds"
-      from resources r where r.business_id=${businessId} and r.id=${id} and r.deleted_at is null`;
-    return row ?? null;
-  }
-  private async validateResource(businessId: string, input: ResourceInput) {
-    const valid = ResourceInputSchema.parse(input);
-    const calendar = await this.getBusinessCalendar(businessId);
-    if (!isResourceScheduleWithinBusiness(valid.weeklySchedule, calendar.weeklySchedule ?? {}))
-      throw new ResourceCatalogError("HOURS_CONFLICT");
-    if (valid.serviceIds.length) {
-      const services = await this.db`select id from services where business_id=${businessId} and deleted_at is null and id in ${this.db(valid.serviceIds)}`;
-      if (services.length !== valid.serviceIds.length) throw new ResourceCatalogError("UNKNOWN_SERVICE");
-    }
-    return valid;
-  }
-  private async replaceResourceServices(businessId: string, id: string, serviceIds: string[]) {
-    await this.db`delete from resource_services where business_id=${businessId} and resource_id=${id}`;
-    if (serviceIds.length) await this.db`insert into resource_services ${this.db(serviceIds.map(serviceId => ({
-      business_id: businessId, resource_id: id, service_id: serviceId,
-    })))}`;
+    return catalog.getResource(this.db, businessId, id);
   }
   /** All mutations require a tenant transaction; assignments and caller audit/outbox share its rollback. */
   async createResource(businessId: string, input: ResourceInput): Promise<CatalogResource> {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const valid = await this.validateResource(businessId, input);
-    const [row] = await this.db<{ id: string }[]>`insert into resources(business_id,name,description,weekly_schedule)
-      values(${businessId},${valid.name},${valid.description ?? null},${this.db.json(asDbJson(valid.weeklySchedule))}) returning id`;
-    await this.replaceResourceServices(businessId, row!.id, valid.serviceIds);
-    return (await this.getResource(businessId, row!.id))!;
-  }
-  /** Protect all strictly future states, using agreed appointment duration rather than current catalog terms. */
-  private async guardResourceAppointments(businessId: string, current: CatalogResource, proposed: ResourceInput, nowMs: number) {
-    const hoursChanged = JSON.stringify(normalizeWeeklySchedule(current.weeklySchedule))
-      !== JSON.stringify(normalizeWeeklySchedule(proposed.weeklySchedule));
-    const removedAssignment = current.serviceIds.some(serviceId => !proposed.serviceIds.includes(serviceId));
-    if (!hoursChanged && !removedAssignment) return;
-    if (!Number.isSafeInteger(nowMs)) throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
-    const appointments = await this.db<(SavedAppointmentInterval & { serviceId: string })[]>`
-      select service_id "serviceId",start_raw "startRaw",start_ms "startMs",end_ms "endMs",duration_minutes "durationMinutes"
-      from appointments where business_id=${businessId} and resource_id=${current.id} and start_ms>${nowMs}`;
-    for (const appointment of appointments) {
-      appointmentInterval(appointment); // Hostile raw SQL must not cause a false pass.
-      if (!proposed.serviceIds.includes(appointment.serviceId)
-        || !isStructurallyAvailable({ start: appointment.startRaw, durationMinutes: appointment.durationMinutes,
-          businessHours: proposed.weeklySchedule, resourceHours: proposed.weeklySchedule }))
-        throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
-    }
+    return catalog.createResource(this.db, this, businessId, input);
   }
   async updateResource(businessId: string, id: string, input: ResourceInput): Promise<CatalogResource | null> {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const nowMs = Date.now(); // One server clock, after locking; never a request/model field.
-    const current = await this.getResource(businessId, id);
-    if (!current) return null;
-    const valid = await this.validateResource(businessId, input);
-    await this.guardResourceAppointments(businessId, current, valid, nowMs);
-    await this.db`update resources set name=${valid.name},description=${valid.description ?? null},
-      weekly_schedule=${this.db.json(asDbJson(valid.weeklySchedule))} where business_id=${businessId} and id=${id} and deleted_at is null`;
-    await this.replaceResourceServices(businessId, id, valid.serviceIds);
-    return this.getResource(businessId, id);
+    return catalog.updateResource(this.db, this, businessId, id, input);
   }
   async setResourceStatus(businessId: string, id: string, status: CatalogResource["status"]): Promise<CatalogResource | null> {
-    await this.acquireBusinessCalendarLock({ businessId });
-    await this.db`update resources set status=${status} where business_id=${businessId} and id=${id} and deleted_at is null`;
-    return this.getResource(businessId, id);
+    return catalog.setResourceStatus(this.db, this, businessId, id, status);
   }
   listClients(q = "") {
-    const pattern = literalSearch(q);
-    return this.db<RegistryClient[]>`
-      select id,first_name "firstName",last_name "lastName",phone from clients
-      where first_name collate service_name_case ilike ${pattern}
-         or last_name collate service_name_case ilike ${pattern}
-         or phone ilike ${pattern}
-      order by lower(first_name collate service_name_case) collate "C",
-        lower(last_name collate service_name_case) collate "C",phone,id`;
+    return clients.listClients(this.db, q);
   }
   async getClientById(id: string) {
-    const [row] = await this.db<RegistryClient[]>`
-      select id,first_name "firstName",last_name "lastName",phone from clients where id=${id}`;
-    return row ?? null;
+    return clients.getClientById(this.db, id);
   }
   // Exact stored identity only: no manual-country/type inference or aliases.
   async findClientByCanonicalPhone(phone: string) {
-    const [row] = await this.db<RegistryClient[]>`
-      select id,first_name "firstName",last_name "lastName",phone from clients where phone=${phone}`;
-    return row ?? null;
+    return clients.findClientByCanonicalPhone(this.db, phone);
   }
   async createClient(businessId: string, input: ClientRegistryInput) {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const [row] = await this.db<RegistryClient[]>`
-      insert into clients(business_id,first_name,last_name,phone)
-      values(${businessId},${input.firstName},${input.lastName},${input.phone})
-      returning id,first_name "firstName",last_name "lastName",phone`;
-    return row!;
+    return clients.createClient(this.db, this, businessId, input);
   }
   async updateClient(businessId: string, id: string, input: ClientRegistryInput) {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const [row] = await this.db<RegistryClient[]>`
-      update clients set first_name=${input.firstName},last_name=${input.lastName},phone=${input.phone}
-      where business_id=${businessId} and id=${id} returning id,first_name "firstName",last_name "lastName",phone`;
-    return row ?? null;
+    return clients.updateClient(this.db, this, businessId, id, input);
   }
   listServices() {
-    return this.db<CatalogService[]>`
-      select id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status
-      from services where deleted_at is null order by normalized_name,id`;
+    return catalog.listServices(this.db);
   }
   async createService(businessId: string, input: ServiceCatalogInput) {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const [row] = await this.db<CatalogService[]>`
-      insert into services(business_id,name,description,duration_minutes,price_ars)
-      values(${businessId},${input.name},${input.description ?? null},${input.durationMinutes},${input.priceArs})
-      returning id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status`;
-    return row!;
+    return catalog.createService(this.db, this, businessId, input);
   }
   async updateService(businessId: string, id: string, input: ServiceCatalogInput) {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const [row] = await this.db<CatalogService[]>`
-      update services set name=${input.name},description=${input.description ?? null},
-      duration_minutes=${input.durationMinutes},price_ars=${input.priceArs} where business_id=${businessId} and id=${id} and deleted_at is null
-      returning id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status`;
-    return row ?? null;
+    return catalog.updateService(this.db, this, businessId, id, input);
   }
   async setServiceStatus(businessId: string, id: string, status: CatalogService["status"]) {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const [row] = await this.db<CatalogService[]>`
-      update services set status=${status} where business_id=${businessId} and id=${id} and deleted_at is null
-      returning id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status`;
-    return row ?? null;
+    return catalog.setServiceStatus(this.db, this, businessId, id, status);
   }
   /** Internal retirement only: caller UoW owns tombstone + links + audit/outbox rollback. */
   private async retireCatalogItem(businessId: string, id: string, table: "services" | "resources") {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const nowMs = Date.now();
-    const ownedId = appointmentId.safeParse(id);
-    if (!ownedId.success) return false;
-    id = ownedId.data;
-    const [owned] = await this.db`select id from ${this.db(table)} where business_id=${businessId} and id=${id} and deleted_at is null`;
-    if (!owned) return false;
-    if (!Number.isSafeInteger(nowMs)) throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
-    const column = table === "services" ? "service_id" : "resource_id";
-    // ALL states, actual assignment only. A historical preference FK does not reserve this resource.
-    const future = await this.db`select id from appointments where business_id=${businessId}
-      and ${this.db(column)}=${id} and start_ms>${nowMs} limit 1`;
-    if (future.length) throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
-    const updated = await this.db`update ${this.db(table)} set deleted_at=${new Date(nowMs)}
-      where business_id=${businessId} and id=${id} and deleted_at is null returning id`;
-    if (!updated.length) return false;
-    await this.db`delete from resource_services where business_id=${businessId} and ${this.db(column)}=${id}`;
-    return true;
+    return catalog.retireCatalogItem(this.db, this, businessId, id, table);
   }
   deleteService(businessId: string, id: string): Promise<boolean> {
     return this.retireCatalogItem(businessId, id, "services");
