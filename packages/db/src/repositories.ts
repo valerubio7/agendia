@@ -7,6 +7,7 @@ import * as clients from "./repositories/clients.ts";
 import * as catalog from "./repositories/catalog.ts";
 import * as businessCalendar from "./repositories/business-calendar.ts";
 import * as appointments from "./repositories/appointments.ts";
+import * as agentSettings from "./repositories/agent-settings.ts";
 import { AppointmentError, type StoredAppointment, type AppointmentCreationContext, type AppointmentChangeContext,
   type AppointmentAvailabilityContext, type AppointmentAvailabilityOption } from "./repositories/appointments.ts";
 export { AppointmentError } from "./repositories/appointments.ts";
@@ -22,17 +23,10 @@ export { ResourceCatalogError } from "./repositories/catalog.ts";
 export type { CatalogResource, ServiceCatalogInput, CatalogService } from "./repositories/catalog.ts";
 import type { TenantContext } from "./tenant-context.ts";
 import { replyDeadline } from "./reply-pacing.ts";
-import { ReplyPacingSchema, type ReplyPacing } from "@agendia/domain";
+import type { ReplyPacing } from "@agendia/domain";
 import { validSenderEvidence, emptyAgendaDialogue, type SenderEvidence, type AgendaDialogue } from "../../domain/src/whatsapp/agenda.ts";
 import type { AppointmentActionContext, ResourceInput,
   BusinessClosure, BusinessClosureInput, WeeklySchedule } from "@agendia/domain";
-
-type PlatformAiSettingsRow = ReplyPacing & { additionalInstructions: string };
-function platformAiSettings(row: PlatformAiSettingsRow | undefined) {
-  if (!row) throw new Error("Platform AI instructions singleton missing");
-  const { additionalInstructions, ...replyPacing } = row;
-  return { additionalInstructions, replyPacing: ReplyPacingSchema.parse(replyPacing) };
-}
 
 /** Acquire inside the tenant UoW BEFORE reads/guards/mutations (also when no row exists).
  * C/T05/T09 must use this same namespace. Hash collisions only serialize businesses;
@@ -249,32 +243,13 @@ export class PostgresRepositories {
     return this.retireCatalogItem(businessId, id, "resources");
   }
   async platformAiInstructions() {
-    const [row] = await this.db<PlatformAiSettingsRow[]>`
-      select additional_instructions "additionalInstructions", initial_delay_seconds "initialDelaySeconds",
-        active_delay_seconds "activeDelaySeconds", inactivity_reset_seconds "inactivityResetSeconds"
-      from operational_controls where singleton`;
-    return platformAiSettings(row);
+    return agentSettings.platformAiInstructions(this.db);
   }
   async updatePlatformAiInstructions(additionalInstructions: string, replyPacing?: ReplyPacing) {
-    const policy = replyPacing === undefined ? undefined : ReplyPacingSchema.parse(replyPacing);
-    // Omitted policy columns are not written, including under concurrent instruction-only saves.
-    const values = { additional_instructions: additionalInstructions, ...(policy === undefined ? {} : {
-      initial_delay_seconds: policy.initialDelaySeconds,
-      active_delay_seconds: policy.activeDelaySeconds,
-      inactivity_reset_seconds: policy.inactivityResetSeconds,
-    }) };
-    const [row] = await this.db<PlatformAiSettingsRow[]>`
-      update operational_controls set ${this.db(values)} where singleton
-      returning additional_instructions "additionalInstructions", initial_delay_seconds "initialDelaySeconds",
-        active_delay_seconds "activeDelaySeconds", inactivity_reset_seconds "inactivityResetSeconds"`;
-    return platformAiSettings(row);
+    return agentSettings.updatePlatformAiInstructions(this.db, additionalInstructions, replyPacing);
   }
   async globalReplyPacing(): Promise<ReplyPacing> {
-    const [row] = await this.db<ReplyPacing[]>`
-      select initial_delay_seconds "initialDelaySeconds", active_delay_seconds "activeDelaySeconds",
-        inactivity_reset_seconds "inactivityResetSeconds" from operational_controls where singleton`;
-    if (!row) throw new Error("Global reply pacing singleton missing");
-    return ReplyPacingSchema.parse(row);
+    return agentSettings.globalReplyPacing(this.db);
   }
   saveBusiness(row: { id: string; name: string }) {
     return business.saveBusiness(this.db, row);
@@ -356,28 +331,17 @@ export class PostgresRepositories {
     return business.saveFullProfile(this.db, businessId, p);
   }
   saveAssistant(businessId: string, active: boolean) {
-    return this
-      .db`insert into assistant_configs (business_id,active) values (${businessId},${active}) on conflict (business_id) do update set active=excluded.active,revision=assistant_configs.revision+1,updated_at=now()`;
+    return agentSettings.saveAssistant(this.db, businessId, active);
   }
   async assistant() {
-    return (
-      (
-        await this
-          .db`select style,business_instructions "businessInstructions",active,revision from assistant_configs limit 1`
-      )[0] ?? null
-    );
+    return agentSettings.assistant(this.db);
   }
   async saveFullAssistant(
     businessId: string,
     p: Record<string, unknown>,
     expected: number,
   ) {
-    return (
-      (
-        await this
-          .db`insert into assistant_configs(business_id,style,business_instructions,active,revision) values(${businessId},${p.style as string},${p.businessInstructions as string},${p.active as boolean},1) on conflict(business_id) do update set style=excluded.style,business_instructions=excluded.business_instructions,active=excluded.active,revision=assistant_configs.revision+1,updated_at=now() where assistant_configs.revision=${expected} returning style,business_instructions "businessInstructions",active,revision`
-      )[0] ?? null
-    );
+    return agentSettings.saveFullAssistant(this.db, businessId, p, expected);
   }
   async whatsapp() {
     return (
