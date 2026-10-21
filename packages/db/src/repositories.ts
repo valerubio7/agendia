@@ -1,5 +1,8 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import type { Sql, TransactionSql } from "postgres";
+import type { Db } from "./repositories/shared.ts";
+import * as identity from "./repositories/identity.ts";
+import * as business from "./repositories/business.ts";
 import type { TenantContext } from "./tenant-context.ts";
 import { replyDeadline } from "./reply-pacing.ts";
 import { ReplyPacingSchema, type ReplyPacing } from "@agendia/domain";
@@ -199,7 +202,6 @@ export class AppointmentError extends Error {
 // LIKE metacharacters are data, never a caller-controlled search pattern.
 const literalSearch = (value: string) => `%${value.replace(/[\\%_]/g, "\\$&")}%`;
 
-type Db = Sql | TransactionSql;
 type DbJson = Parameters<Sql["json"]>[0];
 function asDbJson(value: unknown): DbJson {
   try {
@@ -778,44 +780,23 @@ export class PostgresRepositories {
     return ReplyPacingSchema.parse(row);
   }
   saveBusiness(row: { id: string; name: string }) {
-    return this
-      .db`insert into businesses (id,name) values (${row.id},${row.name}) on conflict (id) do update set name=excluded.name`;
+    return business.saveBusiness(this.db, row);
   }
   saveIdentity(row: {
     email: string;
     passwordPhc: string;
     businessId: string;
   }) {
-    return this
-      .db`insert into auth_identities (normalized_email,password_phc,role,business_id) values (${row.email},${row.passwordPhc},'business_user',${row.businessId})`;
+    return identity.saveIdentity(this.db, row);
   }
   async findIdentity(email: string) {
-    return (
-      (
-        await this.db<
-          { business_id: string }[]
-        >`select business_id from auth_identities where normalized_email=${email}`
-      )[0] ?? null
-    );
+    return identity.findIdentity(this.db, email);
   }
   async admitLogin(accountHash: string): Promise<boolean> {
-    return (await this.db<{ admitted: boolean }[]>`select admit_login(${accountHash}) admitted`)[0]?.admitted === true;
+    return identity.admitLogin(this.db, accountHash);
   }
   async authIdentity(email: string) {
-    return (
-      (
-        await this.db<
-          {
-            id: string;
-            password_phc: string;
-            role: "platform_admin" | "business_user";
-            business_id: string | null;
-            active: boolean;
-            business_status: string | null;
-          }[]
-        >`select i.id,i.password_phc,i.role,i.business_id,i.active,b.status business_status from auth_identities i left join businesses b on b.id=i.business_id where normalized_email=${email}`
-      )[0] ?? null
-    );
+    return identity.authIdentity(this.db, email);
   }
   createSession(row: {
     identityId: string;
@@ -824,31 +805,16 @@ export class PostgresRepositories {
     absolute: Date;
     idle: Date;
   }) {
-    return this
-      .db`insert into web_sessions(identity_id,token_sha256,csrf_sha256,absolute_expires_at,idle_expires_at) values(${row.identityId},${row.tokenHash},${row.csrfHash},${row.absolute},${row.idle})`;
+    return identity.createSession(this.db, row);
   }
   async session(tokenHash: string) {
-    return (
-      (
-        await this.db<
-          {
-            session_id: string;
-            identity_id: string;
-            role: "platform_admin" | "business_user";
-            business_id: string | null;
-            csrf_sha256: string;
-          }[]
-        >`select s.id session_id,i.id identity_id,i.role,i.business_id,s.csrf_sha256 from web_sessions s join auth_identities i on i.id=s.identity_id left join businesses b on b.id=i.business_id where s.token_sha256=${tokenHash} and s.revoked_at is null and s.absolute_expires_at>now() and s.idle_expires_at>now() and i.active and (i.role='platform_admin' or b.status='active')`
-      )[0] ?? null
-    );
+    return identity.session(this.db, tokenHash);
   }
   touchSession(id: string, idle: Date) {
-    return this
-      .db`update web_sessions set last_seen_at=now(),idle_expires_at=least(absolute_expires_at,${idle}) where id=${id}`;
+    return identity.touchSession(this.db, id, idle);
   }
   revokeSession(tokenHash: string) {
-    return this
-      .db`update web_sessions set revoked_at=now() where token_sha256=${tokenHash} and revoked_at is null`;
+    return identity.revokeSession(this.db, tokenHash);
   }
   appendRuntimeAudit(businessId: string | null, event: SafeRuntimeEvent) {
     return this
@@ -866,64 +832,31 @@ export class PostgresRepositories {
     email: string;
     passwordPhc: string;
   }) {
-    await this.saveBusiness(row);
-    await this.saveIdentity({
-      email: row.email,
-      passwordPhc: row.passwordPhc,
-      businessId: row.id,
-    });
+    return business.createBusinessUser(this.db, this, row);
   }
   renameBusiness(id: string, name: string) {
-    return this
-      .db`update businesses set name=${name} where id=${id} returning id`;
+    return business.renameBusiness(this.db, id, name);
   }
   async setBusinessStatus(id: string, status: string) {
-    const changed = await this
-      .db`update businesses set status=${status} where id=${id} returning id`;
-    if (!changed.length) return false;
-    await this
-      .db`update auth_identities set active=${status === "active"} where business_id=${id}`;
-    if (status === "suspended")
-      await this
-        .db`update web_sessions set revoked_at=now() where identity_id in(select id from auth_identities where business_id=${id}) and revoked_at is null`;
-    return true;
+    return business.setBusinessStatus(this.db, id, status);
   }
   async replaceBusinessPassword(id: string, passwordPhc: string) {
-    const rows = await this.db<
-      { id: string }[]
-    >`update auth_identities set password_phc=${passwordPhc} where business_id=${id} and role='business_user' returning id`;
-    if (rows[0])
-      await this
-        .db`update web_sessions set revoked_at=now() where identity_id=${rows[0].id} and revoked_at is null`;
-    return Boolean(rows[0]);
+    return business.replaceBusinessPassword(this.db, id, passwordPhc);
   }
   listBusinesses() {
-    return this
-      .db`select id,name,status,created_at "createdAt",last_technical_activity_at "lastTechnicalActivityAt",assistant_status "assistantStatus",whatsapp_status "whatsappStatus" from admin_business_status order by created_at`;
+    return business.listBusinesses(this.db);
   }
   async business(id: string) {
-    return (
-      (
-        await this
-          .db`select id,name,status,created_at "createdAt",last_technical_activity_at "lastTechnicalActivityAt" from businesses where id=${id}`
-      )[0] ?? null
-    );
+    return business.business(this.db, id);
   }
   saveProfile(businessId: string, displayName: string) {
-    return this
-      .db`insert into business_profiles (business_id,display_name) values (${businessId},${displayName}) on conflict (business_id) do update set display_name=excluded.display_name,updated_at=now()`;
+    return business.saveProfile(this.db, businessId, displayName);
   }
   async profile() {
-    return (
-      (
-        await this
-          .db`select display_name "displayName",description,address from business_profiles limit 1`
-      )[0] ?? null
-    );
+    return business.profile(this.db);
   }
   saveFullProfile(businessId: string, p: Record<string, string>) {
-    return this
-      .db`insert into business_profiles(business_id,display_name,description,address) values(${businessId},${p.displayName!},${p.description!},${p.address!}) on conflict(business_id) do update set display_name=excluded.display_name,description=excluded.description,address=excluded.address,updated_at=now()`;
+    return business.saveFullProfile(this.db, businessId, p);
   }
   saveAssistant(businessId: string, active: boolean) {
     return this
