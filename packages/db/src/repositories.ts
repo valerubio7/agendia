@@ -5,9 +5,11 @@ import * as identity from "./repositories/identity.ts";
 import * as business from "./repositories/business.ts";
 import * as clients from "./repositories/clients.ts";
 import * as catalog from "./repositories/catalog.ts";
+import * as businessCalendar from "./repositories/business-calendar.ts";
+import type { BusinessCalendar } from "./repositories/business-calendar.ts";
+export type { BusinessCalendar } from "./repositories/business-calendar.ts";
 import type { ClientRegistryInput, RegistryClient } from "./repositories/clients.ts";
-import { ResourceCatalogError, appointmentInterval, type SavedAppointmentInterval,
-  type CatalogResource, type ServiceCatalogInput, type CatalogService } from "./repositories/catalog.ts";
+import type { CatalogResource, ServiceCatalogInput, CatalogService } from "./repositories/catalog.ts";
 export type { ClientRegistryInput, RegistryClient } from "./repositories/clients.ts";
 export { ResourceCatalogError } from "./repositories/catalog.ts";
 export type { CatalogResource, ServiceCatalogInput, CatalogService } from "./repositories/catalog.ts";
@@ -22,9 +24,8 @@ import { ClientInputSchema, InstantSchema, AppointmentOriginSchema, captureAppoi
   prepareAppointmentChange, resolveCustomerResourcePreference, type CustomerResourcePreferenceExpression,
   canEditAppointmentNotes, canTransitionAppointment, AppointmentStateSchema, AppointmentTermsSnapshotSchema,
   type AppointmentActionContext } from "@agendia/domain";
-import { BusinessClosureInputSchema, CalendarDateSchema, materializeArgentinaDayGrid, parseInstantMs, WeeklyScheduleSchema,
-  isResourceScheduleWithinBusiness, isStructurallyAvailable,
-  isEpochIntervalWithinWeeklySchedule, isEpochIntervalOpenForClosures, type EpochInterval, type ResourceInput,
+import { CalendarDateSchema, materializeArgentinaDayGrid, parseInstantMs, isStructurallyAvailable,
+  type EpochInterval, type ResourceInput,
   type BusinessClosure, type BusinessClosureInput, type WeeklySchedule } from "@agendia/domain";
 
 type PlatformAiSettingsRow = ReplyPacing & { additionalInstructions: string };
@@ -34,20 +35,6 @@ function platformAiSettings(row: PlatformAiSettingsRow | undefined) {
   return { additionalInstructions, replyPacing: ReplyPacingSchema.parse(replyPacing) };
 }
 
-type ClosureRow = { id: string; kind: string; date: string | null; start: string | null; end: string | null };
-const closureDto = (row: ClosureRow): BusinessClosure => ({ id: row.id,
-  ...BusinessClosureInputSchema.parse(row.kind === "date"
-    ? { kind: row.kind, date: row.date } : { kind: row.kind, start: row.start, end: row.end }),
-});
-function closureValues(input: BusinessClosureInput) {
-  const valid = BusinessClosureInputSchema.parse(input);
-  return valid.kind === "date"
-    ? { kind: valid.kind, date: valid.date, start: null, end: null, startMs: null, endMs: null }
-    : { kind: valid.kind, date: null, start: valid.start, end: valid.end,
-      startMs: parseInstantMs(valid.start)!, endMs: parseInstantMs(valid.end)! };
-}
-
-export type BusinessCalendar = { weeklySchedule: WeeklySchedule };
 /** Acquire inside the tenant UoW BEFORE reads/guards/mutations (also when no row exists).
  * C/T05/T09 must use this same namespace. Hash collisions only serialize businesses;
  * tenant identity remains enforced by context and RLS, never by the hash.
@@ -474,71 +461,24 @@ export class PostgresRepositories {
     }
   }
   async getBusinessCalendar(businessId: string): Promise<{ weeklySchedule: WeeklySchedule | null }> {
-    const [row] = await this.db<{ weeklySchedule: WeeklySchedule }[]>`
-      select weekly_schedule "weeklySchedule" from business_calendars where business_id=${businessId}`;
-    return { weeklySchedule: row ? WeeklyScheduleSchema.parse(row.weeklySchedule) : null };
-  }
-  /** Called only after the shared early lock; B2 protects Confirmed only, unlike B1 resources. */
-  private async futureConfirmedIntervals(businessId: string, nowMs: number): Promise<EpochInterval[]> {
-    if (!Number.isSafeInteger(nowMs)) throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
-    const rows = await this.db<SavedAppointmentInterval[]>`select start_raw "startRaw",start_ms "startMs",end_ms "endMs",duration_minutes "durationMinutes"
-      from appointments where business_id=${businessId} and state='confirmed' and start_ms>${nowMs}`;
-    return rows.map(appointmentInterval);
-  }
-  private async guardClosureAppointments(businessId: string, input: BusinessClosureInput, nowMs: number) {
-    if ((await this.futureConfirmedIntervals(businessId, nowMs)).some(interval => !isEpochIntervalOpenForClosures(interval, [input])))
-      throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
+    return businessCalendar.getBusinessCalendar(this.db, businessId);
   }
   /** Transaction required; uses the same early lock as public calendar/closure callers. */
   async saveBusinessCalendar(businessId: string, weeklySchedule: WeeklySchedule): Promise<BusinessCalendar> {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const nowMs = Date.now();
-    const valid = WeeklyScheduleSchema.parse(weeklySchedule);
-    const resources = await this.listResources(businessId);
-    if (resources.some(resource => !isResourceScheduleWithinBusiness(resource.weeklySchedule, valid)))
-      throw new ResourceCatalogError("HOURS_CONFLICT");
-    if ((await this.futureConfirmedIntervals(businessId, nowMs)).some(interval => !isEpochIntervalWithinWeeklySchedule(interval, valid)))
-      throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
-    const [row] = await this.db<BusinessCalendar[]>`
-      insert into business_calendars(business_id,weekly_schedule) values(${businessId},${this.db.json(asDbJson(valid))})
-      on conflict(business_id) do update set weekly_schedule=excluded.weekly_schedule
-      returning weekly_schedule "weeklySchedule"`;
-    return row!;
+    return businessCalendar.saveBusinessCalendar(this.db, this, businessId, weeklySchedule);
   }
   async listBusinessClosures(businessId: string): Promise<BusinessClosure[]> {
-    const rows = await this.db<ClosureRow[]>`select id,kind,closed_date::text date,start_raw start,end_raw "end"
-      from business_calendar_closures where business_id=${businessId} order by id`;
-    return rows.map(closureDto);
+    return businessCalendar.listBusinessClosures(this.db, businessId);
   }
   /** All closure mutations require the shared early calendar lock in the caller's UoW. */
   async createBusinessClosure(businessId: string, input: BusinessClosureInput): Promise<BusinessClosure> {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const nowMs = Date.now();
-    const v = closureValues(input);
-    await this.guardClosureAppointments(businessId, input, nowMs);
-    const [row] = await this.db<ClosureRow[]>`insert into business_calendar_closures
-      (business_id,kind,closed_date,start_raw,end_raw,start_ms,end_ms)
-      values(${businessId},${v.kind},${v.date},${v.start},${v.end},${v.startMs},${v.endMs})
-      returning id,kind,closed_date::text date,start_raw start,end_raw "end"`;
-    return closureDto(row!);
+    return businessCalendar.createBusinessClosure(this.db, this, businessId, input);
   }
   async updateBusinessClosure(businessId: string, id: string, input: BusinessClosureInput): Promise<BusinessClosure | null> {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const nowMs = Date.now();
-    const [owned] = await this.db`select id from business_calendar_closures where business_id=${businessId} and id=${id}`;
-    if (!owned) return null;
-    const v = closureValues(input);
-    await this.guardClosureAppointments(businessId, input, nowMs);
-    const [row] = await this.db<ClosureRow[]>`update business_calendar_closures set kind=${v.kind},closed_date=${v.date},
-      start_raw=${v.start},end_raw=${v.end},start_ms=${v.startMs},end_ms=${v.endMs}
-      where business_id=${businessId} and id=${id}
-      returning id,kind,closed_date::text date,start_raw start,end_raw "end"`;
-    return row ? closureDto(row) : null;
+    return businessCalendar.updateBusinessClosure(this.db, this, businessId, id, input);
   }
   async deleteBusinessClosure(businessId: string, id: string): Promise<boolean> {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const rows = await this.db`delete from business_calendar_closures where business_id=${businessId} and id=${id} returning id`;
-    return rows.length > 0;
+    return businessCalendar.deleteBusinessClosure(this.db, this, businessId, id);
   }
   listResources(businessId: string) {
     return catalog.listResources(this.db, businessId);
