@@ -1,59 +1,35 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import postgres, { type Sql, type TransactionSql } from "postgres";
+import type { TransactionSql } from "postgres";
+import { asDbJson, type Db } from "./repositories/shared.ts";
+import * as identity from "./repositories/identity.ts";
+import * as business from "./repositories/business.ts";
+import * as clients from "./repositories/clients.ts";
+import * as catalog from "./repositories/catalog.ts";
+import * as businessCalendar from "./repositories/business-calendar.ts";
+import * as appointments from "./repositories/appointments.ts";
+import * as agentSettings from "./repositories/agent-settings.ts";
+import * as whatsapp from "./repositories/whatsapp.ts";
+import * as whatsappAgenda from "./repositories/whatsapp-agenda.ts";
+import * as messaging from "./repositories/messaging.ts";
+import * as events from "./repositories/events.ts";
+import type { StoredAppointment, AppointmentCreationContext, AppointmentChangeContext,
+  AppointmentAvailabilityContext, AppointmentAvailabilityOption } from "./repositories/appointments.ts";
+export { AppointmentError } from "./repositories/appointments.ts";
+export type { CreateAppointmentInput, AppointmentChangeContext, AppointmentCreationContext, ChangeAppointmentInput,
+  AppointmentNotesInput, AppointmentAvailabilityContext, AppointmentAvailabilityOption, AppointmentHistoryFilter,
+  StoredAppointment } from "./repositories/appointments.ts";
+import type { BusinessCalendar } from "./repositories/business-calendar.ts";
+export type { BusinessCalendar } from "./repositories/business-calendar.ts";
+import type { ClientRegistryInput } from "./repositories/clients.ts";
+import type { CatalogResource, ServiceCatalogInput, CatalogService } from "./repositories/catalog.ts";
+export type { ClientRegistryInput, RegistryClient } from "./repositories/clients.ts";
+export { ResourceCatalogError } from "./repositories/catalog.ts";
+export type { CatalogResource, ServiceCatalogInput, CatalogService } from "./repositories/catalog.ts";
 import type { TenantContext } from "./tenant-context.ts";
-import { replyDeadline } from "./reply-pacing.ts";
-import { ReplyPacingSchema, type ReplyPacing } from "@agendia/domain";
-import { validSenderEvidence, emptyAgendaDialogue, type SenderEvidence, type AgendaDialogue } from "../../domain/src/whatsapp-agenda.ts";
-import { z } from "zod";
-import { ClientInputSchema, InstantSchema, AppointmentOriginSchema, captureAppointmentTerms,
-  isNewStartAllowed, isResourceEligibleForService, type AppointmentTermsSnapshot,
-  type AppointmentState, type AppointmentOrigin, type ClientInput,
-  prepareAppointmentChange, resolveCustomerResourcePreference, type CustomerResourcePreferenceExpression,
-  canEditAppointmentNotes, canTransitionAppointment, AppointmentStateSchema, AppointmentTermsSnapshotSchema,
-  type AppointmentActionContext } from "@agendia/domain";
-import { BusinessClosureInputSchema, CalendarDateSchema, materializeArgentinaDayGrid, parseInstantMs, WeeklyScheduleSchema,
-  ResourceInputSchema, isResourceScheduleWithinBusiness, normalizeWeeklySchedule, isStructurallyAvailable,
-  isEpochIntervalWithinWeeklySchedule, isEpochIntervalOpenForClosures, type EpochInterval, type ResourceInput,
-  type BusinessClosure, type BusinessClosureInput, type WeeklySchedule } from "@agendia/domain";
-
-type PlatformAiSettingsRow = ReplyPacing & { additionalInstructions: string };
-function platformAiSettings(row: PlatformAiSettingsRow | undefined) {
-  if (!row) throw new Error("Platform AI instructions singleton missing");
-  const { additionalInstructions, ...replyPacing } = row;
-  return { additionalInstructions, replyPacing: ReplyPacingSchema.parse(replyPacing) };
-}
-
-type ClosureRow = { id: string; kind: string; date: string | null; start: string | null; end: string | null };
-const closureDto = (row: ClosureRow): BusinessClosure => ({ id: row.id,
-  ...BusinessClosureInputSchema.parse(row.kind === "date"
-    ? { kind: row.kind, date: row.date } : { kind: row.kind, start: row.start, end: row.end }),
-});
-function closureValues(input: BusinessClosureInput) {
-  const valid = BusinessClosureInputSchema.parse(input);
-  return valid.kind === "date"
-    ? { kind: valid.kind, date: valid.date, start: null, end: null, startMs: null, endMs: null }
-    : { kind: valid.kind, date: null, start: valid.start, end: valid.end,
-      startMs: parseInstantMs(valid.start)!, endMs: parseInstantMs(valid.end)! };
-}
-
-export type BusinessCalendar = { weeklySchedule: WeeklySchedule };
-export type CatalogResource = Omit<ResourceInput, "description"> & {
-  id: string; description: string | null; status: "active" | "suspended";
-};
-/** B2 maps these domain conflicts to safe HTTP errors; no persistence details escape. */
-export class ResourceCatalogError extends Error {
-  constructor(readonly code: "UNKNOWN_SERVICE" | "HOURS_CONFLICT" | "FUTURE_APPOINTMENT_CONFLICT") { super(code); }
-}
-
-type SavedAppointmentInterval = { startRaw: string; startMs: string; endMs: string; durationMinutes: number };
-function appointmentInterval(row: SavedAppointmentInterval): EpochInterval {
-  const startMs = Number(row.startMs), endMs = Number(row.endMs);
-  if (parseInstantMs(row.startRaw) !== startMs || !Number.isSafeInteger(endMs) || endMs <= startMs
-    || endMs > 253402387139999 || !Number.isSafeInteger(row.durationMinutes) || row.durationMinutes <= 0
-    || row.durationMinutes % 15 !== 0 || endMs !== startMs + row.durationMinutes * 60000)
-    throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
-  return { startMs, endMs };
-}
+import type { ReplyPacing } from "@agendia/domain";
+import type { SenderEvidence, AgendaDialogue } from "../../domain/src/whatsapp/agenda.ts";
+import type { AppointmentActionContext, ResourceInput,
+  BusinessClosure, BusinessClosureInput, WeeklySchedule } from "@agendia/domain";
 
 /** Acquire inside the tenant UoW BEFORE reads/guards/mutations (also when no row exists).
  * C/T05/T09 must use this same namespace. Hash collisions only serialize businesses;
@@ -113,108 +89,7 @@ export function openLinkCode(key: Buffer, value: SealedLinkCode) {
   ]).toString("utf8");
 }
 
-export type ServiceCatalogInput = {
-  name: string;
-  description?: string | undefined;
-  durationMinutes: number;
-  priceArs: number;
-};
-export type CatalogService = {
-  id: string;
-  name: string;
-  description: string | null;
-  durationMinutes: number;
-  priceArs: number;
-  status: "active" | "suspended";
-};
-
-export type ClientRegistryInput = {
-  firstName: string;
-  lastName: string;
-  phone: string;
-};
-export type RegistryClient = ClientRegistryInput & { id: string };
-
-const appointmentId = z.uuid().transform(id => id.toLowerCase());
-const appointmentCommand = z.object({
-  serviceId: appointmentId, resourceId: appointmentId, startRaw: InstantSchema,
-  notes: z.string().nullable().optional(), clientId: appointmentId.optional(),
-  newClient: ClientInputSchema.optional(),
-}).refine(input => (input.clientId !== undefined) !== (input.newClient !== undefined));
-export type CreateAppointmentInput = {
-  serviceId: string; resourceId: string; startRaw: string; notes?: string | null;
-} & ({ clientId: string; newClient?: never } | { clientId?: never; newClient: ClientInput });
-/** Established by the authenticated caller, not fields of a booking body. */
-export type AppointmentChangeContext = { now: string; customerResourceExpression?: CustomerResourcePreferenceExpression };
-export type AppointmentCreationContext = AppointmentChangeContext & { origin: AppointmentOrigin };
-export type ChangeAppointmentInput = { serviceId: string; resourceId: string; startRaw: string };
-export type AppointmentNotesInput = { notes: string | null };
-const appointmentAvailabilityCommand = z.object({
-  serviceId: appointmentId, date: CalendarDateSchema, resourceId: appointmentId.optional(),
-}).strict();
-/** Server-owned, after authorization. Business ownership is NOT customer/sender identity proof. */
-export type AppointmentAvailabilityContext = { appointmentId?: string; clock?: () => string };
-export type AppointmentAvailabilityOption = {
-  start: string; startMs: number; endMs: number; resourceId: string; terms: AppointmentTermsSnapshot;
-};
-export type AppointmentHistoryFilter = { clientId?: string; from?: string; to?: string };
-const appointmentActionFacts = z.object({
-  actor: z.enum(["businessAdmin", "platformAdmin", "customer", "ai"]), channel: z.enum(["manual", "ai"]),
-  now: InstantSchema, confirmed: z.boolean().optional(),
-});
-const appointmentHistoryFilter = z.object({ clientId: appointmentId.optional(), from: InstantSchema.optional(), to: InstantSchema.optional() })
-  .refine(filter => filter.from === undefined || filter.to === undefined || parseInstantMs(filter.from)! < parseInstantMs(filter.to)!);
-const appointmentChangeCommand = z.object({ serviceId: appointmentId, resourceId: appointmentId, startRaw: InstantSchema });
-const customerExpression = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("chosen"), resourceId: appointmentId }), z.object({ kind: z.literal("none") }),
-]);
-const appointmentChangeFacts = z.object({ now: InstantSchema, customerResourceExpression: customerExpression.optional() });
-export type StoredAppointment = {
-  id: string; client: RegistryClient; startsAt: string; startMs: number; endMs: number;
-  terms: AppointmentTermsSnapshot; state: AppointmentState; origin: AppointmentOrigin;
-  notes: string | null; customerResourcePreference: string | null;
-};
-type AppointmentRow = {
-  id: string; clientId: string; firstName: string; lastName: string; phone: string;
-  startsAt: string; startMs: string | number; endMs: string | number;
-  serviceId: string; serviceName: string; resourceId: string; resourceName: string;
-  durationMinutes: number; priceArs: number; state: AppointmentState; origin: AppointmentOrigin;
-  notes: string | null; customerResourcePreference: string | null;
-};
-const appointmentDto = (row: AppointmentRow): StoredAppointment => ({
-  id: row.id, client: { id: row.clientId, firstName: row.firstName, lastName: row.lastName, phone: row.phone },
-  startsAt: row.startsAt, startMs: Number(row.startMs), endMs: Number(row.endMs),
-  terms: { serviceId: row.serviceId, serviceName: row.serviceName, resourceId: row.resourceId,
-    resourceName: row.resourceName, durationMinutes: row.durationMinutes, priceArs: row.priceArs },
-  state: row.state, origin: row.origin, notes: row.notes, customerResourcePreference: row.customerResourcePreference,
-});
-export class AppointmentError extends Error {
-  constructor(readonly code: "INVALID_INPUT" | "UNKNOWN_OWNED_ID" | "INELIGIBLE_CATALOG" | "UNAVAILABLE" | "BUSY" | "CLIENT_CONFLICT"
-    | "STATE_LOCKED" | "STARTED_STRUCTURE_LOCKED" | "LEAD_TIME" | "NOTES_LOCKED" | "NOT_TRANSITION"
-    | "INVALID_ACTION_CONTEXT" | "ATTENDANCE_FORBIDDEN" | "INVALID_ATTENDANCE_TIME" | "BEFORE_START" | "CONFIRMATION_REQUIRED") {
-    super(code);
-  }
-}
-
-// LIKE metacharacters are data, never a caller-controlled search pattern.
-const literalSearch = (value: string) => `%${value.replace(/[\\%_]/g, "\\$&")}%`;
-
-type Db = Sql | TransactionSql;
-type DbJson = Parameters<Sql["json"]>[0];
-function asDbJson(value: unknown): DbJson {
-  try {
-    const encoded = JSON.stringify(value);
-    if (encoded === undefined) throw new Error("not JSON serializable");
-    return JSON.parse(encoded) as DbJson;
-  } catch {
-    throw new Error("Value must be JSON serializable");
-  }
-}
-export type RuntimeRole =
-  | "agendia_runtime"
-  | "agendia_admin_runtime"
-  | "agendia_whatsapp_runtime"
-  | "agendia_worker_runtime";
+export type { RuntimeRole } from "./runtime-pools.ts";
 export type SafeRuntimeEvent = {
   code: string;
   outcome: "success" | "failure" | "denied";
@@ -256,123 +131,28 @@ export class PostgresRepositories {
     if ("begin" in this.db) throw new Error("Calendar lock requires a transaction");
     return acquireBusinessCalendarLock(this.db as TransactionSql, context);
   }
-  /** Shared owned projection for detail and untruncated history; never converts epochs to ISO. */
-  private appointmentRows(businessId: string, filters: { id?: string; clientId?: string; fromMs?: number; toMs?: number } = {}) {
-    return this.db<AppointmentRow[]>`select ap.id,ap.client_id "clientId",
-      c.first_name "firstName",c.last_name "lastName",c.phone,
-      ap.start_raw "startsAt",ap.start_ms "startMs",ap.end_ms "endMs",
-      ap.service_id "serviceId",ap.service_label "serviceName",ap.resource_id "resourceId",ap.resource_label "resourceName",
-      ap.duration_minutes "durationMinutes",ap.price_ars::float8 "priceArs",ap.state,ap.origin,ap.notes,
-      ap.customer_resource_preference_id "customerResourcePreference"
-      from appointments ap join clients c on (c.business_id,c.id)=(ap.business_id,ap.client_id)
-      where ap.business_id=${businessId}
-        and (${filters.id ?? null}::uuid is null or ap.id=${filters.id ?? null}::uuid)
-        and (${filters.clientId ?? null}::uuid is null or ap.client_id=${filters.clientId ?? null}::uuid)
-        and (${filters.fromMs ?? null}::bigint is null or ap.start_ms>=${filters.fromMs ?? null}::bigint)
-        and (${filters.toMs ?? null}::bigint is null or ap.start_ms<${filters.toMs ?? null}::bigint)
-      order by ap.start_ms,ap.id`;
-  }
   /** Read-only owned projection: current client identity, frozen catalog terms. */
   async getAppointment(businessId: string, id: string): Promise<StoredAppointment | null> {
-    const [row] = await this.appointmentRows(businessId, { id });
-    return row ? appointmentDto(row) : null;
+    return appointments.getAppointment(this.db, businessId, id);
   }
   /** All states, exact half-open START bounds. Caller materializes local dates for UI. */
   async listAppointments(businessId: string, input: unknown = {}): Promise<StoredAppointment[]> {
-    const scope = appointmentId.safeParse(businessId), filters = appointmentHistoryFilter.safeParse(input);
-    if (!scope.success || !filters.success) throw new AppointmentError("INVALID_INPUT");
-    const value = filters.data;
-    return (await this.appointmentRows(scope.data, { ...(value.clientId ? { clientId: value.clientId } : {}),
-      ...(value.from ? { fromMs: parseInstantMs(value.from)! } : {}), ...(value.to ? { toMs: parseInstantMs(value.to)! } : {}),
-    })).map(appointmentDto);
-  }
-  private async appointmentAction(businessId: string, id: string, trusted: AppointmentActionContext) {
-    const ownedId = appointmentId.safeParse(id), facts = appointmentActionFacts.safeParse(trusted);
-    if (!ownedId.success || !facts.success) throw new AppointmentError("INVALID_INPUT");
-    const current = await this.getAppointment(businessId, ownedId.data);
-    if (!current) throw new AppointmentError("UNKNOWN_OWNED_ID");
-    return { current, facts: facts.data };
+    return appointments.listAppointments(this.db, businessId, input);
   }
   /** Caller establishes action facts; only notes change, including on started Confirmed bookings. */
   async setAppointmentNotes(businessId: string, id: string, input: unknown, trusted: AppointmentActionContext): Promise<StoredAppointment> {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const parsed = z.object({ notes: z.string().refine(text => !text.includes("\u0000")).nullable() }).safeParse(input);
-    if (!parsed.success) throw new AppointmentError("INVALID_INPUT");
-    const { current } = await this.appointmentAction(businessId, id, trusted);
-    if (!canEditAppointmentNotes(current.state).ok) throw new AppointmentError("NOTES_LOCKED");
-    if (current.notes === parsed.data.notes) return current;
-    const updated = await this.db`update appointments set notes=${parsed.data.notes},updated_at=now()
-      where business_id=${businessId} and id=${current.id} and state='confirmed' returning id`;
-    if (!updated.length) throw new AppointmentError("STATE_LOCKED");
-    return { ...current, notes: parsed.data.notes };
+    return appointments.setAppointmentNotes(this.db, this, businessId, id, input, trusted);
   }
   /** No automatic states/reopening. Creation origin does not establish this action's channel. */
   async transitionAppointment(businessId: string, id: string, target: unknown, trusted: AppointmentActionContext): Promise<StoredAppointment> {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const parsed = AppointmentStateSchema.safeParse(target);
-    if (!parsed.success) throw new AppointmentError("INVALID_INPUT");
-    const { current, facts } = await this.appointmentAction(businessId, id, trusted);
-    const policy = canTransitionAppointment(current, parsed.data, facts);
-    if (!policy.ok) {
-      const errors = { notes_locked: "NOTES_LOCKED", not_transition: "NOT_TRANSITION", invalid_action_context: "INVALID_ACTION_CONTEXT",
-        attendance_forbidden: "ATTENDANCE_FORBIDDEN", invalid_attendance_time: "INVALID_ATTENDANCE_TIME",
-        before_start: "BEFORE_START", confirmation_required: "CONFIRMATION_REQUIRED" } as const;
-      throw new AppointmentError(errors[policy.error]);
-    }
-    const updated = await this.db`update appointments set state=${parsed.data},updated_at=now()
-      where business_id=${businessId} and id=${current.id} and state='confirmed' returning id`;
-    if (!updated.length) throw new AppointmentError("STATE_LOCKED");
-    return { ...current, state: parsed.data };
+    return appointments.transitionAppointment(this.db, this, businessId, id, target, trusted);
   }
   /** Caller UoW owns client + appointment + audit/outbox rollback; no messaging effects here.
    * Shared business lock precedes every lookup. SQL GiST remains the raw-writer backstop.
    * Only trusted explicit customer expression sets preference; absence defaults to null.
    */
   async createAppointment(businessId: string, input: unknown, trusted: AppointmentCreationContext): Promise<StoredAppointment> {
-    await this.acquireBusinessCalendarLock({ businessId });
-    businessId = businessId.toLowerCase();
-    const parsed = appointmentCommand.safeParse(input);
-    const facts = appointmentChangeFacts.extend({ origin: AppointmentOriginSchema }).safeParse(trusted);
-    if (!parsed.success || !facts.success) throw new AppointmentError("INVALID_INPUT");
-    const value = parsed.data;
-    const [service] = await this.db<CatalogService[]>`select id,name,description,duration_minutes "durationMinutes",
-      price_ars::float8 "priceArs",status from services where business_id=${businessId} and id=${value.serviceId} and deleted_at is null`;
-    const resource = await this.getResource(businessId, value.resourceId);
-    const client = value.clientId ? await this.getClientById(value.clientId) : null;
-    if (!service || !resource || (value.clientId && !client)) throw new AppointmentError("UNKNOWN_OWNED_ID");
-    if (!isResourceEligibleForService(resource, service))
-      throw new AppointmentError("INELIGIBLE_CATALOG");
-    const preference = await this.appointmentPreference(businessId, null, facts.data.customerResourceExpression);
-    const terms = captureAppointmentTerms(service, resource);
-    const startMs = parseInstantMs(value.startRaw)!;
-    const endMs = startMs + terms.durationMinutes * 60000;
-    const calendar = await this.getBusinessCalendar(businessId);
-    const closures = await this.listBusinessClosures(businessId);
-    if (!Number.isSafeInteger(endMs) || endMs <= startMs || endMs > 253402387139999
-      || !isNewStartAllowed({ start: value.startRaw, durationMinutes: terms.durationMinutes,
-        businessHours: calendar.weeklySchedule ?? {}, resourceHours: resource.weeklySchedule,
-        closedDates: closures.flatMap(closure => closure.kind === "date" ? [closure.date] : []),
-        closedIntervals: closures.flatMap(closure => closure.kind === "interval" ? [{ start: closure.start, end: closure.end }] : []),
-      }, facts.data.now)) throw new AppointmentError("UNAVAILABLE");
-    // Compare exact epochs directly; irrelevant historical UTC year-zero busy rows
-    // cannot be round-tripped through an external positive-year Instant string.
-    const busy = await this.db`select id from appointments where business_id=${businessId}
-      and resource_id=${resource.id} and state='confirmed' and start_ms<${endMs} and end_ms>${startMs} limit 1`;
-    if (busy.length) throw new AppointmentError("BUSY");
-    try {
-      const selectedClient = client ?? await this.createClient(businessId, value.newClient!);
-      const [saved] = await this.db<{ id: string }[]>`insert into appointments
-        (business_id,client_id,service_id,resource_id,service_label,resource_label,price_ars,duration_minutes,
-         start_raw,start_ms,end_ms,state,origin,notes,customer_resource_preference_id)
-        values(${businessId},${selectedClient.id},${terms.serviceId},${terms.resourceId},${terms.serviceName},${terms.resourceName},
-          ${terms.priceArs},${terms.durationMinutes},${value.startRaw},${startMs},${endMs},'confirmed',${facts.data.origin},${value.notes ?? null},${preference}) returning id`;
-      return (await this.getAppointment(businessId, saved!.id))!;
-    } catch (error) {
-      const code = (error as { code?: string }).code;
-      if (code === "23P01") throw new AppointmentError("BUSY");
-      if (code === "23505") throw new AppointmentError("CLIENT_CONFLICT");
-      throw error;
-    }
+    return appointments.createAppointment(this.db, this, businessId, input, trusted);
   }
   /** Business-scoped advisory read, in one tenant transaction under the shared calendar lock.
    * Caller must bind the real sender/customer before supplying reschedule context (T14/T15).
@@ -380,81 +160,7 @@ export class PostgresRepositories {
    */
   async listAppointmentAvailability(businessId: string, input: unknown,
     trusted: AppointmentAvailabilityContext = {}): Promise<AppointmentAvailabilityOption[]> {
-    await this.acquireBusinessCalendarLock({ businessId });
-    businessId = businessId.toLowerCase();
-    const parsed = appointmentAvailabilityCommand.safeParse(input);
-    const ownedId = trusted.appointmentId === undefined ? undefined : appointmentId.safeParse(trusted.appointmentId);
-    if (!parsed.success || (ownedId && !ownedId.success) || (trusted.clock !== undefined && typeof trusted.clock !== "function"))
-      throw new AppointmentError("INVALID_INPUT");
-    const clock = InstantSchema.safeParse((trusted.clock ?? (() => new Date().toISOString()))());
-    if (!clock.success) throw new AppointmentError("INVALID_INPUT");
-    const now = clock.data;
-    const current = ownedId?.success ? await this.getAppointment(businessId, ownedId.data) : null;
-    if (ownedId && !current) throw new AppointmentError("UNKNOWN_OWNED_ID");
-    if (current) {
-      if (current.state !== "confirmed") throw new AppointmentError("STATE_LOCKED");
-      const saved = AppointmentTermsSnapshotSchema.safeParse(current.terms);
-      if (!saved.success || parseInstantMs(current.startsAt) !== current.startMs
-        || !Number.isSafeInteger(current.endMs) || current.endMs <= current.startMs
-        || current.endMs > 253402387139999 || current.endMs !== current.startMs + saved.data.durationMinutes * 60000)
-        throw new AppointmentError("INVALID_INPUT");
-      if (parseInstantMs(now)! >= current.startMs) throw new AppointmentError("STARTED_STRUCTURE_LOCKED");
-    }
-    const value = parsed.data;
-    const [service] = await this.db<CatalogService[]>`select id,name,description,duration_minutes "durationMinutes",
-      price_ars::float8 "priceArs",status from services where business_id=${businessId} and id=${value.serviceId} and deleted_at is null`;
-    const resources = value.resourceId
-      ? [await this.getResource(businessId, value.resourceId)] : await this.listResources(businessId);
-    if (!service || resources.some(resource => !resource)) throw new AppointmentError("UNKNOWN_OWNED_ID");
-    const eligible = resources.filter((resource): resource is CatalogResource =>
-      resource !== null && isResourceEligibleForService(resource, service));
-    if (!eligible.length) return [];
-    const calendar = await this.getBusinessCalendar(businessId), closures = await this.listBusinessClosures(businessId);
-    const choices: AppointmentAvailabilityOption[] = [];
-    for (const point of materializeArgentinaDayGrid(value.date)) {
-      for (const resource of eligible) {
-        const facts = { now, businessHours: calendar.weeklySchedule ?? {}, resourceHours: resource.weeklySchedule,
-          closedDates: closures.flatMap(closure => closure.kind === "date" ? [closure.date] : []),
-          closedIntervals: closures.flatMap(closure => closure.kind === "interval" ? [{ start: closure.start, end: closure.end }] : []),
-        };
-        const plan = current ? prepareAppointmentChange(current, { startsAt: point.start, service, resource }, facts) : null;
-        if (plan && !plan.ok) continue;
-        const terms = plan?.ok ? plan.terms : captureAppointmentTerms(service, resource);
-        const startRaw = plan?.ok ? plan.startsAt : point.start;
-        const endMs = point.startMs + terms.durationMinutes * 60000;
-        const interval = { ...facts, start: startRaw, durationMinutes: terms.durationMinutes };
-        // Even a planner no-op must be a live, structurally available alternative here.
-        if (!Number.isSafeInteger(endMs) || point.startMs < -62135683140000 || endMs <= point.startMs || endMs > 253402387139999
-          || !isStructurallyAvailable(interval)
-          || ((!current || point.startMs !== current.startMs) && !isNewStartAllowed(interval, now))) continue;
-        choices.push({ start: startRaw, startMs: point.startMs, endMs, resourceId: resource.id, terms });
-      }
-    }
-    if (!choices.length) return choices;
-    // Bound actual planned intervals: unchanged-service reschedules retain saved duration,
-    // and the last candidate may end after midnight (or near the supported epoch limit).
-    const earliestStart = choices.reduce((earliest, choice) => Math.min(earliest, choice.startMs), Infinity);
-    const latestEnd = choices.reduce((latest, choice) => Math.max(latest, choice.endMs), -Infinity);
-    // Numeric occupancy only: raw busy strings need not be coherent or positive-year ISO.
-    const busy = await this.db<{ resourceId: string; startMs: string; endMs: string }[]>`
-      select resource_id "resourceId",start_ms "startMs",end_ms "endMs" from appointments
-      where business_id=${businessId} and state='confirmed' and resource_id in ${this.db(eligible.map(resource => resource.id))}
-        and (${current?.id ?? null}::uuid is null or id<>${current?.id ?? null}::uuid)
-        and start_ms<${latestEnd} and end_ms>${earliestStart}`;
-    const busyByResource = new Map<string, EpochInterval[]>();
-    for (const row of busy) {
-      const intervals = busyByResource.get(row.resourceId) ?? [];
-      intervals.push({ startMs: Number(row.startMs), endMs: Number(row.endMs) });
-      busyByResource.set(row.resourceId, intervals);
-    }
-    return choices.filter(choice => !busyByResource.get(choice.resourceId)?.some(interval =>
-      interval.startMs < choice.endMs && interval.endMs > choice.startMs));
-  }
-  private async appointmentPreference(businessId: string, previous: string | null, expression?: CustomerResourcePreferenceExpression) {
-    const preference = resolveCustomerResourcePreference(previous, expression);
-    if (expression?.kind === "chosen" && !(await this.getResource(businessId, preference!)))
-      throw new AppointmentError("UNKNOWN_OWNED_ID");
-    return preference;
+    return appointments.listAppointmentAvailability(this.db, this, businessId, input, trusted);
   }
   /** Otherwise-authorized structural changes or explicit upcoming customer-preference metadata.
    * Preference-only changes do not require active catalogs/hours or promise availability;
@@ -463,289 +169,75 @@ export class PostgresRepositories {
    * The existing T07 planner owns identity/epoch no-op, agreed-term and time policy.
    */
   async changeAppointment(businessId: string, id: string, input: unknown, trusted: AppointmentChangeContext): Promise<StoredAppointment> {
-    await this.acquireBusinessCalendarLock({ businessId });
-    businessId = businessId.toLowerCase();
-    const ownedId = appointmentId.safeParse(id), parsed = appointmentChangeCommand.safeParse(input);
-    const facts = appointmentChangeFacts.safeParse(trusted);
-    if (!ownedId.success || !parsed.success || !facts.success) throw new AppointmentError("INVALID_INPUT");
-    id = ownedId.data;
-    const current = await this.getAppointment(businessId, id);
-    if (!current) throw new AppointmentError("UNKNOWN_OWNED_ID");
-    if (current.state !== "confirmed") throw new AppointmentError("STATE_LOCKED");
-    const savedTerms = AppointmentTermsSnapshotSchema.safeParse(current.terms);
-    if (!savedTerms.success || parseInstantMs(current.startsAt) !== current.startMs
-      || !Number.isSafeInteger(current.endMs) || current.endMs <= current.startMs
-      || current.endMs > 253402387139999 || current.endMs !== current.startMs + savedTerms.data.durationMinutes * 60000)
-      throw new AppointmentError("INVALID_INPUT");
-    const preference = await this.appointmentPreference(businessId, current.customerResourcePreference, facts.data.customerResourceExpression);
-    const preferenceChanged = preference !== current.customerResourcePreference;
-    // A validated stored no-op needs no live catalog lookup or snapshot refresh.
-    if (parsed.data.serviceId === savedTerms.data.serviceId && parsed.data.resourceId === savedTerms.data.resourceId
-      && parseInstantMs(parsed.data.startRaw) === current.startMs && !preferenceChanged) return current;
-    if (preferenceChanged && parseInstantMs(facts.data.now)! >= current.startMs)
-      throw new AppointmentError("STARTED_STRUCTURE_LOCKED");
-    const [service] = await this.db<CatalogService[]>`select id,name,description,duration_minutes "durationMinutes",
-      price_ars::float8 "priceArs",status from services where business_id=${businessId} and id=${parsed.data.serviceId} and deleted_at is null`;
-    const resource = await this.getResource(businessId, parsed.data.resourceId);
-    if (!service || !resource) throw new AppointmentError("UNKNOWN_OWNED_ID");
-    const calendar = await this.getBusinessCalendar(businessId);
-    const closures = await this.listBusinessClosures(businessId);
-    const plan = prepareAppointmentChange(current, { startsAt: parsed.data.startRaw, service, resource }, {
-      now: facts.data.now, businessHours: calendar.weeklySchedule ?? {}, resourceHours: resource.weeklySchedule,
-      closedDates: closures.flatMap(closure => closure.kind === "date" ? [closure.date] : []),
-      closedIntervals: closures.flatMap(closure => closure.kind === "interval" ? [{ start: closure.start, end: closure.end }] : []),
-    });
-    if (!plan.ok) {
-      const errors = { state_locked: "STATE_LOCKED", invalid_change_input: "INVALID_INPUT",
-        started_structure_locked: "STARTED_STRUCTURE_LOCKED", ineligible_catalog: "INELIGIBLE_CATALOG",
-        structural_unavailable: "UNAVAILABLE", lead_time: "LEAD_TIME" } as const;
-      throw new AppointmentError(errors[plan.error]);
-    }
-    if (!plan.changed && !preferenceChanged) return current;
-    const startMs = parseInstantMs(plan.startsAt)!, endMs = startMs + plan.terms.durationMinutes * 60000;
-    if (!Number.isSafeInteger(endMs) || endMs <= startMs || endMs > 253402387139999)
-      throw new AppointmentError("UNAVAILABLE");
-    const busy = await this.db`select id from appointments where business_id=${businessId} and resource_id=${plan.terms.resourceId}
-      and state='confirmed' and id<>${id} and start_ms<${endMs} and end_ms>${startMs} limit 1`;
-    if (busy.length) throw new AppointmentError("BUSY");
-    try {
-      const updated = await this.db`update appointments set service_id=${plan.terms.serviceId},resource_id=${plan.terms.resourceId},
-        service_label=${plan.terms.serviceName},resource_label=${plan.terms.resourceName},price_ars=${plan.terms.priceArs},
-        duration_minutes=${plan.terms.durationMinutes},start_raw=${plan.startsAt},start_ms=${startMs},end_ms=${endMs},
-        customer_resource_preference_id=${preference},updated_at=now()
-        where business_id=${businessId} and id=${id} and state='confirmed' returning id`;
-      if (!updated.length) throw new AppointmentError("STATE_LOCKED");
-      return (await this.getAppointment(businessId, id))!;
-    } catch (error) {
-      if ((error as { code?: string }).code === "23P01") throw new AppointmentError("BUSY");
-      throw error;
-    }
+    return appointments.changeAppointment(this.db, this, businessId, id, input, trusted);
   }
   async getBusinessCalendar(businessId: string): Promise<{ weeklySchedule: WeeklySchedule | null }> {
-    const [row] = await this.db<{ weeklySchedule: WeeklySchedule }[]>`
-      select weekly_schedule "weeklySchedule" from business_calendars where business_id=${businessId}`;
-    return { weeklySchedule: row ? WeeklyScheduleSchema.parse(row.weeklySchedule) : null };
-  }
-  /** Called only after the shared early lock; B2 protects Confirmed only, unlike B1 resources. */
-  private async futureConfirmedIntervals(businessId: string, nowMs: number): Promise<EpochInterval[]> {
-    if (!Number.isSafeInteger(nowMs)) throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
-    const rows = await this.db<SavedAppointmentInterval[]>`select start_raw "startRaw",start_ms "startMs",end_ms "endMs",duration_minutes "durationMinutes"
-      from appointments where business_id=${businessId} and state='confirmed' and start_ms>${nowMs}`;
-    return rows.map(appointmentInterval);
-  }
-  private async guardClosureAppointments(businessId: string, input: BusinessClosureInput, nowMs: number) {
-    if ((await this.futureConfirmedIntervals(businessId, nowMs)).some(interval => !isEpochIntervalOpenForClosures(interval, [input])))
-      throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
+    return businessCalendar.getBusinessCalendar(this.db, businessId);
   }
   /** Transaction required; uses the same early lock as public calendar/closure callers. */
   async saveBusinessCalendar(businessId: string, weeklySchedule: WeeklySchedule): Promise<BusinessCalendar> {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const nowMs = Date.now();
-    const valid = WeeklyScheduleSchema.parse(weeklySchedule);
-    const resources = await this.listResources(businessId);
-    if (resources.some(resource => !isResourceScheduleWithinBusiness(resource.weeklySchedule, valid)))
-      throw new ResourceCatalogError("HOURS_CONFLICT");
-    if ((await this.futureConfirmedIntervals(businessId, nowMs)).some(interval => !isEpochIntervalWithinWeeklySchedule(interval, valid)))
-      throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
-    const [row] = await this.db<BusinessCalendar[]>`
-      insert into business_calendars(business_id,weekly_schedule) values(${businessId},${this.db.json(asDbJson(valid))})
-      on conflict(business_id) do update set weekly_schedule=excluded.weekly_schedule
-      returning weekly_schedule "weeklySchedule"`;
-    return row!;
+    return businessCalendar.saveBusinessCalendar(this.db, this, businessId, weeklySchedule);
   }
   async listBusinessClosures(businessId: string): Promise<BusinessClosure[]> {
-    const rows = await this.db<ClosureRow[]>`select id,kind,closed_date::text date,start_raw start,end_raw "end"
-      from business_calendar_closures where business_id=${businessId} order by id`;
-    return rows.map(closureDto);
+    return businessCalendar.listBusinessClosures(this.db, businessId);
   }
   /** All closure mutations require the shared early calendar lock in the caller's UoW. */
   async createBusinessClosure(businessId: string, input: BusinessClosureInput): Promise<BusinessClosure> {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const nowMs = Date.now();
-    const v = closureValues(input);
-    await this.guardClosureAppointments(businessId, input, nowMs);
-    const [row] = await this.db<ClosureRow[]>`insert into business_calendar_closures
-      (business_id,kind,closed_date,start_raw,end_raw,start_ms,end_ms)
-      values(${businessId},${v.kind},${v.date},${v.start},${v.end},${v.startMs},${v.endMs})
-      returning id,kind,closed_date::text date,start_raw start,end_raw "end"`;
-    return closureDto(row!);
+    return businessCalendar.createBusinessClosure(this.db, this, businessId, input);
   }
   async updateBusinessClosure(businessId: string, id: string, input: BusinessClosureInput): Promise<BusinessClosure | null> {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const nowMs = Date.now();
-    const [owned] = await this.db`select id from business_calendar_closures where business_id=${businessId} and id=${id}`;
-    if (!owned) return null;
-    const v = closureValues(input);
-    await this.guardClosureAppointments(businessId, input, nowMs);
-    const [row] = await this.db<ClosureRow[]>`update business_calendar_closures set kind=${v.kind},closed_date=${v.date},
-      start_raw=${v.start},end_raw=${v.end},start_ms=${v.startMs},end_ms=${v.endMs}
-      where business_id=${businessId} and id=${id}
-      returning id,kind,closed_date::text date,start_raw start,end_raw "end"`;
-    return row ? closureDto(row) : null;
+    return businessCalendar.updateBusinessClosure(this.db, this, businessId, id, input);
   }
   async deleteBusinessClosure(businessId: string, id: string): Promise<boolean> {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const rows = await this.db`delete from business_calendar_closures where business_id=${businessId} and id=${id} returning id`;
-    return rows.length > 0;
+    return businessCalendar.deleteBusinessClosure(this.db, this, businessId, id);
   }
   listResources(businessId: string) {
-    return this.db<CatalogResource[]>`select r.id,r.name,r.description,r.status,r.weekly_schedule "weeklySchedule",
-      array(select rs.service_id::text from resource_services rs join services s on (s.business_id,s.id)=(rs.business_id,rs.service_id)
-        where rs.business_id=r.business_id and rs.resource_id=r.id and s.deleted_at is null order by rs.service_id) "serviceIds"
-      from resources r where r.business_id=${businessId} and r.deleted_at is null order by r.normalized_name,r.id`;
+    return catalog.listResources(this.db, businessId);
   }
   async getResource(businessId: string, id: string) {
-    const [row] = await this.db<CatalogResource[]>`select r.id,r.name,r.description,r.status,r.weekly_schedule "weeklySchedule",
-      array(select rs.service_id::text from resource_services rs join services s on (s.business_id,s.id)=(rs.business_id,rs.service_id)
-        where rs.business_id=r.business_id and rs.resource_id=r.id and s.deleted_at is null order by rs.service_id) "serviceIds"
-      from resources r where r.business_id=${businessId} and r.id=${id} and r.deleted_at is null`;
-    return row ?? null;
-  }
-  private async validateResource(businessId: string, input: ResourceInput) {
-    const valid = ResourceInputSchema.parse(input);
-    const calendar = await this.getBusinessCalendar(businessId);
-    if (!isResourceScheduleWithinBusiness(valid.weeklySchedule, calendar.weeklySchedule ?? {}))
-      throw new ResourceCatalogError("HOURS_CONFLICT");
-    if (valid.serviceIds.length) {
-      const services = await this.db`select id from services where business_id=${businessId} and deleted_at is null and id in ${this.db(valid.serviceIds)}`;
-      if (services.length !== valid.serviceIds.length) throw new ResourceCatalogError("UNKNOWN_SERVICE");
-    }
-    return valid;
-  }
-  private async replaceResourceServices(businessId: string, id: string, serviceIds: string[]) {
-    await this.db`delete from resource_services where business_id=${businessId} and resource_id=${id}`;
-    if (serviceIds.length) await this.db`insert into resource_services ${this.db(serviceIds.map(serviceId => ({
-      business_id: businessId, resource_id: id, service_id: serviceId,
-    })))}`;
+    return catalog.getResource(this.db, businessId, id);
   }
   /** All mutations require a tenant transaction; assignments and caller audit/outbox share its rollback. */
   async createResource(businessId: string, input: ResourceInput): Promise<CatalogResource> {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const valid = await this.validateResource(businessId, input);
-    const [row] = await this.db<{ id: string }[]>`insert into resources(business_id,name,description,weekly_schedule)
-      values(${businessId},${valid.name},${valid.description ?? null},${this.db.json(asDbJson(valid.weeklySchedule))}) returning id`;
-    await this.replaceResourceServices(businessId, row!.id, valid.serviceIds);
-    return (await this.getResource(businessId, row!.id))!;
-  }
-  /** Protect all strictly future states, using agreed appointment duration rather than current catalog terms. */
-  private async guardResourceAppointments(businessId: string, current: CatalogResource, proposed: ResourceInput, nowMs: number) {
-    const hoursChanged = JSON.stringify(normalizeWeeklySchedule(current.weeklySchedule))
-      !== JSON.stringify(normalizeWeeklySchedule(proposed.weeklySchedule));
-    const removedAssignment = current.serviceIds.some(serviceId => !proposed.serviceIds.includes(serviceId));
-    if (!hoursChanged && !removedAssignment) return;
-    if (!Number.isSafeInteger(nowMs)) throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
-    const appointments = await this.db<(SavedAppointmentInterval & { serviceId: string })[]>`
-      select service_id "serviceId",start_raw "startRaw",start_ms "startMs",end_ms "endMs",duration_minutes "durationMinutes"
-      from appointments where business_id=${businessId} and resource_id=${current.id} and start_ms>${nowMs}`;
-    for (const appointment of appointments) {
-      appointmentInterval(appointment); // Hostile raw SQL must not cause a false pass.
-      if (!proposed.serviceIds.includes(appointment.serviceId)
-        || !isStructurallyAvailable({ start: appointment.startRaw, durationMinutes: appointment.durationMinutes,
-          businessHours: proposed.weeklySchedule, resourceHours: proposed.weeklySchedule }))
-        throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
-    }
+    return catalog.createResource(this.db, this, businessId, input);
   }
   async updateResource(businessId: string, id: string, input: ResourceInput): Promise<CatalogResource | null> {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const nowMs = Date.now(); // One server clock, after locking; never a request/model field.
-    const current = await this.getResource(businessId, id);
-    if (!current) return null;
-    const valid = await this.validateResource(businessId, input);
-    await this.guardResourceAppointments(businessId, current, valid, nowMs);
-    await this.db`update resources set name=${valid.name},description=${valid.description ?? null},
-      weekly_schedule=${this.db.json(asDbJson(valid.weeklySchedule))} where business_id=${businessId} and id=${id} and deleted_at is null`;
-    await this.replaceResourceServices(businessId, id, valid.serviceIds);
-    return this.getResource(businessId, id);
+    return catalog.updateResource(this.db, this, businessId, id, input);
   }
   async setResourceStatus(businessId: string, id: string, status: CatalogResource["status"]): Promise<CatalogResource | null> {
-    await this.acquireBusinessCalendarLock({ businessId });
-    await this.db`update resources set status=${status} where business_id=${businessId} and id=${id} and deleted_at is null`;
-    return this.getResource(businessId, id);
+    return catalog.setResourceStatus(this.db, this, businessId, id, status);
   }
   listClients(q = "") {
-    const pattern = literalSearch(q);
-    return this.db<RegistryClient[]>`
-      select id,first_name "firstName",last_name "lastName",phone from clients
-      where first_name collate service_name_case ilike ${pattern}
-         or last_name collate service_name_case ilike ${pattern}
-         or phone ilike ${pattern}
-      order by lower(first_name collate service_name_case) collate "C",
-        lower(last_name collate service_name_case) collate "C",phone,id`;
+    return clients.listClients(this.db, q);
   }
   async getClientById(id: string) {
-    const [row] = await this.db<RegistryClient[]>`
-      select id,first_name "firstName",last_name "lastName",phone from clients where id=${id}`;
-    return row ?? null;
+    return clients.getClientById(this.db, id);
   }
   // Exact stored identity only: no manual-country/type inference or aliases.
   async findClientByCanonicalPhone(phone: string) {
-    const [row] = await this.db<RegistryClient[]>`
-      select id,first_name "firstName",last_name "lastName",phone from clients where phone=${phone}`;
-    return row ?? null;
+    return clients.findClientByCanonicalPhone(this.db, phone);
   }
   async createClient(businessId: string, input: ClientRegistryInput) {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const [row] = await this.db<RegistryClient[]>`
-      insert into clients(business_id,first_name,last_name,phone)
-      values(${businessId},${input.firstName},${input.lastName},${input.phone})
-      returning id,first_name "firstName",last_name "lastName",phone`;
-    return row!;
+    return clients.createClient(this.db, this, businessId, input);
   }
   async updateClient(businessId: string, id: string, input: ClientRegistryInput) {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const [row] = await this.db<RegistryClient[]>`
-      update clients set first_name=${input.firstName},last_name=${input.lastName},phone=${input.phone}
-      where business_id=${businessId} and id=${id} returning id,first_name "firstName",last_name "lastName",phone`;
-    return row ?? null;
+    return clients.updateClient(this.db, this, businessId, id, input);
   }
   listServices() {
-    return this.db<CatalogService[]>`
-      select id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status
-      from services where deleted_at is null order by normalized_name,id`;
+    return catalog.listServices(this.db);
   }
   async createService(businessId: string, input: ServiceCatalogInput) {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const [row] = await this.db<CatalogService[]>`
-      insert into services(business_id,name,description,duration_minutes,price_ars)
-      values(${businessId},${input.name},${input.description ?? null},${input.durationMinutes},${input.priceArs})
-      returning id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status`;
-    return row!;
+    return catalog.createService(this.db, this, businessId, input);
   }
   async updateService(businessId: string, id: string, input: ServiceCatalogInput) {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const [row] = await this.db<CatalogService[]>`
-      update services set name=${input.name},description=${input.description ?? null},
-      duration_minutes=${input.durationMinutes},price_ars=${input.priceArs} where business_id=${businessId} and id=${id} and deleted_at is null
-      returning id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status`;
-    return row ?? null;
+    return catalog.updateService(this.db, this, businessId, id, input);
   }
   async setServiceStatus(businessId: string, id: string, status: CatalogService["status"]) {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const [row] = await this.db<CatalogService[]>`
-      update services set status=${status} where business_id=${businessId} and id=${id} and deleted_at is null
-      returning id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status`;
-    return row ?? null;
+    return catalog.setServiceStatus(this.db, this, businessId, id, status);
   }
   /** Internal retirement only: caller UoW owns tombstone + links + audit/outbox rollback. */
   private async retireCatalogItem(businessId: string, id: string, table: "services" | "resources") {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const nowMs = Date.now();
-    const ownedId = appointmentId.safeParse(id);
-    if (!ownedId.success) return false;
-    id = ownedId.data;
-    const [owned] = await this.db`select id from ${this.db(table)} where business_id=${businessId} and id=${id} and deleted_at is null`;
-    if (!owned) return false;
-    if (!Number.isSafeInteger(nowMs)) throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
-    const column = table === "services" ? "service_id" : "resource_id";
-    // ALL states, actual assignment only. A historical preference FK does not reserve this resource.
-    const future = await this.db`select id from appointments where business_id=${businessId}
-      and ${this.db(column)}=${id} and start_ms>${nowMs} limit 1`;
-    if (future.length) throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
-    const updated = await this.db`update ${this.db(table)} set deleted_at=${new Date(nowMs)}
-      where business_id=${businessId} and id=${id} and deleted_at is null returning id`;
-    if (!updated.length) return false;
-    await this.db`delete from resource_services where business_id=${businessId} and ${this.db(column)}=${id}`;
-    return true;
+    return catalog.retireCatalogItem(this.db, this, businessId, id, table);
   }
   deleteService(businessId: string, id: string): Promise<boolean> {
     return this.retireCatalogItem(businessId, id, "services");
@@ -754,72 +246,32 @@ export class PostgresRepositories {
     return this.retireCatalogItem(businessId, id, "resources");
   }
   async platformAiInstructions() {
-    const [row] = await this.db<PlatformAiSettingsRow[]>`
-      select additional_instructions "additionalInstructions", initial_delay_seconds "initialDelaySeconds",
-        active_delay_seconds "activeDelaySeconds", inactivity_reset_seconds "inactivityResetSeconds"
-      from operational_controls where singleton`;
-    return platformAiSettings(row);
+    return agentSettings.platformAiInstructions(this.db);
   }
   async updatePlatformAiInstructions(additionalInstructions: string, replyPacing?: ReplyPacing) {
-    const policy = replyPacing === undefined ? undefined : ReplyPacingSchema.parse(replyPacing);
-    // Omitted policy columns are not written, including under concurrent instruction-only saves.
-    const values = { additional_instructions: additionalInstructions, ...(policy === undefined ? {} : {
-      initial_delay_seconds: policy.initialDelaySeconds,
-      active_delay_seconds: policy.activeDelaySeconds,
-      inactivity_reset_seconds: policy.inactivityResetSeconds,
-    }) };
-    const [row] = await this.db<PlatformAiSettingsRow[]>`
-      update operational_controls set ${this.db(values)} where singleton
-      returning additional_instructions "additionalInstructions", initial_delay_seconds "initialDelaySeconds",
-        active_delay_seconds "activeDelaySeconds", inactivity_reset_seconds "inactivityResetSeconds"`;
-    return platformAiSettings(row);
+    return agentSettings.updatePlatformAiInstructions(this.db, additionalInstructions, replyPacing);
   }
   async globalReplyPacing(): Promise<ReplyPacing> {
-    const [row] = await this.db<ReplyPacing[]>`
-      select initial_delay_seconds "initialDelaySeconds", active_delay_seconds "activeDelaySeconds",
-        inactivity_reset_seconds "inactivityResetSeconds" from operational_controls where singleton`;
-    if (!row) throw new Error("Global reply pacing singleton missing");
-    return ReplyPacingSchema.parse(row);
+    return agentSettings.globalReplyPacing(this.db);
   }
   saveBusiness(row: { id: string; name: string }) {
-    return this
-      .db`insert into businesses (id,name) values (${row.id},${row.name}) on conflict (id) do update set name=excluded.name`;
+    return business.saveBusiness(this.db, row);
   }
   saveIdentity(row: {
     email: string;
     passwordPhc: string;
     businessId: string;
   }) {
-    return this
-      .db`insert into auth_identities (normalized_email,password_phc,role,business_id) values (${row.email},${row.passwordPhc},'business_user',${row.businessId})`;
+    return identity.saveIdentity(this.db, row);
   }
   async findIdentity(email: string) {
-    return (
-      (
-        await this.db<
-          { business_id: string }[]
-        >`select business_id from auth_identities where normalized_email=${email}`
-      )[0] ?? null
-    );
+    return identity.findIdentity(this.db, email);
   }
   async admitLogin(accountHash: string): Promise<boolean> {
-    return (await this.db<{ admitted: boolean }[]>`select admit_login(${accountHash}) admitted`)[0]?.admitted === true;
+    return identity.admitLogin(this.db, accountHash);
   }
   async authIdentity(email: string) {
-    return (
-      (
-        await this.db<
-          {
-            id: string;
-            password_phc: string;
-            role: "platform_admin" | "business_user";
-            business_id: string | null;
-            active: boolean;
-            business_status: string | null;
-          }[]
-        >`select i.id,i.password_phc,i.role,i.business_id,i.active,b.status business_status from auth_identities i left join businesses b on b.id=i.business_id where normalized_email=${email}`
-      )[0] ?? null
-    );
+    return identity.authIdentity(this.db, email);
   }
   createSession(row: {
     identityId: string;
@@ -828,41 +280,22 @@ export class PostgresRepositories {
     absolute: Date;
     idle: Date;
   }) {
-    return this
-      .db`insert into web_sessions(identity_id,token_sha256,csrf_sha256,absolute_expires_at,idle_expires_at) values(${row.identityId},${row.tokenHash},${row.csrfHash},${row.absolute},${row.idle})`;
+    return identity.createSession(this.db, row);
   }
   async session(tokenHash: string) {
-    return (
-      (
-        await this.db<
-          {
-            session_id: string;
-            identity_id: string;
-            role: "platform_admin" | "business_user";
-            business_id: string | null;
-            csrf_sha256: string;
-          }[]
-        >`select s.id session_id,i.id identity_id,i.role,i.business_id,s.csrf_sha256 from web_sessions s join auth_identities i on i.id=s.identity_id left join businesses b on b.id=i.business_id where s.token_sha256=${tokenHash} and s.revoked_at is null and s.absolute_expires_at>now() and s.idle_expires_at>now() and i.active and (i.role='platform_admin' or b.status='active')`
-      )[0] ?? null
-    );
+    return identity.session(this.db, tokenHash);
   }
   touchSession(id: string, idle: Date) {
-    return this
-      .db`update web_sessions set last_seen_at=now(),idle_expires_at=least(absolute_expires_at,${idle}) where id=${id}`;
+    return identity.touchSession(this.db, id, idle);
   }
   revokeSession(tokenHash: string) {
-    return this
-      .db`update web_sessions set revoked_at=now() where token_sha256=${tokenHash} and revoked_at is null`;
+    return identity.revokeSession(this.db, tokenHash);
   }
   appendRuntimeAudit(businessId: string | null, event: SafeRuntimeEvent) {
-    return this
-      .db`select append_runtime_audit(${businessId},${event.code},${event.outcome},${event.source},${event.actorId ?? null},${event.requestId})`;
+    return events.appendRuntimeAudit(this.db, businessId, event);
   }
   async recordRuntimeEvent(businessId: string, event: SafeRuntimeEvent) {
-    if (event.severity)
-      await this
-        .db`insert into technical_events(business_id,component,code,severity,safe_details) values(${businessId},${event.source},${event.code},${event.severity},'{}')`;
-    await this.appendRuntimeAudit(businessId, event);
+    return events.recordRuntimeEvent(this.db, this, businessId, event);
   }
   async createBusinessUser(row: {
     id: string;
@@ -870,182 +303,83 @@ export class PostgresRepositories {
     email: string;
     passwordPhc: string;
   }) {
-    await this.saveBusiness(row);
-    await this.saveIdentity({
-      email: row.email,
-      passwordPhc: row.passwordPhc,
-      businessId: row.id,
-    });
+    return business.createBusinessUser(this.db, this, row);
   }
   renameBusiness(id: string, name: string) {
-    return this
-      .db`update businesses set name=${name} where id=${id} returning id`;
+    return business.renameBusiness(this.db, id, name);
   }
   async setBusinessStatus(id: string, status: string) {
-    const changed = await this
-      .db`update businesses set status=${status} where id=${id} returning id`;
-    if (!changed.length) return false;
-    await this
-      .db`update auth_identities set active=${status === "active"} where business_id=${id}`;
-    if (status === "suspended")
-      await this
-        .db`update web_sessions set revoked_at=now() where identity_id in(select id from auth_identities where business_id=${id}) and revoked_at is null`;
-    return true;
+    return business.setBusinessStatus(this.db, id, status);
   }
   async replaceBusinessPassword(id: string, passwordPhc: string) {
-    const rows = await this.db<
-      { id: string }[]
-    >`update auth_identities set password_phc=${passwordPhc} where business_id=${id} and role='business_user' returning id`;
-    if (rows[0])
-      await this
-        .db`update web_sessions set revoked_at=now() where identity_id=${rows[0].id} and revoked_at is null`;
-    return Boolean(rows[0]);
+    return business.replaceBusinessPassword(this.db, id, passwordPhc);
   }
   listBusinesses() {
-    return this
-      .db`select id,name,status,created_at "createdAt",last_technical_activity_at "lastTechnicalActivityAt",assistant_status "assistantStatus",whatsapp_status "whatsappStatus" from admin_business_status order by created_at`;
+    return business.listBusinesses(this.db);
   }
   async business(id: string) {
-    return (
-      (
-        await this
-          .db`select id,name,status,created_at "createdAt",last_technical_activity_at "lastTechnicalActivityAt" from businesses where id=${id}`
-      )[0] ?? null
-    );
+    return business.business(this.db, id);
   }
   saveProfile(businessId: string, displayName: string) {
-    return this
-      .db`insert into business_profiles (business_id,display_name) values (${businessId},${displayName}) on conflict (business_id) do update set display_name=excluded.display_name,updated_at=now()`;
+    return business.saveProfile(this.db, businessId, displayName);
   }
   async profile() {
-    return (
-      (
-        await this
-          .db`select display_name "displayName",description,address from business_profiles limit 1`
-      )[0] ?? null
-    );
+    return business.profile(this.db);
   }
   saveFullProfile(businessId: string, p: Record<string, string>) {
-    return this
-      .db`insert into business_profiles(business_id,display_name,description,address) values(${businessId},${p.displayName!},${p.description!},${p.address!}) on conflict(business_id) do update set display_name=excluded.display_name,description=excluded.description,address=excluded.address,updated_at=now()`;
+    return business.saveFullProfile(this.db, businessId, p);
   }
   saveAssistant(businessId: string, active: boolean) {
-    return this
-      .db`insert into assistant_configs (business_id,active) values (${businessId},${active}) on conflict (business_id) do update set active=excluded.active,revision=assistant_configs.revision+1,updated_at=now()`;
+    return agentSettings.saveAssistant(this.db, businessId, active);
   }
   async assistant() {
-    return (
-      (
-        await this
-          .db`select style,business_instructions "businessInstructions",active,revision from assistant_configs limit 1`
-      )[0] ?? null
-    );
+    return agentSettings.assistant(this.db);
   }
   async saveFullAssistant(
     businessId: string,
     p: Record<string, unknown>,
     expected: number,
   ) {
-    return (
-      (
-        await this
-          .db`insert into assistant_configs(business_id,style,business_instructions,active,revision) values(${businessId},${p.style as string},${p.businessInstructions as string},${p.active as boolean},1) on conflict(business_id) do update set style=excluded.style,business_instructions=excluded.business_instructions,active=excluded.active,revision=assistant_configs.revision+1,updated_at=now() where assistant_configs.revision=${expected} returning style,business_instructions "businessInstructions",active,revision`
-      )[0] ?? null
-    );
+    return agentSettings.saveFullAssistant(this.db, businessId, p, expected);
   }
   async whatsapp() {
-    return (
-      (
-        await this
-          .db`select id,lower(state) status,linked_number "linkedNumber",linked_at "linkedAt",last_connected_at "lastConnectedAt" from whatsapp_connections limit 1`
-      )[0] ?? null
-    );
+    return whatsapp.whatsapp(this.db);
   }
   saveConnection(id: string, businessId: string) {
-    return this
-      .db`insert into whatsapp_connections (id,business_id) values (${id},${businessId}) on conflict(business_id) do nothing`;
+    return whatsapp.saveConnection(this.db, id, businessId);
   }
   async connection() {
-    return (
-      (
-        await this.db<
-          { id: string; sessionPublicId: string; linkCommandId: string | null; linkPending: boolean }[]
-        >`select id,session_public_id "sessionPublicId",link_command_id "linkCommandId",link_pending "linkPending" from whatsapp_connections limit 1`
-      )[0] ?? null
-    );
+    return whatsapp.connection(this.db);
   }
   replaceLinkCode(id: string, value: SealedLinkCode, expiresAt: Date) {
-    return this
-      .db`insert into whatsapp_link_codes(connection_id,business_id,token,ciphertext,nonce,auth_tag,expires_at) values(${id},${value.businessId},${value.token},${value.ciphertext},${value.nonce},${value.tag},${expiresAt}) on conflict(connection_id) do update set token=excluded.token,ciphertext=excluded.ciphertext,nonce=excluded.nonce,auth_tag=excluded.auth_tag,expires_at=excluded.expires_at,created_at=now()`;
+    return whatsapp.replaceLinkCode(this.db, id, value, expiresAt);
   }
   async currentLinkCode(now: Date) {
-    await this.db`delete from whatsapp_link_codes where expires_at<=${now}`;
-    return (
-      (
-        await this.db<
-          {
-            businessId: string;
-            connectionId: string;
-            token: string;
-            ciphertext: Buffer;
-            nonce: Buffer;
-            tag: Buffer;
-          }[]
-        >`select business_id "businessId",connection_id "connectionId",token,ciphertext,nonce,auth_tag tag from whatsapp_link_codes where expires_at>${now} limit 1`
-      )[0] ?? null
-    );
+    return whatsapp.currentLinkCode(this.db, now);
   }
   invalidateLinkCode(id: string, token: string) {
-    return this
-      .db`delete from whatsapp_link_codes where connection_id=${id} and token=${token}`;
+    return whatsapp.invalidateLinkCode(this.db, id, token);
   }
   clearLinkCode(id: string) {
-    return this.db`delete from whatsapp_link_codes where connection_id=${id}`;
+    return whatsapp.clearLinkCode(this.db, id);
   }
   async clearWhatsAppAuth(id: string) {
-    await this.db`delete from whatsapp_auth_records where connection_id=${id}`;
-    await this
-      .db`update whatsapp_connections set wrapped_dek=null,wrapped_dek_nonce=null,wrapped_dek_tag=null,kek_version=null where id=${id}`;
+    return whatsapp.clearWhatsAppAuth(this.db, id);
   }
   async lockAuthConnection(businessId: string, id: string) {
-    const rows = await this.db`select id from whatsapp_connections where id=${id} and business_id=${businessId} for update`;
-    if (!rows.length) throw new Error("authentication connection unavailable");
+    return whatsapp.lockAuthConnection(this.db, businessId, id);
   }
   async authEnvelope(id: string) {
-    return (
-      await this.db<
-        {
-          businessId: string;
-          ciphertext: Buffer;
-          iv: Buffer;
-          tag: Buffer;
-          kekVersion: string;
-        }[]
-      >`select business_id "businessId",wrapped_dek ciphertext,wrapped_dek_nonce iv,wrapped_dek_tag tag,kek_version "kekVersion" from whatsapp_connections where id=${id} and wrapped_dek is not null`
-    )[0];
+    return whatsapp.authEnvelope(this.db, id);
   }
   async saveAuthEnvelope(
     id: string,
     value: { ciphertext: Buffer; iv: Buffer; tag: Buffer; kekVersion: string },
   ) {
-    const rows = await this
-      .db`update whatsapp_connections set wrapped_dek=${value.ciphertext},wrapped_dek_nonce=${value.iv},wrapped_dek_tag=${value.tag},kek_version=${value.kekVersion} where id=${id} and wrapped_dek is null returning id`;
-    if (!rows.length) throw new Error("authentication envelope already initialized or unavailable");
+    return whatsapp.saveAuthEnvelope(this.db, id, value);
   }
   async authRecord(id: string, name: string) {
-    return (
-      await this.db<
-        {
-          businessId: string;
-          connectionId: string;
-          name: string;
-          version: number;
-          ciphertext: Buffer;
-          iv: Buffer;
-          tag: Buffer;
-        }[]
-      >`select business_id "businessId",connection_id "connectionId",record_name name,version,ciphertext,nonce iv,auth_tag tag from whatsapp_auth_records where connection_id=${id} and record_name=${name}`
-    )[0];
+    return whatsapp.authRecord(this.db, id, name);
   }
   async saveAuthRecord(value: {
     businessId: string;
@@ -1056,147 +390,63 @@ export class PostgresRepositories {
     iv: Buffer;
     tag: Buffer;
   }) {
-    const rows = await this
-      .db`insert into whatsapp_auth_records(business_id,connection_id,record_name,version,ciphertext,nonce,auth_tag) values(${value.businessId},${value.connectionId},${value.name},${value.version},${value.ciphertext},${value.iv},${value.tag}) on conflict(business_id,connection_id,record_name) do update set version=excluded.version,ciphertext=excluded.ciphertext,nonce=excluded.nonce,auth_tag=excluded.auth_tag where whatsapp_auth_records.version=excluded.version-1 returning version`;
-    if (!rows.length) throw new Error("authentication record version conflict");
+    return whatsapp.saveAuthRecord(this.db, value);
   }
   async claimWhatsAppLink(token: string) {
-    return (
-      (
-        await this.db<
-          { command_id: string; business_id: string }[]
-        >`select * from claim_whatsapp_link_command(${token})`
-      )[0] ?? null
-    );
+    return whatsapp.claimWhatsAppLink(this.db, token);
   }
   restorableWhatsApp() {
-    return this.db<
-      { id: string; business_id: string }[]
-    >`select * from restorable_whatsapp_connections()`;
+    return whatsapp.restorableWhatsApp(this.db);
   }
   async admitWhatsAppLink(id: string, commandId: string, claim: string): Promise<boolean> {
-    const [connection] = await this.db`select id from whatsapp_connections where id=${id} for update`;
-    if (!connection) return false;
-    const [command] = await this.db`select o.id,o.link_admitted_at from outbox_events o
-      join whatsapp_connections w on w.business_id=o.business_id
-      where w.id=${id} and o.id=${commandId} and o.topic='whatsapp.link_requested'
-        and o.published_at is null and o.claim_token=${claim}
-        and o.claimed_at>now()-interval '30 seconds' for update of o`;
-    if (!command) return false;
-    if (!command.link_admitted_at) {
-      await this.clearLinkCode(id);
-      await this.clearWhatsAppAuth(id);
-      await this.db`update whatsapp_connections set link_command_id=${commandId},link_pending=true,state='LINKING',version=version+1 where id=${id}`;
-      await this.db`update outbox_events set link_admitted_at=now() where id=${commandId}`;
-    }
-    return true;
+    return whatsapp.admitWhatsAppLink(this.db, this, id, commandId, claim);
   }
   async completeWhatsAppLink(commandId: string, claim: string, ownership: string) {
-    return (await this.db<{ completed: boolean }[]>`select complete_whatsapp_link_command(${commandId},${claim},${ownership}) completed`)[0]!.completed;
+    return whatsapp.completeWhatsAppLink(this.db, commandId, claim, ownership);
   }
   async takeOverWhatsApp(id: string, owner: string, token: string, now: Date) {
-    // Match claim/finish lock ordering, then fence the old socket before reconciliation.
-    await this.db`select id from conversations where connection_id=${id} order by created_at,id for update`;
-    await this.db`update whatsapp_connections set owner_id=${owner},ownership_token=${token},heartbeat_at=${now},version=version+1 where id=${id}`;
-    const abandoned = await this.db<{ outbound_id: string; business_id: string }[]>`
-      update outbound_commands set state='delivery_unknown',failure_code='delivery_unknown',updated_at=now()
-      where connection_id=${id} and state='sending' returning outbound_id,business_id`;
-    for (const row of abandoned) await this.recordRuntimeEvent(row.business_id, {
-      code: 'whatsapp.delivery_unknown', outcome: 'failure', source: 'whatsapp-manager',
-      requestId: `outbound:${row.outbound_id}`, severity: 'error',
-    });
+    return whatsapp.takeOverWhatsApp(this.db, this, id, owner, token, now);
   }
   async lockWhatsAppOwnership(id: string, token: string): Promise<boolean> {
-    const rows = await this.db`select id from whatsapp_connections where id=${id} and ownership_token=${token} for update`;
-    return rows.length > 0;
+    return whatsapp.lockWhatsAppOwnership(this.db, id, token);
   }
   heartbeatWhatsApp(id: string, owner: string, now: Date, token?: string) {
-    return this
-      .db`update whatsapp_connections set owner_id=${owner},heartbeat_at=${now},version=version+1 where id=${id} and (${token ?? null}::uuid is null or ownership_token=${token ?? null})`;
+    return whatsapp.heartbeatWhatsApp(this.db, id, owner, now, token);
   }
   releaseWhatsApp(id: string, owner: string, token: string) {
-    return this
-      .db`update whatsapp_connections set owner_id=null,ownership_token=null,heartbeat_at=null,version=version+1 where id=${id} and owner_id=${owner} and ownership_token=${token}`;
+    return whatsapp.releaseWhatsApp(this.db, id, owner, token);
   }
   setWhatsAppState(id: string, state: string, now: Date, number?: string) {
-    return this
-      .db`update whatsapp_connections set state=${state},link_pending=case when ${state} in ('CONNECTED','LINK_REQUIRED') then false else link_pending end,linked_number=coalesce(${number ?? null},linked_number),linked_at=case when ${state}='CONNECTED' then coalesce(linked_at,${now}) else linked_at end,last_connected_at=case when ${state}='CONNECTED' then ${now} else last_connected_at end,version=version+1 where id=${id}`;
+    return whatsapp.setWhatsAppState(this.db, id, state, now, number);
   }
   /** Serialize collisions across PN and LID within this specific business connection. */
   async bindReceivedSender(businessId: string, connectionId: string, remoteJid: string, evidence: SenderEvidence): Promise<string | null> {
-    if (!validSenderEvidence(remoteJid, evidence)) return null;
-    await this.db`select pg_advisory_xact_lock(hashtextextended(${`sender:${businessId}:${connectionId}`},0))`;
-    const rows = await this.db<{ phone: string; pn_jid: string; lid_jid: string | null }[]>`
-      select phone,pn_jid,lid_jid from whatsapp_sender_bindings
-      where business_id=${businessId} and connection_id=${connectionId}
-        and (phone=${evidence.phone} or pn_jid=${evidence.pnJid} or lid_jid=${evidence.lidJid})`;
-    if (rows.some(row => row.phone !== evidence.phone || row.pn_jid !== evidence.pnJid
-      || (evidence.lidJid !== null && row.lid_jid !== null && row.lid_jid !== evidence.lidJid))) return null;
-    await this.db`insert into whatsapp_sender_bindings(business_id,connection_id,phone,pn_jid,lid_jid)
-      values(${businessId},${connectionId},${evidence.phone},${evidence.pnJid},${evidence.lidJid})
-      on conflict(business_id,connection_id,phone) do update
-      set lid_jid=coalesce(whatsapp_sender_bindings.lid_jid,excluded.lid_jid)`;
-    return evidence.phone;
+    return whatsappAgenda.bindReceivedSender(this.db, businessId, connectionId, remoteJid, evidence);
   }
   async agendaSender(messageId: string): Promise<string | null> {
-    const [row] = await this.db<{ phone: string }[]>`select s.phone from whatsapp_received_senders s
-      join messages m on (m.business_id,m.id,m.connection_id)=(s.business_id,s.message_id,s.connection_id)
-      join whatsapp_sender_bindings b on (b.business_id,b.connection_id,b.phone)=(s.business_id,s.connection_id,s.phone)
-      where s.message_id=${messageId} and m.direction='inbound'`;
-    return row?.phone ?? null;
+    return whatsappAgenda.agendaSender(this.db, messageId);
   }
   async lockAgendaDialogue(businessId: string, connectionId: string, phone: string): Promise<AgendaDialogue> {
-    await this.db`select pg_advisory_xact_lock(hashtextextended(${`agenda:${businessId}:${connectionId}:${phone}`},0))`;
-    const [row] = await this.db<{ dialogue: AgendaDialogue }[]>`select dialogue from whatsapp_agenda_dialogues
-      where business_id=${businessId} and connection_id=${connectionId} and phone=${phone}`;
-    return row?.dialogue ?? emptyAgendaDialogue();
+    return whatsappAgenda.lockAgendaDialogue(this.db, businessId, connectionId, phone);
   }
   async saveAgendaDialogue(businessId: string, connectionId: string, phone: string, dialogue: AgendaDialogue) {
-    await this.db`insert into whatsapp_agenda_dialogues(business_id,connection_id,phone,dialogue)
-      values(${businessId},${connectionId},${phone},${this.db.json(asDbJson(dialogue))})
-      on conflict(business_id,connection_id,phone) do update set dialogue=excluded.dialogue,updated_at=now()`;
+    return whatsappAgenda.saveAgendaDialogue(this.db, businessId, connectionId, phone, dialogue);
   }
   async lockAgendaSource(messageId: string) {
-    await this.db`select c.id from conversations c join messages m on m.conversation_id=c.id
-      where m.id=${messageId} for update of c`;
-    return this.loadAiMessage(messageId, true);
+    return whatsappAgenda.lockAgendaSource(this.db, this, messageId);
   }
   async agendaQuoteDelivered(outboundId: string | null, connectionId: string, phone: string): Promise<boolean> {
-    if (!outboundId) return false;
-    const [row] = await this.db`select o.outbound_id from outbound_commands o
-      join whatsapp_received_senders s on s.message_id=o.source_message_id and s.business_id=o.business_id
-      where o.outbound_id=${outboundId} and o.connection_id=${connectionId} and s.phone=${phone} and o.state='sent'`;
-    return !!row;
+    return whatsappAgenda.agendaQuoteDelivered(this.db, outboundId, connectionId, phone);
   }
   async recordAgendaReceipt(businessId: string, messageId: string, outboundId: string, operation: string) {
-    await this.db`insert into whatsapp_agenda_receipts(business_id,message_id,outbound_id,operation)
-      values(${businessId},${messageId},${outboundId},${operation})`;
+    return whatsappAgenda.recordAgendaReceipt(this.db, businessId, messageId, outboundId, operation);
   }
   /** Metadata-only expression does not need an active catalog or reserve capacity. */
   async setAgendaPreference(businessId: string, id: string, resourceId: string | null, now: string) {
-    await this.acquireBusinessCalendarLock({ businessId });
-    const current = await this.getAppointment(businessId, id);
-    if (!current) throw new AppointmentError("UNKNOWN_OWNED_ID");
-    if (current.state !== "confirmed") throw new AppointmentError("STATE_LOCKED");
-    if (Date.parse(now) >= current.startMs) throw new AppointmentError("STARTED_STRUCTURE_LOCKED");
-    if (resourceId !== null && !(await this.getResource(businessId, resourceId))) throw new AppointmentError("UNKNOWN_OWNED_ID");
-    await this.db`update appointments set customer_resource_preference_id=${resourceId},updated_at=now()
-      where business_id=${businessId} and id=${id} and state='confirmed'`;
-    return { ...current, customerResourcePreference: resourceId };
+    return whatsappAgenda.setAgendaPreference(this.db, this, businessId, id, resourceId, now);
   }
   async routeSession(session: string) {
-    return (
-      (
-        await this.db<
-          {
-            business_id: string;
-            connection_id: string;
-            business_status: "active" | "suspended";
-            assistant_active: boolean;
-          }[]
-        >`select * from route_whatsapp_session(${session}::uuid)`
-      )[0] ?? null
-    );
+    return messaging.routeSession(this.db, session);
   }
   async ingestInbound(input: {
     businessId: string;
@@ -1208,141 +458,13 @@ export class PostgresRepositories {
     classification: string;
     senderEvidence?: SenderEvidence;
   }) {
-    const seen = await this
-      .db`insert into inbox_events(business_id,source,stable_key) values(${input.businessId},'baileys',${input.providerId}) on conflict do nothing returning id`;
-    if (!seen.length) return null;
-    const senderPhone = input.classification === "accepted" && input.senderEvidence
-      ? await this.bindReceivedSender(input.businessId, input.connectionId, input.remoteJid, input.senderEvidence) : null;
-    const businessText = input.classification === "accepted_business";
-    if (input.classification !== "accepted" && !businessText) {
-      await this
-        .db`insert into technical_events(business_id,component,code,severity) values(${input.businessId},'whatsapp-manager',${input.classification},'info')`;
-      return { duplicate: false };
-    }
-    const conversation = (
-      await this.db<
-        { id: string; reply_due_at: Date | null; last_reply_at: Date | null; last_exchange_at: Date | null; accepted_at: Date }[]
-      >`insert into conversations(business_id,connection_id,remote_jid) values(${input.businessId},${input.connectionId},${input.remoteJid}) on conflict(business_id,connection_id,remote_jid) do update set remote_jid=excluded.remote_jid returning id,reply_due_at,last_reply_at,last_exchange_at,clock_timestamp() accepted_at`
-    )[0]!;
-    // The upsert holds the conversation lock, shared with generation save,
-    // outbound claim and confirmation. Recheck echo identity after that lock.
-    // Identity outlives delivery state: even a late echo after a terminal
-    // failure must not masquerade as manual input and cancel fresh work.
-    if (businessText) {
-      const echo = await this.db`select outbound_id from outbound_commands where business_id=${input.businessId} and connection_id=${input.connectionId} and conversation_id=${conversation.id} and (outbound_id::text=${input.providerId} or provider_message_id=${input.providerId})`;
-      const persisted = await this.db`select id from messages where business_id=${input.businessId} and connection_id=${input.connectionId} and provider_message_id=${input.providerId} and direction='outbound'`;
-      if (echo.length || persisted.length) return { duplicate: false, generatedEcho: true };
-    }
-    const sequence = Number(
-      (
-        await this.db<
-          { sequence: string }[]
-        >`update conversations set next_sequence=next_sequence+1 where id=${conversation.id} returning next_sequence-1 sequence`
-      )[0]!.sequence,
-    );
-    if (businessText) {
-      await this.db`insert into messages(business_id,conversation_id,connection_id,provider_message_id,sequence,direction,raw_text,received_at,processing_state) values(${input.businessId},${conversation.id},${input.connectionId},${input.providerId},${sequence},'outbound',${input.text!},${input.receivedAt},'sent')`;
-      await this.db`update conversations set latest_inbound_id=null,reply_due_at=null,last_reply_at=${conversation.accepted_at},last_exchange_at=${conversation.accepted_at} where id=${conversation.id}`;
-      await this.db`update messages set processing_state='superseded' where conversation_id=${conversation.id} and direction='inbound' and processing_state in ('pending','generated') and not exists(select 1 from outbound_commands o where o.source_message_id=messages.id and o.state in ('sending','sent','delivery_unknown'))`;
-      await this.db`update outbound_commands set state='failed',failure_code='manual_reply',updated_at=now() where conversation_id=${conversation.id} and state='generated'`;
-      await this.db`update outbox_events set published_at=now() where topic='ai.generate' and published_at is null and payload->>'messageId' in (select id::text from messages where conversation_id=${conversation.id} and processing_state='superseded')`;
-      return { duplicate: false, sequence };
-    }
-    const message = (
-      await this.db<
-        { id: string }[]
-      >`insert into messages(business_id,conversation_id,connection_id,provider_message_id,sequence,direction,raw_text,received_at) values(${input.businessId},${conversation.id},${input.connectionId},${input.providerId},${sequence},'inbound',${input.text!},${input.receivedAt}) returning id`
-    )[0]!;
-    if (senderPhone) await this.db`insert into whatsapp_received_senders(business_id,message_id,connection_id,phone)
-      values(${input.businessId},${message.id},${input.connectionId},${senderPhone})`;
-    const policy = await this.globalReplyPacing();
-    const due = replyDeadline(conversation.accepted_at, conversation.last_reply_at, conversation.last_exchange_at, conversation.reply_due_at, policy);
-    await this.db`update conversations set latest_inbound_id=${message.id},reply_due_at=${due},last_exchange_at=${conversation.accepted_at} where id=${conversation.id}`;
-    await this.db`update messages set processing_state='superseded' where conversation_id=${conversation.id} and direction='inbound' and id<>${message.id} and processing_state in ('pending','generated')`;
-    await this.db`update outbound_commands set state='failed',failure_code='superseded',updated_at=now() where conversation_id=${conversation.id} and state='generated'`;
-    await this.db`update outbox_events set published_at=now() where topic='ai.generate' and published_at is null and payload->>'messageId' in (select id::text from messages where conversation_id=${conversation.id} and processing_state='superseded')`;
-    await this.db`insert into outbox_events(business_id,topic,stable_key,payload,next_attempt_at) values(${input.businessId},'ai.generate',${`ai:${input.providerId}`},${this.db.json({ businessId: input.businessId, messageId: message.id })},${due}) on conflict do nothing`;
-    return { duplicate: false, messageId: message.id, sequence };
+    return messaging.ingestInbound(this.db, this, input);
   }
   async loadAiMessage(messageId: string, requireDue = false) {
-    const message = (
-      await this.db<
-        {
-          id: string;
-          business_id: string;
-          sequence: string;
-          conversation_id: string;
-          connection_id: string;
-          raw_text: string;
-        }[]
-      >`select m.id,m.business_id,m.sequence,m.conversation_id,m.connection_id,m.raw_text from messages m join conversations c on c.id=m.conversation_id and c.business_id=m.business_id join businesses b on b.id=m.business_id join assistant_configs a on a.business_id=b.id join whatsapp_connections w on w.id=m.connection_id where m.id=${messageId} and m.direction='inbound' and m.processing_state='pending' and c.latest_inbound_id=m.id and (not ${requireDue} or c.reply_due_at<=now()) and b.status='active' and a.active and w.state='CONNECTED'`
-    )[0];
-    if (!message) return null;
-    const profile =
-      (
-        await this.db<
-          Record<string, string>[]
-        >`select display_name,description,address from business_profiles limit 1`
-      )[0] ?? {};
-    const assistant =
-      (
-        await this.db<
-          Record<string, string>[]
-        >`select style,business_instructions from assistant_configs limit 1`
-      )[0] ?? {};
-    const turns = await this.db<
-      {
-        id: string;
-        sequence: string;
-        direction: "inbound" | "outbound";
-        raw_text: string;
-        processing_state: string;
-        closes_group: boolean;
-      }[]
-    >`select m.id,m.sequence,m.direction,m.raw_text,m.processing_state,
-      case when m.direction='inbound' then m.processing_state='ai_failed' or exists(
-        select 1 from outbound_commands o where o.business_id=m.business_id
-        and o.connection_id=m.connection_id and o.conversation_id=m.conversation_id
-        and o.source_message_id=m.id and o.send_started_at is not null)
-      else m.processing_state='sent' and not exists(
-        select 1 from outbound_commands o where o.business_id=m.business_id
-        and o.connection_id=m.connection_id and o.conversation_id=m.conversation_id
-        and (o.provider_message_id=m.provider_message_id or o.outbound_id::text=m.provider_message_id
-          or (o.source_message_id is null and o.send_started_at is not null and o.provider_message_id is null)))
-      end closes_group
-      from messages m where m.business_id=${message.business_id}
-      and m.connection_id=${message.connection_id} and m.conversation_id=${message.conversation_id} order by m.sequence`;
-    // Claimed output closes at its inbound source, never its delayed sent row.
-    // Unknown-source legacy output cannot prove a boundary; unknown delivery
-    // identity also prevents guessing that a sent row was a manual reply.
-    const closedThrough = turns.reduce((closed, turn) => turn.closes_group && Number(turn.sequence) < Number(message.sequence)
-      ? Math.max(closed, Number(turn.sequence)) : closed, 0);
-    const currentGroup = turns.filter((turn) => turn.direction === 'inbound'
-      && Number(turn.sequence) > closedThrough && Number(turn.sequence) <= Number(message.sequence));
-    const summaries = await this.db<
-      { version: number; covered_through: string; structured_summary: any }[]
-    >`select version,covered_through,structured_summary from conversation_summaries where conversation_id=${message.conversation_id} and covered_through<=(select coalesce(max(sequence),0) from messages where conversation_id=${message.conversation_id}) order by covered_through desc,version desc`;
-    return { ...message, profile, assistant, turns, summaries, currentGroup };
+    return messaging.loadAiMessage(this.db, messageId, requireDue);
   }
   async loadSummarySource(conversationId: string, coveredThrough: number) {
-    const exists = (
-      await this.db<
-        { id: string }[]
-      >`select id from conversations where id=${conversationId}`
-    )[0];
-    if (!exists) return null;
-    const turns = await this.db<
-      {
-        sequence: string;
-        direction: "inbound" | "outbound";
-        raw_text: string;
-        processing_state: string;
-      }[]
-    >`select sequence,direction,raw_text,processing_state from messages where conversation_id=${conversationId} and sequence<=${coveredThrough} order by sequence`;
-    const summaries = await this.db<
-      { version: number; covered_through: string; structured_summary: any }[]
-    >`select version,covered_through,structured_summary from conversation_summaries where conversation_id=${conversationId} and covered_through<=${coveredThrough} order by covered_through desc,version desc`;
-    return { turns, summaries };
+    return messaging.loadSummarySource(this.db, conversationId, coveredThrough);
   }
   async saveConversationSummary(
     conversationId: string,
@@ -1350,65 +472,19 @@ export class PostgresRepositories {
     coveredThrough: number,
     summary: unknown,
   ) {
-    await this
-      .db`select pg_advisory_xact_lock(hashtextextended(${"summary:" + conversationId},0))`;
-    return Boolean(
-      (
-        await this
-          .db`insert into conversation_summaries(business_id,conversation_id,version,covered_through,structured_summary) select current_setting('app.tenant_id')::uuid,${conversationId},${expectedVersion + 1},${coveredThrough},${this.db.json(asDbJson(summary))} where ${coveredThrough}>(select coalesce(max(covered_through),0) from conversation_summaries where conversation_id=${conversationId}) and ${expectedVersion}=(select coalesce(max(version),0) from conversation_summaries where conversation_id=${conversationId}) and ${coveredThrough}<=(select coalesce(max(sequence),0) from messages where conversation_id=${conversationId}) on conflict do nothing returning id`
-      ).length,
-    );
+    return messaging.saveConversationSummary(this.db, conversationId, expectedVersion, coveredThrough, summary);
   }
   recordSummaryFailure(businessId: string) {
-    return this
-      .db`insert into technical_events(business_id,component,code,severity) values(${businessId},'message-worker','ai.summary_failed','error')`;
+    return messaging.recordSummaryFailure(this.db, businessId);
   }
   async failAi(messageId: string, businessId: string, code: string) {
-    await this.db`select c.id from conversations c join messages m on m.conversation_id=c.id where m.id=${messageId} for update of c`;
-    const changed = await this
-      .db`update messages set processing_state='ai_failed' where id=${messageId} and processing_state='pending'`;
-    if (!changed.count) return;
-    await this.db`update conversations set reply_due_at=null where latest_inbound_id=${messageId}`;
-    await this
-      .db`insert into technical_events(business_id,component,code,severity) values(${businessId},'message-worker',${code},'error')`;
-    await this.appendAudit(businessId, {
-      eventType: "ai.failed",
-      outcome: "failure",
-      eventHash: "f".repeat(64),
-    });
+    return messaging.failAi(this.db, this, messageId, businessId, code);
   }
   async saveGenerated(messageId: string, businessId: string, text: string) {
-    await this.db`select c.id from conversations c join messages m on m.conversation_id=c.id where m.id=${messageId} for update of c`;
-    const source = (
-      await this.db<
-        { conversation_id: string; connection_id: string }[]
-      >`update messages set processing_state='generated' where id=${messageId} and processing_state='pending' and exists(select 1 from conversations c where c.id=messages.conversation_id and c.latest_inbound_id=messages.id and c.reply_due_at<=now()) returning conversation_id,connection_id`
-    )[0];
-    if (!source) return null;
-    return (
-      (
-        await this.db<
-          { outbound_id: string }[]
-        >`insert into outbound_commands(business_id,conversation_id,connection_id,source_message_id,text,state) values(${businessId},${source.conversation_id},${source.connection_id},${messageId},${text},'generated') on conflict(source_message_id) where source_message_id is not null do nothing returning outbound_id`
-      )[0] ?? null
-    );
+    return messaging.saveGenerated(this.db, messageId, businessId, text);
   }
   async claimOwnedOutbound(owner: string, ownership: string[]) {
-    return (
-      (
-        await this.db<
-          {
-            outbound_id: string;
-            business_id: string;
-            conversation_id: string;
-            connection_id: string;
-            remote_jid: string;
-            text: string;
-            ownership_token: string;
-          }[]
-        >`select * from claim_owned_outbound(${owner},${ownership})`
-      )[0] ?? null
-    );
+    return messaging.claimOwnedOutbound(this.db, owner, ownership);
   }
   async finishOutbound(
     id: string,
@@ -1416,52 +492,10 @@ export class PostgresRepositories {
     providerId: string | undefined,
     ownership: string,
   ) {
-    await this.db`select c.id from conversations c join outbound_commands o on o.conversation_id=c.id where o.outbound_id=${id} for update of c`;
-    const [connection] = await this.db`select w.id from whatsapp_connections w join outbound_commands o
-      on o.connection_id=w.id and o.business_id=w.business_id where o.outbound_id=${id} for update of w`;
-    if (!connection || !await this.lockWhatsAppOwnership(connection.id, ownership)) return false;
-    const row = (
-      await this.db<
-        {
-          business_id: string;
-          conversation_id: string;
-          connection_id: string;
-          text: string;
-        }[]
-      >`update outbound_commands set state=${state},provider_message_id=${providerId ?? null},acknowledged_at=case when ${state}='sent' then now() end,failure_code=case when ${state}='sent' then null else ${state} end,updated_at=now() where outbound_id=${id} and state='sending' and ownership_token=${ownership} returning business_id,conversation_id,connection_id,text`
-    )[0];
-    if (!row) return false;
-    const code =
-      state === "sent"
-        ? "whatsapp.outbound.acknowledged"
-        : state === "failed"
-          ? "whatsapp.send_failed"
-          : "whatsapp.delivery_unknown";
-    if (state === "sent")
-      await this
-        .db`insert into technical_events(business_id,component,code,severity,safe_details) values(${row.business_id},'whatsapp-manager',${code},'info','{}')`;
-    else
-      await this.recordRuntimeEvent(row.business_id, {
-        code,
-        outcome: "failure",
-        source: "whatsapp-manager",
-        requestId: `outbound:${id}`,
-        severity: "error",
-      });
-    if (state === "sent") {
-      const seq = (
-        await this.db<
-          { sequence: string }[]
-        >`update conversations set next_sequence=next_sequence+1,last_reply_at=date_trunc('milliseconds',clock_timestamp()),last_exchange_at=date_trunc('milliseconds',clock_timestamp()) where id=${row.conversation_id} returning next_sequence-1 sequence`
-      )[0]!.sequence;
-      await this
-        .db`insert into messages(business_id,conversation_id,connection_id,provider_message_id,sequence,direction,raw_text,received_at,processing_state) values(${row.business_id},${row.conversation_id},${row.connection_id},${providerId!},${seq},'outbound',${row.text},now(),'sent') on conflict do nothing`;
-    }
-    return true;
+    return messaging.finishOutbound(this.db, this, id, state, providerId, ownership);
   }
   recordInbox(businessId: string, source: string, stableKey: string) {
-    return this
-      .db`insert into inbox_events (business_id,source,stable_key) values (${businessId},${source},${stableKey}) on conflict do nothing`;
+    return events.recordInbox(this.db, businessId, source, stableKey);
   }
   enqueueOutbox(
     businessId: string,
@@ -1469,75 +503,31 @@ export class PostgresRepositories {
     stableKey: string,
     payload: unknown,
   ) {
-    return this
-      .db`insert into outbox_events (business_id,topic,stable_key,payload) values (${businessId},${topic},${stableKey},${this.db.json(asDbJson(payload))}) on conflict do nothing`;
+    return events.enqueueOutbox(this.db, businessId, topic, stableKey, payload);
   }
   async claimOutbox() {
-    return (
-      (
-        await this.db<
-          { id: string; topic: string; stable_key: string }[]
-        >`select id,topic,stable_key from outbox_events where published_at is null order by created_at for update skip locked limit 1`
-      )[0] ?? null
-    );
+    return events.claimOutbox(this.db);
   }
   async markOutboxPublished(id: string) {
-    return (
-      await this
-        .db`update outbox_events set published_at=now() where id=${id} and published_at is null returning id`
-    ).length;
+    return events.markOutboxPublished(this.db, id);
   }
   claimAiOutbox(token: string, limit: number, staleMs: number) {
-    return this.db<
-      {
-        id: string;
-        business_id: string;
-        stable_key: string;
-        payload: object;
-        publish_attempts: number;
-      }[]
-    >`select * from claim_ai_outbox(${token},${limit},${staleMs})`;
+    return events.claimAiOutbox(this.db, token, limit, staleMs);
   }
   async completeAiOutbox(id: string, token: string) {
-    return (
-      await this.db<
-        { complete_ai_outbox: boolean }[]
-      >`select complete_ai_outbox(${id},${token})`
-    )[0]?.complete_ai_outbox
-      ? 1
-      : 0;
+    return events.completeAiOutbox(this.db, id, token);
   }
   async releaseAiOutbox(id: string, token: string, delayMs: number) {
-    return Boolean(
-      (
-        await this.db<
-          { release_ai_outbox: boolean }[]
-        >`select release_ai_outbox(${id},${token},${delayMs})`
-      )[0]?.release_ai_outbox,
-    );
+    return events.releaseAiOutbox(this.db, id, token, delayMs);
   }
   async appendAudit(
     businessId: string,
     event: { eventType: string; outcome: string; eventHash: string },
   ) {
-    await this
-      .db`select pg_advisory_xact_lock(hashtext(${"audit:" + businessId}))`;
-    const previous = (
-      await this.db<
-        { stream_sequence: string; event_hash: string }[]
-      >`select stream_sequence,event_hash from audit_events where business_id=${businessId} order by stream_sequence desc limit 1`
-    )[0];
-    return this
-      .db`insert into audit_events (business_id,actor_id,event_type,outcome,request_id,stream_sequence,previous_hash,event_hash,hmac_key_version) values (${businessId},current_setting('app.actor_id',true),${event.eventType},${event.outcome},current_setting('app.request_id',true),${Number(previous?.stream_sequence ?? 0) + 1},${previous?.event_hash ?? "GENESIS"},${event.eventHash},'runtime-v1')`;
+    return events.appendAudit(this.db, businessId, event);
   }
   async auditCount() {
-    return Number(
-      (
-        await this.db<
-          { count: string }[]
-        >`select count(*) count from audit_events`
-      )[0]?.count ?? 0,
-    );
+    return events.auditCount(this.db);
   }
   async tenantSnapshot() {
     const profile = (
@@ -1579,107 +569,4 @@ export class PostgresRepositories {
   }
 }
 
-export class RolePool {
-  private readonly lockSessions = new Set<Sql>();
-  private ending = false;
-  private shutdown?: Promise<void>;
-  constructor(
-    private readonly sql: Sql,
-    readonly role: RuntimeRole,
-    private readonly lockUrl?: string,
-  ) {}
-  run<T>(
-    context: TenantContext | undefined,
-    work: (repositories: PostgresRepositories) => Promise<T>,
-  ): Promise<T> {
-    return this.sql.begin(async (tx) => {
-      await tx.unsafe(`set local role ${this.role}`);
-      if (context)
-        for (const [key, value] of Object.entries({
-          tenant_id: context.businessId,
-          actor_role: context.role,
-          actor_id: context.actorId,
-          request_id: context.requestId,
-        }))
-          await tx`select set_config(${`app.${key}`},${value},true)`;
-      return work(new PostgresRepositories(tx));
-    }) as Promise<T>;
-  }
-  async reserveAdvisoryLock(
-    key: string,
-    wait = false,
-  ): Promise<(() => Promise<void>) | null> {
-    for (;;) {
-      if (this.ending) throw new Error("RolePool is closed");
-      if (!this.lockUrl) throw new Error("Advisory locks require a dedicated connection URL");
-      // Lifetime locks must not occupy the transaction pool, even when all sockets are live.
-      let disconnected = false;
-      const session = postgres(this.lockUrl, { max: 1, onclose: () => { disconnected = true; } });
-      this.lockSessions.add(session);
-      let connection: Awaited<ReturnType<Sql["reserve"]>> | undefined;
-      const close = async () => {
-        try {
-          if (connection) {
-            try { if (!disconnected && !this.ending) await connection.unsafe("reset role"); }
-            finally { connection.release(); }
-          }
-        } finally {
-          try { await session.end({ timeout: 0 }); }
-          finally { this.lockSessions.delete(session); }
-        }
-      };
-      let acquired: boolean | undefined;
-      try {
-        connection = await session.reserve();
-        await connection.unsafe(`set role ${this.role}`);
-        acquired = (
-          await connection<{ acquired: boolean }[]>`select pg_try_advisory_lock(hashtextextended(${key},0)) acquired`
-        )[0]?.acquired;
-      } catch (error) {
-        await close().catch(() => undefined);
-        throw error;
-      }
-      if (acquired) {
-        let released: Promise<void> | undefined;
-        return () => released ??= (async () => {
-          try {
-            if (disconnected || this.ending) throw new Error("Advisory lock connection closed");
-            await connection!`select pg_advisory_unlock(hashtextextended(${key},0))`;
-          } finally { await close(); }
-        })();
-      }
-      await close();
-      if (!wait) return null;
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-  }
-  end() {
-    this.ending = true;
-    return this.shutdown ??= Promise.all([
-      this.sql.end(),
-      ...[...this.lockSessions].map((session) => session.end({ timeout: 0 }).finally(() => this.lockSessions.delete(session))),
-    ]).then(() => undefined);
-  }
-}
-
-export function createRuntimePools(
-  input:
-    | string
-    | { api: string; admin: string; manager: string; worker: string },
-) {
-  const url = (key: "api" | "admin" | "manager" | "worker") =>
-    typeof input === "string" ? input : input[key];
-  const pools = {
-    api: new RolePool(postgres(url("api")), "agendia_runtime", url("api")),
-    admin: new RolePool(postgres(url("admin")), "agendia_admin_runtime", url("admin")),
-    manager: new RolePool(postgres(url("manager")), "agendia_whatsapp_runtime", url("manager")),
-    worker: new RolePool(postgres(url("worker")), "agendia_worker_runtime", url("worker")),
-  };
-  return {
-    ...pools,
-    end: () =>
-      Promise.all(Object.values(pools).map((pool) => pool.end())).then(
-        () => undefined,
-      ),
-  };
-}
+export { RolePool, createRuntimePools } from "./runtime-pools.ts";

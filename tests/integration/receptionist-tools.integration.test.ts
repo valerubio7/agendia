@@ -2,11 +2,11 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { createRuntimePools, tenantContext } from "@agendia/db";
-import { PostgresWhatsAppAgenda } from "../../apps/message-worker/src/whatsapp-agenda.ts";
-import { PostgresInboundHandler } from "../../apps/whatsapp-manager/src/inbound-handler.ts";
+import { PostgresWhatsAppAgenda } from "../../apps/message-worker/src/agent/adapters/agenda.ts";
+import { PostgresInboundHandler } from "../../apps/whatsapp-manager/src/inbound.ts";
 import { normalizeBaileysMessage } from "../../packages/whatsapp-baileys/src/baileys-gateway.ts";
 import { applyPostgresMigrations, startTestPostgres, type TestPostgres } from "../support/index.ts";
-import type { ReceptionistToolSession, ReceptionistToolResult } from "../../apps/message-worker/src/receptionist-tools.ts";
+import type { ReceptionistToolSession, ReceptionistToolResult } from "../../apps/message-worker/src/agent/tools.ts";
 
 let db: TestPostgres;
 let pools: ReturnType<typeof createRuntimePools>;

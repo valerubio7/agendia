@@ -177,7 +177,7 @@
       "**No agregues** rutas, métricas, bandejas de conversación, recuperación de contraseña, ayuda, desvinculación de WhatsApp ni detalles administrativos que la interfaz actual no soporta.",
       "**No conviertas** horarios o tono en controles estructurados: ambos son campos de texto libre en el producto vigente.",
       "**No ocultes** columnas administrativas, acciones inline, etiquetas o significado de estado para resolver el móvil.",
-      "**No reemplaces** `apps/web/src/ui/brand.tsx` con una copia documental del símbolo; esa implementación continúa siendo la fuente de ejecución."
+      "**No reemplaces** `apps/web/src/components/brand.tsx` con una copia documental del símbolo; esa implementación continúa siendo la fuente de ejecución."
     ]
   }
 }

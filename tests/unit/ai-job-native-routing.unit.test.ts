@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import * as domain from "@agendia/domain";
 import { DeepSeekAdapter } from "@agendia/ai-deepseek";
-import { PostgresAiJobProcessor } from "../../apps/message-worker/src/ai-job.ts";
-import * as agenda from "../../apps/message-worker/src/whatsapp-agenda.ts";
+import { PostgresAiJobProcessor } from "../../apps/message-worker/src/jobs/ai-job.ts";
+import * as agenda from "../../apps/message-worker/src/agent/adapters/agenda.ts";
 
 const generate = async () => ({ text: "hola", providerId: "fixture", usageTokens: 0 });
 describe("native-only production worker boundary", () => {

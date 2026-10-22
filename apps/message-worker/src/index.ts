@@ -7,11 +7,11 @@ import {
   PostgresSummaryJobProcessor,
   type PostgresAiJob,
   type PostgresSummaryJob,
-} from "./ai-job.ts";
+} from "./jobs/ai-job.ts";
 
 export const serviceName = "message-worker" as const;
-export * from "./ai-job.ts";
-export * from "./whatsapp-agenda.ts";
+export * from "./jobs/ai-job.ts";
+export * from "./agent/adapters/agenda.ts";
 export const createMessageWorker = (
   pools: ReturnType<typeof createRuntimePools>,
   provider: AiProvider,

@@ -14,7 +14,7 @@ import {
 } from "@agendia/ai-deepseek";
 import { createMessagingRuntime } from "../../apps/whatsapp-manager/src/index.ts";
 import { startMessageWorker } from "../../apps/message-worker/src/index.ts";
-import { PostgresAiJobProcessor } from "../../apps/message-worker/src/ai-job.ts";
+import { PostgresAiJobProcessor } from "../../apps/message-worker/src/jobs/ai-job.ts";
 import { deepSeekFetchDouble } from "../support/index.ts";
 
 const request: AiGenerateRequest = {

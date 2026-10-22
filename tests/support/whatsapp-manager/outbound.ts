@@ -2,7 +2,7 @@ import {
   transitionDelivery,
   type OutboundDeliveryState,
 } from "@agendia/domain";
-import type { OutboundGateway } from "../../../apps/whatsapp-manager/src/outbound-dispatcher.ts";
+import type { OutboundGateway } from "../../../apps/whatsapp-manager/src/outbound.ts";
 
 export interface OutboundRecord {
   outboundId: string;

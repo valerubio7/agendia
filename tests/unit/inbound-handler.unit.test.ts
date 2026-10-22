@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { InboundWhatsAppEvent } from "../../apps/whatsapp-manager/src/inbound-handler.ts";
+import type { InboundWhatsAppEvent } from "../../apps/whatsapp-manager/src/inbound.ts";
 import {
   InMemoryInboundRepository,
   InMemorySessionRouter,

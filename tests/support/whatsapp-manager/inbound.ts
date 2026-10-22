@@ -2,7 +2,7 @@ import {
     classifyInbound,
     type InboundResult,
     type InboundWhatsAppEvent,
-} from "../../../apps/whatsapp-manager/src/inbound-handler.ts";
+} from "../../../apps/whatsapp-manager/src/inbound.ts";
 
 interface RoutedSession {
     businessId: string;

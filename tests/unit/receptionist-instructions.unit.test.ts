@@ -3,7 +3,7 @@ import { AI_SYSTEM_INSTRUCTIONS, RECEPTIONIST_SYSTEM_INSTRUCTIONS } from "@agend
 import {
   RECEPTIONIST_INSTRUCTIONS, RECEPTIONIST_RESPONSE_INSTRUCTIONS,
   RECEPTIONIST_SYSTEM_INSTRUCTIONS as leafSystemInstructions,
-} from "../../packages/domain/src/receptionist-instructions.ts";
+} from "../../packages/domain/src/agent/instructions.ts";
 import { buildDeepSeekRequest, DeepSeekAdapter } from "../../packages/ai-deepseek/src/deepseek-adapter.ts";
 
 // Freeze existing guardrails; evolve the native operation contracts explicitly.

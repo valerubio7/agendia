@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   AssistantConfigService,
   InMemoryAssistantRepository,
-} from "../../packages/domain/src/assistant-config.ts";
+} from "../../packages/domain/src/agent/config.ts";
 import { renderAssistantStatus } from "../support/web/assistant-render.ts";
 
 test("a minimal valid assistant activation persists in the business panel", async ({
