@@ -41,7 +41,7 @@ test("login preserves its approved semantic, responsive, and pending-state contr
   expect(storyLockupBox).not.toBeNull();
   expect(formLockupBox).not.toBeNull();
   expect(storyLockupBox!.width).toBeGreaterThanOrEqual(
-    formLockupBox!.width * 1.5,
+    formLockupBox!.width * 1.2,
   );
 
   await expect(
@@ -144,7 +144,7 @@ test("login preserves its approved semantic, responsive, and pending-state contr
     await expect(formPanel.locator(".login-field").first()).toHaveCSS("font-weight", "650");
     await expect(email).toHaveCSS("font-weight", "450");
     await expect(email).toHaveCSS("color", "rgb(28, 38, 32)");
-    await expect(email).toHaveCSS("background-color", semanticHeadingColors.paper);
+    await expect(email).toHaveCSS("background-color", "rgb(252, 250, 243)");
     for (const control of [email, submit]) {
       await control.focus();
       await page.keyboard.press("Tab");

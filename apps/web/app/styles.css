@@ -154,12 +154,11 @@ main.login-frame {
     "form"
     "story";
   grid-template-columns: minmax(0, 1fr);
-  min-height: 100vh;
-  min-height: 100svh;
-  max-width: none;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
+  min-height: 100dvh;
+  max-width: 100rem;
+  margin: 0 auto;
+  padding: 1rem;
+  gap: 1rem;
   background: var(--paper);
   color: var(--ink);
 }
@@ -174,30 +173,40 @@ main.login-frame {
   min-width: 0;
   display: grid;
   place-items: center;
-  padding: clamp(2rem, 8vw, 4.5rem) clamp(1.25rem, 6vw, 4rem);
-  background: var(--paper);
+  padding: 1rem 0.5rem 3rem;
 }
 
 .login-card {
-  width: min(100%, 27rem);
-  padding: clamp(1.5rem, 5vw, 2.25rem);
-  border: 1px solid rgba(217, 210, 190, 0.9);
-  border-radius: 1.25rem;
-  background: var(--paper);
-  box-shadow: 0 1.25rem 3.5rem rgba(23, 38, 32, 0.09);
+  width: min(100%, 24rem);
+}
+
+.login-card > .brand {
+  --brand-height: 2.5rem;
+  display: flex;
+  width: max-content;
+  margin-inline: auto;
 }
 
 .login-card h1 {
-  margin: 1.75rem 0;
+  margin: 1.25rem 0 0.65rem;
   font-family: var(--font-display);
-  font-size: clamp(2rem, 8vw, 2.65rem);
-  line-height: 1.02;
-  letter-spacing: -0.05em;
+  font-size: clamp(2rem, 3vw, 2.5rem);
+  line-height: 1.1;
+  letter-spacing: -0.04em;
+  text-align: center;
+}
+
+.login-welcome {
+  margin: 0 0 2.25rem;
+  color: var(--ink-2);
+  font-size: 1rem;
+  line-height: 1.5;
+  text-align: center;
 }
 
 .login-card form {
   display: grid;
-  gap: 1rem;
+  gap: 1.25rem;
   margin: 0;
 }
 
@@ -211,18 +220,16 @@ main.login-frame {
 
 .login-field input {
   width: 100%;
-  min-height: 3rem;
-  padding: 0.75rem 0.875rem;
+  min-height: 3.25rem;
+  padding: 0.8rem 1rem;
   border: 1px solid var(--sand);
-  border-radius: 0.75rem;
+  border-radius: 0.5rem;
   outline: none;
-  background: var(--paper);
+  background: var(--surface);
   color: var(--ink);
+  font-size: 1rem;
   font-weight: 450;
-  box-shadow: 0 1px 0 rgba(23, 38, 32, 0.03);
-  transition:
-    border-color 140ms ease,
-    box-shadow 140ms ease;
+  transition: border-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
 .login-field input:hover {
@@ -237,26 +244,26 @@ main.login-frame {
 
 .login-submit {
   width: 100%;
-  min-height: 3rem;
-  margin-top: 0.25rem;
-  padding: 0.75rem 1rem;
+  min-height: 3.25rem;
+  margin-top: 0.5rem;
+  padding: 0.8rem 1rem;
   border: 1px solid transparent;
-  border-radius: 0.75rem;
+  border-radius: 0.5rem;
   background: var(--pine);
   color: var(--white);
   cursor: pointer;
   font-weight: 650;
-  box-shadow: 0 0.7rem 1.5rem rgba(194, 75, 58, 0.18);
   transition:
-    background-color 140ms ease,
-    box-shadow 140ms ease,
-    transform 140ms ease;
+    background-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1),
+    transform 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
 .login-submit:hover:not(:disabled) {
-  background: var(--pine);
-  box-shadow: 0 0.85rem 1.75rem rgba(194, 75, 58, 0.24);
-  transform: translateY(-1px);
+  background: var(--pine-deep);
+}
+
+.login-submit:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 .login-submit:focus-visible {
@@ -280,14 +287,14 @@ main.login-frame {
 
 .login-form-panel [role="alert"] {
   border-left-color: var(--coral-ink);
-  background: var(--paper);
+  background: var(--danger-soft);
   color: var(--coral-ink);
 }
 
 .login-form-panel [role="status"] {
   padding: 1rem;
   border-left: 0.25rem solid var(--pine);
-  background: var(--paper);
+  background: var(--pine-soft);
   color: var(--pine);
 }
 
@@ -295,27 +302,15 @@ main.login-frame {
   position: relative;
   grid-area: story;
   min-width: 0;
-  min-height: 20rem;
   display: flex;
   flex-direction: column;
   align-items: stretch;
   justify-content: space-between;
-  gap: clamp(3rem, 12vw, 8rem);
-  padding: clamp(2.25rem, 7vw, 4rem) clamp(1.5rem, 7vw, 4rem);
-  overflow: hidden;
+  gap: 1.5rem;
+  padding: 0.5rem 1.25rem 2rem;
+  border-radius: 1rem;
   background: var(--pine-deep);
   color: var(--paper);
-}
-
-.login-story::after {
-  position: absolute;
-  right: -10rem;
-  bottom: -12rem;
-  width: 26rem;
-  height: 26rem;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: 50%;
-  content: "";
 }
 
 .login-story__brand,
@@ -325,25 +320,22 @@ main.login-frame {
 }
 
 .login-story__brand {
-  align-self: flex-start;
-}
-
-.login-story__brand {
-  --brand-height: 48px;
+  --brand-height: 3rem;
+  align-self: center;
 }
 
 .login-story__content {
-  max-width: 38rem;
+  max-width: 32rem;
 }
 
 .login-story__eyebrow {
   margin: 0 0 1rem;
   color: var(--paper);
   font-family: var(--font-mono);
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.04em;
   line-height: 1.5;
   text-transform: uppercase;
 }
@@ -351,9 +343,10 @@ main.login-frame {
 .login-story h2 {
   margin: 0 0 1.25rem;
   font-family: var(--font-display);
-  font-size: clamp(2.35rem, 7vw, 4.75rem);
-  line-height: 0.98;
-  letter-spacing: -0.055em;
+  font-size: clamp(2rem, 5.5vw, 3rem);
+  line-height: 1.08;
+  letter-spacing: -0.04em;
+  text-wrap: balance;
 }
 
 .login-story h2 [data-ui="login-story-heading-primary"],
@@ -370,42 +363,44 @@ main.login-frame {
 }
 
 .login-story__copy {
-  max-width: 32rem;
+  max-width: 34ch;
   margin: 0;
   color: var(--paper);
   font-size: 1rem;
-  line-height: 1.7;
+  line-height: 1.65;
 }
 
 @media (min-width: 64rem) {
   main.login-frame {
     grid-template-areas: "story form";
-    grid-template-columns: minmax(0, 1.08fr) minmax(28rem, 0.92fr);
+    grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+    padding: 1.5rem;
+    gap: 1.5rem;
   }
 
   .login-story {
-    min-height: 100vh;
-    min-height: 100svh;
+    --login-story-logo-height: clamp(4.5rem, 8vw, 6rem);
+    gap: 2rem;
+    padding: 2rem clamp(2rem, 4vw, 4rem) clamp(3rem, 6vw, 6rem) var(--login-story-logo-height);
+  }
+
+  .login-story__brand {
+    --brand-height: var(--login-story-logo-height);
+    align-self: flex-start;
+    /* Align the visible spark, preserving its official clearspace. */
+    margin-inline-start: calc(-1 * var(--brand-clearspace) - var(--brand-height) / 20);
+  }
+
+  .login-story h2 {
+    font-size: clamp(3rem, 4.4vw, 4rem);
+  }
+
+  .login-card > .brand {
+    --brand-height: 3rem;
   }
 
   .login-form-panel {
-    min-height: 100vh;
-    min-height: 100svh;
-  }
-}
-
-@media (max-width: 30rem) {
-  .login-card {
-    padding: 1.4rem;
-    border-radius: 1rem;
-  }
-
-  .login-card h1 {
-    font-size: 2rem;
-  }
-
-  .login-story {
-    min-height: 18rem;
+    padding: 2rem clamp(1.5rem, 4vw, 4rem);
   }
 }
 
