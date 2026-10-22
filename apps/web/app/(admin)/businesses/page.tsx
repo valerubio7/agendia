@@ -1,2 +1,2 @@
-import { AdminView } from "../../../src/admin-view";
+import { AdminView } from "../../../src/features/administration/admin-view";
 export default AdminView;

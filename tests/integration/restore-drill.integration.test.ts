@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { runRestoreDrill } from "../../scripts/restore-drill.ts";
+import { runRestoreDrill } from "../../scripts/db/restore-drill.ts";
 
 test("restores an isolated PostgreSQL backup with tenant counts, RLS, jobs and encrypted Baileys auth", async () => {
   const report = await runRestoreDrill();

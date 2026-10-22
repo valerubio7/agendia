@@ -14,7 +14,7 @@ import {
   type SocketFactory,
 } from "@agendia/whatsapp-baileys";
 import { createWhatsAppLifecycleLogger } from "../../apps/whatsapp-manager/src/index.ts";
-import type { WhatsAppGateway } from "../../apps/whatsapp-manager/src/lifecycle.ts";
+import type { WhatsAppGateway } from "../../apps/whatsapp-manager/src/connection.ts";
 import {
   DeterministicBaileysDouble,
   DurableLinkCommands,

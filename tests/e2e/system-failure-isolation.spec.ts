@@ -1,8 +1,8 @@
 import { expect, type APIResponse } from "@playwright/test";
 import { test } from "./support/fixtures.ts";
 import { assertSemanticBoundary, systemExposure } from "./support/system.ts";
-import { formatActivityTimestamp } from "../../apps/web/src/live-panel.tsx";
-import { receivedSenderEvidence } from "../../packages/domain/src/whatsapp-agenda.ts";
+import { formatActivityTimestamp } from "../../apps/web/src/shell/live-panel.tsx";
+import { receivedSenderEvidence } from "../../packages/domain/src/whatsapp/agenda.ts";
 
 const ORIGIN = (system: { webUrl: string }) => system.webUrl;
 const tenants = [

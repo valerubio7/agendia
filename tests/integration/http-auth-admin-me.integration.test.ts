@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { hash, Algorithm } from "@node-rs/argon2";
 import { join } from "node:path";
 import { buildApi } from "../../apps/api/src/app.ts";
-import { buildReceptionistMessages } from "../../apps/message-worker/src/receptionist.ts";
+import { buildReceptionistMessages } from "../../apps/message-worker/src/agent/context.ts";
 import { createRuntimePools } from "@agendia/db";
 import type { PlatformAiInstructions } from "@agendia/contracts";
 import {

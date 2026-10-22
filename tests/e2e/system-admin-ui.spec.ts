@@ -1,6 +1,6 @@
 import { expect, type Locator, type Page, type Route } from "@playwright/test";
 import { test } from "./support/fixtures.ts";
-import { RECEPTIONIST_SYSTEM_INSTRUCTIONS } from "../../packages/domain/src/receptionist-instructions.ts";
+import { RECEPTIONIST_SYSTEM_INSTRUCTIONS } from "../../packages/domain/src/agent/instructions.ts";
 
 const tenant = {
   name: "Estudio Administración Horizonte",

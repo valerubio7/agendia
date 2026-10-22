@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { createRuntimePools, tenantContext } from "@agendia/db";
-import { PostgresInboundHandler, type InboundWhatsAppEvent } from "../../apps/whatsapp-manager/src/inbound-handler.ts";
+import { PostgresInboundHandler, type InboundWhatsAppEvent } from "../../apps/whatsapp-manager/src/inbound.ts";
 import { applyPostgresMigrations, startTestPostgres, type TestPostgres } from "../support/index.ts";
 
 const A = "11111111-1111-4111-8111-111111111111";

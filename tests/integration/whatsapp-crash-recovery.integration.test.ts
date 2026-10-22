@@ -2,8 +2,8 @@ import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { createRuntimePools, tenantContext } from "@agendia/db";
-import { PostgresWhatsAppManager, type BaileysLifecycleEvent } from "../../apps/whatsapp-manager/src/lifecycle.ts";
-import { PostgresOutboundDispatcher } from "../../apps/whatsapp-manager/src/outbound-dispatcher.ts";
+import { PostgresWhatsAppManager, type BaileysLifecycleEvent } from "../../apps/whatsapp-manager/src/connection.ts";
+import { PostgresOutboundDispatcher } from "../../apps/whatsapp-manager/src/outbound.ts";
 import { applyPostgresMigrations, startTestPostgres, type TestPostgres } from "../support/index.ts";
 
 let db: TestPostgres, pools: ReturnType<typeof createRuntimePools>;

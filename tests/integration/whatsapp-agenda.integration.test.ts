@@ -4,10 +4,10 @@ import { join } from "node:path";
 import { createRuntimePools, tenantContext, type StoredAppointment } from "@agendia/db";
 import { ToolAssistantMessageSchema, type WeeklySchedule, type AiProvider, type ToolConversationProvider, type ToolConversationRequest } from "@agendia/domain";
 import { normalizeBaileysMessage } from "../../packages/whatsapp-baileys/src/baileys-gateway.ts";
-import { PostgresInboundHandler } from "../../apps/whatsapp-manager/src/inbound-handler.ts";
-import { PostgresWhatsAppAgenda } from "../../apps/message-worker/src/whatsapp-agenda.ts";
-import { converseReceptionist } from "../../apps/message-worker/src/receptionist.ts";
-import type { ReceptionistToolCommand, ReceptionistToolResult } from "../../apps/message-worker/src/receptionist-tools.ts";
+import { PostgresInboundHandler } from "../../apps/whatsapp-manager/src/inbound.ts";
+import { PostgresWhatsAppAgenda } from "../../apps/message-worker/src/agent/adapters/agenda.ts";
+import { converseReceptionist } from "../../apps/message-worker/src/agent/runtime.ts";
+import type { ReceptionistToolCommand, ReceptionistToolResult } from "../../apps/message-worker/src/agent/tools.ts";
 import { createMessageWorker } from "../../apps/message-worker/src/index.ts";
 import { applyPostgresMigrations, startTestPostgres, type TestPostgres } from "../support/index.ts";
 

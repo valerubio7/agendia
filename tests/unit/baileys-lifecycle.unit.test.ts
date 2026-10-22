@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import Fastify from "fastify";
-import { PostgresWhatsAppManager } from "../../apps/whatsapp-manager/src/lifecycle.ts";
+import { PostgresWhatsAppManager } from "../../apps/whatsapp-manager/src/connection.ts";
 import { normalizeBaileysMessage } from "../../packages/whatsapp-baileys/src/baileys-gateway.ts";
-import { classifyInbound } from "../../apps/whatsapp-manager/src/inbound-handler.ts";
+import { classifyInbound } from "../../apps/whatsapp-manager/src/inbound.ts";
 import {
   InMemoryWhatsAppConnections,
   WhatsAppConnectionService,

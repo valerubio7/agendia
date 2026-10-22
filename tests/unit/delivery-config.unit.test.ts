@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
-import { checkV1Scope, scanForSecrets } from "../../scripts/policy-checks.ts";
+import { checkV1Scope, scanForSecrets } from "../../scripts/checks/policy-checks.ts";
 
 const read = (path: string) => readFileSync(path, "utf8");
 

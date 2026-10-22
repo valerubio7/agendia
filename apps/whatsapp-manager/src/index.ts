@@ -13,22 +13,22 @@ import {
   PostgresBaileysAuthStore,
   type SocketFactory,
 } from "@agendia/whatsapp-baileys";
-import { PostgresWhatsAppManager, type WhatsAppGateway } from "./lifecycle.ts";
-import { PostgresInboundHandler } from "./inbound-handler.ts";
+import { PostgresWhatsAppManager, type WhatsAppGateway } from "./connection.ts";
+import { PostgresInboundHandler } from "./inbound.ts";
 import {
   AiOutboxDispatcher,
   type JobPublisher,
-} from "./ai-outbox-dispatcher.ts";
+} from "./ai-outbox.ts";
 import {
   PostgresOutboundDispatcher,
   type OutboundGateway,
-} from "./outbound-dispatcher.ts";
+} from "./outbound.ts";
 
 export const serviceName = "whatsapp-manager" as const;
-export * from "./lifecycle.ts";
-export * from "./inbound-handler.ts";
-export * from "./ai-outbox-dispatcher.ts";
-export * from "./outbound-dispatcher.ts";
+export * from "./connection.ts";
+export * from "./inbound.ts";
+export * from "./ai-outbox.ts";
+export * from "./outbound.ts";
 
 export const MIN_RECONNECT_INTERVAL_MS = 15_000;
 
@@ -83,7 +83,7 @@ export function createWhatsAppManager(options: {
   gateway: WhatsAppGateway;
   heartbeatMs?: number;
   onInbound?: (
-    event: import("./inbound-handler.ts").InboundWhatsAppEvent,
+    event: import("./inbound.ts").InboundWhatsAppEvent,
   ) => unknown;
   linkCodeKey?: Buffer;
 }) {
@@ -100,7 +100,7 @@ export function createProductionWhatsAppManager(
   env: NodeJS.ProcessEnv = process.env,
   socketFactory?: SocketFactory,
   onInbound?: (
-    event: import("./inbound-handler.ts").InboundWhatsAppEvent,
+    event: import("./inbound.ts").InboundWhatsAppEvent,
   ) => unknown,
 ) {
   const database = env.MANAGER_DATABASE_URL ?? env.DATABASE_URL;

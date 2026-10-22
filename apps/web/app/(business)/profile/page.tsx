@@ -1,2 +1,2 @@
-import { ProfileView } from "../../../src/profile-view";
+import { ProfileView } from "../../../src/features/business-profile/profile-view";
 export default ProfileView;

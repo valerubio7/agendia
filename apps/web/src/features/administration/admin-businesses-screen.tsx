@@ -1,0 +1,506 @@
+"use client";
+
+import { useRef, useState, type FormEvent } from "react";
+import type { Business, PlatformAiInstructions } from "../../api/api-client";
+// The domain barrel also exports server-only administration code.
+import { MAX_REPLY_DELAY_SECONDS, MAX_INACTIVITY_RESET_SECONDS, ReplyPacingSchema } from "../../../../../packages/domain/src/messaging/reply-pacing.ts";
+
+type CreateBusinessInput = {
+  name: string;
+  userEmail: string;
+  initialPassword: string;
+};
+
+type AdminBusinessesScreenProps = {
+  businesses: Business[];
+  instructions: PlatformAiInstructions;
+  saveInstructionsAction: (text: string, replyPacing: PlatformAiInstructions["replyPacing"]) => Promise<boolean>;
+  notice: string;
+  error: string;
+  refreshWarning: boolean;
+  refreshPending: boolean;
+  retryRefreshAction: () => void;
+  createAction: (input: CreateBusinessInput) => Promise<boolean>;
+  renameAction: (id: string, name: string) => Promise<boolean>;
+  replacePasswordAction: (id: string, password: string) => Promise<boolean>;
+  setStatusAction: (
+    id: string,
+    status: "active" | "suspended",
+  ) => Promise<boolean>;
+};
+
+type PendingAction =
+  | { kind: "create" | "instructions" }
+  | { kind: "rename" | "password" | "status"; businessId: string };
+
+const timestampFormatter = new Intl.DateTimeFormat("es-AR", {
+  dateStyle: "medium",
+  timeStyle: "short",
+  timeZone: "UTC",
+  hourCycle: "h23",
+});
+
+function formatTimestamp(value: string | null | undefined, fallback: string) {
+  if (!value) return fallback;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? fallback
+    : timestampFormatter.format(date);
+}
+
+export const formatActivityTimestamp = (value: string | null) =>
+  formatTimestamp(value, "Sin actividad");
+
+const formatCreatedTimestamp = (value: string) =>
+  formatTimestamp(value, "Fecha no disponible");
+
+const businessStatusLabels: Record<Business["status"], string> = {
+  active: "Activo",
+  suspended: "Suspendido",
+};
+
+const assistantStatusLabels: Record<Business["assistantStatus"], string> = {
+  active: "Activo",
+  inactive: "Inactivo",
+};
+
+const whatsappStatusLabels: Record<Business["whatsappStatus"], string> = {
+  connected: "Conectado",
+  disconnected: "Desconectado",
+  link_required: "Requiere vinculación",
+  error: "Error de conexión",
+};
+
+export function AdminBusinessesScreen({
+  businesses,
+  instructions,
+  saveInstructionsAction,
+  notice,
+  error,
+  refreshWarning,
+  refreshPending,
+  retryRefreshAction,
+  createAction,
+  renameAction,
+  replacePasswordAction,
+  setStatusAction,
+}: AdminBusinessesScreenProps) {
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(
+    null,
+  );
+  const [failedAction, setFailedAction] = useState<PendingAction | null>(null);
+  const [instructionsValidationError, setInstructionsValidationError] = useState("");
+  const pendingRef = useRef(false);
+  const anyPending = pendingAction !== null || refreshPending;
+  const clearSubmitted = (form: HTMLFormElement, submitted: FormData) => {
+    submitted.forEach((value, name) => {
+      const input = form.elements.namedItem(name);
+      if (input instanceof HTMLInputElement && input.value === value) input.value = input.defaultValue;
+    });
+  };
+
+  const runAction = async (
+    action: PendingAction,
+    work: () => Promise<boolean>,
+  ) => {
+    if (pendingRef.current) return false;
+    pendingRef.current = true;
+    setFailedAction(null);
+    setPendingAction(action);
+    try {
+      const succeeded = await work();
+      setFailedAction(succeeded ? null : action);
+      return succeeded;
+    } finally {
+      pendingRef.current = false;
+      setPendingAction(null);
+    }
+  };
+
+  const submitCreate = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const succeeded = await runAction({ kind: "create" }, () =>
+      createAction({
+        name: String(form.get("name")),
+        userEmail: String(form.get("userEmail")),
+        initialPassword: String(form.get("initialPassword")),
+      }),
+    );
+    if (succeeded) clearSubmitted(formElement, form);
+  };
+
+  const submitRename =
+    (business: Business) => async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const formElement = event.currentTarget;
+      const form = new FormData(formElement);
+      const succeeded = await runAction(
+        { kind: "rename", businessId: business.id },
+        () => renameAction(business.id, String(form.get("name"))),
+      );
+      if (succeeded) clearSubmitted(formElement, form);
+    };
+
+  const submitPassword =
+    (business: Business) => async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const formElement = event.currentTarget;
+      const form = new FormData(formElement);
+      const succeeded = await runAction(
+        { kind: "password", businessId: business.id },
+        () => replacePasswordAction(business.id, String(form.get("password"))),
+      );
+      if (succeeded) clearSubmitted(formElement, form);
+    };
+
+  const changeStatus = async (business: Business) => {
+    const nextStatus = business.status === "active" ? "suspended" : "active";
+    await runAction({ kind: "status", businessId: business.id }, () =>
+      setStatusAction(business.id, nextStatus),
+    );
+  };
+
+  return (
+    <main className="admin-screen" data-ui="admin-screen">
+      <section
+        className="admin-hero"
+        data-ui="admin-hero"
+        aria-labelledby="admin-title"
+      >
+        <div className="admin-hero__copy">
+          <p className="admin-hero__eyebrow">Operación de plataforma</p>
+          <h1 id="admin-title">Cada negocio, bajo control.</h1>
+          <p>
+            Supervisá la operación de cada cuenta desde un registro central, sin
+            acceder a conversaciones ni exponer secretos.
+          </p>
+        </div>
+
+        <div
+          className="admin-registry-map"
+          aria-label="El registro organiza la supervisión por Negocio, Estado y Canales"
+        >
+          <header>
+            <span>Registro operativo</span>
+            <span className="brand admin-registry-map__brand" aria-hidden="true">
+              <img
+                className="brand__image"
+                src="/brand/logo-symbol-inverse.svg"
+                alt=""
+              />
+            </span>
+          </header>
+          <div className="admin-registry-map__track" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
+          <ol>
+            <li>
+              <span>01</span>
+              <strong>Negocio</strong>
+              <small>Identidad registrada</small>
+            </li>
+            <li>
+              <span>02</span>
+              <strong>Estado</strong>
+              <small>Acceso operativo</small>
+            </li>
+            <li>
+              <span>03</span>
+              <strong>Canales</strong>
+              <small>Asistente y WhatsApp</small>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <div className="admin-feedback" aria-label="Estado de la operación">
+        {notice && <p role="status">{notice}</p>}
+        {refreshWarning && <>
+          <p role="alert">No se pudo actualizar la información. Reintentá solo la consulta.</p>
+          <button type="button" disabled={anyPending} onClick={retryRefreshAction}>Reintentar consulta</button>
+        </>}
+      </div>
+
+      <section className="admin-create admin-instructions" aria-labelledby="platform-instructions-title">
+        <h2 id="platform-instructions-title">Instrucciones de IA de la plataforma</h2>
+        <form onSubmit={async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          const parsed = ReplyPacingSchema.safeParse(Object.fromEntries(
+            ["initialDelaySeconds", "activeDelaySeconds", "inactivityResetSeconds"].map(key => {
+              const value = form.get(key);
+              return [key, value === null || value === "" ? NaN : Number(value)];
+            }),
+          ));
+          setInstructionsValidationError(parsed.success ? "" : "Ingresá tiempos enteros dentro de los límites indicados.");
+          if (!parsed.success) return;
+          await runAction({ kind: "instructions" }, () =>
+            saveInstructionsAction(String(form.get("additionalInstructions")), parsed.data));
+        }} aria-busy={pendingAction?.kind === "instructions"}>
+          <label htmlFor="platform-base-instructions">Instrucciones base del recepcionista</label>
+          <textarea id="platform-base-instructions" value={instructions.baseInstructions} readOnly rows={5} />
+          <p>Sistema activo del recepcionista de WhatsApp, de solo lectura. Se modifica únicamente desde el código; no incluye datos de conversaciones.</p>
+          <label htmlFor="platform-additional-instructions">Indicaciones administrativas complementarias</label>
+          <textarea id="platform-additional-instructions" name="additionalInstructions" defaultValue={instructions.additionalInstructions} rows={6} disabled={anyPending} />
+          <p>Se envían como contexto complementario, no como instrucciones de sistema. No reemplazan las reglas base ni las herramientas; su cumplimiento no está garantizado.</p>
+          <h3>Tiempos de respuesta para todos los negocios</h3>
+          <p>Las esperas se expresan en segundos. Cero significa respuesta inmediata. Los cambios no modifican las esperas ya programadas.</p>
+          <label htmlFor="platform-initial-wait">Espera inicial (segundos)</label>
+          <input id="platform-initial-wait" name="initialDelaySeconds" type="number" required min={0} max={MAX_REPLY_DELAY_SECONDS} step={1}
+            defaultValue={instructions.replyPacing.initialDelaySeconds} disabled={anyPending} />
+          <p>Antes de la primera respuesta o después de un período de inactividad. Entre 0 y 86400 segundos.</p>
+          <label htmlFor="platform-active-wait">Espera activa (segundos)</label>
+          <input id="platform-active-wait" name="activeDelaySeconds" type="number" required min={0} max={MAX_REPLY_DELAY_SECONDS} step={1}
+            defaultValue={instructions.replyPacing.activeDelaySeconds} disabled={anyPending} />
+          <p>Durante una conversación en curso. Entre 0 y 86400 segundos.</p>
+          <label htmlFor="platform-inactivity-reset">Reinicio por inactividad (segundos)</label>
+          <input id="platform-inactivity-reset" name="inactivityResetSeconds" type="number" required min={1} max={MAX_INACTIVITY_RESET_SECONDS} step={1}
+            defaultValue={instructions.replyPacing.inactivityResetSeconds} disabled={anyPending} />
+          <p>Si la inactividad supera este tiempo, vuelve a aplicarse la espera inicial. Entre 1 y 604800 segundos.</p>
+          <button type="submit" disabled={anyPending}>{pendingAction?.kind === "instructions" ? "Guardando…" : "Guardar"}</button>
+          {instructionsValidationError && <p role="alert">{instructionsValidationError}</p>}
+          {failedAction?.kind === "instructions" && <p role="alert">{error}</p>}
+        </form>
+      </section>
+
+      <section
+        className="admin-create"
+        data-ui="admin-create"
+        aria-labelledby="admin-create-title"
+      >
+        <header className="admin-section-heading">
+          <div>
+            <p>Alta controlada</p>
+            <h2 id="admin-create-title">Incorporar un negocio</h2>
+          </div>
+          <span>01 / REGISTRO</span>
+        </header>
+        <form
+          onSubmit={submitCreate}
+          aria-busy={pendingAction?.kind === "create"}
+        >
+          <label>
+            Nombre
+            <input
+              name="name"
+              type="text"
+              required
+              maxLength={160}
+              pattern={".*\\S.*"}
+              title="Ingresá un nombre de hasta 160 caracteres que incluya al menos un carácter no vacío."
+              disabled={anyPending}
+            />
+          </label>
+          <label>
+            Correo del usuario
+            <input
+              name="userEmail"
+              type="email"
+              required
+              disabled={anyPending}
+            />
+          </label>
+          <label>
+            Contraseña inicial
+            <input
+              name="initialPassword"
+              type="password"
+              required
+              minLength={16}
+              disabled={anyPending}
+            />
+          </label>
+          <button type="submit" disabled={anyPending}>
+            {pendingAction?.kind === "create" ? "Creando…" : "Crear negocio"}
+          </button>
+        </form>
+        {failedAction?.kind === "create" && error && (
+          <div className="admin-context-error" role="alert">
+            <strong>No se pudo crear el negocio.</strong>
+            <span>{error}</span>
+          </div>
+        )}
+      </section>
+
+      <section
+        className="admin-inventory"
+        data-ui="admin-inventory"
+        aria-labelledby="admin-inventory-title"
+      >
+        <header className="admin-section-heading">
+          <div>
+            <p>Directorio operativo</p>
+            <h2 id="admin-inventory-title">Negocios registrados</h2>
+          </div>
+          <span>02 / INVENTARIO</span>
+        </header>
+
+        <div className="admin-table-frame">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Negocio</th>
+                <th scope="col">Operación</th>
+                <th scope="col">Asistente</th>
+                <th scope="col">WhatsApp</th>
+                <th scope="col">Alta</th>
+                <th scope="col">Última actividad técnica</th>
+                <th scope="col">Gestión</th>
+              </tr>
+            </thead>
+            <tbody>
+              {businesses.length === 0 ? (
+                <tr className="admin-table__empty">
+                  <td colSpan={7}>Todavía no hay negocios registrados.</td>
+                </tr>
+              ) : (
+                businesses.map((business) => {
+                  const rowPending =
+                    pendingAction !== null &&
+                    "businessId" in pendingAction &&
+                    pendingAction.businessId === business.id;
+                  const statusPending =
+                    rowPending && pendingAction.kind === "status";
+                  const rowFailure =
+                    failedAction !== null &&
+                    "businessId" in failedAction &&
+                    failedAction.businessId === business.id
+                      ? failedAction
+                      : null;
+                  return (
+                    <tr key={business.id}>
+                      <td data-label="Negocio">
+                        <strong className="admin-business-name">
+                          {business.name}
+                        </strong>
+                      </td>
+                      <td data-label="Operación">
+                        <span
+                          className={`admin-status admin-status--business-${business.status}`}
+                        >
+                          {businessStatusLabels[business.status]}
+                        </span>
+                      </td>
+                      <td data-label="Asistente">
+                        <span
+                          className={`admin-status admin-status--assistant-${business.assistantStatus}`}
+                        >
+                          {assistantStatusLabels[business.assistantStatus]}
+                        </span>
+                      </td>
+                      <td data-label="WhatsApp">
+                        <span
+                          className={`admin-status admin-status--whatsapp-${business.whatsappStatus}`}
+                        >
+                          {whatsappStatusLabels[business.whatsappStatus]}
+                        </span>
+                      </td>
+                      <td data-label="Alta" className="admin-timestamp">
+                        {formatCreatedTimestamp(business.createdAt)}
+                      </td>
+                      <td
+                        data-label="Última actividad técnica"
+                        className="admin-timestamp"
+                      >
+                        {formatActivityTimestamp(
+                          business.lastTechnicalActivityAt,
+                        )}
+                      </td>
+                      <td
+                        data-label="Gestión"
+                        className="admin-management-cell"
+                      >
+                        <details className="admin-management">
+                          <summary>Gestionar</summary>
+                          <div className="admin-management__panel">
+                            <form
+                              onSubmit={submitRename(business)}
+                              aria-busy={
+                                rowPending && pendingAction.kind === "rename"
+                              }
+                            >
+                              <label>
+                                Nombre de {business.name}
+                                <input
+                                  name="name"
+                                  type="text"
+                                  defaultValue={business.name}
+                                  required
+                                  maxLength={160}
+                                  pattern={".*\\S.*"}
+                                  title="Ingresá un nombre de hasta 160 caracteres que incluya al menos un carácter no vacío."
+                                  disabled={anyPending}
+                                />
+                              </label>
+                              <button type="submit" disabled={anyPending}>
+                                {rowPending && pendingAction.kind === "rename"
+                                  ? "Renombrando…"
+                                  : "Renombrar"}
+                              </button>
+                            </form>
+                            <form
+                              onSubmit={submitPassword(business)}
+                              aria-busy={
+                                rowPending && pendingAction.kind === "password"
+                              }
+                            >
+                              <label>
+                                Nueva contraseña de {business.name}
+                                <input
+                                  name="password"
+                                  type="password"
+                                  required
+                                  minLength={16}
+                                  disabled={anyPending}
+                                />
+                              </label>
+                              <button type="submit" disabled={anyPending}>
+                                {rowPending && pendingAction.kind === "password"
+                                  ? "Actualizando…"
+                                  : "Cambiar contraseña"}
+                              </button>
+                            </form>
+                            <button
+                              className="admin-management__status-action"
+                              type="button"
+                              disabled={anyPending}
+                              onClick={() => void changeStatus(business)}
+                            >
+                              {statusPending
+                                ? business.status === "active"
+                                  ? "Suspendiendo…"
+                                  : "Reactivando…"
+                                : business.status === "active"
+                                  ? "Suspender"
+                                  : "Reactivar"}
+                            </button>
+                            {rowFailure && error && (
+                              <div className="admin-context-error" role="alert">
+                                <strong>
+                                  {rowFailure.kind === "rename"
+                                    ? `No se pudo renombrar ${business.name}.`
+                                    : rowFailure.kind === "password"
+                                      ? `No se pudo cambiar la contraseña de ${business.name}.`
+                                      : `No se pudo actualizar el estado de ${business.name}.`}
+                                </strong>
+                                <span>{error}</span>
+                              </div>
+                            )}
+                          </div>
+                        </details>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  );
+}

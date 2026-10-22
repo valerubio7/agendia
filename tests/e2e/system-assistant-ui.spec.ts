@@ -1,6 +1,6 @@
 import { expect, type Locator, type Page, type Route } from "@playwright/test";
 import { test } from "./support/fixtures.ts";
-import { ASSISTANT_STYLE_LIMIT, ASSISTANT_BUSINESS_INSTRUCTIONS_LIMIT } from "../../packages/domain/src/assistant-config.ts";
+import { ASSISTANT_STYLE_LIMIT, ASSISTANT_BUSINESS_INSTRUCTIONS_LIMIT } from "../../packages/domain/src/agent/config.ts";
 
 const tenant = {
   name: "Estudio Voz Propia",
