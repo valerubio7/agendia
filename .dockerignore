@@ -41,8 +41,6 @@ playwright.config.ts
 **/*.key
 **/*.p12
 **/*.dump
-**/*.backup
-backups
 
 # =============================================================================
 # Local agent tooling state (never commit, never ship)
