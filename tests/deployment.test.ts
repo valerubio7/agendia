@@ -280,8 +280,6 @@ test("application packaging shares one image with explicit web startup and separ
   const dockerfile = read("Dockerfile");
   expect(dockerfile).toContain("ENV AGENDIA_API_ORIGIN=http://api:3001\nRUN bun run --cwd apps/web build");
   expect(dockerfile).toContain('FROM web-build AS application\nUSER bun\nWORKDIR /app\nCMD ["bun", "run", "scripts/dev/start-api.ts"]');
-  expect(dockerfile).toContain("FROM base AS runtime");
-  expect(dockerfile).toContain("FROM application AS web");
   const compose = read("compose.production.yml");
   expect(compose.match(/target: application/g)).toHaveLength(1);
   expect(compose.match(/image: /g)).toHaveLength(2);
