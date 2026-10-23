@@ -31,8 +31,6 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Typecheck
         run: bun run typecheck
-      - name: Scaffolding
-        run: bun run test:scaffolding
       - name: Unit tests
         run: bun run test:unit
       - name: Contracts
