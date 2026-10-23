@@ -147,12 +147,10 @@ Referencia breve de los runners definidos en el [package.json raíz](../package.
 | `bun run test:unit` | `bun test tests/unit packages apps scripts`. |
 | `bun run test:integration` | `bun test tests/integration`. |
 | `bun run test:contracts` | `bun test tests/contracts`. |
-| `bun run test:tenant-isolation` | Integración de RLS por tenant. |
 | `bun run test:e2e` | Playwright e2e (navegador real). |
-| `bun run test:e2e` | Playwright, proyecto `system`. |
 | `bun run test:scaffolding` | Scaffolding y release. |
 | `bun run security:scan` | Comprobación de credenciales en fuentes y archivos de entrega. |
 
-[playwright.config.ts](../playwright.config.ts) distingue el proyecto `system` de los casos históricos. Elegí los runners que correspondan y sus requisitos de entorno; esta tabla no es un procedimiento de instalación ni un informe de pruebas aprobadas.
+[playwright.config.ts](../playwright.config.ts) ejecuta la suite `system-*` sobre la app web real. Elegí los runners que correspondan y sus requisitos de entorno; esta tabla no es un procedimiento de instalación ni un informe de pruebas aprobadas.
 
 Este archivo es la guía vigente de estructura. Los documentos de `odd/tasks/` son un registro interno histórico de trabajo, no la referencia pública de arquitectura.

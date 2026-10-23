@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { connect, createServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import {
@@ -78,25 +80,21 @@ const fakeDependencies = (databaseReady: boolean, migrated = false) => {
 };
 
 describe("local development supervisor", () => {
-  test("root development commands load secrets only from the external config file", async () => {
+  test("root development commands rely on Bun auto-loading the repo .env", async () => {
     const packageJson = (await Bun.file(
       new URL("../../package.json", import.meta.url),
     ).json()) as {
       scripts: Record<string, string>;
     };
-    const externalEnvOption = '--env-file="$HOME/.config/agendia/dev.env"';
 
-    expect(packageJson.scripts.dev).toBe(
-      `bun ${externalEnvOption} run scripts/dev/dev-stack.ts`,
-    );
+    expect(packageJson.scripts.dev).toBe("bun run scripts/dev/dev-stack.ts");
     expect(packageJson.scripts["bootstrap:admin"]).toBe(
-      `bun ${externalEnvOption} run scripts/db/bootstrap-admin.ts`,
+      "bun run scripts/db/bootstrap-admin.ts",
     );
-    expect(
-      Object.values(packageJson.scripts).some((command) =>
-        /--env-file(?:=|\s+)["']?\.env["']?(?:\s|$)/.test(command),
-      ),
-    ).toBe(false);
+    // No development entrypoint may opt into an external env file: the single
+    // source of truth for local secrets is the git-ignored root .env.
+    expect(JSON.stringify(packageJson.scripts)).not.toContain("--env-file");
+    expect(existsSync(join(projectRoot, ".env.example"))).toBe(true);
   });
 
   test("Node TypeScript loader imports service entrypoints without starting them", () => {
