@@ -9,16 +9,13 @@
   ],
   "scripts": {
     "dev": "bun run scripts/dev/dev-stack.ts",
-    "bootstrap:admin": "bun run scripts/db/bootstrap-admin.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:unit": "bun test tests/unit packages apps scripts",
     "test:integration": "bun test tests/integration",
     "test:contracts": "bun test tests/contracts",
     "test:e2e": "playwright test",
     "test": "bun run test:unit && bun run test:integration && bun run test:contracts && bun run test:e2e",
-    "db:validate": "bun run scripts/db/db-validate.ts",
     "db:migrate:dev": "bun run scripts/db/db-migrate.ts",
-    "db:check": "bun run scripts/db/db-check.ts",
     "build": "tsc -p tsconfig.json --noEmit && bun run --cwd apps/web build"
   },
   "devDependencies": {
