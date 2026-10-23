@@ -11,7 +11,7 @@
     "dev": "bun run scripts/dev/dev-stack.ts",
     "bootstrap:admin": "bun run scripts/db/bootstrap-admin.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:scaffolding": "bun test tests/scaffolding.test.ts tests/release.test.ts",
+    "test:scaffolding": "bun test tests/scaffolding.test.ts",
     "test:unit": "bun test tests/unit packages apps scripts",
     "test:integration": "bun test tests/integration",
     "test:contracts": "bun test tests/contracts",

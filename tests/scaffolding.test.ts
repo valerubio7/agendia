@@ -129,9 +129,7 @@ describe("monorepo reproducible", () => {
 
   test("includes its own scaffolding gate in the aggregate suite", () => {
     const scripts = readJson("package.json").scripts as Record<string, string>;
-    expect(scripts["test:scaffolding"]).toBe(
-      "bun test tests/scaffolding.test.ts tests/release.test.ts",
-    );
+    expect(scripts["test:scaffolding"]).toBe("bun test tests/scaffolding.test.ts");
     expect(scripts.test).toContain("bun run test:scaffolding");
   });
 
