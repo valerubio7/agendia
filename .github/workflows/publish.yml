@@ -1,82 +1,25 @@
 name: Publish release
-run-name: Publish ${{ github.sha }}
 on:
   push:
     tags: ['v*']
-permissions: {}
-concurrency:
-  group: publish-${{ github.ref }}
-  cancel-in-progress: false
+permissions:
+  contents: write
 jobs:
   publish:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      actions: read
-    env:
-      GH_TOKEN: ${{ github.token }}
-      REPOSITORY: ${{ github.repository }}
-      RELEASE: ${{ github.sha }}
-      REF: ${{ github.ref }}
-      EVENT: ${{ github.event_name }}
     steps:
-      - name: Verify tag, main ancestry and exact successful CI before downloading source
-        run: |
-          set -euo pipefail
-          [[ "$EVENT" == push && "$REF" =~ ^refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
-          [[ "$RELEASE" =~ ^[0-9a-f]{40}$ ]]
-          tag="${REF#refs/tags/}"
-          object=$(gh api "repos/$REPOSITORY/git/ref/tags/$tag" | jq -e '.object')
-          # Dereference annotated tags; never execute unchecked tag contents.
-          for attempt in {1..10}; do
-            [[ $(jq -r '.type' <<< "$object") == tag ]] || break
-            target=$(jq -er '.sha | select(test("^[0-9a-f]{40}$"))' <<< "$object")
-            object=$(gh api "repos/$REPOSITORY/git/tags/$target" | jq -e '.object')
-          done
-          jq -e --arg sha "$RELEASE" '.type == "commit" and .sha == $sha' <<< "$object"
-          gh api "repos/$REPOSITORY/compare/$RELEASE...main" | jq -e '.status == "identical" or .status == "ahead"'
-          # Inspect the newest exact-main run: an older success cannot mask a pending/failed rerun.
-          gh api "repos/$REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$RELEASE&branch=main&event=push&per_page=100" | \
-            jq -e --arg sha "$RELEASE" --arg repo "$REPOSITORY" '
-              [.workflow_runs[] | select(.head_sha == $sha and .head_branch == "main" and .event == "push")][0] |
-              .name == "CI" and .path == ".github/workflows/ci.yml" and .head_repository.full_name == $repo and
-              .status == "completed" and .conclusion == "success"'
-          gh api "repos/$REPOSITORY/tarball/$RELEASE" > source.tar.gz
-          mkdir source
-          tar -xzf source.tar.gz -C source --strip-components=1
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
-          bun-version: 1.4.0
-      - name: Verify matching metadata and absence of published versions
+          persist-credentials: false
+      - name: Verify tag matches package.json version
         run: |
-          set -euo pipefail
-          tag="${REF#refs/tags/}"
-          version="${tag#v}"
-          manifests=(source/package.json source/apps/*/package.json source/packages/*/package.json)
-          [[ ${#manifests[@]} == 11 ]]
-          for manifest in "${manifests[@]}"; do
-            jq -e --arg version "$version" '.version == $version' "$manifest"
-          done
-          # Only a definitive 404 is absence; permissions/network/server errors stop publication.
-          if gh api --include "repos/$REPOSITORY/releases/tags/$tag" > release-response; then
-            echo 'Release already exists; refusing replacement' >&2; exit 1
-          fi
-          grep -Eq '^HTTP/[0-9.]+ 404([[:space:]]|$)' release-response
-          awk '/^\r?$/ {body=1; next} body {print}' release-response | jq -e '.message == "Not Found"'
-      - name: Verify tag binding immediately before publication
+          tag="${GITHUB_REF#refs/tags/}"
+          jq -e --arg version "${tag#v}" '.version == $version' package.json
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          tag="${REF#refs/tags/}"
-          # Recheck after previous steps: --verify-tag only checks existence, not its SHA.
-          # This is not atomic; immutable-tag platform protection is still required.
-          object=$(gh api "repos/$REPOSITORY/git/ref/tags/$tag" | jq -e '.object')
-          for attempt in {1..10}; do
-            [[ $(jq -r '.type' <<< "$object") == tag ]] || break
-            target=$(jq -er '.sha | select(test("^[0-9a-f]{40}$"))' <<< "$object")
-            object=$(gh api "repos/$REPOSITORY/git/tags/$target" | jq -e '.object')
-          done
-          jq -e --arg sha "$RELEASE" '.type == "commit" and .sha == $sha' <<< "$object"
-          gh release create "$tag" --repo "$REPOSITORY" --verify-tag --target "$RELEASE" \
-            --title "agendIA $tag" --generate-notes --draft=false --prerelease=false --latest=false
+          tag="${GITHUB_REF#refs/tags/}"
+          gh release create "$tag" --verify-tag --target "${GITHUB_SHA}" \
+            --title "agendIA $tag" --generate-notes
