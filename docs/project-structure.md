@@ -16,8 +16,7 @@ Para trabajar en agendIA, empezá por la capacidad que querés cambiar, no por e
 | [packages/](../packages/) | Dominio, contratos, autenticación, persistencia y adaptadores compartidos. |
 | [scripts/](../scripts/) | Herramientas de desarrollo, base de datos y comprobaciones, agrupadas en `dev`, `db` y `checks`. |
 | [tests/](../tests/) | Pruebas que cruzan dueños y soporte común; no reemplaza las unitarias junto al código. |
-| [deploy/](../deploy/) | Recursos operativos de despliegue, incluido el script de release y nginx. |
-| [.github/](../.github/) | Workflows de CI, publicación y despliegue, y acciones compartidas. |
+| [.github/](../.github/) | Workflows de CI y publicación del release (imagen OCI en GHCR). |
 | [docs/](./) | Guías vigentes para mantenimiento, incluido este documento. |
 
 Los cuatro procesos tienen responsabilidades distintas:

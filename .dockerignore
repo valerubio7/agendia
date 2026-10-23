@@ -15,7 +15,6 @@ test-results
 **/.env
 **/.env.*
 **/*.env
-!deploy/production.env.example
 *.log
 **/*.tsbuildinfo
 **/*.pem

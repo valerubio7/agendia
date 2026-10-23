@@ -76,9 +76,6 @@ jobs:
             [[ "$status" == 404 ]]
             jq -e '.errors | length > 0 and all(.[]; .code == "MANIFEST_UNKNOWN")' manifest-response
           done
-      - name: Deployment regressions on validated source
-        working-directory: source
-        run: bun test tests/deployment.test.ts
       - name: Publish SHA and version images, then definitive Release
         run: |
           set -euo pipefail
