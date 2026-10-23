@@ -817,13 +817,13 @@ main.login-frame {
 }
 
 /* Profile navigation — horizontal shell, unchanged route controls */
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) {
   position: relative;
   display: flex;
   flex-direction: column;
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__sidebar {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__sidebar {
   position: static;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -838,13 +838,13 @@ main.login-frame {
   background: var(--pine-deep);
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__sidebar > .brand {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__sidebar > .brand {
   --brand-height: 32px;
   --brand-clearspace: calc(var(--brand-height) * 11 / 12);
   align-self: center;
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__navigation {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__navigation {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -854,7 +854,7 @@ main.login-frame {
   padding-block: 0.5rem;
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__navigation a {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__navigation a {
   flex: 0 0 auto;
   min-height: 2.75rem;
   padding: 0.65rem 0.75rem;
@@ -868,18 +868,18 @@ main.login-frame {
     border-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__navigation a:hover {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__navigation a:hover {
   border-color: var(--pine);
   background: var(--pine);
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__navigation a[aria-current="page"] {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__navigation a[aria-current="page"] {
   border-color: var(--pine);
   background: var(--pine);
   color: var(--white);
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__sidebar > button {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__sidebar > button {
   width: auto;
   min-height: 2.75rem;
   margin: 0;
@@ -893,47 +893,47 @@ main.login-frame {
   transition: background-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__sidebar > button:hover:not(:disabled) {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__sidebar > button:hover:not(:disabled) {
   background: var(--pine);
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__sidebar a:focus-visible,
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__sidebar > button:focus-visible {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__sidebar a:focus-visible,
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__sidebar > button:focus-visible {
   outline: 2px solid var(--paper);
   outline-offset: 2px;
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__sidebar > button:disabled {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__sidebar > button:disabled {
   cursor: wait;
   opacity: 0.65;
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__workspace {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__workspace {
   flex: 1 0 auto;
   width: 100%;
   min-height: 0;
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__topbar {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__topbar {
   display: none;
 }
 
 @media (width < 64rem) {
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__sidebar {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__sidebar {
     grid-template-columns: minmax(0, 1fr);
     padding-inline: 1rem;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__sidebar > .brand {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__sidebar > .brand {
     justify-self: start;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__navigation,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__sidebar > button {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__navigation,
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__sidebar > button {
     display: none;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__topbar {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__topbar {
     position: absolute;
     top: 0;
     right: 1rem;
@@ -946,17 +946,17 @@ main.login-frame {
     background: transparent;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-brand,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__section {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__mobile-brand,
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__section {
     display: none;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) [data-ui="mobile-navigation"] {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) [data-ui="mobile-navigation"] {
     position: relative;
     display: block;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) [data-ui="mobile-navigation"] > summary {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) [data-ui="mobile-navigation"] > summary {
     display: list-item;
     min-height: 2.75rem;
     padding: 0.65rem 0.85rem;
@@ -971,28 +971,28 @@ main.login-frame {
     transition: background-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) [data-ui="mobile-navigation"] > summary::-webkit-details-marker {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) [data-ui="mobile-navigation"] > summary::-webkit-details-marker {
     display: revert;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) [data-ui="mobile-navigation"] > summary::after {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) [data-ui="mobile-navigation"] > summary::after {
     content: none;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) [data-ui="mobile-navigation"][open] > summary {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) [data-ui="mobile-navigation"][open] > summary {
     list-style-type: disclosure-open;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) [data-ui="mobile-navigation"] > summary:hover {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) [data-ui="mobile-navigation"] > summary:hover {
     background: var(--pine-deep);
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) [data-ui="mobile-navigation"] > summary:focus-visible {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) [data-ui="mobile-navigation"] > summary:focus-visible {
     outline: 2px solid var(--paper);
     outline-offset: 3px;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-menu {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__mobile-menu {
     position: absolute;
     top: calc(100% + 0.75rem);
     right: 0;
@@ -1009,14 +1009,14 @@ main.login-frame {
     box-shadow: 0 0.75rem 2rem color-mix(in srgb, var(--pine-deep) 12%, transparent);
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-menu nav {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__mobile-menu nav {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.25rem;
     min-width: 0;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-menu a {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__mobile-menu a {
     display: flex;
     align-items: center;
     min-width: 0;
@@ -1031,18 +1031,18 @@ main.login-frame {
     transition: background-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-menu a:hover {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__mobile-menu a:hover {
     background: var(--pine-soft);
     color: var(--pine-deep);
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-menu a[aria-current="page"] {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__mobile-menu a[aria-current="page"] {
     border-color: var(--pine);
     background: var(--pine);
     color: var(--white);
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-menu button {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__mobile-menu button {
     width: 100%;
     min-height: 2.75rem;
     padding: 0.65rem 1rem;
@@ -1054,28 +1054,28 @@ main.login-frame {
     transition: background-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-menu button:hover:not(:disabled) {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__mobile-menu button:hover:not(:disabled) {
     background: var(--pine-deep);
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-menu a:focus-visible,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-menu button:focus-visible {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__mobile-menu a:focus-visible,
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__mobile-menu button:focus-visible {
     outline: 2px solid var(--pine);
     outline-offset: 2px;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-menu button:disabled {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__mobile-menu button:disabled {
     cursor: wait;
     opacity: 0.65;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__navigation a,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__sidebar > button,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) [data-ui="mobile-navigation"] > summary,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-menu a,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-menu button {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__navigation a,
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__sidebar > button,
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) [data-ui="mobile-navigation"] > summary,
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__mobile-menu a,
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"])) .authenticated-shell__mobile-menu button {
     transition: none;
   }
 }
@@ -5165,6 +5165,489 @@ main.resources-screen[aria-labelledby="resources-title"] ::selection {
 
 @media (prefers-reduced-motion: reduce) {
   main.resources-screen[aria-labelledby="resources-title"] :is(button, input, textarea) {
+    transition: none;
+  }
+}
+
+/* Horario only: independent weekly and business-closure work areas. */
+main.services-screen[aria-labelledby="business-calendar-title"] {
+  --calendar-stroke: color-mix(in srgb, var(--pine-deep) 32%, var(--sand));
+  width: 100%;
+  min-width: 0;
+  max-width: 82rem;
+  margin-inline: auto;
+  padding: 2rem 2rem 3rem;
+  line-height: 1.5;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .services-header {
+  margin-bottom: 1.5rem;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .services-header h1 {
+  margin: 0;
+  font-size: 2rem;
+  letter-spacing: -0.025em;
+  line-height: 1.2;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .calendar-workspace {
+  display: grid;
+  align-items: start;
+  gap: 1.5rem;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] :is(.calendar-weekly, .calendar-closures) {
+  min-width: 0;
+  margin: 0;
+  padding: 1.5rem;
+  border: 0;
+  border-top: 1px solid var(--sand);
+  background: var(--surface);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .calendar-closures {
+  background: var(--white);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.25rem;
+  line-height: 1.35;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] p {
+  max-width: 68ch;
+  margin: 0;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] :is(label, button, dt, dd) {
+  overflow-wrap: anywhere;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] :is(.calendar-weekly-tools, .calendar-closure-tools, .services-form-actions) {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .calendar-weekly-tools {
+  margin-bottom: 1.25rem;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .calendar-closure-tools {
+  margin-block: 1.25rem;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .calendar-closure-tools [role="alert"] {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .services-form {
+  min-width: 0;
+  max-width: none;
+  margin: 0 0 1.5rem;
+  padding: 0 0 1.5rem;
+  border-bottom: 1px solid var(--sand);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .calendar-closure-form {
+  display: grid;
+  gap: 1.25rem;
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--sand);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .calendar-field {
+  display: grid;
+  align-content: start;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] label {
+  font-size: 0.9375rem;
+  line-height: 1.4;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] :is(input:not([type="radio"]):not([type="checkbox"]), select) {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 3.125rem;
+  padding: 0.8rem 1rem;
+  border: 1px solid var(--calendar-stroke);
+  border-radius: 0.625rem;
+  background: var(--white);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 1rem;
+  font-weight: 450;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  caret-color: var(--pine);
+  transition: border-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] input::placeholder {
+  color: var(--ink-2);
+  opacity: 1;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] :is(input, select):hover:not(:disabled) {
+  border-color: var(--pine);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] :is(input, select):focus-visible {
+  outline: 2px solid var(--pine);
+  outline-offset: 2px;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] :is(input, select):disabled,
+main.services-screen[aria-labelledby="business-calendar-title"] fieldset:disabled input {
+  background: var(--paper);
+  color: var(--ink-2);
+  cursor: not-allowed;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .services-form .calendar-ambiguity {
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .calendar-ambiguity legend {
+  padding: 0;
+  margin-bottom: 0.5rem;
+  color: var(--ink);
+  font-size: 0.9375rem;
+  font-weight: 650;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .calendar-choice {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 2.75rem;
+  padding-block: 0.25rem;
+  font-weight: 450;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] :is(input[type="radio"], input[type="checkbox"]) {
+  flex: 0 0 auto;
+  width: 1.125rem;
+  height: 1.125rem;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--pine);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .services-form .resources-hours {
+  gap: 0.75rem;
+  margin: 0 0 1.5rem;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .resources-hours > legend {
+  padding: 0;
+  margin-bottom: 0.75rem;
+  font-size: 1.25rem;
+  line-height: 1.35;
+  font-weight: 650;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] :is(.resources-hours > p, .calendar-time-note) {
+  margin-bottom: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  background: var(--honey-soft);
+  color: var(--ink);
+  font-size: 0.875rem;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .services-form .resources-hours-day {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.625rem;
+  padding-top: 0.625rem;
+  border-top: 1px solid var(--sand);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .resources-hours-day > legend {
+  margin: 0;
+  padding: 0 0.5rem 0 0;
+  font-size: 0.9375rem;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .resources-hours-day > p {
+  color: var(--ink-2);
+  font-size: 0.875rem;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .resources-hours-day > button {
+  grid-column: 2;
+  justify-self: end;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .resources-hours-row {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 0;
+  gap: 0.5rem;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .resources-hours-row label {
+  min-width: 0;
+  font-size: 0.875rem;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .resources-hours-row input {
+  padding-inline: 0.75rem;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .resources-hours-row button {
+  grid-column: 1 / -1;
+  justify-self: start;
+  color: var(--coral-ink);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] button {
+  min-height: 2.75rem;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--calendar-stroke);
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--ink);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+  transition:
+    background-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1),
+    border-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] button:hover:not(:disabled) {
+  border-color: var(--pine);
+  background: var(--pine-soft);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] button:focus-visible,
+main.services-screen[aria-labelledby="business-calendar-title"] #business-closures-title:focus {
+  outline: 2px solid var(--pine);
+  outline-offset: 3px;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .calendar-primary {
+  border-color: var(--coral);
+  background: var(--coral);
+  color: var(--ink);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .calendar-primary:hover:not(:disabled) {
+  border-color: var(--coral-ink);
+  background: var(--coral-soft);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] :is(.calendar-quiet, .calendar-danger) {
+  border-color: transparent;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .calendar-quiet {
+  color: var(--ink-2);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .calendar-danger {
+  color: var(--coral-ink);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .calendar-danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .calendar-danger-confirm {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: var(--white);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .calendar-danger-confirm:hover:not(:disabled) {
+  border-color: var(--coral-ink);
+  background: var(--coral-ink);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .calendar-saved {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .calendar-saved > p {
+  margin-bottom: 1rem;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .resources-week {
+  margin: 0;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .resources-week > div {
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  gap: 0.75rem;
+  padding-block: 0.75rem;
+  border-top: 1px solid var(--sand);
+  font-size: 0.9375rem;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .resources-week dt {
+  padding-block: 0.125rem;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .resources-week dd {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.375rem 0.5rem;
+  min-width: 0;
+  margin: 0;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .resources-week dd p {
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.375rem;
+  background: var(--honey-soft);
+  color: var(--ink);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .services-list {
+  margin: 1.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .services-item {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+  min-width: 0;
+  padding-block: 1.25rem;
+  border-top: 1px solid var(--sand);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .calendar-closure-time {
+  display: grid;
+  gap: 0.25rem;
+  font-variant-numeric: tabular-nums;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .calendar-closure-time p {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .calendar-closures-empty {
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--sand);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .calendar-confirmation {
+  padding-block: 1.25rem;
+  border-block: 1px solid var(--danger);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .calendar-confirmation > p {
+  color: var(--ink);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .calendar-confirmation .services-form-actions {
+  margin-top: 1rem;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] :is([role="alert"], [role="status"]) {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--pine);
+  border-radius: 0.5rem;
+  background: var(--pine-soft);
+  color: var(--pine-deep);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] [role="alert"] {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--coral-ink);
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] .services-refresh-warning {
+  margin-bottom: 1.5rem;
+}
+
+main.services-screen[aria-labelledby="business-calendar-title"] ::selection {
+  background: var(--pine-soft);
+  color: var(--pine-deep);
+}
+
+@media (min-width: 76rem) {
+  main.services-screen[aria-labelledby="business-calendar-title"] .calendar-workspace {
+    grid-template-columns: 34rem minmax(0, 1fr);
+    gap: 2rem;
+  }
+}
+
+@media (max-width: 47.5rem) {
+  main.services-screen[aria-labelledby="business-calendar-title"] {
+    padding: 1.5rem 1rem 2rem;
+  }
+
+  main.services-screen[aria-labelledby="business-calendar-title"] .services-header h1 {
+    font-size: 1.75rem;
+  }
+
+  main.services-screen[aria-labelledby="business-calendar-title"] :is(.calendar-weekly, .calendar-closures) {
+    padding: 1.25rem 1rem;
+  }
+
+  main.services-screen[aria-labelledby="business-calendar-title"] .services-form-actions > button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 22.5rem) {
+  main.services-screen[aria-labelledby="business-calendar-title"] .resources-week > div {
+    grid-template-columns: 5rem minmax(0, 1fr);
+    gap: 0.5rem;
+  }
+
+  main.services-screen[aria-labelledby="business-calendar-title"] .resources-hours-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  main.services-screen[aria-labelledby="business-calendar-title"] .resources-hours-row button {
+    grid-column: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  main.services-screen[aria-labelledby="business-calendar-title"] :is(button, input, select) {
     transition: none;
   }
 }

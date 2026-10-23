@@ -179,24 +179,29 @@ export function BusinessClosuresSection({ state, retryAction, createAction, upda
       if (request.current === controller) { request.current = null; setSaving(false); }
     }
   };
-  return <section ref={section} className="services-empty" aria-labelledby="business-closures-title" aria-busy={pending}>
-    <h2 ref={heading} id="business-closures-title" tabIndex={-1}>Cierres del negocio</h2>
-    <p>Se aplican a todo el negocio. Las fechas y horas se muestran en Argentina.</p>
+  return <section ref={section} className="services-empty calendar-closures" aria-labelledby="business-closures-title" aria-busy={pending}>
+    <header className="calendar-closures-heading">
+      <h2 ref={heading} id="business-closures-title" tabIndex={-1}>Cierres del negocio</h2>
+      <p>Se aplican a todo el negocio. Las fechas y horas se muestran en Argentina.</p>
+    </header>
     {state.status === "loading" && <p role="status">Cargando cierres…</p>}
     {state.status === "ready" && pending && <p role="status">{saving ? "Guardando cierre…" : "Actualizando cierres…"}</p>}
     {state.status === "ready" && state.warning && <p role="alert">
       No se pudo actualizar la lista de cierres. Los datos visibles pueden estar desactualizados.
     </p>}
+    <div className="calendar-closure-tools">
     {(state.status === "error" || state.status === "loading" || state.warning) && <>
       {state.status === "error" && <p role="alert">{state.message}</p>}
-      <button ref={retryButton} type="button" disabled={pending} onClick={retry}>Volver a cargar cierres</button>
+      <button ref={retryButton} className="calendar-quiet" type="button" disabled={pending} onClick={retry}>Volver a cargar cierres</button>
     </>}
     {state.status === "ready" && !state.warning &&
-      <button type="button" disabled={pending} onClick={retry}>Actualizar cierres</button>}
-    {state.status === "ready" && <button ref={opener} type="button" disabled={pending || editing || !!confirmation}
+      <button className="calendar-quiet" type="button" disabled={pending} onClick={retry}>Actualizar cierres</button>}
+    {state.status === "ready" && <button ref={opener} className="calendar-primary" type="button" disabled={pending || editing || !!confirmation}
       onClick={() => begin()}>Crear cierre</button>}
-    {editing && <form ref={form} className="services-form" aria-label={editId ? "Editar cierre" : "Crear cierre"} aria-busy={pending} onSubmit={save}>
-      <p>Se aplica a todo el negocio. Las horas corresponden a America/Argentina/Buenos_Aires.</p>
+    </div>
+    {editing && <form ref={form} className="services-form calendar-closure-form" aria-label={editId ? "Editar cierre" : "Crear cierre"} aria-busy={pending} onSubmit={save}>
+      <p className="calendar-time-note">Se aplica a todo el negocio. Las horas corresponden a America/Argentina/Buenos_Aires.</p>
+      <div className="calendar-field">
       <label htmlFor={kindId}>Tipo de cierre</label>
       <select id={kindId} value={kind} disabled={pending} onChange={event => {
         if (request.current) return;
@@ -204,21 +209,22 @@ export function BusinessClosuresSection({ state, retryAction, createAction, upda
         setOriginal(null); setDate(""); setWall({ start: "", end: "" });
         setChanged({ start: false, end: false }); setChoice({ start: "", end: "" }); setError("");
       }}><option value="date">Día completo</option><option value="interval">Intervalo</option></select>
-      {kind === "date" ? <label>Fecha<input type="date" required disabled={pending} value={date}
+      </div>
+      {kind === "date" ? <label className="calendar-field">Fecha<input type="date" required disabled={pending} value={date}
         onChange={event => { if (!request.current) { setDate(event.target.value); setError(""); } }} /></label> :
         (["start", "end"] as const).map(field => {
           const result = convertArgentinaClosureTime(wall[field]);
-          return <div key={field}>
-            <label>{field === "start" ? "Desde (Argentina)" : "Hasta (Argentina)"}
+          return <div key={field} className="calendar-interval-field">
+            <label className="calendar-field">{field === "start" ? "Desde (Argentina)" : "Hasta (Argentina)"}
               <input type="datetime-local" step="0.001" required disabled={pending} value={wall[field]} onChange={event => {
                 if (request.current) return;
                 setWall(value => ({ ...value, [field]: event.target.value }));
                 setChanged(value => ({ ...value, [field]: true }));
                 setChoice(value => ({ ...value, [field]: "" })); setError("");
               }} /></label>
-            {(!original || changed[field]) && result.ok && result.candidates.length > 1 && <fieldset disabled={pending}>
+            {(!original || changed[field]) && result.ok && result.candidates.length > 1 && <fieldset className="calendar-ambiguity" disabled={pending}>
               <legend>{field === "start" ? "Elegí el inicio" : "Elegí el fin"}: hora repetida</legend>
-              {result.candidates.map(candidate => <label key={candidate.instant}>
+              {result.candidates.map(candidate => <label key={candidate.instant} className="calendar-choice">
                 <input type="radio" name={`closure-${field}`} required checked={choice[field] === candidate.instant}
                   onChange={() => {
                     if (request.current) return;
@@ -231,32 +237,34 @@ export function BusinessClosuresSection({ state, retryAction, createAction, upda
         })}
       {error && <p role="alert">{error}</p>}
       <div className="services-form-actions">
-        <button ref={saveButton} type="submit" disabled={pending}>Guardar cierre</button>
+        <button ref={saveButton} className="calendar-primary" type="submit" disabled={pending}>Guardar cierre</button>
         <button type="button" disabled={pending} onClick={() => { if (!request.current) close(); }}>Cancelar cierre</button>
       </div>
     </form>}
     {state.status === "ready" && (state.closures.length === 0 ?
-      <p>No hay cierres guardados. El horario semanal sigue siendo la referencia de atención.</p> :
+      <p className="calendar-closures-empty">No hay cierres guardados. El horario semanal sigue siendo la referencia de atención.</p> :
       <ul className="services-list">
         {state.closures.map(closure => <li key={closure.id} className="services-item" data-closure-id={closure.id}>
+          <div className="calendar-closure-time">
           {closure.kind === "date" ? <p>Día completo: {formatArgentinaClosureDate(closure.date)}</p> : <>
             <p>Desde: {formatArgentinaClosureInstant(closure.start)}</p>
             <p>Hasta: {formatArgentinaClosureInstant(closure.end)}</p>
           </>}
+          </div>
           <div className="services-form-actions">
-            <button type="button" data-closure-action="edit" disabled={pending || editing || !!confirmation}
+            <button className="calendar-edit" type="button" data-closure-action="edit" disabled={pending || editing || !!confirmation}
               onClick={() => begin(closure)}>Editar cierre</button>
-            <button type="button" data-closure-action="delete" disabled={pending || editing || !!confirmation}
+            <button className="calendar-danger" type="button" data-closure-action="delete" disabled={pending || editing || !!confirmation}
               onClick={() => {
                 if (request.current || pending || editing || confirmation) return;
                 generation.current++; setError(""); setFocus(null); setConfirmation(closure.id);
               }}>Eliminar cierre</button>
           </div>
-          {confirmation === closure.id && <div role="group" aria-label="Confirmar eliminación del cierre">
+          {confirmation === closure.id && <div className="calendar-confirmation" role="group" aria-label="Confirmar eliminación del cierre">
             <p>Eliminar este cierre vuelve a permitir atención según el horario semanal. No cancela ni modifica turnos existentes.</p>
             {error && <p role="alert">{error}</p>}
             <div className="services-form-actions">
-              <button ref={deleteConfirm} type="button" disabled={pending} onClick={() => void remove()}>Confirmar eliminación</button>
+              <button ref={deleteConfirm} className="calendar-danger-confirm" type="button" disabled={pending} onClick={() => void remove()}>Confirmar eliminación</button>
               <button ref={deleteCancel} type="button" disabled={pending} onClick={cancelDelete}>Cancelar eliminación</button>
             </div>
           </div>}
