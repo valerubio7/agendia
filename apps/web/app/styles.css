@@ -817,13 +817,13 @@ main.login-frame {
 }
 
 /* Profile navigation — horizontal shell, unchanged route controls */
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) {
   position: relative;
   display: flex;
   flex-direction: column;
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__sidebar {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__sidebar {
   position: static;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -838,13 +838,13 @@ main.login-frame {
   background: var(--pine-deep);
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__sidebar > .brand {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__sidebar > .brand {
   --brand-height: 32px;
   --brand-clearspace: calc(var(--brand-height) * 11 / 12);
   align-self: center;
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__navigation {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__navigation {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -854,7 +854,7 @@ main.login-frame {
   padding-block: 0.5rem;
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__navigation a {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__navigation a {
   flex: 0 0 auto;
   min-height: 2.75rem;
   padding: 0.65rem 0.75rem;
@@ -868,18 +868,18 @@ main.login-frame {
     border-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__navigation a:hover {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__navigation a:hover {
   border-color: var(--pine);
   background: var(--pine);
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__navigation a[aria-current="page"] {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__navigation a[aria-current="page"] {
   border-color: var(--pine);
   background: var(--pine);
   color: var(--white);
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__sidebar > button {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__sidebar > button {
   width: auto;
   min-height: 2.75rem;
   margin: 0;
@@ -893,47 +893,47 @@ main.login-frame {
   transition: background-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__sidebar > button:hover:not(:disabled) {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__sidebar > button:hover:not(:disabled) {
   background: var(--pine);
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__sidebar a:focus-visible,
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__sidebar > button:focus-visible {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__sidebar a:focus-visible,
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__sidebar > button:focus-visible {
   outline: 2px solid var(--paper);
   outline-offset: 2px;
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__sidebar > button:disabled {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__sidebar > button:disabled {
   cursor: wait;
   opacity: 0.65;
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__workspace {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__workspace {
   flex: 1 0 auto;
   width: 100%;
   min-height: 0;
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__topbar {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__topbar {
   display: none;
 }
 
 @media (width < 64rem) {
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__sidebar {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__sidebar {
     grid-template-columns: minmax(0, 1fr);
     padding-inline: 1rem;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__sidebar > .brand {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__sidebar > .brand {
     justify-self: start;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__navigation,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__sidebar > button {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__navigation,
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__sidebar > button {
     display: none;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__topbar {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__topbar {
     position: absolute;
     top: 0;
     right: 1rem;
@@ -946,17 +946,17 @@ main.login-frame {
     background: transparent;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__mobile-brand,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__section {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-brand,
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__section {
     display: none;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) [data-ui="mobile-navigation"] {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) [data-ui="mobile-navigation"] {
     position: relative;
     display: block;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) [data-ui="mobile-navigation"] > summary {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) [data-ui="mobile-navigation"] > summary {
     display: list-item;
     min-height: 2.75rem;
     padding: 0.65rem 0.85rem;
@@ -971,28 +971,28 @@ main.login-frame {
     transition: background-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) [data-ui="mobile-navigation"] > summary::-webkit-details-marker {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) [data-ui="mobile-navigation"] > summary::-webkit-details-marker {
     display: revert;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) [data-ui="mobile-navigation"] > summary::after {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) [data-ui="mobile-navigation"] > summary::after {
     content: none;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) [data-ui="mobile-navigation"][open] > summary {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) [data-ui="mobile-navigation"][open] > summary {
     list-style-type: disclosure-open;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) [data-ui="mobile-navigation"] > summary:hover {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) [data-ui="mobile-navigation"] > summary:hover {
     background: var(--pine-deep);
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) [data-ui="mobile-navigation"] > summary:focus-visible {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) [data-ui="mobile-navigation"] > summary:focus-visible {
     outline: 2px solid var(--paper);
     outline-offset: 3px;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__mobile-menu {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-menu {
     position: absolute;
     top: calc(100% + 0.75rem);
     right: 0;
@@ -1009,14 +1009,14 @@ main.login-frame {
     box-shadow: 0 0.75rem 2rem color-mix(in srgb, var(--pine-deep) 12%, transparent);
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__mobile-menu nav {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-menu nav {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.25rem;
     min-width: 0;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__mobile-menu a {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-menu a {
     display: flex;
     align-items: center;
     min-width: 0;
@@ -1031,18 +1031,18 @@ main.login-frame {
     transition: background-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__mobile-menu a:hover {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-menu a:hover {
     background: var(--pine-soft);
     color: var(--pine-deep);
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__mobile-menu a[aria-current="page"] {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-menu a[aria-current="page"] {
     border-color: var(--pine);
     background: var(--pine);
     color: var(--white);
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__mobile-menu button {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-menu button {
     width: 100%;
     min-height: 2.75rem;
     padding: 0.65rem 1rem;
@@ -1054,28 +1054,28 @@ main.login-frame {
     transition: background-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__mobile-menu button:hover:not(:disabled) {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-menu button:hover:not(:disabled) {
     background: var(--pine-deep);
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__mobile-menu a:focus-visible,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__mobile-menu button:focus-visible {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-menu a:focus-visible,
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-menu button:focus-visible {
     outline: 2px solid var(--pine);
     outline-offset: 2px;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__mobile-menu button:disabled {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-menu button:disabled {
     cursor: wait;
     opacity: 0.65;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__navigation a,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__sidebar > button,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) [data-ui="mobile-navigation"] > summary,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__mobile-menu a,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"])) .authenticated-shell__mobile-menu button {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__navigation a,
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__sidebar > button,
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) [data-ui="mobile-navigation"] > summary,
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-menu a,
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"])) .authenticated-shell__mobile-menu button {
     transition: none;
   }
 }
@@ -4696,6 +4696,475 @@ main.services-screen[aria-labelledby="services-title"] ::selection {
 
 @media (prefers-reduced-motion: reduce) {
   main.services-screen[aria-labelledby="services-title"] :is(button, input, textarea) {
+    transition: none;
+  }
+}
+
+/* Recursos only: Horario retains the shared weekly editor and legacy rules. */
+main.resources-screen[aria-labelledby="resources-title"] {
+  --resources-stroke: color-mix(in srgb, var(--pine-deep) 32%, var(--sand));
+  width: 100%;
+  min-width: 0;
+  max-width: 82rem;
+  margin-inline: auto;
+  padding: 2rem 2rem 3rem;
+  line-height: 1.5;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-header {
+  margin-bottom: 1.5rem;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-header h1 {
+  margin: 0;
+  font-size: 2rem;
+  letter-spacing: -0.025em;
+  line-height: 1.2;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-workspace {
+  display: grid;
+  align-items: start;
+  gap: 1.5rem;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-form {
+  min-width: 0;
+  margin: 0;
+  padding: 1.5rem;
+  border: 1px solid var(--sand);
+  border-radius: 0.875rem;
+  background: var(--surface);
+}
+
+main.resources-screen[aria-labelledby="resources-title"] h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  line-height: 1.35;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-form h2 {
+  margin-bottom: 1.25rem;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-form > fieldset {
+  gap: 1.25rem;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-field {
+  display: grid;
+  align-content: start;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] label {
+  font-size: 0.9375rem;
+  line-height: 1.4;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] :is(input:not([type="checkbox"]), textarea) {
+  width: 100%;
+  min-width: 0;
+  min-height: 3.125rem;
+  padding: 0.8rem 1rem;
+  border: 1px solid var(--resources-stroke);
+  border-radius: 0.625rem;
+  background: var(--white);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 1rem;
+  line-height: 1.5;
+  caret-color: var(--pine);
+  transition: border-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+main.resources-screen[aria-labelledby="resources-title"] textarea {
+  min-height: 7rem;
+  resize: vertical;
+  scrollbar-color: var(--resources-stroke) var(--white);
+}
+
+main.resources-screen[aria-labelledby="resources-title"] input::placeholder {
+  color: var(--ink-2);
+  opacity: 1;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] :is(input, textarea):hover:not(:disabled) {
+  border-color: var(--pine);
+}
+
+main.resources-screen[aria-labelledby="resources-title"] :is(input, textarea):focus-visible {
+  border-color: var(--pine);
+  outline: 2px solid var(--pine);
+  outline-offset: 2px;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] fieldset:disabled :is(input, textarea) {
+  background: var(--paper);
+  color: var(--ink-2);
+  cursor: not-allowed;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-picker {
+  gap: 0.25rem;
+  margin: 0;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] :is(.resources-picker, .resources-hours) > legend {
+  padding: 0;
+  margin-bottom: 0.5rem;
+  font-size: 1rem;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-picker > p {
+  margin-bottom: 0.5rem;
+  font-size: 0.875rem;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-picker label {
+  align-items: center;
+  min-height: 2.75rem;
+  padding-block: 0.25rem;
+  font-weight: 450;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 1.125rem;
+  height: 1.125rem;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--pine);
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-form .resources-hours {
+  margin: 0;
+  gap: 0.625rem;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-hours > p {
+  margin-bottom: 0.5rem;
+  font-size: 0.875rem;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-form .resources-hours-day {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.625rem;
+  padding-top: 0.5rem;
+  border-color: var(--sand);
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-hours-day > legend {
+  margin: 0;
+  padding: 0 0.5rem 0 0;
+  font-size: 0.9375rem;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-hours-day > p {
+  font-size: 0.875rem;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-hours-day > button {
+  grid-column: 2;
+  justify-self: end;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-hours-row {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-hours-row label {
+  min-width: 0;
+  font-size: 0.875rem;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-hours-row input {
+  padding-inline: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-hours-row button {
+  grid-column: 1 / -1;
+  justify-self: start;
+  color: var(--coral-ink);
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-form-actions {
+  align-items: center;
+  gap: 0.5rem;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-form fieldset > .resources-form-actions {
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--sand);
+}
+
+main.resources-screen[aria-labelledby="resources-title"] button {
+  min-height: 2.75rem;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--resources-stroke);
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--ink);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.4;
+  transition:
+    background-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1),
+    border-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+main.resources-screen[aria-labelledby="resources-title"] button:hover:not(:disabled) {
+  border-color: var(--pine);
+  background: var(--pine-soft);
+}
+
+main.resources-screen[aria-labelledby="resources-title"] button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+main.resources-screen[aria-labelledby="resources-title"] button:focus-visible,
+main.resources-screen[aria-labelledby="resources-title"] #resources-title:focus {
+  outline: 2px solid var(--pine);
+  outline-offset: 3px;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-primary {
+  border-color: var(--coral);
+  background: var(--coral);
+  color: var(--ink);
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-primary:hover:not(:disabled) {
+  border-color: var(--coral-ink);
+  background: var(--coral-soft);
+}
+
+main.resources-screen[aria-labelledby="resources-title"] :is(.resources-secondary, .resources-danger) {
+  border-color: transparent;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-danger {
+  color: var(--coral-ink);
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-danger-confirm {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: var(--white);
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-danger-confirm:hover:not(:disabled) {
+  border-color: var(--coral-ink);
+  background: var(--coral-ink);
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-catalog {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-schedule-note {
+  max-width: 70ch;
+  margin: 0;
+  padding: 0.875rem 1rem;
+  border-radius: 0.5rem;
+  background: var(--honey-soft);
+  color: var(--ink);
+  font-size: 0.875rem;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] :is(.resources-list, .resources-empty) {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--sand);
+  border-radius: 0.875rem;
+  background: var(--white);
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-item {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.25rem;
+  min-width: 0;
+  padding: 1.5rem;
+  border: 0;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-item + .resources-item {
+  border-top: 1px solid var(--sand);
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-identity {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.75rem;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-status {
+  margin: 0;
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.375rem;
+  background: var(--pine-soft);
+  color: var(--pine-deep);
+  font-size: 0.8125rem;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-status[data-status="suspended"] {
+  background: var(--honey-soft);
+  color: var(--ink);
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-item-actions {
+  margin-top: 1rem;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-summary button {
+  margin: 0;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] h3 {
+  margin: 1.25rem 0 0.5rem;
+  font-size: 0.9375rem;
+  line-height: 1.4;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-services {
+  display: grid;
+  gap: 0.25rem;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-schedule {
+  min-width: 0;
+  padding-top: 1rem;
+  border-top: 1px solid var(--sand);
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-schedule h3 {
+  margin-top: 0;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-week > div {
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  gap: 0.75rem;
+  padding-block: 0.375rem;
+  font-size: 0.9375rem;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-week > div + div {
+  border-top: 1px solid var(--line);
+}
+
+main.resources-screen[aria-labelledby="resources-title"] :is(.resources-empty, .resources-confirmation) {
+  margin: 0;
+  padding: 1.5rem;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-empty h2 {
+  margin-bottom: 0.5rem;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-confirmation {
+  border: 1px solid var(--danger);
+  border-radius: 0.875rem;
+  background: var(--surface);
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-confirmation p {
+  margin-top: 0.75rem;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] :is([role="alert"], [role="status"]) {
+  margin: 1rem 0 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--pine);
+  border-radius: 0.5rem;
+  background: var(--pine-soft);
+  color: var(--pine-deep);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] [role="alert"] {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--coral-ink);
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-catalog [role="alert"] {
+  margin-top: 0;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] .resources-refresh-warning button {
+  margin-top: 0.75rem;
+}
+
+main.resources-screen[aria-labelledby="resources-title"] ::selection {
+  background: var(--pine-soft);
+  color: var(--pine-deep);
+}
+
+@media (min-width: 48.0625rem) {
+  main.resources-screen[aria-labelledby="resources-title"] .resources-hours-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  }
+
+  main.resources-screen[aria-labelledby="resources-title"] .resources-hours-row button {
+    grid-column: auto;
+  }
+}
+
+@media (min-width: 76rem) {
+  main.resources-screen[aria-labelledby="resources-title"] .resources-workspace {
+    grid-template-columns: 34rem minmax(0, 1fr);
+    gap: 2rem;
+  }
+}
+
+@media (max-width: 47.5rem) {
+  main.resources-screen[aria-labelledby="resources-title"] {
+    padding: 1.5rem 1rem 2rem;
+  }
+
+  main.resources-screen[aria-labelledby="resources-title"] .resources-header h1 {
+    font-size: 1.75rem;
+  }
+
+  main.resources-screen[aria-labelledby="resources-title"] :is(.resources-form, .resources-item, .resources-empty, .resources-confirmation) {
+    padding: 1.25rem 1rem;
+  }
+
+  main.resources-screen[aria-labelledby="resources-title"] .resources-form-actions > button {
+    width: 100%;
+  }
+
+  main.resources-screen[aria-labelledby="resources-title"] .resources-item-actions > button {
+    width: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  main.resources-screen[aria-labelledby="resources-title"] :is(button, input, textarea) {
     transition: none;
   }
 }
