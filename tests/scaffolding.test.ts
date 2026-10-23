@@ -98,23 +98,18 @@ describe("CI policy", () => {
     expect(workflow()).not.toContain("bun run test:tenant-isolation");
   });
 
-  test("isolates both configured Playwright projects with browser and Docker prerequisites", () => {
+  test("isolates the e2e suite with browser and Docker prerequisites", () => {
     const lines = policyLines(jobs().browser!);
-    expect(lines).toContain("fail-fast: false");
-    expect(lines).toContain("suite: [harness, e2e]");
+    expect(lines).not.toContain("matrix");
     expect(lines).toContain('CI: "true"');
     expect(lines.filter((line) => line.startsWith("run:"))).toEqual([
       "run: bun install --frozen-lockfile",
       "run: docker info",
       "run: bunx --no-install playwright install --with-deps chromium",
-      "run: bun run test:${{ matrix.suite }}",
+      "run: bun run test:e2e",
     ]);
-    const scripts = readJson("package.json").scripts as Record<string, string>;
     const config = readFileSync(join(root, "playwright.config.ts"), "utf8");
-    for (const [suite, project] of [["harness", "historical-harness"], ["e2e", "system"]]) {
-      expect(scripts[`test:${suite}`]).toBe(`playwright test --project=${project}`);
-      expect(config).toContain(`name: "${project}"`);
-    }
+    expect(config).not.toContain("projects");
     expect(config).toContain("workers: 1");
     expect(config).toContain("timeout: 180_000");
   });

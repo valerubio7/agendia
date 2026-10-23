@@ -64,13 +64,9 @@ jobs:
         run: bun run test:integration
 
   browser:
-    name: Playwright (${{ matrix.suite }})
+    name: Playwright
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        suite: [harness, e2e]
     env:
       CI: "true"
     steps:
@@ -88,6 +84,6 @@ jobs:
         run: docker info
       - name: Install Chromium and system dependencies
         run: bunx --no-install playwright install --with-deps chromium
-      # Scripts select projects from playwright.config.ts; fixtures own their services.
+      # Script selects the single e2e project from playwright.config.ts; fixtures own their services.
       - name: Browser tests
-        run: bun run test:${{ matrix.suite }}
+        run: bun run test:e2e
