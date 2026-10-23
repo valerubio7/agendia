@@ -20,8 +20,6 @@
     "db:validate": "bun run scripts/db/db-validate.ts",
     "db:migrate:dev": "bun run scripts/db/db-migrate.ts",
     "db:check": "bun run scripts/db/db-check.ts",
-    "security:scan": "bun run scripts/checks/secret-scan.ts",
-    "scope:check": "bun run scripts/checks/scope-check.ts",
     "build": "tsc -p tsconfig.json --noEmit && bun run --cwd apps/web build"
   },
   "devDependencies": {

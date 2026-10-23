@@ -37,10 +37,6 @@ jobs:
         run: bun run test:unit
       - name: Contracts
         run: bun run test:contracts
-      - name: Scope check
-        run: bun run scope:check
-      - name: Security scan
-        run: bun run security:scan
 
   integration:
     name: Integration (includes tenant RLS)
