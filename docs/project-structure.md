@@ -14,7 +14,7 @@ Para trabajar en agendIA, empezá por la capacidad que querés cambiar, no por e
 | --- | --- |
 | [apps/](../apps/) | Composición de los procesos: API, web, message-worker y whatsapp-manager. |
 | [packages/](../packages/) | Dominio, contratos, autenticación, persistencia y adaptadores compartidos. |
-| [scripts/](../scripts/) | Herramientas de desarrollo, base de datos y comprobaciones, agrupadas en `dev`, `db` y `checks`. |
+| [scripts/](../scripts/) | Herramientas de desarrollo y base de datos, agrupadas en `dev` y `db`. |
 | [tests/](../tests/) | Pruebas que cruzan dueños y soporte común; no reemplaza las unitarias junto al código. |
 | [.github/](../.github/) | Workflows de CI y publicación del release (imagen OCI en GHCR). |
 | [docs/](./) | Guías vigentes para mantenimiento, incluido este documento. |
@@ -148,7 +148,6 @@ Referencia breve de los runners definidos en el [package.json raíz](../package.
 | `bun run test:contracts` | `bun test tests/contracts`. |
 | `bun run test:e2e` | Playwright e2e (navegador real). |
 | `bun run test:scaffolding` | Scaffolding y release. |
-| `bun run security:scan` | Comprobación de credenciales en fuentes y archivos de entrega. |
 
 [playwright.config.ts](../playwright.config.ts) ejecuta la suite `system-*` sobre la app web real. Elegí los runners que correspondan y sus requisitos de entorno; esta tabla no es un procedimiento de instalación ni un informe de pruebas aprobadas.
 

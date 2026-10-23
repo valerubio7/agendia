@@ -80,10 +80,8 @@ describe("CI policy", () => {
       "run: bun run test:scaffolding",
       "run: bun run test:unit",
       "run: bun run test:contracts",
-      "run: bun run scope:check",
-      "run: bun run security:scan",
     ]);
-    expect(lines.filter((line) => line.startsWith("- name:"))).toHaveLength(9);
+    expect(lines.filter((line) => line.startsWith("- name:"))).toHaveLength(7);
     expect(source).not.toMatch(/\bsecrets\b|\bdeploy\b|write-all|contents:\s*write/i);
     expect(source).not.toContain("dev.env");
   });

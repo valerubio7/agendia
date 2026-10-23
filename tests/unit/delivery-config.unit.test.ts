@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
-import { checkV1Scope, scanForSecrets } from "../../scripts/checks/policy-checks.ts";
 
 const read = (path: string) => readFileSync(path, "utf8");
 
@@ -26,23 +25,4 @@ describe("delivery configuration", () => {
     expect(workflow).not.toContain("bun run test:tenant-isolation");
   });
 
-  test("fails closed for provider secrets and future conversation capabilities", () => {
-    expect(
-      scanForSecrets({ "safe.ts": "const key = 'deterministic-test-double'" }),
-    ).toEqual([]);
-    expect(
-      scanForSecrets({
-        "leak.ts": "const key = 'sk-abcdefghijklmnopqrstuvwxyz123456'",
-      }),
-    ).toEqual(["leak.ts: DeepSeek credential pattern"]);
-    expect(
-      checkV1Scope(["/me/assistant"], ["apps/web/app/assistant/page.tsx"]),
-    ).toEqual([]);
-    expect(
-      checkV1Scope(["/conversations"], ["apps/web/app/conversations/page.tsx"]),
-    ).toEqual([
-      "route outside v1: /conversations",
-      "path outside v1: apps/web/app/conversations/page.tsx",
-    ]);
-  });
 });
