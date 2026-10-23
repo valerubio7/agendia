@@ -79,4 +79,4 @@ jobs:
           done
           jq -e --arg sha "$RELEASE" '.type == "commit" and .sha == $sha' <<< "$object"
           gh release create "$tag" --repo "$REPOSITORY" --verify-tag --target "$RELEASE" \
-            --title "Agendia $tag" --notes "Agendia $tag: versión estable de la instantánea completa validada de main. Esta publicación no anuncia un despliegue en producción." --generate-notes --draft=false --prerelease=false --latest=false
+            --title "agendIA $tag" --notes "agendIA $tag: stable release of the fully validated main snapshot. This publication does not announce a production deployment." --generate-notes --draft=false --prerelease=false --latest=false

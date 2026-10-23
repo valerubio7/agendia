@@ -137,7 +137,7 @@ test("publisher creates stable Release without archived notes", () => {
   expect(result.code).toBe(0);
   expect(result.notesExist).toBe(false);
   expect(result.releaseArgs[result.releaseArgs.indexOf("--notes") + 1]).toBe(
-    "Agendia v0.7.0: versión estable de la instantánea completa validada de main. Esta publicación no anuncia un despliegue en producción.",
+    "agendIA v0.7.0: stable release of the fully validated main snapshot. This publication does not announce a production deployment.",
   );
   expect(result.releaseArgs).toContain("--notes");
   expect(result.releaseArgs).toContain("--generate-notes");
