@@ -330,11 +330,12 @@ export function ClientsScreen({ disabled, sessionActive, businessId, identityId 
   };
   const locked = disabled || pending || fenced.current || !!storageError;
   return <main className="clients-screen" aria-labelledby="clients-title">
-    <h1 id="clients-title">Clientes</h1>
-    <p>Buscá por nombre o teléfono. Los turnos conservan las condiciones originales del servicio y recurso.</p>
-    {storageError && <p role="alert">{storageError}</p>}
-    <button ref={createButton} disabled={locked || creating} onClick={startCreate}>Crear cliente</button>
-    {creating && draft && <form ref={form} aria-label="Crear cliente" aria-busy={pending} onSubmit={save}>
+    <div className="clients-heading">
+      <h1 id="clients-title">Clientes</h1>
+      {storageError && <p role="alert">{storageError}</p>}
+      <button className="clients-primary" ref={createButton} disabled={locked || creating} onClick={startCreate}>Crear cliente</button>
+    </div>
+    {creating && draft && <form className="clients-editor clients-editor--create" ref={form} aria-label="Crear cliente" aria-busy={pending} onSubmit={save}>
       {([ ["firstName", "Nombre"], ["lastName", "Apellido"], ["phone", "Teléfono"] ] as const).map(([key, label]) =>
         <label key={key} htmlFor={`create-client-${key}`}>{label}
           <input id={`create-client-${key}`} name={key} type={key === "phone" ? "tel" : "text"} required disabled={locked}
@@ -343,55 +344,72 @@ export function ClientsScreen({ disabled, sessionActive, businessId, identityId 
             }} />
         </label>)}
       {saveError && <p role="alert">{saveError}</p>}
-      <button disabled={locked} type="submit">{pending ? "Guardando…" : "Crear cliente"}</button>
-      <button disabled={locked} type="button" onClick={cancelCreate}>Cancelar</button>
-      {uncertain && <button disabled={disabled || pending} type="button" onClick={() => void checkClient()}>Comprobar cliente</button>}
+      <div className="clients-form-actions">
+        <button className="clients-primary" disabled={locked} type="submit">{pending ? "Guardando…" : "Crear cliente"}</button>
+        <button disabled={locked} type="button" onClick={cancelCreate}>Cancelar</button>
+        {uncertain && <button className="clients-quiet" disabled={disabled || pending} type="button" onClick={() => void checkClient()}>Comprobar cliente</button>}
+      </div>
     </form>}
-    <form aria-label="Buscar clientes" onSubmit={searchClients}>
-      <label htmlFor="clients-search">Nombre o teléfono</label>
-      <input id="clients-search" value={search} disabled={locked} onChange={event => {
+    <div className="clients-explorer">
+      <div className="clients-directory">
+        <form className="clients-search" aria-label="Buscar clientes" onSubmit={searchClients}>
+          <label htmlFor="clients-search">Nombre o teléfono</label>
+          <input id="clients-search" value={search} disabled={locked} onChange={event => {
         if (!fenced.current && !mutation.current && !disabled && sessionActive()) setSearch(event.target.value);
       }} />
-      <button disabled={locked} type="submit">Buscar</button>
-    </form>
-    {list.pending && <p role="status">Cargando clientes…</p>}
-    {list.error && <div className="clients-warning"><p role="alert">{notice ? "El cliente se guardó, pero no pudimos actualizar la lista." : list.error}</p>
-      <button disabled={locked || list.pending} onClick={() => void loadList()}>Actualizar clientes</button></div>}
-    {!list.pending && !list.error && !list.rows.length && <p>{query.current ? "No hay clientes que coincidan." : "Todavía no hay clientes."}</p>}
-    <ul className="clients-list" aria-label="Clientes del negocio">
-      {list.rows.map(client => <li key={client.id}>
-        <button disabled={locked} aria-pressed={selected?.id === client.id} onClick={() => select(client)}>
-          <strong>{client.firstName} {client.lastName}</strong><span>{client.phone}</span>
-        </button>
-      </li>)}
-    </ul>
-    {selected && <section className="clients-detail" aria-label="Cliente seleccionado">
-      <h2>{selected.firstName} {selected.lastName}</h2><p>{selected.phone}</p>
-      {notice && <p role="status">{notice}</p>}
-      {!draft ? <button ref={editButton} disabled={locked} onClick={() => {
+          <button disabled={locked} type="submit">Buscar</button>
+          <p className="clients-search-help">Buscá por nombre o teléfono.</p>
+        </form>
+        {list.pending && <p role="status">Cargando clientes…</p>}
+        {list.error && <div className="clients-warning"><p role="alert">{notice ? "El cliente se guardó, pero no pudimos actualizar la lista." : list.error}</p>
+          <button className="clients-quiet" disabled={locked || list.pending} onClick={() => void loadList()}>Actualizar clientes</button></div>}
+        {!list.pending && !list.error && !list.rows.length && <p>{query.current ? "No hay clientes que coincidan." : "Todavía no hay clientes."}</p>}
+        <ul className="clients-list" aria-label="Clientes del negocio">
+          {list.rows.map(client => <li key={client.id}>
+            <button disabled={locked} aria-pressed={selected?.id === client.id} onClick={() => select(client)}>
+              <strong>{client.firstName} {client.lastName}</strong><span>{client.phone}</span>
+            </button>
+          </li>)}
+        </ul>
+      </div>
+      <div className="clients-inspector">
+        <p className="clients-selection-hint">Elegí un cliente para ver sus datos y turnos.</p>
+        {selected && <section className="clients-detail" aria-label="Cliente seleccionado">
+          <div className="clients-profile">
+            <h2>{selected.firstName} {selected.lastName}</h2><p>{selected.phone}</p>
+            {notice && <p role="status">{notice}</p>}
+            {!draft ? <button ref={editButton} disabled={locked} onClick={() => {
         if (mutation.current || fenced.current || disabled || !sessionActive()) return;
         setDraft({ firstName: selected.firstName, lastName: selected.lastName, phone: selected.phone });
         setSaveError(""); scheduleFocus("name");
-      }}>Editar cliente</button> : <form ref={form} aria-label="Editar cliente" aria-busy={pending} onSubmit={save}>
-        {([ ["firstName", "Nombre"], ["lastName", "Apellido"], ["phone", "Teléfono"] ] as const).map(([key, label]) =>
-          <label key={key} htmlFor={`client-${key}`}>{label}
-            <input id={`client-${key}`} name={key} type={key === "phone" ? "tel" : "text"} required disabled={locked}
-              value={draft[key]} onChange={event => {
+      }}>Editar cliente</button> : <form className="clients-editor" ref={form} aria-label="Editar cliente" aria-busy={pending} onSubmit={save}>
+              {([ ["firstName", "Nombre"], ["lastName", "Apellido"], ["phone", "Teléfono"] ] as const).map(([key, label]) =>
+                <label key={key} htmlFor={`client-${key}`}>{label}
+                  <input id={`client-${key}`} name={key} type={key === "phone" ? "tel" : "text"} required disabled={locked}
+                    value={draft[key]} onChange={event => {
                 if (!fenced.current && !mutation.current && !disabled && sessionActive()) setDraft({ ...draft, [key]: event.target.value });
               }} />
-          </label>)}
-        {saveError && <p role="alert">{saveError}</p>}
-        <button disabled={locked} type="submit">{pending ? "Guardando…" : "Guardar cambios"}</button>
-        <button disabled={locked} type="button" onClick={() => {
+                </label>)}
+              {saveError && <p role="alert">{saveError}</p>}
+              <div className="clients-form-actions">
+                <button className="clients-primary" disabled={locked} type="submit">{pending ? "Guardando…" : "Guardar cambios"}</button>
+                <button disabled={locked} type="button" onClick={() => {
           if (mutation.current || fenced.current || disabled || !sessionActive()) return;
           setDraft(null); setSaveError(""); scheduleFocus("edit");
         }}>Cancelar</button>
-      </form>}
-      {history.pending && <p role="status">Cargando turnos…</p>}
-      {history.error && <div className="clients-warning"><p role="alert">{notice ? "El cliente se guardó, pero no pudimos actualizar los turnos." : history.error}</p>
-        <button disabled={locked || history.pending} onClick={() => void loadHistory()}>Actualizar turnos</button></div>}
-      <Appointments title="Próximos turnos" rows={history.rows.filter(row => row.state === "confirmed" && row.startMs > now)} />
-      <Appointments title="Historial completo" rows={history.rows} />
-    </section>}
+              </div>
+            </form>}
+          </div>
+          <div className="clients-history">
+            <p className="clients-history-help">Los turnos conservan las condiciones originales del servicio y recurso.</p>
+            {history.pending && <p role="status">Cargando turnos…</p>}
+            {history.error && <div className="clients-warning"><p role="alert">{notice ? "El cliente se guardó, pero no pudimos actualizar los turnos." : history.error}</p>
+              <button className="clients-quiet" disabled={locked || history.pending} onClick={() => void loadHistory()}>Actualizar turnos</button></div>}
+            <Appointments title="Próximos turnos" rows={history.rows.filter(row => row.state === "confirmed" && row.startMs > now)} />
+            <Appointments title="Historial completo" rows={history.rows} />
+          </div>
+        </section>}
+      </div>
+    </div>
   </main>;
 }
