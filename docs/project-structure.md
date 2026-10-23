@@ -148,7 +148,7 @@ Referencia breve de los runners definidos en el [package.json raíz](../package.
 | `bun run test:integration` | `bun test tests/integration`. |
 | `bun run test:contracts` | `bun test tests/contracts`. |
 | `bun run test:tenant-isolation` | Integración de RLS por tenant. |
-| `bun run test:harness` | Playwright, proyecto `historical-harness`. |
+| `bun run test:e2e` | Playwright e2e (navegador real). |
 | `bun run test:e2e` | Playwright, proyecto `system`. |
 | `bun run test:scaffolding` | Scaffolding y release. |
 | `bun run security:scan` | Comprobación de credenciales en fuentes y archivos de entrega. |
