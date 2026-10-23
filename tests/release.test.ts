@@ -11,27 +11,37 @@ const paths = ["", "apps/api", "apps/message-worker", "apps/web", "apps/whatsapp
 const scripts = [...workflow.matchAll(/        run: \|\n((?:          .*\n|\n)+)/g)]
   .map((match) => match[1]!.replace(/^          /gm, ""));
 const mock = `#!/usr/bin/env bun
-import { appendFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { appendFileSync, writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
 const tool = basename(process.argv[1]);
 const args = process.argv.slice(2);
 const command = args.join(" ");
 const mode = process.env.MODE;
 const sha = process.env.RELEASE;
-const afterBuild = existsSync("build-complete");
 appendFileSync("operations", tool + " " + command + "\\n");
 function emit(value) { console.log(JSON.stringify(value)); }
 if (tool === "gh") {
   if (mode === "tag-missing" && command.includes("git/ref/tags/")) process.exit(1);
+  // A second ref/tags read is the pre-publication recheck; drift modes fail there.
   if (command.includes("git/ref/tags/")) {
-    if (afterBuild && mode === "final-missing") process.exit(1);
-    if (afterBuild && mode === "final-unknown") process.exit(7);
-    if (afterBuild && mode === "final-malformed") emit({ object: {} });
-    else emit({ object: { type: mode.startsWith("annotated") ? "tag" : "commit", sha: mode === "tag-mismatch" || (afterBuild && mode === "final-drift") ? "b".repeat(40) : sha } });
+    const reads = existsSync("ref-reads") ? Number(readFileSync("ref-reads", "utf8")) + 1 : 1;
+    writeFileSync("ref-reads", String(reads));
+    const recheck = reads >= 2;
+    const annotation = mode.startsWith("annotated");
+    if (recheck && mode === "final-missing") process.exit(1);
+    if (recheck && mode === "final-unknown") process.exit(7);
+    if (recheck && mode === "final-malformed") emit({ object: {} });
+    else emit({ object: {
+      type: annotation ? "tag" : "commit",
+      sha: mode === "tag-mismatch" || (recheck && ["final-drift", "annotated-final-drift"].includes(mode)) ? "b".repeat(40) : sha,
+    } });
   } else if (command.includes("git/tags/")) {
-    if (afterBuild && mode === "annotated-final-unknown") process.exit(7);
-    if (afterBuild && mode === "annotated-final-malformed") emit({ object: {} });
-    else emit({ object: { type: "commit", sha: mode === "annotated-mismatch" || (afterBuild && mode === "annotated-final-drift") ? "b".repeat(40) : sha } });
+    const reads = existsSync("tag-reads") ? Number(readFileSync("tag-reads", "utf8")) + 1 : 1;
+    writeFileSync("tag-reads", String(reads));
+    const recheck = reads >= 2;
+    if (recheck && mode === "annotated-final-unknown") process.exit(7);
+    if (recheck && mode === "annotated-final-malformed") emit({ object: {} });
+    else emit({ object: { type: "commit", sha: mode === "annotated-mismatch" || (recheck && mode === "annotated-final-drift") ? "b".repeat(40) : sha } });
   } else if (command.includes("compare/")) {
     emit({ status: mode === "ancestry" ? "diverged" : mode === "identical" ? "identical" : "ahead" });
   } else if (command.includes("actions/workflows/ci.yml/runs")) {
@@ -59,14 +69,6 @@ if (tool === "gh") {
     process.exit(0);
   }
   else throw new Error("Unexpected gh: " + command);
-} else if (tool === "curl") {
-  if (mode === "network") process.exit(7);
-  if (command.includes("/token?")) emit({ token: "fake-registry-token" });
-  else {
-    const output = args[args.indexOf("-o") + 1];
-    writeFileSync(output, JSON.stringify({ errors: [{ code: mode === "registry-unknown" ? "UNKNOWN" : "MANIFEST_UNKNOWN" }] }));
-    console.log(mode === "image-exists" || (mode === "alias-exists" && command.endsWith("v0.7.0")) ? "200" : mode === "registry-403" ? "403" : mode === "registry-500" ? "500" : "404");
-  }
 } else if (tool === "tar") {
   for (const path of ${JSON.stringify(paths)}) {
     mkdirSync("source/" + path, { recursive: true });
@@ -78,10 +80,8 @@ if (tool === "gh") {
     writeFileSync("source/docs/releases/v0.7.0.md", "Notas pendientes de publicación.");
   }
 } else if (tool === "docker") {
-  if (args[0] === "build") writeFileSync("build-complete", "built validated SHA");
-  if (mode === "image-failure" && args[0] === "push") process.exit(1);
-  if (args[0] === "buildx") console.log("sha256:" + (mode === "digest" && command.includes(":v0.7.0") ? "b" : "a").repeat(64));
-  if (args[0] === "inspect") console.log(mode === "revision" ? "wrong" : sha);
+  // No docker operations remain in publish.yml; never reached.
+  process.exit(1);
 } else throw new Error("Unexpected tool: " + tool);
 `;
 
@@ -89,7 +89,7 @@ function run(mode = "", event = "push", ref = "refs/tags/v0.7.0") {
   const cwd = mkdtempSync(join(tmpdir(), "agendia-release-"));
   const bin = join(cwd, "bin");
   mkdirSync(bin);
-  for (const tool of ["gh", "curl", "docker", "tar"]) {
+  for (const tool of ["gh", "tar"]) {
     writeFileSync(join(bin, tool), mock);
     chmodSync(join(bin, tool), 0o755);
   }
@@ -114,25 +114,19 @@ test("publisher accepts lightweight and annotated stable tags after exact main C
     const result = run(mode);
     expect(result.error).toBe("");
     expect(result.code).toBe(0);
-    const order = ["actions/workflows/ci.yml/runs", "tarball/", "docker login", "docker build",
-      `docker push ghcr.io/valerubio7/agendia:${sha}`, "docker push ghcr.io/valerubio7/agendia:v0.7.0",
-      "docker buildx imagetools inspect", "docker inspect", "gh release create v0.7.0"];
+    // Chronology: CI gate, source, release-absence check, tag re-read (assertion below), create.
+    const order = ["actions/workflows/ci.yml/runs", "tarball/", "gh api --include repos/valerubio7/agendia/releases/tags/v0.7.0", "gh release create v0.7.0"];
     let previous = -1;
     for (const entry of order) {
       const position = result.log.indexOf(entry);
       expect(position).toBeGreaterThan(previous);
       previous = position;
     }
-    expect(result.log).toContain("org.opencontainers.image.version=0.7.0");
-    expect(result.log).toContain(`org.opencontainers.image.revision=${sha}`);
-    expect(result.log).toContain("org.opencontainers.image.source=https://github.com/valerubio7/agendia");
-    expect(result.log.match(/docker buildx imagetools inspect/g)).toHaveLength(2);
     expect(result.log).toContain("--generate-notes --draft=false --prerelease=false --latest=false");
     expect(result.log).toContain(`--target ${sha}`);
-    expect(result.log).not.toContain(":latest");
+    expect(result.log).not.toContain("docker");
     expect(result.log.match(/git\/ref\/tags\/v0\.7\.0/g)).toHaveLength(2);
     const finalTagRead = result.log.lastIndexOf("gh api repos/valerubio7/agendia/git/ref/tags/");
-    expect(finalTagRead).toBeGreaterThan(result.log.indexOf("docker inspect"));
     expect(finalTagRead).toBeLessThan(result.log.indexOf("gh release create"));
     if (mode === "annotated") expect(result.log.match(/gh api .*\/git\/tags\//g)).toHaveLength(2);
   }
@@ -148,10 +142,8 @@ test("publisher creates stable Release without archived notes", () => {
   expect(result.releaseArgs).toContain("--notes");
   expect(result.releaseArgs).toContain("--generate-notes");
   expect(result.releaseArgs).not.toContain("--notes-file");
-  const imageVerified = result.log.indexOf("docker inspect");
   const finalTagRead = result.log.lastIndexOf("gh api repos/valerubio7/agendia/git/ref/tags/");
-  expect(imageVerified).toBeGreaterThan(-1);
-  expect(finalTagRead).toBeGreaterThan(imageVerified);
+  expect(finalTagRead).toBeGreaterThan(-1);
   expect(result.log.indexOf("gh release create")).toBeGreaterThan(finalTagRead);
 });
 
@@ -163,22 +155,21 @@ for (const [event, ref] of [["push", "refs/heads/main"], ["pull_request", "refs/
   });
 }
 
-const rejections = ["tag-missing", "tag-mismatch", "annotated-mismatch", "ancestry", "ci-sha", "ci-pr", "ci-fork", "ci-pending", "ci-failure", "ci-unknown", "ci-empty", "ci-rerun", "release-exists", "draft", "prerelease", "api-403", "api-500", "api-network", "api-unknown", "network", "image-exists", "alias-exists", "registry-403", "registry-500", "registry-unknown", "version", "root-version", "image-failure", "digest", "revision"];
+const rejections = ["tag-missing", "tag-mismatch", "annotated-mismatch", "ancestry", "ci-sha", "ci-pr", "ci-fork", "ci-pending", "ci-failure", "ci-unknown", "ci-empty", "ci-rerun", "release-exists", "draft", "prerelease", "api-403", "api-500", "api-network", "api-unknown", "version", "root-version"];
 for (const mode of rejections) {
   test(`publisher fails closed: ${mode}`, () => {
     const result = run(mode);
     expect(result.code).not.toBe(0);
     expect(result.log).not.toContain("gh release create");
-    if (!["image-failure", "digest", "revision"].includes(mode)) expect(result.log).not.toContain("docker login");
+    expect(result.log).not.toContain("docker");
   });
 }
 
 for (const mode of ["final-drift", "annotated-final-drift", "final-missing", "final-unknown", "final-malformed", "annotated-final-unknown", "annotated-final-malformed"]) {
-  test(`tag binding after build fails closed: ${mode}`, () => {
+  test(`tag binding after preflight fails closed: ${mode}`, () => {
     const result = run(mode);
-    expect(result.log).toContain("docker inspect");
     expect(result.log.match(/git\/ref\/tags\/v0\.7\.0/g)).toHaveLength(2);
-    expect(result.log.lastIndexOf("gh api repos/valerubio7/agendia/git/ref/tags/")).toBeGreaterThan(result.log.indexOf("docker inspect"));
+    expect(result.log.lastIndexOf("gh api repos/valerubio7/agendia/git/ref/tags/")).toBeLessThan(result.log.indexOf("gh release create v0.7.0") === -1 ? Infinity : result.log.indexOf("gh release create v0.7.0"));
     expect(result.log).not.toContain("gh release create");
     expect(result.code).not.toBe(0);
   });

@@ -1,8 +1,5 @@
 name: agendia
 x-process: &process
-  build:
-    context: .
-    target: application
   image: ${AGENDIA_IMAGE:-agendia:local}
   restart: unless-stopped
   init: true
