@@ -147,7 +147,6 @@ Referencia breve de los runners definidos en el [package.json raíz](../package.
 | `bun run test:integration` | `bun test tests/integration`. |
 | `bun run test:contracts` | `bun test tests/contracts`. |
 | `bun run test:e2e` | Playwright e2e (navegador real). |
-| `bun run test:scaffolding` | Scaffolding y release. |
 
 [playwright.config.ts](../playwright.config.ts) ejecuta la suite `system-*` sobre la app web real. Elegí los runners que correspondan y sus requisitos de entorno; esta tabla no es un procedimiento de instalación ni un informe de pruebas aprobadas.
 
