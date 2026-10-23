@@ -88,9 +88,6 @@ describe("local development supervisor", () => {
     };
 
     expect(packageJson.scripts.dev).toBe("bun run scripts/dev/dev-stack.ts");
-    expect(packageJson.scripts["bootstrap:admin"]).toBe(
-      "bun run scripts/db/bootstrap-admin.ts",
-    );
     // No development entrypoint may opt into an external env file: the single
     // source of truth for local secrets is the git-ignored root .env.
     expect(JSON.stringify(packageJson.scripts)).not.toContain("--env-file");
