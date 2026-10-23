@@ -75,10 +75,6 @@ if (tool === "gh") {
     const conflict = (mode === "version" && path === "apps/api") || (mode === "root-version" && path === "");
     writeFileSync("source/" + path + "/package.json", JSON.stringify({ version: conflict ? "0.1.0" : "0.7.0" }));
   }
-  if (mode !== "notes-missing") {
-    mkdirSync("source/docs/releases", { recursive: true });
-    writeFileSync("source/docs/releases/v0.7.0.md", "Notas pendientes de publicación.");
-  }
 } else if (tool === "docker") {
   // No docker operations remain in publish.yml; never reached.
   process.exit(1);
@@ -100,7 +96,6 @@ function run(mode = "", event = "push", ref = "refs/tags/v0.7.0") {
       REPOSITORY: "valerubio7/agendia", ACTOR: "fake", GH_TOKEN: "fake", EVENT: event, REF: ref },
   });
   return { code: result.exitCode, log: readFileSync(join(cwd, "operations"), "utf8"), error: result.stderr.toString(),
-    notesExist: existsSync(join(cwd, "source/docs/releases/v0.7.0.md")),
     releaseArgs: existsSync(join(cwd, "release-args")) ? JSON.parse(readFileSync(join(cwd, "release-args"), "utf8")) as string[] : [],
   };
 }
@@ -124,27 +119,14 @@ test("publisher accepts lightweight and annotated stable tags after exact main C
     }
     expect(result.log).toContain("--generate-notes --draft=false --prerelease=false --latest=false");
     expect(result.log).toContain(`--target ${sha}`);
+    expect(result.releaseArgs).not.toContain("--notes");
+    expect(result.releaseArgs).not.toContain("--notes-file");
     expect(result.log).not.toContain("docker");
     expect(result.log.match(/git\/ref\/tags\/v0\.7\.0/g)).toHaveLength(2);
     const finalTagRead = result.log.lastIndexOf("gh api repos/valerubio7/agendia/git/ref/tags/");
     expect(finalTagRead).toBeLessThan(result.log.indexOf("gh release create"));
     if (mode === "annotated") expect(result.log.match(/gh api .*\/git\/tags\//g)).toHaveLength(2);
   }
-});
-
-test("publisher creates stable Release without archived notes", () => {
-  const result = run("notes-missing");
-  expect(result.code).toBe(0);
-  expect(result.notesExist).toBe(false);
-  expect(result.releaseArgs[result.releaseArgs.indexOf("--notes") + 1]).toBe(
-    "agendIA v0.7.0: stable release of the fully validated main snapshot. This publication does not announce a production deployment.",
-  );
-  expect(result.releaseArgs).toContain("--notes");
-  expect(result.releaseArgs).toContain("--generate-notes");
-  expect(result.releaseArgs).not.toContain("--notes-file");
-  const finalTagRead = result.log.lastIndexOf("gh api repos/valerubio7/agendia/git/ref/tags/");
-  expect(finalTagRead).toBeGreaterThan(-1);
-  expect(result.log.indexOf("gh release create")).toBeGreaterThan(finalTagRead);
 });
 
 for (const [event, ref] of [["push", "refs/heads/main"], ["pull_request", "refs/tags/v0.7.0"], ["push", "refs/tags/v0.7.0-beta"], ["push", "refs/tags/v00.7.0"]]) {
