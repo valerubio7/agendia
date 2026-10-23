@@ -39,14 +39,35 @@ export function TurnosScreen({ disabled, sessionActive }: { disabled: boolean; s
   const receiptRequests = useRef(new Map<string, AbortController>());
   const selected = useRef<string | null>(null), range = useRef({ from: "", to: "" });
   const heading = useRef<HTMLHeadingElement>(null), createButton = useRef<HTMLButtonElement>(null);
+  const [dialogVisible, setDialogVisible] = useState(false);
+  const dialog = useRef<HTMLDialogElement>(null), dialogHeading = useRef<HTMLHeadingElement>(null);
+  const invoker = useRef<HTMLElement | null>(null);
+  const revealDialog = () => {
+    if (!dialog.current?.open) invoker.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setDialogVisible(true);
+  };
+  useEffect(() => {
+    const surface = dialog.current;
+    if (!surface) return;
+    if (dialogVisible) {
+      if (!surface.open) surface.showModal();
+      dialogHeading.current?.focus();
+    } else if (surface.open) {
+      surface.close();
+      const target = invoker.current;
+      if (target?.isConnected && !target.matches(":disabled, [hidden]") && target.getClientRects().length) target.focus();
+      else heading.current?.focus();
+    }
+  }, [dialogVisible, editor]);
   const [focusRevision, setFocusRevision] = useState(0);
   const focus = useRef<"create" | "detail" | "heading" | null>(null);
   const scheduleFocus = (target: typeof focus.current) => { focus.current = target; setFocusRevision(value => value + 1); };
   useEffect(() => {
     const target = focus.current; focus.current = null;
-    if (disabled || !sessionActive()) return;
-    const element = target === "create" ? createButton.current
-      : target === "detail" ? document.getElementById("turnos-detail-title") : heading.current;
+    if (!target || disabled || !sessionActive() || (target === "detail" && !dialog.current?.open)) return;
+    const element = dialog.current?.open
+      ? target === "detail" && !editor ? document.getElementById("turnos-detail-title") ?? dialogHeading.current : dialogHeading.current
+      : target === "create" ? createButton.current : heading.current;
     if (element?.isConnected && !(element instanceof HTMLButtonElement && element.disabled)) element.focus();
   }, [focusRevision]);
   const owns = (generation: number, controller: AbortController) =>
@@ -272,6 +293,7 @@ export function TurnosScreen({ disabled, sessionActive }: { disabled: boolean; s
   const detailLocked = locked || !scopeReady || (detail.value ? blocked("change", detail.value.id) : false);
   const select = (id: string) => {
     if (locked || mutation.current || !sessionActive()) return;
+    revealDialog();
     detailRequest.current?.abort(); detailRequest.current = null; selected.current = id;
     setDetail(read(null)); setEditor(null); setNotice(""); setError(operationRef.current.length ? unknownMessage : "");
     if (freshnessRef.current.has(id)) void loadCurrent(id, true);
@@ -279,41 +301,42 @@ export function TurnosScreen({ disabled, sessionActive }: { disabled: boolean; s
   };
   const open = (mode: "create" | "change") => {
     if ((mode === "create" ? createLocked : detailLocked) || mutation.current || !sessionActive()) return;
+    revealDialog();
     setError(operationRef.current.length ? unknownMessage : ""); setNotice(""); setEditor(mode); void loadCatalog();
+  };
+  const cancelEditor = () => {
+    setEditor(null); setError(operationRef.current.length ? unknownMessage : "");
+    if (editor === "create") setDialogVisible(false);
+    scheduleFocus(editor === "create" ? "create" : "detail");
+  };
+  const closeDialog = () => {
+    // Hiding must never interrupt a write or resolve an operation intent.
+    if (pending || mutation.current || dialog.current?.querySelector('[aria-busy="true"]')) return;
+    if (editor && !(editor === "create" ? createLocked : detailLocked) && sessionActive()) cancelEditor();
+    setDialogVisible(false);
   };
   const days = view === "month" ? monthDays(anchor) : view === "week" ? Array.from({ length: 7 }, (_, index) => addDays(first, index)) : [today];
   const renderRows = (date: string) => {
     const rows = calendarRows(list.value, date);
-    return <section key={date} aria-label={dateLabel(date)}><h2>{dateLabel(date)}</h2>
-      {!rows.length ? <p>No hay turnos para esta fecha.</p> : <ul className="turnos-list" aria-label={`Turnos ${date}`}>
-        {rows.map(row => <li key={row.id}><button disabled={locked} onClick={() => select(row.id)} aria-pressed={selected.current === row.id}>
+    return <section className="turnos-day" key={date} aria-label={dateLabel(date)}><h2>{dateLabel(date)}</h2>
+      {!rows.length ? <p className="turnos-day__empty">No hay turnos para esta fecha.</p> : <ul className="turnos-list" aria-label={`Turnos ${date}`}>
+        {rows.map(row => <li key={row.id}><button disabled={locked} onClick={() => select(row.id)} aria-pressed={selected.current === row.id} aria-haspopup="dialog" aria-controls="turnos-dialog">
           <time dateTime={row.startsAt}>{turnoTime(row.startMs)}</time>
-          <span><strong>{row.client.firstName} {row.client.lastName}</strong><span>{row.terms.serviceName}</span></span><span>{turnoStates[row.state]}</span>
+          <span className="turnos-list__person"><strong>{row.client.firstName} {row.client.lastName}</strong><span>{row.terms.serviceName}</span></span><span className="turnos-state" data-state={row.state}>{turnoStates[row.state]}</span>
         </button></li>)}
       </ul>}
     </section>;
   };
-  return <main className="turnos-screen" aria-labelledby="turnos-title">
-    <div className="turnos-toolbar"><h1 id="turnos-title" ref={heading} tabIndex={-1}>Turnos</h1>
-      <button ref={createButton} disabled={createLocked} onClick={() => open("create")}>Nuevo turno</button></div>
-    <div className="turnos-toolbar" role="group" aria-label="Vista de turnos">
-      {([ ["today", "Hoy"], ["week", "Semana"], ["month", "Mes"] ] as const).map(([value, label]) =>
-        <button key={value} disabled={locked} aria-pressed={view === value} onClick={() => { setView(value); setAnchor(today); setDay(today); }}>{label}</button>)}
-    </div>
-    {view !== "today" && <div className="turnos-toolbar" role="group" aria-label="Navegar calendario">
-      <button disabled={locked} onClick={() => { const next = view === "week" ? addDays(anchor, -7) : shiftMonth(anchor, -1); setAnchor(next); setDay(next); }}>Anterior</button>
-      <button disabled={locked} onClick={() => { setAnchor(today); setDay(today); }}>Volver a hoy</button>
-      <button disabled={locked} onClick={() => { const next = view === "week" ? addDays(anchor, 7) : shiftMonth(anchor, 1); setAnchor(next); setDay(next); }}>Siguiente</button>
-    </div>}
+  const feedback = <div className="turnos-feedback">
     {notice && <p role="status">{notice}</p>}{error && <p role="alert">{error}</p>}
     {!scopeReady && !disabled && <button disabled={pending} onClick={() => void loadScope()}>Actualizar autorización</button>}
-    {Object.entries(freshness).map(([id, state]) => <section key={id} aria-label="Estado actual del turno">
+    {Object.entries(freshness).map(([id, state]) => <section className="turnos-recovery" key={id} aria-label="Estado actual del turno">
       <p role={state === "failed" ? "alert" : "status"}>{state === "failed"
         ? "No pudimos verificar el estado actual del turno. La operación se guardó; los datos visibles pueden no estar actualizados. Solo este turno permanece protegido."
         : "Verificando el estado actual del turno. La recepción histórica no reemplaza los datos actuales."}</p>
       <button disabled={locked || state === "pending"} onClick={() => void loadCurrent(id, true)}>Actualizar estado actual</button>
     </section>)}
-    {operations.map(op => <section key={op.key} aria-label="Recuperar solicitud de turno">
+    {operations.map(op => <section className="turnos-recovery" key={op.key} aria-label="Recuperar solicitud de turno">
       <p>Solicitud {op.kind === "create" ? "de creación" : "de modificación"} sin resolver. Otros turnos siguen disponibles.</p>
       {inspection[op.key] && <p role="status">{inspection[op.key]}</p>}
       <button disabled={locked || reading.includes(op.key)} onClick={() => void recover(op)}>Consultar resultado guardado</button>
@@ -322,26 +345,57 @@ export function TurnosScreen({ disabled, sessionActive }: { disabled: boolean; s
           <button disabled={locked || reading.includes(op.key)} onClick={() => void recover(op, true)}>Confirmar cancelación de solicitud</button>
           <button disabled={locked || reading.includes(op.key)} onClick={() => setFence(null)}>Volver sin cancelar solicitud</button></>}
     </section>)}
+    </div>;
+  return <main className="turnos-screen" aria-labelledby="turnos-title">
+    <header className="turnos-heading"><h1 id="turnos-title" ref={heading} tabIndex={-1}>Turnos</h1>
+      <button className="turnos-primary" ref={createButton} disabled={createLocked} onClick={() => open("create")} aria-haspopup="dialog" aria-controls="turnos-dialog">Nuevo turno</button></header>
+    <div className="turnos-controls">
+    <div className="turnos-views" role="group" aria-label="Vista de turnos">
+      {([ ["today", "Hoy"], ["week", "Semana"], ["month", "Mes"] ] as const).map(([value, label]) =>
+        <button key={value} disabled={locked} aria-pressed={view === value} onClick={() => { setView(value); setAnchor(today); setDay(today); }}>{label}</button>)}
+    </div>
+    {view !== "today" && <div className="turnos-range" role="group" aria-label="Navegar calendario">
+      <button disabled={locked} onClick={() => { const next = view === "week" ? addDays(anchor, -7) : shiftMonth(anchor, -1); setAnchor(next); setDay(next); }}>Anterior</button>
+      <button disabled={locked} onClick={() => { setAnchor(today); setDay(today); }}>Volver a hoy</button>
+      <button disabled={locked} onClick={() => { const next = view === "week" ? addDays(anchor, 7) : shiftMonth(anchor, 1); setAnchor(next); setDay(next); }}>Siguiente</button>
+    </div>}
+    <button className="turnos-refresh" disabled={locked || list.pending} onClick={() => void loadList()}>Actualizar turnos</button>
+    </div>
+    {!dialogVisible && feedback}
+    <div className="turnos-agenda">
     {list.pending && <p role="status">Actualizando turnos…</p>}
     {list.error && <p role="alert">{notice ? "El turno se guardó, pero no pudimos actualizar la lista." : list.error}</p>}
-    <button disabled={locked || list.pending} onClick={() => void loadList()}>Actualizar turnos</button>
     {view === "month" && <div className="turnos-month" role="group" aria-label="Días del mes">{days.map(date =>
       <button key={date} disabled={locked} aria-pressed={day === date} onClick={() => setDay(date)}>
         <span>{Number(date.slice(-2))}</span><span>{calendarRows(list.value, date).length} turnos</span>
       </button>)}</div>}
     {view === "month" ? renderRows(day) : days.map(renderRows)}
+    </div>
+    <dialog id="turnos-dialog" className="turnos-dialog" ref={dialog} aria-labelledby="turnos-dialog-title"
+      onCancel={event => { event.preventDefault(); closeDialog(); }}>
+    <header className="turnos-dialog__header">
+      <h2 id="turnos-dialog-title" ref={dialogHeading} tabIndex={-1}>{editor === "create" ? "Nuevo turno" : editor === "change" ? "Modificar turno" : "Detalle del turno"}</h2>
+      <button id="turnos-dialog-close" type="button" aria-label="Cerrar ventana de turno" disabled={pending} onClick={closeDialog}>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+      </button>
+    </header>
+    <div className="turnos-dialog__body">
+    {dialogVisible && feedback}
+    <div hidden={!!editor}>
     {detail.pending && <p role="status">Actualizando detalle…</p>}
     {detail.error && <div><p role="alert">{notice ? "El turno se guardó, pero no pudimos actualizar el detalle." : detail.error}</p>
       <button disabled={locked || detail.pending} onClick={() => void loadDetail()}>Actualizar detalle</button></div>}
     {detail.value && <TurnosDetail key={detail.value.id} row={detail.value} now={now} disabled={detailLocked} mutate={mutate} change={() => open("change")} error={error} />}
+    </div>
     {editor && <section className="turnos-editor" aria-label={editor === "create" ? "Nuevo turno" : "Modificar turno"}>
-      <h2>{editor === "create" ? "Nuevo turno" : "Modificar turno"}</h2>
       {catalog.pending && <p role="status">Cargando servicios y recursos…</p>}
       {catalog.error && <div><p role="alert">{catalog.error}</p><button disabled={locked} onClick={() => void loadCatalog()}>Actualizar catálogo</button></div>}
       {!catalog.pending && !catalog.error && <TurnosBookingForm key={`${editor}:${detail.value?.id ?? "new"}`}
         appointment={editor === "change" ? detail.value : null} services={catalog.value.services} resources={catalog.value.resources}
         disabled={editor === "create" ? createLocked : detailLocked} sessionActive={sessionActive} now={now} mutate={mutate}
-        error={error} cancel={() => { setEditor(null); setError(operationRef.current.length ? unknownMessage : ""); scheduleFocus(editor === "create" ? "create" : "detail"); }} />}
+        initialFocus={false} error={error} cancel={cancelEditor} />}
     </section>}
+    </div>
+    </dialog>
   </main>;
 }
