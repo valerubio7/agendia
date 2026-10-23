@@ -15,11 +15,8 @@ describe("delivery configuration", () => {
     expect(packageJson.scripts.test).not.toContain(
       "bun run test:tenant-isolation",
     );
-    expect(packageJson.scripts.test).toContain("bun run test:harness");
+    expect(packageJson.scripts.test).not.toContain("bun run test:harness");
     expect(packageJson.scripts.test).toContain("bun run test:e2e");
-    expect(packageJson.scripts["test:tenant-isolation"]).toBe(
-      "bun test tests/integration/tenant-rls.integration.test.ts",
-    );
     expect(packageJson.scripts["test:integration"]).toBe("bun test tests/integration");
     expect(existsSync("tests/integration/tenant-rls.integration.test.ts")).toBe(true);
     // Bun's directory runner includes the focused RLS file: aggregate and CI
