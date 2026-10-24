@@ -1,11 +1,9 @@
 import { connect } from "node:net";
-import postgres from "postgres";
 
 export type ManagedService = { stop(): Promise<void> };
 export interface DevStackDependencies {
   probePort(host: string, port: number): Promise<boolean>;
   waitPort?(host: string, port: number): Promise<void>;
-  isMigrated?(databaseUrl: string): Promise<boolean>;
   run(command: string, args: string[]): Promise<void>;
   spawn(name: string, command: string, args: string[]): ManagedService;
   waitHttp(url: string): Promise<void>;
@@ -129,20 +127,6 @@ const waitForPort = async (host: string, port: number) => {
   }
   throw new Error("Local PostgreSQL did not become ready");
 };
-const isMigrated = async (databaseUrl: string) => {
-  const sql = postgres(databaseUrl, { max: 1 });
-  try {
-    return Boolean(
-      (
-        await sql<
-          { installed: boolean }[]
-        >`select to_regprocedure('append_runtime_audit(uuid,text,text,text,text,text)') is not null installed`
-      )[0]?.installed,
-    );
-  } finally {
-    await sql.end();
-  }
-};
 const runCommand = async (command: string, args: string[]) => {
   const child = Bun.spawn([command, ...args], {
     stdout: "inherit",
@@ -202,7 +186,6 @@ const waitHttp = async (url: string) => {
 export const systemDependencies: DevStackDependencies = {
   probePort,
   waitPort: waitForPort,
-  isMigrated,
   run: runCommand,
   spawn: spawnService,
   waitHttp,
@@ -225,8 +208,7 @@ export async function runDevStack(
       await dependencies.run("docker", ["compose", "up", "-d", "postgres"]);
       await dependencies.waitPort?.(host, port);
     }
-    if (!(await dependencies.isMigrated?.(database.toString())))
-      await dependencies.run("bun", ["run", "db:migrate:dev"]);
+    await dependencies.run("bun", ["run", "db:migrate:dev"]);
     await dependencies.run("bun", ["run", "scripts/db/bootstrap-admin.ts"]);
     const specs: [string, string, string[]][] = [
       ["api", "bun", ["run", "scripts/dev/start-api.ts"]],
