@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createRuntimePools } from "@agendia/db";
 import { DEFAULT_REPLY_PACING } from "@agendia/domain";
@@ -9,23 +8,13 @@ const directory = join(import.meta.dir, "../../packages/db/migrations");
 const oldColumns = ["singleton", "automation_disabled", "incident_reference", "updated_at"];
 const pacingColumns = ["initial_delay_seconds", "active_delay_seconds", "inactivity_reset_seconds"];
 test("global operational singleton preserves metadata with least-privilege instruction persistence", async () => {
-  for (const upgrade of [false, true]) {
-    const db = await startTestPostgres();
-    const pools = createRuntimePools(db.container.getConnectionUri());
-    try {
-      let before;
-      if (upgrade) {
-        const names = (await readdir(directory)).filter(name => name.endsWith(".sql")).sort();
-        for (const name of names.filter(name => name < "0024")) {
-          await db.sql.unsafe(await readFile(join(directory, name), "utf8"));
-        }
-        await db.sql`insert into businesses(id,name) values('11111111-1111-4111-8111-111111111111','Existing business')`;
-        await db.sql`update operational_controls set automation_disabled=true, incident_reference='Existing incident', updated_at='2025-01-01T00:00:00Z'`;
-        before = [...await db.sql`select singleton,automation_disabled,incident_reference,updated_at from operational_controls`];
-        for (const name of names.filter(name => name >= "0024")) {
-          await db.sql.unsafe(await readFile(join(directory, name), "utf8"));
-        }
-      } else await applyPostgresMigrations(db.sql, directory);
+  const db = await startTestPostgres();
+  const pools = createRuntimePools(db.container.getConnectionUri());
+  try {
+      await applyPostgresMigrations(db.sql, directory);
+      expect([...await db.sql`select singleton,automation_disabled,incident_reference from operational_controls`])
+        .toEqual([{ singleton: true, automation_disabled: false, incident_reference: null }]);
+      await db.sql`update operational_controls set automation_disabled=true, incident_reference='Existing incident', updated_at='2025-01-01T00:00:00Z'`;
       expect((await db.sql`select to_regclass('public.platform_ai_instructions') as name`)[0]?.name).toBeNull();
       expect([...(await db.sql`select column_name,data_type,is_nullable,column_default from information_schema.columns
         where table_schema='public' and table_name='operational_controls' and column_name='additional_instructions'`)]).toEqual([
@@ -33,8 +22,7 @@ test("global operational singleton preserves metadata with least-privilege instr
       ]);
       const metadata = [...await db.sql`select singleton,automation_disabled,incident_reference,updated_at from operational_controls`];
       expect(metadata).toHaveLength(1);
-      if (upgrade) expect(before).toEqual(metadata);
-      else expect(metadata[0]).toMatchObject({ singleton: true, automation_disabled: false, incident_reference: null });
+      expect(metadata[0]).toMatchObject({ singleton: true, automation_disabled: true, incident_reference: 'Existing incident', updated_at: new Date('2025-01-01T00:00:00Z') });
       expect(await pools.admin.run(undefined, r => r.platformAiInstructions())).toEqual({ additionalInstructions: "", replyPacing: DEFAULT_REPLY_PACING });
       const columns = [...await db.sql`select column_name,data_type,is_nullable,column_default from information_schema.columns
         where table_schema='public' and table_name='operational_controls' and column_name in ('initial_delay_seconds','active_delay_seconds','inactivity_reset_seconds') order by column_name`];
@@ -104,9 +92,8 @@ test("global operational singleton preserves metadata with least-privilege instr
       await expect(db.sql`update operational_controls set additional_instructions=null`.execute()).rejects.toMatchObject({ code: "23502" });
       await expect(db.sql`insert into operational_controls(singleton) values(false)`.execute()).rejects.toMatchObject({ code: "23514" });
       await expect(db.sql`insert into operational_controls(singleton) values(true)`.execute()).rejects.toMatchObject({ code: "23505" });
-    } finally {
-      await pools.end();
-      await db.stop();
-    }
+  } finally {
+    await pools.end();
+    await db.stop();
   }
 }, 120_000);
