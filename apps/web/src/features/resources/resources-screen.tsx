@@ -166,121 +166,130 @@ export function ResourcesScreen({ resources, services, onSave, onRefresh, onLife
     <main className="resources-screen" aria-labelledby="resources-title">
       <header className="resources-header">
         <h1 id="resources-title" ref={heading} tabIndex={-1}>Recursos</h1>
-        <p>Consultá los recursos de tu negocio, sus servicios asignados y horarios semanales.</p>
       </header>
-      <form className="resources-form" key={`${editing?.id ?? "create"}-${revision}`}
-        aria-labelledby="resource-form-title" aria-busy={pending} onSubmit={submit}>
-        <h2 id="resource-form-title">{editing ? "Editar recurso" : "Crear recurso"}</h2>
-        <fieldset disabled={pending || refreshPending || !!confirmation}>
-          <label htmlFor="resource-name">Nombre</label>
-          <input ref={nameInput} id="resource-name" name="name" required defaultValue={editing?.name ?? ""} />
-          <label htmlFor="resource-description">Descripción (opcional)</label>
-          <textarea id="resource-description" name="description" defaultValue={editing?.description ?? ""} />
-          <fieldset className="resources-picker">
-            <legend>Servicios asignados</legend>
-            <p>Podés dejar el recurso sin servicios asignados.</p>
-            {services.map(service => <label key={service.id}>
-              <input type="checkbox" name="serviceIds" value={service.id}
-                defaultChecked={editing?.serviceIds.includes(service.id) ?? false} />
-              {service.name}{service.status === "suspended" ? " (suspendido)" : ""}
-            </label>)}
+      <div className="resources-workspace">
+        <form className="resources-form" key={`${editing?.id ?? "create"}-${revision}`}
+          aria-labelledby="resource-form-title" aria-busy={pending} onSubmit={submit}>
+          <h2 id="resource-form-title">{editing ? "Editar recurso" : "Crear recurso"}</h2>
+          <fieldset disabled={pending || refreshPending || !!confirmation}>
+            <div className="resources-field">
+              <label htmlFor="resource-name">Nombre</label>
+              <input ref={nameInput} id="resource-name" name="name" required defaultValue={editing?.name ?? ""} />
+            </div>
+            <div className="resources-field">
+              <label htmlFor="resource-description">Descripción (opcional)</label>
+              <textarea id="resource-description" name="description" defaultValue={editing?.description ?? ""} />
+            </div>
+            <fieldset className="resources-picker">
+              <legend>Servicios asignados</legend>
+              <p>Podés dejar el recurso sin servicios asignados.</p>
+              {services.map(service => <label key={service.id}>
+                <input type="checkbox" name="serviceIds" value={service.id}
+                  defaultChecked={editing?.serviceIds.includes(service.id) ?? false} />
+                {service.name}{service.status === "suspended" ? " (suspendido)" : ""}
+              </label>)}
+            </fieldset>
+            <ControlledWeeklyScheduleEditor value={schedule} onChange={changeSchedule}
+              disabled={pending || refreshPending || !!confirmation} />
+            <div className="resources-form-actions">
+              <button className="resources-primary" type="submit">{pending ? "Guardando…" : editing ? "Guardar cambios" : "Crear recurso"}</button>
+              {editing && <button type="button" onClick={() => selectResource(null)}>Cancelar edición</button>}
+            </div>
           </fieldset>
-          <ControlledWeeklyScheduleEditor value={schedule} onChange={changeSchedule}
-            disabled={pending || refreshPending || !!confirmation} />
-          <div className="resources-form-actions">
-            <button type="submit">{pending ? "Guardando…" : editing ? "Guardar cambios" : "Crear recurso"}</button>
-            {editing && <button type="button" onClick={() => selectResource(null)}>Cancelar edición</button>}
-          </div>
-        </fieldset>
-        {error && <p role="alert">{error}</p>}
-        {notice && <p role="status">{notice}</p>}
-      </form>
-      {confirmation && <section className="resources-confirmation" role="region" aria-label="Confirmar acción sobre recurso" aria-busy={pending}>
-        <h2>{confirmation.action === "retire" ? "Retirar" : "Suspender"} {confirmation.resource.name}</h2>
-        <p>{confirmation.action === "retire"
-          ? "Se quitará del catálogo y se conservará el historial. Puede rechazarse si tiene asignaciones futuras."
-          : "No será elegible para nuevas reservas. Los turnos existentes no se cancelan."}</p>
-        <div className="resources-form-actions">
-          <button ref={cancelButton} type="button" disabled={pending} onClick={cancelLifecycle}>Cancelar</button>
-          <button type="button" disabled={pending} onClick={() => void lifecycle(confirmation.resource, confirmation.action)}>
-            {pending ? "Procesando…" : confirmation.action === "retire" ? "Confirmar retiro" : "Confirmar suspensión"}
-          </button>
-        </div>
-      </section>}
-      {lifecycleError && <p role="alert">{lifecycleError}</p>}
-      {refreshWarning && <section aria-label="Actualización del catálogo" aria-busy={refreshPending}>
-        <p role="alert">El cambio se guardó, pero no pudimos actualizar el catálogo. Reintentá la actualización.</p>
-        <button type="button" disabled={pending || refreshPending || !!confirmation} onClick={() => void refresh()}>
-          {refreshPending ? "Actualizando catálogo…" : "Actualizar catálogo"}
-        </button>
-      </section>}
-      {resources.length === 0 ? (
-        <section className="resources-empty" aria-labelledby="resources-empty-title">
-          <h2 id="resources-empty-title">Todavía no hay recursos</h2>
-          <p>Los recursos de tu negocio aparecerán acá con su estado, servicios y horarios.</p>
-        </section>
-      ) : (
-        <>
-          <p className="resources-schedule-note">Las franjas corresponden al día en que empiezan y pueden continuar al día siguiente.
-            No representan turnos disponibles ni incluyen cierres por fecha.</p>
-          <ul className="resources-list" aria-label="Catálogo de recursos">
-            {resources.map(resource => (
-              <li className="resources-item" key={resource.id}>
-                <div className="resources-summary">
-                  <h2>{resource.name}</h2>
-                  <span className="resources-status" data-status={resource.status}>
-                    {resource.status === "active" ? "Activo" : "Suspendido"}
-                  </span>
-                  {resource.description && <p className="resources-description">{resource.description}</p>}
-                  <div className="resources-form-actions">
-                    <button type="button" disabled={pending || refreshPending || !!confirmation} onClick={() => selectResource(resource)}
-                      aria-label={`Editar ${resource.name}`}>Editar</button>
-                    <button type="button" disabled={pending || refreshPending || !!confirmation}
-                      ref={node => {
-                        const key = `${resource.id}:${resource.status === "active" ? "suspended" : "active"}`;
-                        if (node) lifecycleButtons.current.set(key, node); else lifecycleButtons.current.delete(key);
-                      }} onClick={event => {
-                        if (request.current) return;
-                        if (resource.status === "suspended") void lifecycle(resource, "active");
-                        else { opener.current = event.currentTarget; setLifecycleError(""); setConfirmation({ resource, action: "suspended" }); }
-                      }}>{resource.status === "active" ? "Suspender" : "Reactivar"}</button>
-                    <button type="button" disabled={pending || refreshPending || !!confirmation} onClick={event => {
-                      if (request.current) return;
-                      opener.current = event.currentTarget;
-                      setLifecycleError("");
-                      setConfirmation({ resource, action: "retire" });
-                    }}>Retirar</button>
-                  </div>
-                  <h3>Servicios asignados</h3>
-                  {resource.serviceIds.length === 0 ? <p>Sin servicios asignados</p> : (
-                    <div className="resources-services">
-                      {resource.serviceIds.map(id => {
-                        const service = serviceById.get(id);
-                        return <p key={id}>{service
-                          ? `${service.name}${service.status === "suspended" ? " (suspendido)" : ""}`
-                          : `Servicio no disponible en el catálogo (ID: ${id})`}</p>;
-                      })}
-                    </div>
-                  )}
-                </div>
-                <section className="resources-schedule" aria-label={`Horario semanal de ${resource.name}`}>
-                  <h3>Horario semanal</h3>
-                  <dl className="resources-week">
-                    {scheduleDays.map(([day, label]) => (
-                      <div key={day}>
-                        <dt>{label}</dt>
-                        <dd>{resource.weeklySchedule[day]?.map(span =>
-                          `${formatScheduleClock(span.startMinute)}–${formatScheduleClock(span.endMinute)}${span.endMinute < span.startMinute ? " (día siguiente)" : ""}`
-                        ).join(" · ") || "Sin franjas"}</dd>
+          {error && <p role="alert">{error}</p>}
+          {notice && <p role="status">{notice}</p>}
+        </form>
+        <div className="resources-catalog">
+          {confirmation && <section className="resources-confirmation" role="region" aria-label="Confirmar acción sobre recurso" aria-busy={pending}>
+            <h2>{confirmation.action === "retire" ? "Retirar" : "Suspender"} {confirmation.resource.name}</h2>
+            <p>{confirmation.action === "retire"
+              ? "Se quitará del catálogo y se conservará el historial. Puede rechazarse si tiene asignaciones futuras."
+              : "No será elegible para nuevas reservas. Los turnos existentes no se cancelan."}</p>
+            <div className="resources-form-actions">
+              <button ref={cancelButton} type="button" disabled={pending} onClick={cancelLifecycle}>Cancelar</button>
+              <button className="resources-danger-confirm" type="button" disabled={pending} onClick={() => void lifecycle(confirmation.resource, confirmation.action)}>
+                {pending ? "Procesando…" : confirmation.action === "retire" ? "Confirmar retiro" : "Confirmar suspensión"}
+              </button>
+            </div>
+          </section>}
+          {lifecycleError && <p role="alert">{lifecycleError}</p>}
+          {refreshWarning && <section className="resources-refresh-warning" aria-label="Actualización del catálogo" aria-busy={refreshPending}>
+            <p role="alert">El cambio se guardó, pero no pudimos actualizar el catálogo. Reintentá la actualización.</p>
+            <button type="button" disabled={pending || refreshPending || !!confirmation} onClick={() => void refresh()}>
+              {refreshPending ? "Actualizando catálogo…" : "Actualizar catálogo"}
+            </button>
+          </section>}
+          {resources.length === 0 ? (
+            <section className="resources-empty" aria-labelledby="resources-empty-title">
+              <h2 id="resources-empty-title">Todavía no hay recursos</h2>
+              <p>Los recursos de tu negocio aparecerán acá con su estado, servicios y horarios.</p>
+            </section>
+          ) : (
+            <>
+              <p className="resources-schedule-note">Las franjas corresponden al día en que empiezan y pueden continuar al día siguiente.
+                No representan turnos disponibles ni incluyen cierres por fecha.</p>
+              <ul className="resources-list" aria-label="Catálogo de recursos">
+                {resources.map(resource => (
+                  <li className="resources-item" key={resource.id}>
+                    <div className="resources-summary">
+                      <div className="resources-identity">
+                        <h2>{resource.name}</h2>
+                        <span className="resources-status" data-status={resource.status}>
+                          {resource.status === "active" ? "Activo" : "Suspendido"}
+                        </span>
                       </div>
-                    ))}
-                  </dl>
-                </section>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
+                      {resource.description && <p className="resources-description">{resource.description}</p>}
+                      <div className="resources-form-actions resources-item-actions">
+                        <button type="button" disabled={pending || refreshPending || !!confirmation} onClick={() => selectResource(resource)}
+                          aria-label={`Editar ${resource.name}`}>Editar</button>
+                        <button className="resources-secondary" type="button" disabled={pending || refreshPending || !!confirmation}
+                          ref={node => {
+                            const key = `${resource.id}:${resource.status === "active" ? "suspended" : "active"}`;
+                            if (node) lifecycleButtons.current.set(key, node); else lifecycleButtons.current.delete(key);
+                          }} onClick={event => {
+                            if (request.current) return;
+                            if (resource.status === "suspended") void lifecycle(resource, "active");
+                            else { opener.current = event.currentTarget; setLifecycleError(""); setConfirmation({ resource, action: "suspended" }); }
+                          }}>{resource.status === "active" ? "Suspender" : "Reactivar"}</button>
+                        <button className="resources-danger" type="button" disabled={pending || refreshPending || !!confirmation} onClick={event => {
+                          if (request.current) return;
+                          opener.current = event.currentTarget;
+                          setLifecycleError("");
+                          setConfirmation({ resource, action: "retire" });
+                        }}>Retirar</button>
+                      </div>
+                      <h3>Servicios asignados</h3>
+                      {resource.serviceIds.length === 0 ? <p>Sin servicios asignados</p> : (
+                        <div className="resources-services">
+                          {resource.serviceIds.map(id => {
+                            const service = serviceById.get(id);
+                            return <p key={id}>{service
+                              ? `${service.name}${service.status === "suspended" ? " (suspendido)" : ""}`
+                              : `Servicio no disponible en el catálogo (ID: ${id})`}</p>;
+                          })}
+                        </div>
+                      )}
+                    </div>
+                    <section className="resources-schedule" aria-label={`Horario semanal de ${resource.name}`}>
+                      <h3>Horario semanal</h3>
+                      <dl className="resources-week">
+                        {scheduleDays.map(([day, label]) => (
+                          <div key={day}>
+                            <dt>{label}</dt>
+                            <dd>{resource.weeklySchedule[day]?.map(span =>
+                              `${formatScheduleClock(span.startMinute)}–${formatScheduleClock(span.endMinute)}${span.endMinute < span.startMinute ? " (día siguiente)" : ""}`
+                            ).join(" · ") || "Sin franjas"}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </section>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      </div>
     </main>
   );
 }

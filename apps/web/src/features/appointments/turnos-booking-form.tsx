@@ -5,10 +5,10 @@ import { api, type AppointmentRecord, type AvailabilitySlot, type Client, type C
 import type { TurnosMutation } from "./turnos-screen";
 import { argentinaDate, dateLabel, turnoMoney, turnoTime } from "./turnos-calendar";
 
-export function TurnosBookingForm({ appointment, services, resources, disabled, sessionActive, now, mutate, error, cancel }: {
+export function TurnosBookingForm({ appointment, services, resources, disabled, sessionActive, now, mutate, error, cancel, initialFocus = true }: {
   appointment: AppointmentRecord | null; services: Service[]; resources: Resource[];
   disabled: boolean; sessionActive: () => boolean; now: number; mutate: TurnosMutation;
-  error: string; cancel: () => void;
+  error: string; cancel: () => void; initialFocus?: boolean;
 }) {
   const [source, setSource] = useState<"existing" | "new">("existing");
   const [search, setSearch] = useState("");
@@ -40,7 +40,7 @@ export function TurnosBookingForm({ appointment, services, resources, disabled, 
   useEffect(() => {
     const target = focus.current;
     focus.current = null;
-    if (disabled || !sessionActive()) return;
+    if (!target || (target === "first" && !initialFocus) || disabled || !sessionActive()) return;
     const element = form.current?.querySelector<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>(
       target === "confirm" ? '[data-focus="confirm"]' : target === "review" ? '[data-focus="review"]' : 'input, select',
     );
@@ -141,7 +141,7 @@ export function TurnosBookingForm({ appointment, services, resources, disabled, 
       if (alive.current) setSubmitting(false);
     }
   };
-  return <form ref={form} aria-label={appointment ? "Modificar turno" : "Crear turno"} aria-busy={submitting} onSubmit={submit}>
+  return <form className="turnos-booking" ref={form} aria-label={appointment ? "Modificar turno" : "Crear turno"} aria-busy={submitting} onSubmit={submit}>
     {structuralLocked && <p role="alert">El turno ya comenzó o está finalizado. No se pueden modificar servicio, recurso ni horario.</p>}
     {!appointment && <fieldset disabled={locked || confirmation}>
       <legend>Cliente</legend>
@@ -200,7 +200,7 @@ export function TurnosBookingForm({ appointment, services, resources, disabled, 
       {!appointment && <label htmlFor="turnos-create-notes">Notas<textarea id="turnos-create-notes" value={notes}
         onChange={event => { setNotes(event.target.value); setConfirmation(false); }} /></label>}
     </fieldset>
-    {slot && <section aria-label="Condiciones ofrecidas">
+    {slot && <section className="turnos-confirmation" aria-label="Condiciones ofrecidas">
       <h3>{confirmation ? "Confirmación final" : "Condiciones ofrecidas"}</h3>
       <p>{appointment ? `${appointment.client.firstName} ${appointment.client.lastName}` : source === "new"
         ? `${newClient.firstName} ${newClient.lastName}` : `${client?.firstName ?? ""} ${client?.lastName ?? ""}`}</p>
@@ -210,10 +210,12 @@ export function TurnosBookingForm({ appointment, services, resources, disabled, 
       <p>La disponibilidad se verifica nuevamente al guardar. Esta operación manual no envía WhatsApp.</p>
     </section>}
     {error && <p role="alert">{error}</p>}
-    <button data-focus={confirmation ? "confirm" : "review"} type="submit" disabled={locked || !ready}>
+    <div className="turnos-form-actions">
+    <button className="turnos-primary" data-focus={confirmation ? "confirm" : "review"} type="submit" disabled={locked || !ready}>
       {submitting ? "Guardando…" : confirmation ? "Confirmar turno" : "Revisar turno"}
     </button>
     {confirmation && <button type="button" disabled={locked} onClick={() => { setConfirmation(false); scheduleFocus("review"); }}>Volver al formulario</button>}
     <button type="button" disabled={disabled || submitting} onClick={cancel}>Cancelar formulario</button>
+    </div>
   </form>;
 }

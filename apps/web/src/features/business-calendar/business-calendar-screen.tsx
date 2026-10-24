@@ -116,10 +116,13 @@ export function BusinessCalendarScreen({ weeklySchedule, pending, error, notice,
     <main className="services-screen" aria-labelledby="business-calendar-title">
       <header className="services-header">
         <h1 id="business-calendar-title">Horario del negocio</h1>
-        <p>Consultá el horario semanal guardado para tu negocio.</p>
-        <button ref={opener} type="button" disabled={pending || editing} onClick={begin}>Editar horario</button>
       </header>
-      {editing && <form ref={form} className="services-form" aria-label="Editar horario" aria-busy={pending} onSubmit={save}>
+      <div className="calendar-workspace">
+        <div className="calendar-weekly">
+          <div className="calendar-weekly-tools">
+            <button ref={opener} className="calendar-edit" type="button" disabled={pending || editing} onClick={begin}>Editar horario</button>
+          </div>
+      {editing && <form ref={form} className="services-form calendar-weekly-form" aria-label="Editar horario" aria-busy={pending} onSubmit={save}>
         <ControlledWeeklyScheduleEditor value={draft} disabled={pending}
           helpText="Sin franjas no habrá atención ese día. Usá HH:mm; 24:00 solo para el fin. Si el fin es anterior al inicio, continúa al día siguiente."
           onChange={value => {
@@ -132,7 +135,7 @@ export function BusinessCalendarScreen({ weeklySchedule, pending, error, notice,
             setValidationError("");
           }} />
         <div className="services-form-actions">
-          <button ref={saveButton} type="submit" disabled={pending}>Guardar horario</button>
+          <button ref={saveButton} className="calendar-primary" type="submit" disabled={pending}>Guardar horario</button>
           <button type="button" disabled={pending} onClick={() => {
             if (!requestPending.current) { clearFeedback(); close(); }
           }}>Cancelar</button>
@@ -142,9 +145,9 @@ export function BusinessCalendarScreen({ weeklySchedule, pending, error, notice,
       {notice && <p role="status">{notice}</p>}
       {warning && <section className="services-refresh-warning" aria-label="Actualizar horario">
         <p role="alert">El horario está guardado, pero no se pudo actualizar la vista.</p>
-        <button type="button" disabled={pending || editing} onClick={() => void retry()}>Actualizar horario</button>
+        <button className="calendar-quiet" type="button" disabled={pending || editing} onClick={() => void retry()}>Actualizar horario</button>
       </section>}
-      <section className="services-empty" aria-label="Horario semanal">
+      <section className="services-empty calendar-saved" aria-label="Horario semanal">
         {weeklySchedule === null ? <>
           <h2>Horario sin configurar</h2>
           <p>Todavía no hay un horario semanal guardado.</p>
@@ -161,8 +164,10 @@ export function BusinessCalendarScreen({ weeklySchedule, pending, error, notice,
           </dl>
         </>}
       </section>
-      <BusinessClosuresSection state={closures} retryAction={retryClosures} createAction={createClosure}
-        updateAction={updateClosure} deleteAction={deleteClosure} />
+        </div>
+        <BusinessClosuresSection state={closures} retryAction={retryClosures} createAction={createClosure}
+          updateAction={updateClosure} deleteAction={deleteClosure} />
+      </div>
     </main>
   );
 }

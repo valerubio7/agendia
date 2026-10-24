@@ -22,6 +22,7 @@ export function LoginScreen({
         <div className="login-card">
           <Brand />
           <h1 id="login-title">Iniciar sesión</h1>
+          <p className="login-welcome">Qué bueno verte de nuevo.</p>
           {feedback}
           <form onSubmit={submitAction} aria-busy={loginPending}>
             <label className="login-field">

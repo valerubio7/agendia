@@ -98,55 +98,11 @@ export function WhatsAppScreen({
   return (
     <main className="whatsapp-screen" data-ui="whatsapp-screen">
       <section
-        className="whatsapp-hero"
+        className="whatsapp-heading"
         data-ui="whatsapp-hero"
         aria-labelledby="whatsapp-title"
       >
-        <div className="whatsapp-hero__copy">
-          <p className="whatsapp-hero__eyebrow">Canal de atención</p>
-          <h1 id="whatsapp-title">
-            Tu negocio, a una conversación de distancia.
-          </h1>
-          <p>
-            Conectá el canal real de WhatsApp para que agendIA pueda atender
-            desde el mismo lugar donde tus clientes ya escriben.
-          </p>
-        </div>
-
-        <div
-          className="whatsapp-bridge"
-          aria-label="Puente de conexión entre agendIA y WhatsApp"
-        >
-          <div className="whatsapp-bridge__header">
-            <span>Canal seguro</span>
-            <span>Puente de señal</span>
-          </div>
-          <div className="whatsapp-bridge__stage" aria-hidden="true">
-            <div className="whatsapp-bridge__node whatsapp-bridge__node--agendia">
-              <span className="brand whatsapp-bridge__brand" aria-hidden="true">
-                <img
-                  className="brand__image"
-                  src="/brand/logo-symbol-inverse.svg"
-                  alt=""
-                />
-              </span>
-            </div>
-            <div className="whatsapp-bridge__signal">
-              <i />
-              <i />
-              <i />
-              <span />
-            </div>
-            <div className="whatsapp-bridge__node whatsapp-bridge__node--whatsapp">
-              <svg viewBox="0 0 32 32" aria-hidden="true">
-                <path d="M16 4.25A11.25 11.25 0 0 0 6.2 21l-1.45 6.25 6.35-1.4A11.25 11.25 0 1 0 16 4.25Zm0 2.2a9.05 9.05 0 1 1-4.55 16.87l-.36-.2-3.35.74.76-3.25-.23-.37A9.05 9.05 0 0 1 16 6.45Z" />
-                <path d="M12.4 10.55c.22-.5.45-.52.78-.53h.66c.2 0 .43.08.57.42.17.4.7 1.7.76 1.82.06.13.1.27.02.42-.08.16-.13.25-.26.4-.13.14-.27.3-.39.4-.13.12-.26.25-.11.5.14.25.64 1.05 1.38 1.7.95.85 1.75 1.11 2 1.24.25.12.4.1.54-.07.15-.18.64-.75.81-1 .17-.25.34-.2.58-.12.23.09 1.48.7 1.73.83.25.12.42.19.48.29.06.1.06.58-.13 1.13-.19.54-1.1 1.04-1.52 1.1-.39.06-.9.1-1.45-.08-.34-.1-.78-.25-1.34-.5-.56-.24-2.46-.9-4.19-2.45-1.45-1.3-2.43-2.9-2.7-3.4-.27-.5-.03-1.27.2-1.72.2-.4.42-.65.6-.83Z" />
-              </svg>
-              <span>WhatsApp</span>
-            </div>
-          </div>
-          <p>Un puente preparado para llevar la atención al canal correcto.</p>
-        </div>
+        <h1 id="whatsapp-title">WhatsApp</h1>
       </section>
 
       <div className="whatsapp-feedback" aria-label="Mensajes de vinculación">
@@ -246,17 +202,11 @@ export function WhatsAppScreen({
               </figure>
             ) : connected ? (
               <div className="whatsapp-scan-target__confirmation">
-                <span aria-hidden="true">✓</span>
                 <strong>Verificación completa</strong>
                 <p>El canal real de WhatsApp quedó vinculado a agendIA.</p>
               </div>
             ) : (
               <div className="whatsapp-scan-target__placeholder">
-                <span aria-hidden="true">
-                  <i />
-                  <i />
-                  <i />
-                </span>
                 <strong>
                   {linking
                     ? "Preparando el código temporal"
@@ -270,6 +220,18 @@ export function WhatsAppScreen({
               </div>
             )}
           </div>
+
+          <p className="whatsapp-security-note">
+            El QR es temporal y no expone credenciales persistentes.
+          </p>
+
+          <button
+            type="button"
+            disabled={!statusDetails.known || connected || linking}
+            onClick={linkAction}
+          >
+            {buttonLabel}
+          </button>
 
           <ol className="whatsapp-link-steps" aria-label="Pasos para vincular">
             <li>
@@ -297,18 +259,6 @@ export function WhatsAppScreen({
             </li>
           </ol>
 
-          <p className="whatsapp-security-note">
-            <span aria-hidden="true">◇</span>
-            El QR es temporal y no expone credenciales persistentes.
-          </p>
-
-          <button
-            type="button"
-            disabled={!statusDetails.known || connected || linking}
-            onClick={linkAction}
-          >
-            {buttonLabel}
-          </button>
         </section>
       </div>
     </main>

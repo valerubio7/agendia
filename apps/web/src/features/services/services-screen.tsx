@@ -143,101 +143,108 @@ export function ServicesScreen({ services, onSave, onRefresh, onLifecycle }: {
     <main className="services-screen" aria-labelledby="services-title">
       <header className="services-header">
         <h1 ref={servicesHeading} tabIndex={-1} id="services-title">Servicios</h1>
-        <p>Consultá los servicios de tu negocio, sus tiempos y precios.</p>
       </header>
-      <form className="services-form" key={`${editing?.id ?? "create"}-${revision}`}
-        aria-labelledby="service-form-title" aria-busy={pending} onSubmit={submit}>
-        <h2 id="service-form-title">{editing ? "Editar servicio" : "Crear servicio"}</h2>
-        <fieldset disabled={pending || refreshPending || !!confirmation}>
-          <label htmlFor="service-name">Nombre</label>
-          <input ref={nameInput} id="service-name" name="name" required defaultValue={editing?.name ?? ""} />
-          <label htmlFor="service-description">Descripción (opcional)</label>
-          <textarea id="service-description" name="description" defaultValue={editing?.description ?? ""} />
-          <div className="services-form-terms">
-            <div>
-              <label htmlFor="service-duration">Duración (minutos)</label>
-              <input id="service-duration" name="durationMinutes" type="number" min="15" step="15" required
-                defaultValue={editing?.durationMinutes ?? 15} aria-describedby="service-duration-help" />
-              <small id="service-duration-help">Usá múltiplos de 15 minutos.</small>
+      <div className="services-workspace">
+        <form className="services-form" key={`${editing?.id ?? "create"}-${revision}`}
+          aria-labelledby="service-form-title" aria-busy={pending} onSubmit={submit}>
+          <h2 id="service-form-title">{editing ? "Editar servicio" : "Crear servicio"}</h2>
+          <fieldset disabled={pending || refreshPending || !!confirmation}>
+            <div className="services-field">
+              <label htmlFor="service-name">Nombre</label>
+              <input ref={nameInput} id="service-name" name="name" required defaultValue={editing?.name ?? ""} />
             </div>
-            <div>
-              <label htmlFor="service-price">Precio (ARS)</label>
-              <input id="service-price" name="priceArs" type="number" min="0" step="any" required
-                defaultValue={editing?.priceArs ?? 0} />
+            <div className="services-field">
+              <label htmlFor="service-description">Descripción (opcional)</label>
+              <textarea id="service-description" name="description" defaultValue={editing?.description ?? ""} />
             </div>
-          </div>
-          <div className="services-form-actions">
-            <button type="submit">{pending ? "Guardando…" : editing ? "Guardar cambios" : "Crear servicio"}</button>
-            {editing && <button type="button" onClick={() => selectService(null)}>Cancelar edición</button>}
-          </div>
-        </fieldset>
-        {error && <p role="alert">{error}</p>}
-        {notice && <p role="status">{notice}</p>}
-      </form>
-      {confirmation && <section className="services-confirmation" aria-label="Confirmar acción" aria-busy={pending}>
-        <h2>{confirmation.action === "retire" ? "Retirar" : "Suspender"} {confirmation.service.name}</h2>
-        <p>{confirmation.action === "retire"
-          ? "Quedará oculto del catálogo. El historial se conserva. El retiro puede estar bloqueado por turnos futuros."
-          : "No se ofrecerá para nuevos turnos. No cancela los turnos existentes."}</p>
-        <div className="services-form-actions">
-          <button ref={cancelButton} type="button" disabled={pending} onClick={cancelLifecycle}>Cancelar</button>
-          <button type="button" disabled={pending} onClick={() => void lifecycle(confirmation.service, confirmation.action)}>
-            {confirmation.action === "retire" ? "Confirmar retiro" : "Confirmar suspensión"}
-          </button>
+            <div className="services-form-terms">
+              <div className="services-field">
+                <label htmlFor="service-duration">Duración (minutos)</label>
+                <input id="service-duration" name="durationMinutes" type="number" min="15" step="15" required
+                  defaultValue={editing?.durationMinutes ?? 15} aria-describedby="service-duration-help" />
+                <small id="service-duration-help">Usá múltiplos de 15 minutos.</small>
+              </div>
+              <div className="services-field">
+                <label htmlFor="service-price">Precio (ARS)</label>
+                <input id="service-price" name="priceArs" type="number" min="0" step="any" required
+                  defaultValue={editing?.priceArs ?? 0} />
+              </div>
+            </div>
+            <div className="services-form-actions">
+              <button className="services-primary" type="submit">{pending ? "Guardando…" : editing ? "Guardar cambios" : "Crear servicio"}</button>
+              {editing && <button type="button" onClick={() => selectService(null)}>Cancelar edición</button>}
+            </div>
+          </fieldset>
+          {error && <p role="alert">{error}</p>}
+          {notice && <p role="status">{notice}</p>}
+        </form>
+        <div className="services-catalog">
+          {confirmation && <section className="services-confirmation" aria-label="Confirmar acción" aria-busy={pending}>
+            <h2>{confirmation.action === "retire" ? "Retirar" : "Suspender"} {confirmation.service.name}</h2>
+            <p>{confirmation.action === "retire"
+              ? "Quedará oculto del catálogo. El historial se conserva. El retiro puede estar bloqueado por turnos futuros."
+              : "No se ofrecerá para nuevos turnos. No cancela los turnos existentes."}</p>
+            <div className="services-form-actions">
+              <button ref={cancelButton} type="button" disabled={pending} onClick={cancelLifecycle}>Cancelar</button>
+              <button className="services-danger-confirm" type="button" disabled={pending} onClick={() => void lifecycle(confirmation.service, confirmation.action)}>
+                {confirmation.action === "retire" ? "Confirmar retiro" : "Confirmar suspensión"}
+              </button>
+            </div>
+            {lifecycleError && <p role="alert">{lifecycleError}</p>}
+          </section>}
+          {!confirmation && lifecycleError && <p role="alert">{lifecycleError}</p>}
+          {refreshWarning && <section className="services-refresh-warning" aria-label="Actualización del catálogo" aria-busy={refreshPending}>
+            <p role="alert">{notice === "Servicio retirado"
+              ? "El servicio se retiró, pero no pudimos actualizar el catálogo. Reintentá la actualización."
+              : "El servicio se guardó, pero no pudimos actualizar el catálogo. Reintentá la actualización."}</p>
+            <button type="button" disabled={pending || refreshPending} onClick={() => void refresh()}>
+              {refreshPending ? "Actualizando catálogo…" : "Actualizar catálogo"}
+            </button>
+          </section>}
+          {services.length === 0 ? (
+            <section className="services-empty" aria-labelledby="services-empty-title">
+              <h2 id="services-empty-title">Todavía no hay servicios</h2>
+              <p>Los servicios de tu negocio aparecerán acá con su duración, precio y estado.</p>
+            </section>
+          ) : (
+            <ul className="services-list" aria-label="Catálogo de servicios">
+              {services.map((service) => (
+                <li className="services-item" key={service.id}>
+                  <div className="services-summary">
+                    <h2>{service.name}</h2>
+                    <span className="services-status" data-status={service.status}>
+                      {service.status === "active" ? "Activo" : "Suspendido"}
+                    </span>
+                    {service.description && <p className="services-description">{service.description}</p>}
+                  </div>
+                  <dl className="services-terms">
+                    <div><dt>Duración</dt><dd>{service.durationMinutes} min</dd></div>
+                    <div><dt>Precio</dt><dd>{priceFormatter.format(service.priceArs)}</dd></div>
+                  </dl>
+                  <div className="services-item-actions">
+                    <button className="services-edit" type="button" disabled={pending || refreshPending || !!confirmation} aria-label={`Editar ${service.name}`}
+                      onClick={() => selectService(service)}>Editar</button>
+                    {([service.status === "active" ? "suspended" : "active", "retire"] as const).map(action => {
+                      const label = action === "retire" ? "Retirar" : action === "active" ? "Reactivar" : "Suspender";
+                      return <button className={action === "retire" ? "services-danger" : "services-secondary"} key={action} type="button" ref={button => {
+                        const key = `${service.id}:${action}`;
+                        if (button) lifecycleButtons.current.set(key, button);
+                        else lifecycleButtons.current.delete(key);
+                      }} disabled={pending || refreshPending || !!confirmation}
+                        aria-label={`${label} ${service.name}`} onClick={event => {
+                          actionButton.current = event.currentTarget;
+                          setLifecycleError("");
+                          if (action === "active") void lifecycle(service, action);
+                          else setConfirmation({ service, action });
+                        }}>{label}</button>;
+                    })}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
-        {lifecycleError && <p role="alert">{lifecycleError}</p>}
-      </section>}
-      {!confirmation && lifecycleError && <p role="alert">{lifecycleError}</p>}
-      {refreshWarning && <section aria-label="Actualización del catálogo" aria-busy={refreshPending}>
-        <p role="alert">{notice === "Servicio retirado"
-          ? "El servicio se retiró, pero no pudimos actualizar el catálogo. Reintentá la actualización."
-          : "El servicio se guardó, pero no pudimos actualizar el catálogo. Reintentá la actualización."}</p>
-        <button type="button" disabled={pending || refreshPending} onClick={() => void refresh()}>
-          {refreshPending ? "Actualizando catálogo…" : "Actualizar catálogo"}
-        </button>
-      </section>}
-      {services.length === 0 ? (
-        <section className="services-empty" aria-labelledby="services-empty-title">
-          <h2 id="services-empty-title">Todavía no hay servicios</h2>
-          <p>Los servicios de tu negocio aparecerán acá con su duración, precio y estado.</p>
-        </section>
-      ) : (
-        <ul className="services-list" aria-label="Catálogo de servicios">
-          {services.map((service) => (
-            <li className="services-item" key={service.id}>
-              <div className="services-summary">
-                <h2>{service.name}</h2>
-                <span className="services-status" data-status={service.status}>
-                  {service.status === "active" ? "Activo" : "Suspendido"}
-                </span>
-                {service.description && <p className="services-description">{service.description}</p>}
-              </div>
-              <dl className="services-terms">
-                <div><dt>Duración</dt><dd>{service.durationMinutes} min</dd></div>
-                <div><dt>Precio</dt><dd>{priceFormatter.format(service.priceArs)}</dd></div>
-              </dl>
-              <div className="services-item-actions">
-                <button type="button" disabled={pending || refreshPending || !!confirmation} aria-label={`Editar ${service.name}`}
-                  onClick={() => selectService(service)}>Editar</button>
-                {([service.status === "active" ? "suspended" : "active", "retire"] as const).map(action => {
-                  const label = action === "retire" ? "Retirar" : action === "active" ? "Reactivar" : "Suspender";
-                  return <button key={action} type="button" ref={button => {
-                    const key = `${service.id}:${action}`;
-                    if (button) lifecycleButtons.current.set(key, button);
-                    else lifecycleButtons.current.delete(key);
-                  }} disabled={pending || refreshPending || !!confirmation}
-                    aria-label={`${label} ${service.name}`} onClick={event => {
-                      actionButton.current = event.currentTarget;
-                      setLifecycleError("");
-                      if (action === "active") void lifecycle(service, action);
-                      else setConfirmation({ service, action });
-                    }}>{label}</button>;
-                })}
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
+      </div>
     </main>
   );
 }
