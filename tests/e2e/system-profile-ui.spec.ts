@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page, type Route } from "@playwright/test";
-import { test } from "./support/fixtures.ts";
+import { login, test } from "./support/fixtures.ts";
 
 const tenant = {
   name: "Estudio Perfil Claro",
@@ -12,13 +12,6 @@ const values = {
   description: "Asesoramiento personalizado para pequeños negocios.",
   address: "Avenida Siempreviva 742, Buenos Aires",
 };
-
-async function login(page: Page, url: string, email: string, password: string) {
-  await page.goto(url);
-  await page.getByLabel("Correo", { exact: true }).fill(email);
-  await page.getByLabel("Contraseña", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Ingresar", exact: true }).click();
-}
 
 async function expectTextInput(field: Locator, maxlength: string) {
   await expect(field).toBeVisible();
@@ -56,19 +49,17 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
 
-  await page.getByLabel("Nombre", { exact: true }).fill(tenant.name);
-  await page
-    .getByLabel("Correo del usuario", { exact: true })
-    .fill(tenant.email);
-  await page
-    .getByLabel("Contraseña inicial", { exact: true })
-    .fill(tenant.password);
-  await page
-    .getByRole("button", { name: "Crear negocio", exact: true })
-    .click();
-  await expect(
-    page.getByRole("cell", { name: tenant.name, exact: true }),
-  ).toBeVisible();
+  await page.locator('[aria-controls="admin-create"]').click();
+  const create = page.locator('[data-ui="admin-create"] form');
+  await expect(create).toBeVisible();
+  await create.getByLabel(/^Nombre/).fill(tenant.name);
+  await create.getByLabel("Correo del usuario", { exact: true }).fill(tenant.email);
+  await create.getByLabel(/^Contraseña inicial/).fill(tenant.password);
+  await create.getByRole("button", { name: "Crear negocio", exact: true }).click();
+  await expect(page.locator(".admin-directory").getByRole("listitem").filter({
+    has: page.getByText(tenant.name, { exact: true }),
+  })).toBeVisible();
+  await expect(page.locator(".admin-feedback").getByRole("status")).toHaveText("Negocio creado");
 
   const tenantContext = await browser.newContext({
     viewport: { width: 1280, height: 900 },
@@ -99,45 +90,19 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
     ).toBeVisible();
 
     const screen = shell.locator('[data-ui="profile-screen"]');
-    const hero = screen.locator('[data-ui="profile-hero"]');
+    const heading = screen.getByRole("heading", { level: 1, name: "Perfil del negocio", exact: true });
     const savePanel = screen.locator('[data-ui="profile-save-panel"]');
     await expect(screen).toHaveCount(1);
-    await expect(hero).toBeVisible();
-    await expect(
-      hero.getByText("Base de conocimiento", { exact: true }),
-    ).toBeVisible();
-    await expect(
-      hero.getByRole("heading", {
-        level: 1,
-        name: "Tu negocio, explicado con claridad.",
-        exact: true,
-      }),
-    ).toBeVisible();
-    const profileBrand = hero.locator(".profile-knowledge-map__brand");
-    await expect(profileBrand).toHaveCount(1);
-    await expect(profileBrand).toHaveAttribute("aria-hidden", "true");
-    const profileBrandImage = profileBrand.locator('img.brand__image[src="/brand/logo-symbol-inverse.svg"]');
+    await expect(heading).toBeVisible();
+    const profileBrand = shell.locator(".authenticated-shell__sidebar .brand");
+    await expect(profileBrand).toHaveAccessibleName("agendIA");
+    const profileBrandImage = profileBrand.locator('img.brand__image[src="/brand/logo-inverse-outlined.svg"]');
     await expect(profileBrandImage).toHaveAttribute("alt", "");
-    await expect(profileBrandImage).toHaveCSS("width", "24px");
-    await expect(profileBrandImage).toHaveCSS("height", "24px");
-    await expect(hero.locator(".profile-knowledge-map__heading")).not.toContainText(/agendIA/i);
+    await expect(profileBrandImage).toBeVisible();
+    await expect(profileBrandImage).toHaveCSS("height", "32px");
 
-    const sectionHeadings = [
-      "Identidad del negocio",
-    ] as const;
-    const sections: Locator[] = [];
-    for (const heading of sectionHeadings) {
-      const section = screen.locator("section", {
-        has: tenantPage.getByRole("heading", { name: heading, exact: true }),
-      });
-      sections.push(section);
-      await expect(section).toHaveCount(1);
-      await expect(
-        section.getByRole("heading", { name: heading, exact: true }),
-      ).toBeVisible();
-    }
-
-    const form = screen.locator("form#business-profile-form");
+    const form = screen.getByRole("form", { name: "Perfil del negocio", exact: true });
+    await expect(form).toHaveAttribute("id", "business-profile-form");
     await expect(form).toHaveCount(1);
     await expect(savePanel).toBeVisible();
     const save = savePanel.getByRole("button", {
@@ -170,35 +135,33 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
     for (const optionalField of fields.slice(1)) {
       await expect(optionalField).not.toHaveAttribute("required", /.*/);
     }
-    // Pin the mounted Profile palette and typography, not shared-shell styles.
-    await expect(hero).toHaveCSS("background-color", "rgb(18, 55, 42)");
-    await expect(hero.locator("h1")).toHaveCSS("font-weight", "650");
-    for (const selector of [".profile-hero__eyebrow", ".profile-hero__copy > p:last-child", ".profile-knowledge-map__heading", ".profile-knowledge-map__heading strong", ".profile-knowledge-map small", ".profile-knowledge-map li > span"]) {
-      for (const element of await hero.locator(selector).all())
-        await expect(element).toHaveCSS("color", "rgb(243, 238, 225)");
-    }
-    await expect(hero.locator(".profile-knowledge-map")).toHaveCSS("background-color", "rgb(18, 55, 42)");
-    for (const section of sections) {
-      await expect(section).toHaveCSS("background-color", "rgb(243, 238, 225)");
-      await expect(section.locator("h2")).toHaveCSS("font-weight", "650");
+    // Pin the current editing workspace and its visible field guidance.
+    await expect(heading).toHaveCSS("color", "rgb(28, 38, 32)");
+    await expect(heading).toHaveCSS("font-weight", "650");
+    await expect(heading).toHaveCSS("font-family", /Source Sans 3/);
+    await expect(form).toHaveCSS("background-color", "rgb(252, 250, 243)");
+    for (const field of fields) {
+      const name = await field.getAttribute("name");
+      await expect(field).toHaveAttribute("aria-describedby", `profile-${name}-hint`);
+      await expect(form.locator(`#profile-${name}-hint`)).toBeVisible();
     }
     await expect(form.locator('label[for="profile-displayName"]')).toHaveCSS("font-weight", "650");
-    await expect(displayName).toHaveCSS("background-color", "rgb(243, 238, 225)");
+    await expect(displayName).toHaveCSS("background-color", "rgb(255, 255, 255)");
     await expect(displayName).toHaveCSS("color", "rgb(28, 38, 32)");
     await expect(displayName).toHaveCSS("font-weight", "450");
     await expect(displayName).toHaveCSS("font-family", /Source Sans 3/);
-    await expect(savePanel).toHaveCSS("background-color", "rgb(18, 55, 42)");
-    await expect(savePanel.locator("p")).toHaveCSS("color", "rgb(243, 238, 225)");
-    await expect(save).toHaveCSS("background-color", "rgb(168, 58, 26)");
-    await expect(save).toHaveCSS("color", "rgb(255, 255, 255)");
+    await expect(savePanel).toHaveCSS("border-top-color", "rgb(216, 208, 184)");
+    await expect(savePanel.locator(".profile-save-panel__action > p")).toHaveCSS("color", "rgb(76, 91, 83)");
+    await expect(save).toHaveCSS("background-color", "rgb(255, 107, 73)");
+    await expect(save).toHaveCSS("color", "rgb(28, 38, 32)");
     await expect(save).toHaveCSS("font-weight", "650");
     await expectTextInput(displayName, "160");
     await expectTextarea(description, "4000");
     await expectTextInput(address, "500");
 
     await expectNoHorizontalOverflow(tenantPage);
-    await expect(hero).toBeVisible();
-    for (const section of sections) await expect(section).toBeVisible();
+    await expect(heading).toBeVisible();
+    await expect(form).toBeVisible();
     await expect(savePanel).toBeVisible();
 
     await displayName.fill(values.displayName);
@@ -230,7 +193,7 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
     await tenantPage.keyboard.press("Tab");
     await expect(save).toBeFocused();
     expect(await save.evaluate((element) => element.matches(":focus-visible"))).toBe(true);
-    await expect(save).toHaveCSS("outline-color", "rgb(243, 238, 225)");
+    await expect(save).toHaveCSS("outline-color", "rgb(46, 107, 78)");
     await expect(save).toHaveCSS("outline-style", "solid");
     await Promise.all([saveRequestObserved, save.click()]);
     try {
@@ -238,15 +201,15 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
         savePanel.getByRole("button", { name: "Guardando…", exact: true }),
       ).toBeDisabled();
       const pending = savePanel.getByRole("button", { name: "Guardando…", exact: true });
-      await expect(pending).toHaveCSS("background-color", "rgb(168, 58, 26)");
-      await expect(pending).toHaveCSS("color", "rgb(255, 255, 255)");
+      await expect(pending).toHaveCSS("background-color", "rgb(255, 107, 73)");
+      await expect(pending).toHaveCSS("color", "rgb(28, 38, 32)");
       await expect(form).toHaveAttribute("aria-busy", "true");
     } finally {
       releaseSaveRequest();
     }
     await expect(screen.getByRole("status")).toHaveText("Perfil guardado");
-    await expect(screen.getByRole("status")).toHaveCSS("background-color", "rgb(46, 125, 79)");
-    await expect(screen.getByRole("status")).toHaveCSS("color", "rgb(255, 255, 255)");
+    await expect(screen.getByRole("status")).toHaveCSS("background-color", "rgb(223, 233, 225)");
+    await expect(screen.getByRole("status")).toHaveCSS("color", "rgb(18, 55, 42)");
     await tenantPage.unroute("**/me/business-profile", saveHandler);
 
     await tenantPage.reload();
@@ -298,8 +261,8 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
       expect(await response.json()).toMatchObject({ code: "VALIDATION_FAILED" });
       const alert = screen.getByRole("alert");
       await expect(alert).toHaveText("Revisá los campos indicados.");
-      await expect(alert).toHaveCSS("color", "rgb(255, 255, 255)");
-      await expect(alert).toHaveCSS("background-color", "rgb(179, 58, 31)");
+      await expect(alert).toHaveCSS("color", "rgb(168, 58, 26)");
+      await expect(alert).toHaveCSS("background-color", "rgb(243, 217, 211)");
       await expect(description).toHaveValue(draft.description);
       await expect(form).toHaveAttribute("aria-busy", "false");
       await expect(save).toBeEnabled();
@@ -312,8 +275,8 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
     }
     await save.click();
     await expect(screen.getByRole("status")).toHaveText("Perfil guardado");
-    await expect(screen.getByRole("status")).toHaveCSS("color", "rgb(255, 255, 255)");
-    await expect(screen.getByRole("status")).toHaveCSS("background-color", "rgb(46, 125, 79)");
+    await expect(screen.getByRole("status")).toHaveCSS("color", "rgb(18, 55, 42)");
+    await expect(screen.getByRole("status")).toHaveCSS("background-color", "rgb(223, 233, 225)");
     await expect(screen.getByRole("alert")).toHaveCount(0);
     expect(await readProfile()).toEqual(draft);
     await tenantPage.reload();
@@ -322,6 +285,15 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
     await expectNoHorizontalOverflow(tenantPage);
     await tenantPage.screenshot({ path: testInfo.outputPath("profile-desktop.png"), fullPage: true });
     await tenantPage.setViewportSize({ width: 360, height: 800 });
+    const mobileMenu = shell.locator('[data-ui="mobile-navigation"]');
+    await mobileMenu.getByText("Menú", { exact: true }).click();
+    const mobileNavigation = mobileMenu.getByRole("navigation", { name: "Navegación móvil del negocio", exact: true });
+    await expect(mobileNavigation).toBeVisible();
+    const profileLink = mobileNavigation.getByRole("link", { name: "Perfil", exact: true });
+    await expect(profileLink).toHaveAttribute("href", "/profile");
+    await expect(profileLink).toHaveAttribute("aria-current", "page");
+    await mobileMenu.locator("summary").click();
+    await expect(mobileNavigation).toBeHidden();
     for (const field of fields) {
       const label = await field.getAttribute("name");
       const mobileField = tenantPage.locator(
