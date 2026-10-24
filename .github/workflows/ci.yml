@@ -38,6 +38,7 @@ jobs:
 
   integration:
     name: Integration (includes tenant RLS)
+    needs: validation
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -59,6 +60,7 @@ jobs:
 
   browser:
     name: Playwright
+    needs: validation
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -81,3 +83,13 @@ jobs:
       # Script selects the single e2e project from playwright.config.ts; fixtures own their services.
       - name: Browser tests
         run: bun run test:e2e
+      - name: Upload Playwright diagnostics
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: playwright-results
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: warn
+          retention-days: 7
