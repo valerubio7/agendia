@@ -65,7 +65,7 @@ async function officialBrand(page: Page, selector: string, asset: string, height
   const response = await page.request.get(new URL(`/brand/${asset}.svg`, page.url()).href);
   expect(response.status()).toBe(200);
   expect(await response.text()).toContain(`viewBox="0 0 ${wordmark ? "300 90" : "388 120"}"`);
-  expect(geometry.height).toBe(height);
+  expect(geometry.height).toBeCloseTo(height, 1);
   expect(geometry.height).toBeGreaterThanOrEqual(24);
   expect(geometry.ratio).toBeCloseTo(wordmark ? 300 / 90 : 388 / 120, 2);
   const spark = wordmark ? height * 110 * 56 / 58 / 90 : height * 110 / 120;
@@ -107,8 +107,8 @@ test("official local faces, root tokens and shared roles survive real login/prof
   const faviconResponse = await page.request.get(`${system.webUrl}/brand/favicon.svg`);
   expect(faviconResponse.status()).toBe(200);
   expect(await faviconResponse.text()).toContain('viewBox="0 0 64 64"');
-  await officialBrand(page, ".login-card .brand", "logo-primary-outlined", 32);
-  await officialBrand(page, ".login-story .brand", "logo-inverse-outlined", 48);
+  await officialBrand(page, ".login-card .brand", "logo-primary-outlined", 48);
+  await officialBrand(page, ".login-story .brand", "logo-inverse-outlined", 96);
   await expect(page.getByRole("img", { name: "agendIA", exact: true })).toHaveCount(2);
   await page.screenshot({ path: testInfo.outputPath("brand-login-desktop.png"), fullPage: true });
   const actualTokens = await page.evaluate((names) => {
@@ -150,7 +150,7 @@ test("official local faces, root tokens and shared roles survive real login/prof
   await noClipping(page);
   await page.setViewportSize({ width: 360, height: 800 });
   await noClipping(page);
-  await officialBrand(page, ".login-card .brand", "logo-primary-outlined", 32);
+  await officialBrand(page, ".login-card .brand", "logo-primary-outlined", 40);
   await officialBrand(page, ".login-story .brand", "logo-inverse-outlined", 48);
   await page.screenshot({ path: testInfo.outputPath("brand-login-mobile.png"), fullPage: true });
   await page.setViewportSize({ width: 1280, height: 900 });

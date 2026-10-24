@@ -16,7 +16,6 @@ type FieldProps = {
   defaultValue: string;
   required?: boolean;
   input?: boolean;
-  className?: string;
 };
 
 function ProfileField({
@@ -27,17 +26,20 @@ function ProfileField({
   defaultValue,
   required = false,
   input = false,
-  className = "",
 }: FieldProps) {
   const fieldId = `profile-${name}`;
   const hintId = `${fieldId}-hint`;
-  const fieldClassName = `profile-field${className ? ` ${className}` : ""}`;
 
   return (
-    <div className={fieldClassName}>
-      <label className="profile-field__label" htmlFor={fieldId}>
-        {label}
-      </label>
+    <div className="profile-field">
+      <div className="profile-field__heading">
+        <label className="profile-field__label" htmlFor={fieldId}>
+          {label}
+        </label>
+        <span className="profile-field__requirement">
+          {required ? "Obligatorio" : "Opcional"}
+        </span>
+      </div>
       {input ? (
         <input
           id={fieldId}
@@ -72,117 +74,49 @@ export function ProfileScreen({
 }: ProfileScreenProps) {
   return (
     <main className="profile-screen" data-ui="profile-screen">
-      <section
-        className="profile-hero"
-        data-ui="profile-hero"
+      <header className="profile-heading">
+        <h1 id="profile-title">Perfil del negocio</h1>
+      </header>
+
+      <form
+        id="business-profile-form"
+        className="profile-form"
+        onSubmit={submitAction}
+        aria-busy={savePending}
         aria-labelledby="profile-title"
       >
-        <div className="profile-hero__copy">
-          <p className="profile-hero__eyebrow">Base de conocimiento</p>
-          <h1 id="profile-title">Tu negocio, explicado con claridad.</h1>
-          <p>
-            Organizá la información real que el asistente usa para entender tu
-            negocio y responder con precisión.
-          </p>
+        <div className="profile-form__fields">
+          <ProfileField
+            label="Nombre comercial"
+            name="displayName"
+            defaultValue={profile.displayName ?? ""}
+            hint="El nombre con el que presentás tu negocio"
+            maxLength={160}
+            required
+            input
+          />
+          <ProfileField
+            label="Descripción"
+            name="description"
+            defaultValue={profile.description ?? ""}
+            hint="Una explicación directa de tu propuesta y a quién ayudás"
+            maxLength={4000}
+          />
+          <ProfileField
+            label="Dirección"
+            name="address"
+            defaultValue={profile.address ?? ""}
+            hint="Ubicación o zona de atención, si corresponde"
+            maxLength={500}
+            input
+          />
         </div>
 
-        <div
-          className="profile-knowledge-map"
-          aria-label="La información del perfil describe la identidad del negocio"
-        >
-          <div className="profile-knowledge-map__heading">
-            <span>Mapa de información</span>
-            <span className="brand profile-knowledge-map__brand" aria-hidden="true">
-              <img
-                className="brand__image"
-                src="/brand/logo-symbol-inverse.svg"
-                alt=""
-              />
-            </span>
+        <footer className="profile-save-panel" data-ui="profile-save-panel">
+          <div className="profile-feedback" aria-label="Estado del guardado">
+            {feedback}
           </div>
-          <ol>
-            <li>
-              <span>01</span>
-              <strong>Identidad</strong>
-              <small>Quién sos y dónde atendés</small>
-            </li>
-          </ol>
-        </div>
-      </section>
-
-      <div className="profile-feedback" aria-label="Estado del guardado">
-        {feedback}
-      </div>
-
-      <div className="profile-layout">
-        <form
-          id="business-profile-form"
-          className="profile-form"
-          onSubmit={submitAction}
-          aria-busy={savePending}
-        >
-          <section
-            className="profile-section profile-section--identity"
-            aria-labelledby="profile-identity-title"
-          >
-            <header className="profile-section__header">
-              <span className="profile-section__number" aria-hidden="true">
-                01
-              </span>
-              <div>
-                <p>El punto de partida</p>
-                <h2 id="profile-identity-title">Identidad del negocio</h2>
-                <span>
-                  Contá qué hace único a tu negocio y dónde atendés.
-                </span>
-              </div>
-            </header>
-            <div className="profile-section__fields profile-section__fields--identity">
-              <ProfileField
-                label="Nombre comercial"
-                name="displayName"
-                defaultValue={profile.displayName ?? ""}
-                hint="El nombre con el que presentás tu negocio"
-                maxLength={160}
-                required
-                input
-                className="profile-field--name"
-              />
-              <ProfileField
-                label="Descripción"
-                name="description"
-                defaultValue={profile.description ?? ""}
-                hint="Una explicación directa de tu propuesta y a quién ayudás"
-                maxLength={4000}
-                className="profile-field--wide"
-              />
-              <ProfileField
-                label="Dirección"
-                name="address"
-                defaultValue={profile.address ?? ""}
-                hint="Ubicación o zona de atención, si corresponde"
-                maxLength={500}
-                input
-              />
-            </div>
-          </section>
-
-        </form>
-
-        <aside
-          className="profile-rail"
-          aria-label="Guía para completar el perfil"
-        >
-          <div className="profile-rail__guide">
-            <p className="profile-rail__eyebrow">Una fuente confiable</p>
-            <h2>Antes de guardar</h2>
-            <ul>
-              <li>Usá información vigente y específica.</li>
-              <li>Escribí como querés que se explique tu negocio.</li>
-              <li>Separá cada tema para facilitar su lectura.</li>
-            </ul>
-          </div>
-          <div className="profile-save-panel" data-ui="profile-save-panel">
+          <div className="profile-save-panel__action">
             <p>Los cambios se aplican al guardar el perfil.</p>
             <button
               type="submit"
@@ -192,8 +126,8 @@ export function ProfileScreen({
               {savePending ? "Guardando…" : "Guardar perfil"}
             </button>
           </div>
-        </aside>
-      </div>
+        </footer>
+      </form>
     </main>
   );
 }

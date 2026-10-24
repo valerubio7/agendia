@@ -61,7 +61,7 @@ export function TurnosDetail({ row, now, disabled, mutate, change, error }: {
       }
     } finally { guard.current = false; if (mounted.current) setSaving(false); }
   };
-  return <section className="turnos-detail" aria-label="Detalle del turno">
+  return <section className="turnos-detail" aria-label="Detalle del turno" aria-busy={saving}>
     <h2 id="turnos-detail-title" tabIndex={-1}>{row.client.firstName} {row.client.lastName}</h2>
     <dl>
       <dt>Teléfono</dt><dd>{row.client.phone}</dd>
@@ -69,13 +69,13 @@ export function TurnosDetail({ row, now, disabled, mutate, change, error }: {
       <dt>Recurso guardado</dt><dd>{row.terms.resourceName}</dd>
       <dt>Fecha y hora</dt><dd>{dateLabel(argentinaDate(row.startMs))} · {turnoTime(row.startMs)}</dd>
       <dt>Condiciones guardadas</dt><dd>{row.terms.durationMinutes} min · {turnoMoney(row.terms.priceArs)}</dd>
-      <dt>Estado</dt><dd>{turnoStates[row.state]}</dd>
+      <dt>Estado</dt><dd><span className="turnos-state" data-state={row.state}>{turnoStates[row.state]}</span></dd>
       <dt>Origen</dt><dd>{row.origin === "manual" ? "Manual" : "IA"}</dd>
       <dt>Notas</dt><dd>{row.notes ?? "Sin notas"}</dd>
     </dl>
     {confirmed && <>
       {started ? <p>El turno ya comenzó. No se pueden modificar servicio, recurso ni horario.</p>
-        : <button disabled={locked || !!confirmation || editingNotes} onClick={change}>Modificar turno</button>}
+        : <button className="turnos-primary" disabled={locked || !!confirmation || editingNotes} onClick={change}>Modificar turno</button>}
       {!editingNotes ? <button id="turnos-edit-notes" disabled={locked || !!confirmation} onClick={() => {
         setNotes(row.notes ?? ""); setEditingNotes(true); scheduleFocus("notes");
       }}>Editar notas</button> : <form ref={form} aria-label="Editar notas del turno" aria-busy={saving} onSubmit={saveNotes}>
@@ -90,7 +90,7 @@ export function TurnosDetail({ row, now, disabled, mutate, change, error }: {
           <button key={state} id={`turnos-action-${state}`} disabled={locked || editingNotes || (state !== "cancelled" && !started)} onClick={() => {
             setConfirmation(state); scheduleFocus("cancel-state");
           }}>{label}</button>)}
-      </div> : <section aria-label="Confirmar estado del turno">
+      </div> : <section className="turnos-confirmation" aria-label="Confirmar estado del turno">
         <h3>Confirmar: {turnoStates[confirmation]}</h3>
         <p>Esta acción es definitiva. El turno no se puede reabrir y no se envía WhatsApp.</p>
         {error && <p role="alert">{error}</p>}

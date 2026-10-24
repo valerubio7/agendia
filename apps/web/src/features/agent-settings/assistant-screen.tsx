@@ -76,58 +76,11 @@ export function AssistantScreen({
   return (
     <main className="assistant-screen" data-ui="assistant-screen">
       <section
-        className="assistant-hero"
+        className="assistant-heading"
         data-ui="assistant-hero"
         aria-labelledby="assistant-title"
       >
-        <div className="assistant-hero__copy">
-          <p className="assistant-hero__eyebrow">Dirección del asistente</p>
-          <h1 id="assistant-title">Una voz que suena a tu negocio.</h1>
-          <p>
-            Escribí los criterios que guían cada respuesta: cómo expresarse, qué
-            contexto considerar y qué límites respetar.
-          </p>
-        </div>
-
-        <div
-          className="assistant-signal"
-          aria-label="La dirección del asistente combina voz, contexto y límites"
-        >
-          <div className="assistant-signal__header">
-            <span>Señal de dirección</span>
-            <span className="brand assistant-signal__brand" aria-hidden="true">
-              <img
-                className="brand__image"
-                src="/brand/logo-symbol-inverse.svg"
-                alt=""
-              />
-            </span>
-          </div>
-          <div className="assistant-signal__stage" aria-hidden="true">
-            <span className="assistant-signal__orbit assistant-signal__orbit--outer" />
-            <span className="assistant-signal__orbit assistant-signal__orbit--inner" />
-            <span className="assistant-signal__core">IA</span>
-            <span className="assistant-signal__pulse assistant-signal__pulse--one" />
-            <span className="assistant-signal__pulse assistant-signal__pulse--two" />
-          </div>
-          <ol className="assistant-signal__legend">
-            <li>
-              <span>01</span>
-              <strong>Voz</strong>
-              <small>Identidad al expresarse</small>
-            </li>
-            <li>
-              <span>02</span>
-              <strong>Contexto</strong>
-              <small>Criterio para responder</small>
-            </li>
-            <li>
-              <span>03</span>
-              <strong>Límites</strong>
-              <small>Marcos que debe respetar</small>
-            </li>
-          </ol>
-        </div>
+        <h1 id="assistant-title">Asistente</h1>
       </section>
 
       <div className="assistant-feedback" aria-label="Estado del guardado">
@@ -158,13 +111,6 @@ export function AssistantScreen({
             aria-labelledby="assistant-voice-title"
           >
             <header className="assistant-section__header">
-              <div className="assistant-section__marker" aria-hidden="true">
-                <i />
-                <i />
-                <i />
-                <i />
-                <i />
-              </div>
               <div>
                 <p>El carácter de cada mensaje</p>
                 <h2 id="assistant-voice-title">Voz y personalidad</h2>
@@ -189,9 +135,6 @@ export function AssistantScreen({
             aria-labelledby="assistant-context-title"
           >
             <header className="assistant-section__header">
-              <span className="assistant-section__index" aria-hidden="true">
-                02 / ENFOQUE
-              </span>
               <div>
                 <p>La dirección de la respuesta</p>
                 <h2 id="assistant-context-title">Contexto y dirección</h2>
