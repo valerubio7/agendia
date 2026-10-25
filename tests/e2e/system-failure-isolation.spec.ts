@@ -1,5 +1,5 @@
 import { expect, type APIResponse } from "@playwright/test";
-import { test } from "./support/fixtures.ts";
+import { login as loginInUi, test } from "./support/fixtures.ts";
 import { assertSemanticBoundary, systemExposure } from "./support/system.ts";
 import { formatActivityTimestamp } from "../../apps/web/src/shell/live-panel.tsx";
 import { receivedSenderEvidence } from "../../packages/domain/src/whatsapp/agenda.ts";
@@ -504,22 +504,23 @@ test("contains hostile access and provider failures while preserving isolated re
 
   const adminBusinesses = (await json(
     await api(system, admin, "/admin/businesses"),
-  )) as unknown as Array<{ lastTechnicalActivityAt: string | null }>;
-  const activityAt = adminBusinesses.find(
+  )) as unknown as Array<{ name: string; lastTechnicalActivityAt: string | null }>;
+  const activeBusiness = adminBusinesses.find(
     (business) => business.lastTechnicalActivityAt,
-  )?.lastTechnicalActivityAt;
+  );
+  const activityAt = activeBusiness?.lastTechnicalActivityAt;
   expect(activityAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   await page.context().clearCookies();
-  await page.goto(system.webUrl);
-  await page.getByLabel("Correo").fill(system.admin.email);
-  await page.getByLabel("Contraseña").fill(system.admin.password);
-  await page.getByRole("button", { name: "Ingresar" }).click();
+  await loginInUi(page, system.webUrl, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/businesses$/);
+  const businessRow = page.locator('[data-ui="admin-inventory"]').getByRole("listitem")
+    .filter({ has: page.getByText(activeBusiness!.name, { exact: true }) });
+  await businessRow.locator("summary").click();
   await expect(
-    page
-      .getByText(formatActivityTimestamp(activityAt!), { exact: true })
-      .first(),
-  ).toBeVisible();
+    businessRow.locator(".admin-technical-details dt")
+      .filter({ hasText: /^Última actividad técnica · UTC$/ }).locator("+ dd"),
+  ).toHaveText(formatActivityTimestamp(activityAt!));
+  await expect(businessRow.locator(".admin-technical-details")).toBeVisible();
   await expect(page.getByText(activityAt!, { exact: true })).toHaveCount(0);
   const exposed = systemExposure(
     await page.locator("body").innerText(),
