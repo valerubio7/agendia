@@ -108,8 +108,19 @@ test("login preserves its approved semantic, responsive, and pending-state contr
   ).toBeVisible();
   await expect(page.getByText(/^Ingresá para administrar/)).toHaveCount(0);
 
+  const form = formPanel.locator("form");
+  await expect(form).toHaveCount(1);
+  await expect(form).toHaveAttribute("aria-busy", "false");
+  await expect(form.locator("input")).toHaveCount(2);
   const email = formPanel.getByLabel("Correo", { exact: true });
   const password = formPanel.getByLabel("Contraseña", { exact: true });
+  await expect(email).toHaveAttribute("name", "email");
+  await expect(email).toHaveAttribute("type", "email");
+  await expect(email).toHaveAttribute("autocomplete", "email");
+  await expect(email).toHaveAttribute("autocapitalize", "none");
+  await expect(password).toHaveAttribute("name", "password");
+  await expect(password).toHaveAttribute("type", "password");
+  await expect(password).toHaveAttribute("autocomplete", "current-password");
   await expect(email).toHaveAttribute("required", "");
   await expect(password).toHaveAttribute("required", "");
   expect(
@@ -145,7 +156,12 @@ test("login preserves its approved semantic, responsive, and pending-state contr
     await expect(email).toHaveCSS("font-weight", "450");
     await expect(email).toHaveCSS("color", "rgb(28, 38, 32)");
     await expect(email).toHaveCSS("background-color", "rgb(252, 250, 243)");
-    for (const control of [email, submit]) {
+    await email.focus();
+    await page.keyboard.press("Tab");
+    await expect(password).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(submit).toBeFocused();
+    for (const control of [email, password, submit]) {
       await control.focus();
       await page.keyboard.press("Tab");
       await page.keyboard.press("Shift+Tab");
@@ -169,6 +185,7 @@ test("login preserves its approved semantic, responsive, and pending-state contr
     ),
   ).toBe(true);
 
+  let loginRequestCount = 0;
   let observeLoginRequest!: () => void;
   const loginRequestObserved = new Promise<void>((resolve) => {
     observeLoginRequest = resolve;
@@ -178,14 +195,35 @@ test("login preserves its approved semantic, responsive, and pending-state contr
     releaseLoginRequest = resolve;
   });
   await page.route("**/auth/login", async (route) => {
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().postDataJSON()).toEqual({ email: system.admin.email, password: system.admin.password });
+    loginRequestCount++;
     observeLoginRequest();
     await loginRequestReleased;
     await route.continue();
   });
 
-  await email.fill(system.admin.email);
+  await submit.click();
+  expect(await email.evaluate((element: HTMLInputElement) => element.validity.valueMissing)).toBe(true);
+  expect(await password.evaluate((element: HTMLInputElement) => element.validity.valueMissing)).toBe(true);
+  expect(loginRequestCount).toBe(0);
+  await email.fill("not-an-email");
   await password.fill(system.admin.password);
-  await Promise.all([loginRequestObserved, submit.click()]);
+  await submit.click();
+  expect(await email.evaluate((element: HTMLInputElement) => element.validity.typeMismatch)).toBe(true);
+  expect(loginRequestCount).toBe(0);
+  await email.fill(system.admin.email);
+  await password.fill("");
+  await password.pressSequentially("short");
+  await submit.click();
+  expect(await password.evaluate((element: HTMLInputElement) => element.validity.tooShort)).toBe(true);
+  expect(loginRequestCount).toBe(0);
+  await expect(form).toHaveAttribute("aria-busy", "false");
+  await expect(formPanel.getByRole("alert")).toHaveCount(0);
+  await expect(page).toHaveURL(system.webUrl + "/");
+
+  await password.fill(system.admin.password);
+  await Promise.all([loginRequestObserved, password.press("Enter")]);
 
   try {
     const pendingSubmit = formPanel.getByRole("button", {
@@ -193,6 +231,11 @@ test("login preserves its approved semantic, responsive, and pending-state contr
       exact: true,
     });
     await expect(pendingSubmit).toBeDisabled();
+    await expect(form).toHaveAttribute("aria-busy", "true");
+    await expect(email).toBeEnabled();
+    await expect(password).toBeEnabled();
+    await password.press("Enter");
+    expect(loginRequestCount).toBe(1);
     await expect(pendingSubmit).toHaveCSS("background-color", "rgb(46, 107, 78)");
     await expect(pendingSubmit).toHaveCSS("color", "rgb(255, 255, 255)");
     await expect(pendingSubmit).toHaveCSS("opacity", "1");
@@ -202,4 +245,5 @@ test("login preserves its approved semantic, responsive, and pending-state contr
   }
 
   await expect(page).toHaveURL(/\/businesses$/);
+  expect(loginRequestCount).toBe(1);
 });

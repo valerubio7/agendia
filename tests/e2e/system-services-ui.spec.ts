@@ -1,12 +1,5 @@
 import { expect, type Page } from "@playwright/test";
-import { test } from "./support/fixtures.ts";
-
-async function login(page: Page, url: string, email: string, password: string) {
-  await page.goto(url);
-  await page.getByLabel("Correo", { exact: true }).fill(email);
-  await page.getByLabel("Contraseña", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Ingresar", exact: true }).click();
-}
+import { createBusinessInAdminUi, login, test } from "./support/fixtures.ts";
 
 async function seedService(page: Page, name: string, priceArs: number, description?: string) {
   const csrf = await page.evaluate(() => sessionStorage.getItem("agendia.csrf"));
@@ -30,11 +23,7 @@ test("Servicios creates and edits persisted owned services with safe validation 
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
   for (const tenant of tenants) {
-    await page.getByLabel("Nombre", { exact: true }).fill(tenant.name);
-    await page.getByLabel("Correo del usuario", { exact: true }).fill(tenant.email);
-    await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
-    await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
-    await expect(page.getByRole("cell", { name: tenant.name, exact: true })).toBeVisible();
+    await createBusinessInAdminUi(page, { ...tenant, password });
   }
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const otherContext = await browser.newContext();
@@ -110,7 +99,7 @@ test("Servicios creates and edits persisted owned services with safe validation 
     expect((await createdResponse).status()).toBe(201);
     expect((await failedCreateRefresh).status()).toBe(500);
     console.log("POST201 then GET500 requests", requests);
-    await expect(screen.getByRole("status")).toHaveText("Servicio creado");
+    await expect(create.getByRole("status")).toHaveText("Servicio creado");
     await expect(screen.getByRole("heading", { name: "Consulta inicial", exact: true })).toBeVisible();
     await businessPage.screenshot({ path: testInfo.outputPath("services-create-refresh-warning.png"), fullPage: true });
     await checkRefreshRecovery();
@@ -161,7 +150,7 @@ test("Servicios creates and edits persisted owned services with safe validation 
     expect((await savedResponse).status()).toBe(200);
     expect((await failedEditRefresh).status()).toBe(500);
     console.log("PUT200 then GET500 requests", requests);
-    await expect(screen.getByRole("status")).toHaveText("Servicio actualizado");
+    await expect(create.getByRole("status")).toHaveText("Servicio actualizado");
     await expect(list.getByRole("listitem")).toHaveCount(2);
     await expect(list.getByRole("heading", { name: "Consulta de seguimiento", exact: true })).toBeVisible();
     await expect(inactive.getByText("Suspendido", { exact: true })).toBeVisible();
@@ -214,11 +203,9 @@ test("Servicios creates and edits persisted owned services with safe validation 
 
 test("Servicios confirms lifecycle actions, persists changes and recovers without repeating mutations", async ({ page, system }, testInfo) => {
   await login(page, system.webUrl, system.admin.email, system.admin.password);
-  await page.getByLabel("Nombre", { exact: true }).fill("Lifecycle Studio");
-  await page.getByLabel("Correo del usuario").fill("lifecycle@example.test");
-  await page.getByLabel("Contraseña inicial").fill("lifecycle safe password");
-  await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
-  await expect(page.getByRole("cell", { name: "Lifecycle Studio", exact: true })).toBeVisible();
+  await createBusinessInAdminUi(page, {
+    name: "Lifecycle Studio", email: "lifecycle@example.test", password: "lifecycle safe password",
+  });
   await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
   await login(page, system.webUrl, "lifecycle@example.test", "lifecycle safe password");
   await expect(page).toHaveURL(/\/profile$/);
@@ -306,7 +293,7 @@ test("Servicios confirms lifecycle actions, persists changes and recovers withou
   expect((await retired).status()).toBe(200);
   await expect(row).toHaveCount(0);
   await expect(screen.getByRole("heading", { name: "Servicios", exact: true })).toBeFocused();
-  await expect(screen.getByRole("status")).toHaveText("Servicio retirado");
+  await expect(screen.getByRole("form", { name: "Crear servicio", exact: true }).getByRole("status")).toHaveText("Servicio retirado");
   await expect(screen.getByRole("region", { name: "Actualización del catálogo" })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("lifecycle-retired-warning-mobile.png"), fullPage: true });
   const before = { ...counts };

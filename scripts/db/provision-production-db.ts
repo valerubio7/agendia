@@ -1,6 +1,5 @@
-import { createHash } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
 import postgres from "postgres";
+import { migrateDatabase, MigrationHistoryError } from "./db-migrate.ts";
 
 export const capabilities = [
   "agendia_runtime", "agendia_admin_runtime",
@@ -49,41 +48,21 @@ export async function provisionLogins(sql: postgres.Sql, env: Record<string, str
   });
 }
 
-async function migrate(sql: postgres.Sql) {
-  // The existing db:migrate:dev runner replays non-idempotent SQL. Production records
-  // checksums and applies only pending files, atomically, without changing that runner.
-  await sql.begin(async (tx) => {
-    await tx`select pg_advisory_xact_lock(hashtext('agendia:production-setup'))`;
-    await tx`create table if not exists public.agendia_production_migrations
-      (name text primary key, checksum text not null, applied_at timestamptz not null default now())`;
-    for (const name of readdirSync("packages/db/migrations").filter((name) => name.endsWith(".sql")).sort()) {
-      const source = readFileSync(`packages/db/migrations/${name}`, "utf8");
-      const checksum = createHash("sha256").update(source).digest("hex");
-      const [applied] = await tx`select checksum from public.agendia_production_migrations where name=${name}`;
-      if (applied) {
-        if (applied.checksum !== checksum) throw new Error("Applied migration changed");
-        continue;
-      }
-      await tx.unsafe(source);
-      await tx`insert into public.agendia_production_migrations(name,checksum) values(${name},${checksum})`;
-    }
-  });
-}
-
 if (import.meta.main) {
-  let sql: postgres.Sql | undefined;
   try {
-    if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
-    sql = postgres(process.env.DATABASE_URL, { max: 1 });
-    if (process.argv[2] === "migrate") await migrate(sql);
-    else if (process.argv[2]) throw new Error("Unknown setup command");
-    else await provisionLogins(sql, process.env);
+    if (!process.env.DATABASE_URL?.trim()) throw new Error("DATABASE_URL is required");
+    const sql = postgres(process.env.DATABASE_URL, { max: 1 });
+    try {
+      if (process.argv[2] === "migrate") await migrateDatabase(sql);
+      else if (process.argv[2]) throw new Error("Unknown setup command");
+      else await provisionLogins(sql, process.env);
+    } finally {
+      await sql.end();
+    }
     console.log("Production database setup completed");
-  } catch {
+  } catch (error) {
     // Do not expose SQL/passwords or connection URLs in setup logs.
-    console.error("Production database setup failed");
+    console.error(error instanceof MigrationHistoryError ? error.message : "Production database setup failed");
     process.exitCode = 1;
-  } finally {
-    await sql?.end();
   }
 }

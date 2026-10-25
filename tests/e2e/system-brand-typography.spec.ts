@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page } from "@playwright/test";
-import { test } from "./support/fixtures.ts";
+import { login, test } from "./support/fixtures.ts";
 
 const tokens = {
   "--paper": "#f3eee1", "--surface": "#fcfaf3",
@@ -75,13 +75,6 @@ async function officialBrand(page: Page, selector: string, asset: string, height
   expect(geometry.fits).toBe(true);
   expect(geometry.text).toBe("");
   if (height < 32) expect(asset).toBe("logo-mono-outlined");
-}
-
-async function login(page: Page, url: string, email: string, password: string) {
-  await page.goto(url);
-  await page.getByLabel("Correo", { exact: true }).fill(email);
-  await page.getByLabel("Contraseña", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Ingresar", exact: true }).click();
 }
 
 test("official local faces, root tokens and shared roles survive real login/profile reflow", async ({
@@ -168,30 +161,18 @@ test("official local faces, root tokens and shared roles survive real login/prof
   await page.setViewportSize({ width: 360, height: 800 });
   await officialBrand(page, ".authenticated-terminal .branded-name", "logo-wordmark-outlined", 32);
   const terminalBox = await page.locator('.authenticated-terminal[data-state="denied"]').evaluate((terminal) => {
-    const root = document.documentElement;
-    const ancestors = [];
-    for (let element: Element | null = terminal; element; element = element.parentElement) {
-      const rect = element.getBoundingClientRect();
-      const style = getComputedStyle(element);
-      const padding = [style.paddingLeft, style.paddingRight].map(Number.parseFloat);
-      const borders = [style.borderLeftWidth, style.borderRightWidth].map(Number.parseFloat);
-      ancestors.push({
-        tag: element.tagName, className: element.className,
-        clientWidth: element.clientWidth, scrollWidth: element.scrollWidth,
+    const rect = terminal.getBoundingClientRect();
+    const style = getComputedStyle(terminal);
+    return {
+      clientWidth: document.documentElement.clientWidth,
+      mainBox: {
+        boxSizing: style.boxSizing,
         left: rect.left, right: rect.right, width: rect.width,
-        contentWidth: rect.width - padding[0]! - padding[1]! - borders[0]! - borders[1]!,
-        cssWidth: style.width, boxSizing: style.boxSizing, fontSize: style.fontSize,
-        padding, borders, margins: [style.marginLeft, style.marginRight],
-      });
-    }
-    return { clientWidth: root.clientWidth, scrollWidth: root.scrollWidth, ancestors };
-  });
-  console.log("terminal-mobile-box-model", JSON.stringify(terminalBox));
-  await testInfo.attach("terminal-mobile-box-model", {
-    body: JSON.stringify(terminalBox, null, 2), contentType: "application/json",
+      },
+    };
   });
   await noClipping(page);
-  const mainBox = terminalBox.ancestors[0]!;
+  const mainBox = terminalBox.mainBox;
   expect(mainBox.boxSizing).toBe("border-box");
   expect(mainBox.left).toBeGreaterThanOrEqual(0);
   expect(mainBox.right).toBeLessThanOrEqual(terminalBox.clientWidth);
@@ -202,18 +183,29 @@ test("official local faces, root tokens and shared roles survive real login/prof
   const name = "Asesoramiento y planificación para pequeños negocios de Buenos Aires";
   const email = "brand-typography@example.test";
   const password = "brand typography password safe";
-  await page.getByLabel("Nombre", { exact: true }).fill(name);
-  await page.getByLabel("Correo del usuario", { exact: true }).fill(email);
-  await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
-  await expect(page.getByRole("cell", { name, exact: true })).toBeVisible();
-  await expect.soft(page.locator(".admin-timestamp").first()).toHaveCSS("font-weight", "450");
-  await expect.soft(page.locator(".admin-timestamp").first()).toHaveCSS("font-variant-numeric", "tabular-nums");
+  await page.locator('[aria-controls="admin-create"]').click();
+  const create = page.locator('[data-ui="admin-create"] form');
+  await expect(create).toBeVisible();
+  await create.getByLabel(/^Nombre/).fill(name);
+  await create.getByLabel("Correo del usuario", { exact: true }).fill(email);
+  await create.getByLabel(/^Contraseña inicial/).fill(password);
+  await create.getByRole("button", { name: "Crear negocio", exact: true }).click();
+  const business = page.locator(".admin-directory").getByRole("listitem").filter({
+    has: page.getByText(name, { exact: true }),
+  });
+  await expect(business).toBeVisible();
+  await expect(page.locator(".admin-feedback").getByRole("status")).toHaveText("Negocio creado");
+  await business.locator("summary").click();
+  const timestamp = business.locator(".admin-technical-details dd").first();
+  await expect(timestamp).toBeVisible();
+  await expect.soft(timestamp).toHaveCSS("font-family", /"Source Sans 3"/);
+  await expect.soft(timestamp).toHaveCSS("font-weight", "400");
+  await expect.soft(timestamp).toHaveCSS("font-variant-numeric", "tabular-nums");
   await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
   await expect(page.getByRole("button", { name: "Ingresar", exact: true })).toBeVisible();
   await login(page, system.webUrl, email, password);
   await expect(page).toHaveURL(/\/profile$/);
-  const heading = page.getByRole("heading", { name: "Tu negocio, explicado con claridad.", exact: true });
+  const heading = page.getByRole("heading", { level: 1, name: "Perfil del negocio", exact: true });
   await expect(heading).toBeVisible();
   await expect.soft(heading).toHaveCSS("font-family", /"Source Sans 3"/);
   await expect.soft(heading).toHaveCSS("font-weight", "650");
@@ -222,7 +214,7 @@ test("official local faces, root tokens and shared roles survive real login/prof
   const description = page.getByLabel("Descripción", { exact: true });
   await description.fill("Asesoramiento personalizado para pequeños negocios.");
   await expect.soft(description).toHaveCSS("font-family", /"Source Sans 3"/);
-  await expect.soft(description).toHaveCSS("font-weight", "450");
+  await expect.soft(description).toHaveCSS("font-weight", "400");
   for (const label of ["Horarios", "Servicios o productos"])
     await expect(page.getByLabel(label, { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Guardar perfil", exact: true }).click();
@@ -260,9 +252,18 @@ test("official local faces, root tokens and shared roles survive real login/prof
   await page.setViewportSize({ width: 360, height: 800 });
   await noClipping(page);
   await expect(heading).toBeVisible();
-  await officialBrand(page, ".authenticated-shell__mobile-brand", "logo-mono-outlined", 24);
-  await expect(page.locator('.authenticated-shell__mobile-brand .branded-name__wordmark')).toBeHidden();
+  await officialBrand(page, ".authenticated-shell__sidebar .brand", "logo-inverse-outlined", 32);
+  await expect(page.locator('.authenticated-shell__mobile-brand')).toBeHidden();
   await expect(page.getByRole("img", { name: "agendIA", exact: true })).toHaveCount(1);
+  const menu = page.locator('[data-ui="mobile-navigation"]');
+  await menu.locator("summary").click();
+  await expect(menu).toHaveAttribute("open", "");
+  const profileLink = menu.getByRole("link", { name: "Perfil", exact: true });
+  await expect(profileLink).toHaveAttribute("href", "/profile");
+  await expect(profileLink).toHaveAttribute("aria-current", "page");
+  await noClipping(page);
+  await menu.locator("summary").click();
+  await expect(profileLink).toBeHidden();
   await page.screenshot({ path: testInfo.outputPath("typography-mobile.png"), fullPage: true });
   await page.setViewportSize({ width: 1280, height: 900 });
   await zoom200();

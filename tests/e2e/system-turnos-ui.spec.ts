@@ -1,25 +1,20 @@
 import { expect, type Page } from "@playwright/test";
-import { test } from "./support/fixtures.ts";
+import { createBusinessInAdminUi, login, test } from "./support/fixtures.ts";
 
 // Stop this focused transaction at its first unexpected failure.
 test.describe.configure({ mode: "serial" });
 
-async function login(page: Page, url: string, email: string, password: string) {
-  await page.goto(url);
-  await page.getByLabel("Correo", { exact: true }).fill(email);
-  await page.getByLabel("Contraseña", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Ingresar", exact: true }).click();
+async function closeTurno(page: Page) {
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "Cerrar ventana de turno", exact: true }).click();
+  await expect(dialog).toBeHidden();
 }
 
 async function provision(admin: Page, business: Page, system: { webUrl: string; admin: { email: string; password: string } }, suffix: string) {
   const email = `${suffix}@example.test`, password = "turnos isolated password";
   await login(admin, system.webUrl, system.admin.email, system.admin.password);
   await expect(admin).toHaveURL(/\/businesses$/);
-  await admin.getByLabel("Nombre", { exact: true }).fill(`Turnos ${suffix}`);
-  await admin.getByLabel("Correo del usuario", { exact: true }).fill(email);
-  await admin.getByLabel("Contraseña inicial", { exact: true }).fill(password);
-  await admin.getByRole("button", { name: "Crear negocio", exact: true }).click();
-  await expect(admin.getByRole("cell", { name: `Turnos ${suffix}`, exact: true })).toBeVisible();
+  await createBusinessInAdminUi(admin, { name: `Turnos ${suffix}`, email, password });
   await login(business, system.webUrl, email, password);
   await expect(business).toHaveURL(/\/profile$/);
   const csrf = await business.evaluate(() => sessionStorage.getItem("agendia.csrf"));
@@ -54,11 +49,7 @@ test("Turnos navigation and real manual booking lifecycle", async ({ browser, pa
   const password = "turnos tenant password", email = "turnos@example.test";
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
-  await page.getByLabel("Nombre", { exact: true }).fill("Estudio Turnos");
-  await page.getByLabel("Correo del usuario", { exact: true }).fill(email);
-  await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
-  await expect(page.getByRole("cell", { name: "Estudio Turnos", exact: true })).toBeVisible();
+  await createBusinessInAdminUi(page, { name: "Estudio Turnos", email, password });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const business = await context.newPage();
   try {
@@ -104,12 +95,14 @@ test("Turnos navigation and real manual booking lifecycle", async ({ browser, pa
       if (path.startsWith("/api/me/appointments/") && request.method() === "PATCH") counts.PATCH++;
       if (path === "/api/me/clients" && request.method() === "POST") counts.clientPOST++;
     });
-    const screen = business.getByRole("main");
+    const screen = business.locator("main.turnos-screen");
     const openCreate = async () => {
+      if (await business.getByRole("dialog").isVisible()) await closeTurno(business);
       await screen.getByRole("button", { name: "Nuevo turno", exact: true }).click();
-      const form = screen.getByRole("form", { name: "Crear turno", exact: true });
+      const dialog = screen.getByRole("dialog", { name: "Nuevo turno", exact: true });
+      const form = dialog.getByRole("form", { name: "Crear turno", exact: true });
       await expect(form).toBeVisible();
-      await expect(form.getByLabel("Origen del cliente", { exact: true })).toBeFocused();
+      await expect(dialog.getByRole("heading", { name: "Nuevo turno", exact: true })).toBeFocused();
       return form;
     };
     const chooseSlot = async (form: ReturnType<Page["getByRole"]>, resourceValue: string, start: string, serviceValue = service.id) => {
@@ -154,6 +147,7 @@ test("Turnos navigation and real manual booking lifecycle", async ({ browser, pa
     expect(counts.POST).toBe(1);
     await business.unroute("**/api/me/appointments");
     await business.unroute("**/api/me/appointments?*");
+    await closeTurno(business);
     await screen.getByRole("button", { name: "Actualizar turnos", exact: true }).click();
     await expect(screen.getByText("El turno se guardó, pero no pudimos actualizar la lista.", { exact: true })).toHaveCount(0);
     expect(counts.POST).toBe(1);
@@ -176,6 +170,7 @@ test("Turnos navigation and real manual booking lifecycle", async ({ browser, pa
     expect(ownedClients).toHaveLength(2);
     expect(ownedClients.find((row: { firstName: string }) => row.firstName === "Bruno").phone).toBe("+5491123456788");
     expect(counts.clientPOST).toBe(0);
+    await closeTurno(business);
     await screen.getByRole("button", { name: "Semana", exact: true }).click();
     await screen.getByRole("button", { name: "Siguiente", exact: true }).click();
     const dayList = screen.getByRole("list", { name: `Turnos ${date}`, exact: true });
@@ -234,6 +229,7 @@ test("Turnos navigation and real manual booking lifecycle", async ({ browser, pa
     expect((await cancelled).status()).toBe(200);
     await expect(detail.getByText("Cancelado", { exact: true })).toBeVisible();
     await expect(detail.getByRole("button", { name: "Modificar turno", exact: true })).toHaveCount(0);
+    await closeTurno(business);
     await expect(dayList.getByRole("listitem")).toHaveCount(2);
     await expect(dayList.getByText("Cancelado", { exact: true })).toBeVisible();
     await screen.getByRole("button", { name: "Mes", exact: true }).click();
@@ -264,7 +260,7 @@ test("Turnos real atomic conflicts and changed quotes preserve the draft", async
     const setup = await provision(page, business, system, "turnos-conflicts");
     const { client, service, resource, date, offer, offers, headers, read } = setup;
     await business.goto(`${system.webUrl}/turnos`);
-    const screen = business.getByRole("main");
+    const screen = business.locator("main.turnos-screen");
     await screen.getByRole("button", { name: "Nuevo turno", exact: true }).click();
     const form = screen.getByRole("form", { name: "Crear turno", exact: true });
     await form.getByLabel("Origen del cliente", { exact: true }).selectOption("new");
@@ -367,7 +363,7 @@ test("Turnos mounted read recovery, stale availability, session ownership and un
     });
     await business.route("**/api/me/appointments?*", route => route.fulfill({ status: 500, contentType: "application/json", body: '{"code":"INTERNAL_ERROR"}' }));
     await business.goto(`${system.webUrl}/turnos`);
-    const screen = business.getByRole("main");
+    const screen = business.locator("main.turnos-screen");
     await expect(screen.getByRole("alert")).toHaveText("No se pudo completar la operación.");
     await business.unroute("**/api/me/appointments?*");
     await screen.getByRole("button", { name: "Actualizar turnos", exact: true }).click();
@@ -397,6 +393,7 @@ test("Turnos mounted read recovery, stale availability, session ownership and un
     await screen.getByRole("button", { name: "Actualizar detalle", exact: true }).click();
     await expect(screen.getByText("El turno se guardó, pero no pudimos actualizar el detalle.", { exact: true })).toHaveCount(0);
     expect(patch).toBe(1);
+    await closeTurno(business);
 
     let releaseList!: () => void;
     const heldList = new Promise<void>(resolve => { releaseList = resolve; });
@@ -447,12 +444,13 @@ test("Turnos mounted read recovery, stale availability, session ownership and un
     await expect(form.getByRole("button", { name: "Confirmar turno", exact: true })).toBeDisabled();
     expect(post).toBe(1);
     await expect(screen.getByRole("button", { name: "Consultar resultado guardado", exact: true })).toBeVisible();
-    const newTurn = screen.getByRole("button", { name: "Nuevo turno", exact: true });
-    const uncertaintyWarning = screen.locator(':scope > [role="alert"]').filter({ hasText: "El turno podría haberse guardado" });
+    const newTurn = screen.getByRole("button", { name: "Nuevo turno", exact: true, includeHidden: true });
+    const uncertaintyWarning = screen.locator('.turnos-feedback > [role="alert"]').filter({ hasText: "El turno podría haberse guardado" });
     await expect(newTurn).toBeDisabled(); // An ambiguous write must not be bypassed by opening a fresh form.
     await newTurn.evaluate(element => element.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     await expect(form.getByRole("button", { name: "Confirmar turno", exact: true })).toBeDisabled();
     await business.screenshot({ path: testInfo.outputPath("turnos-unknown-network-outcome.png"), fullPage: true });
+    await closeTurno(business);
     await business.unroute("**/api/me/appointments");
     const appointmentListRoute = /\/api\/me\/appointments(?:\?.*)?$/;
     await business.route(appointmentListRoute, route => route.fulfill({ status: 500, contentType: "application/json", body: '{"code":"INTERNAL_ERROR"}' }));
@@ -525,6 +523,7 @@ test("Turnos mounted read recovery, stale availability, session ownership and un
     });
     await dayList.getByRole("button", { name: /Clara López/ }).click();
     await expect(screen.getByText("Actualizando detalle…", { exact: true })).toBeVisible();
+    await closeTurno(business);
     await business.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
     await expect(business).toHaveURL(system.webUrl + "/");
     logoutAsserted = true;
@@ -557,11 +556,9 @@ test("Turnos uncapped all-state calendars and clock locks with UI-mocked attenda
     const { client, service, resource, date, offer } = setup;
     const saved = await setup.create("appointments", { serviceId: service.id, resourceId: resource.id, clientId: client.id,
       date, startRaw: offer.start, expectedTerms: offer.terms, confirmed: true });
-    await page.getByLabel("Nombre", { exact: true }).fill("Turnos otra identidad");
-    await page.getByLabel("Correo del usuario", { exact: true }).fill("turnos-other@example.test");
-    await page.getByLabel("Contraseña inicial", { exact: true }).fill(setup.password);
-    await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
-    await expect(page.getByRole("cell", { name: "Turnos otra identidad", exact: true })).toBeVisible();
+    await createBusinessInAdminUi(page, {
+      name: "Turnos otra identidad", email: "turnos-other@example.test", password: setup.password,
+    });
     await login(other, system.webUrl, "turnos-other@example.test", setup.password);
     await expect(other).toHaveURL(/\/profile$/);
     await other.goto(`${system.webUrl}/turnos`);
@@ -593,7 +590,7 @@ test("Turnos uncapped all-state calendars and clock locks with UI-mocked attenda
       await route.fulfill({ json: projection }); // UI-only: no real past appointment can be created through this API.
     });
     await business.goto(`${system.webUrl}/turnos`);
-    const screen = business.getByRole("main");
+    const screen = business.locator("main.turnos-screen");
     const todayList = screen.getByRole("list", { name: `Turnos ${today}`, exact: true });
     await expect(todayList.getByRole("listitem")).toHaveCount(105);
     await expect(todayList.getByText("Cancelado", { exact: true })).toHaveCount(26);
@@ -624,9 +621,10 @@ test("Turnos uncapped all-state calendars and clock locks with UI-mocked attenda
     await expect(detail.getByText("Completado", { exact: true })).toBeVisible();
     await expect(detail.getByRole("button")).toHaveCount(0);
     expect(patch).toBe(1);
+    await closeTurno(business);
     await screen.getByRole("button", { name: "Semana", exact: true }).click();
     await expect(todayList.getByRole("listitem")).toHaveCount(105);
-    await expect(screen.getByRole("heading", { level: 2 }).filter({ hasNotText: "Clara López" })).toHaveCount(7);
+    await expect(screen.locator(".turnos-agenda").getByRole("heading", { level: 2 })).toHaveCount(7);
     await screen.getByRole("button", { name: "Anterior", exact: true }).click();
     await expect(todayList).toHaveCount(0);
     await screen.getByRole("button", { name: "Volver a hoy", exact: true }).click();
@@ -651,7 +649,7 @@ test("Turnos mounted read recovery resolves a persisted PATCH without blocking u
     const saved = await setup.create("appointments", { serviceId: service.id, resourceId: resource.id, clientId: client.id,
       date, startRaw: offer.start, expectedTerms: offer.terms, confirmed: true });
     await business.goto(`${system.webUrl}/turnos`);
-    const screen = business.getByRole("main");
+    const screen = business.locator("main.turnos-screen");
     await screen.getByRole("button", { name: "Semana", exact: true }).click();
     const row = screen.getByRole("list", { name: `Turnos ${date}`, exact: true }).getByRole("button", { name: /Clara López/ });
     await row.click();
@@ -670,18 +668,19 @@ test("Turnos mounted read recovery resolves a persisted PATCH without blocking u
       await route.abort("failed");
     });
     await notes.getByRole("button", { name: "Guardar notas", exact: true }).click();
-    const warning = screen.locator(':scope > [role="alert"]').filter({ hasText: "El turno podría haberse guardado" });
+    const warning = screen.locator('.turnos-feedback > [role="alert"]').filter({ hasText: "El turno podría haberse guardado" });
     await expect(warning).toBeVisible();
     expect((await setup.read(`appointments/${saved.id}`)).notes).toBe("Persistió sin respuesta al navegador");
     expect(writes).toBe(1);
     await business.unroute(`**/api/me/appointments/${saved.id}/notes`);
-    const newTurn = screen.getByRole("button", { name: "Nuevo turno", exact: true });
+    const newTurn = screen.getByRole("button", { name: "Nuevo turno", exact: true, includeHidden: true });
     await expect(newTurn).toBeEnabled(); // A PATCH on one record does not block unrelated create intents.
     // A second real appointment remains writable while the first PATCH outcome is unresolved.
     const nextOffer = setup.offers.find((slot: { startMs: number }) => slot.startMs >= offer.endMs);
     const unrelatedClient = await setup.create("clients", { firstName: "Otro", lastName: "Cliente", phone: "+5491123456774" });
     const unrelated = await setup.create("appointments", { serviceId: service.id, resourceId: resource.id, clientId: unrelatedClient.id,
       date, startRaw: nextOffer.start, expectedTerms: nextOffer.terms, confirmed: true });
+    await closeTurno(business);
     await screen.getByRole("button", { name: "Actualizar turnos", exact: true }).click();
     const otherRow = screen.getByRole("list", { name: `Turnos ${date}`, exact: true }).getByRole("button", { name: /Otro Cliente/ });
     await otherRow.click();
@@ -692,6 +691,7 @@ test("Turnos mounted read recovery resolves a persisted PATCH without blocking u
     expect((await otherSaved).status()).toBe(200);
     expect((await setup.read(`appointments/${unrelated.id}`)).notes).toBe("Cambio independiente");
     expect(writes).toBe(2);
+    await closeTurno(business);
     await row.click(); // Read-only selection must not erase uncertainty.
     await expect(detail.getByText("Persistió sin respuesta al navegador", { exact: true })).toBeVisible();
     await expect(detail.getByRole("button", { name: "Modificar turno", exact: true })).toBeDisabled();
@@ -703,6 +703,7 @@ test("Turnos mounted read recovery resolves a persisted PATCH without blocking u
       detailGET++;
       await route.fulfill({ status: 500, contentType: "application/json", body: '{"code":"INTERNAL_ERROR"}' });
     });
+    await closeTurno(business);
     await row.click();
     await expect(screen.getByText("Actualizando detalle…", { exact: true })).toHaveCount(0);
     expect(detailGET).toBe(1);
@@ -710,6 +711,7 @@ test("Turnos mounted read recovery resolves a persisted PATCH without blocking u
     await expect(newTurn).toBeEnabled();
     expect(writes).toBe(2);
     await business.unroute(`**/api/me/appointments/${saved.id}`);
+    await closeTurno(business);
     await row.click();
     await expect(screen.getByText("Actualizando detalle…", { exact: true })).toHaveCount(0);
     await expect(detail.getByText("Persistió sin respuesta al navegador", { exact: true })).toBeVisible();
@@ -751,7 +753,7 @@ test("Turnos stale receipt never replaces current state and requires GET-only fr
       const saved = await setup.create("appointments", { serviceId: service.id, resourceId: resource.id, clientId: client.id,
         date, startRaw: offer.start, expectedTerms: offer.terms, confirmed: true });
       await business.goto(`${system.webUrl}/turnos`);
-      const screen = business.getByRole("main");
+      const screen = business.locator("main.turnos-screen");
       await screen.getByRole("button", { name: "Semana", exact: true }).click();
       const row = screen.getByRole("list", { name: `Turnos ${date}`, exact: true }).getByRole("button", { name: /Clara López/ });
       await row.click();
@@ -771,7 +773,7 @@ test("Turnos stale receipt never replaces current state and requires GET-only fr
       });
       await form.getByRole("button", { name: "Guardar notas", exact: true }).click();
       await lossCompletion;
-      await expect(screen.locator(':scope > [role="alert"]').filter({ hasText: "El turno podría haberse guardado" })).toBeVisible();
+      await expect(screen.locator('.turnos-feedback > [role="alert"]').filter({ hasText: "El turno podría haberse guardado" })).toBeVisible();
       await expect(screen.getByRole("button", { name: "Consultar resultado guardado", exact: true })).toBeVisible();
       await business.unroute(`**/api/me/appointments/${saved.id}/notes`);
       // Another authenticated session advances the record after the receipt was committed.
@@ -788,6 +790,7 @@ test("Turnos stale receipt never replaces current state and requires GET-only fr
         expect(cancel.status()).toBe(200);
       } finally { await other.close(); }
       if (inspected) {
+        await closeTurno(business);
         await row.click();
         await expect(detail.getByText("Cancelado", { exact: true })).toBeVisible();
         await expect(detail.getByText("Current newer notes", { exact: true })).toBeVisible();
@@ -815,7 +818,7 @@ test("Turnos stale receipt never replaces current state and requires GET-only fr
         await expect(detail.locator("dt").filter({ hasText: /^Notas$/ }).locator("+ dd")).toHaveText("Sin notas");
         await expect(detail.locator("dl").getByText("Historical receipt notes", { exact: true })).toHaveCount(0);
       }
-      await expect(screen.getByRole("button", { name: "Nuevo turno", exact: true })).toBeEnabled();
+      await expect(screen.getByRole("button", { name: "Nuevo turno", exact: true, includeHidden: true })).toBeEnabled();
       expect(writes).toBe(1);
       await business.screenshot({ path: testInfo.outputPath(`stale-receipt-${inspected}-get-fault.png`), fullPage: true });
       await business.unroute(`**/api/me/appointments/${saved.id}`);
@@ -838,7 +841,7 @@ test("Turnos mounted read recovery resolves atomic new-client POST response loss
   try {
     const setup = await provision(page, business, system, "turnos-lost-create");
     await business.goto(`${system.webUrl}/turnos`);
-    const screen = business.getByRole("main");
+    const screen = business.locator("main.turnos-screen");
     await screen.getByRole("button", { name: "Nuevo turno", exact: true }).click();
     const form = screen.getByRole("form", { name: "Crear turno", exact: true });
     await form.getByLabel("Origen del cliente", { exact: true }).selectOption("new");
@@ -867,14 +870,14 @@ test("Turnos mounted read recovery resolves atomic new-client POST response loss
     expect(await setup.read("appointments")).toHaveLength(1);
     expect(await setup.read("clients")).toHaveLength(2);
     await business.unroute("**/api/me/appointments");
-    await expect(screen.getByRole("button", { name: "Nuevo turno", exact: true })).toBeDisabled();
+    await expect(screen.getByRole("button", { name: "Nuevo turno", exact: true, includeHidden: true })).toBeDisabled();
     const receiptResponse = business.waitForResponse(response => response.request().method() === "GET" && response.url().endsWith(`/appointment-operations/${key}`));
     await screen.getByRole("button", { name: "Consultar resultado guardado", exact: true }).click();
     const receipt = await receiptResponse;
     expect(receipt.status()).toBe(200);
     expect(await receipt.json()).toMatchObject({ state: "completed", appointment: { id: savedId } });
     await expect(form).toHaveCount(0);
-    await expect(screen.getByRole("button", { name: "Nuevo turno", exact: true })).toBeEnabled();
+    await expect(screen.getByRole("button", { name: "Nuevo turno", exact: true, includeHidden: true })).toBeEnabled();
     const detail = screen.getByRole("region", { name: "Detalle del turno", exact: true });
     await expect(detail.getByRole("heading", { name: "Nueva Guardada", exact: true })).toBeFocused();
     await expect(detail.getByText("Confirmado", { exact: true })).toBeVisible();

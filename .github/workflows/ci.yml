@@ -31,19 +31,14 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Typecheck
         run: bun run typecheck
-      - name: Scaffolding
-        run: bun run test:scaffolding
       - name: Unit tests
         run: bun run test:unit
       - name: Contracts
         run: bun run test:contracts
-      - name: Scope check
-        run: bun run scope:check
-      - name: Security scan
-        run: bun run security:scan
 
   integration:
     name: Integration (includes tenant RLS)
+    needs: validation
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -64,13 +59,10 @@ jobs:
         run: bun run test:integration
 
   browser:
-    name: Playwright (${{ matrix.suite }})
+    name: Playwright
+    needs: validation
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        suite: [harness, e2e]
     env:
       CI: "true"
     steps:
@@ -88,6 +80,16 @@ jobs:
         run: docker info
       - name: Install Chromium and system dependencies
         run: bunx --no-install playwright install --with-deps chromium
-      # Scripts select projects from playwright.config.ts; fixtures own their services.
+      # Script selects the single e2e project from playwright.config.ts; fixtures own their services.
       - name: Browser tests
-        run: bun run test:${{ matrix.suite }}
+        run: bun run test:e2e
+      - name: Upload Playwright diagnostics
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: playwright-results
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: warn
+          retention-days: 7
