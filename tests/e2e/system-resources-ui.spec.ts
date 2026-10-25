@@ -1,12 +1,5 @@
 import { expect, type Page } from "@playwright/test";
-import { test } from "./support/fixtures.ts";
-
-async function login(page: Page, url: string, email: string, password: string) {
-  await page.goto(url);
-  await page.getByLabel("Correo", { exact: true }).fill(email);
-  await page.getByLabel("Contraseña", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Ingresar", exact: true }).click();
-}
+import { createBusinessInAdminUi, login, test } from "./support/fixtures.ts";
 
 async function seed(page: Page, method: "post" | "put", path: string, data: object, status: number) {
   const csrf = await page.evaluate(() => sessionStorage.getItem("agendia.csrf"));
@@ -28,11 +21,7 @@ test("Recursos manages owned assignments while preserving weekly spans", async (
   await expect(page).toHaveURL(/\/businesses$/);
   await expect(page.getByRole("link", { name: "Recursos", exact: true })).toHaveCount(0);
   for (const tenant of tenants) {
-    await page.getByLabel("Nombre", { exact: true }).fill(tenant.name);
-    await page.getByLabel("Correo del usuario", { exact: true }).fill(tenant.email);
-    await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
-    await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
-    await expect(page.getByRole("cell", { name: tenant.name, exact: true })).toBeVisible();
+    await createBusinessInAdminUi(page, { ...tenant, password });
   }
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const otherContext = await browser.newContext();
@@ -451,7 +440,7 @@ test("Recursos manages owned assignments while preserving weekly spans", async (
       && response.request().method() === "DELETE" && response.status() === 409);
     await confirmation.getByRole("button", { name: "Confirmar retiro", exact: true }).click();
     await retireConflict;
-    await expect(screen.locator(':scope > [role="alert"]')).toBeVisible();
+    await expect(screen.locator('.resources-catalog > [role="alert"]')).toHaveText("Los datos cambiaron. Recargá y volvé a intentar.");
     await expect(hoursRow).toBeVisible();
     expect(await readHours()).toEqual(bookedRecord);
     expect(await readBooking()).toEqual(originalBooking);
