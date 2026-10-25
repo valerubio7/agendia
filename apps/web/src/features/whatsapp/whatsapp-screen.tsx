@@ -35,6 +35,16 @@ const statusContent: Record<
     explanation:
       "WhatsApp necesita una vinculación antes de que agendIA pueda usar este canal de atención.",
   },
+  linking: {
+    label: "Vinculando",
+    explanation:
+      "La vinculación está en curso. Podés recuperar el QR temporal para completar la verificación.",
+  },
+  reconnecting: {
+    label: "Reconectando",
+    explanation:
+      "Estamos intentando restablecer la conexión del canal. Podés recuperar el QR disponible si necesitás volver a vincularlo.",
+  },
   error: {
     label: "Error de conexión",
     explanation:

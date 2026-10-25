@@ -74,7 +74,7 @@ export type Assistant = {
   revision: number;
 };
 export type WhatsAppStatus = {
-  status: "connected" | "disconnected" | "link_required" | "error";
+  status: "connected" | "disconnected" | "link_required" | "linking" | "reconnecting" | "error";
   linkedNumber?: string | null;
   linkedAt?: string | null;
   lastConnectedAt?: string | null;
@@ -196,6 +196,7 @@ const safeMessages: Record<string, string> = {
   FORBIDDEN: "Tu rol o el estado del negocio no permite esta acción.",
   VALIDATION_FAILED: "Revisá los campos indicados.",
   CONFLICT: "Los datos cambiaron. Recargá y volvé a intentar.",
+  WHATSAPP_ASSISTANT_INACTIVE: "Activá el asistente antes de vincular WhatsApp.",
   NOT_FOUND: "El recurso no está disponible.",
 };
 
@@ -452,7 +453,11 @@ export class ApiClient {
     try {
       await this.requestWhatsAppLink(options.signal);
     } catch (error) {
-      if (!(error instanceof ApiError) || error.code !== "CONFLICT")
+      if (!(error instanceof ApiError) || error.status !== 409 || error.code !== "CONFLICT")
+        throw error;
+      if (error.message === "Activate the assistant before linking WhatsApp")
+        throw new ApiError("WHATSAPP_ASSISTANT_INACTIVE", "Assistant activation required", 409);
+      if (error.message !== "WhatsApp connection already linked")
         throw error;
     }
     return this.waitForWhatsAppQr(options);
