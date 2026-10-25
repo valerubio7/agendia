@@ -1,5 +1,5 @@
 import { expect } from "@playwright/test";
-import { test } from "./support/fixtures.ts";
+import { createBusinessInAdminUi, login, test } from "./support/fixtures.ts";
 import { assertSemanticBoundary } from "./support/system.ts";
 
 const tenants = [
@@ -19,18 +19,6 @@ const tenants = [
   },
 ];
 
-async function login(
-  page: import("@playwright/test").Page,
-  url: string,
-  email: string,
-  password: string,
-) {
-  await page.goto(url);
-  await page.getByLabel("Correo").fill(email);
-  await page.getByLabel("Contraseña").fill(password);
-  await page.getByRole("button", { name: "Ingresar" }).click();
-}
-
 test("real services complete the deterministic multi-tenant happy path", async ({
   browser,
   page,
@@ -48,13 +36,7 @@ test("real services complete the deterministic multi-tenant happy path", async (
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
   for (const tenant of tenants) {
-    await page.getByLabel("Nombre", { exact: true }).fill(tenant.name);
-    await page.getByLabel("Correo del usuario").fill(tenant.email);
-    await page.getByLabel("Contraseña inicial").fill(tenant.password);
-    await page.getByRole("button", { name: "Crear negocio" }).click();
-    await expect(
-      page.getByRole("cell", { name: tenant.name, exact: true }),
-    ).toBeVisible();
+    await createBusinessInAdminUi(page, tenant);
   }
 
   const tenantPages: import("@playwright/test").Page[] = [];
@@ -72,7 +54,7 @@ test("real services complete the deterministic multi-tenant happy path", async (
     for (const label of ["Horarios", "Servicios o productos"])
       await expect(tenantPage.getByLabel(label, { exact: true })).toHaveCount(0);
     await tenantPage.getByRole("button", { name: "Guardar perfil" }).click();
-    await expect(tenantPage.getByRole("status")).toHaveText("Perfil guardado");
+    await expect(tenantPage.locator(".profile-feedback").getByRole("status")).toHaveText("Perfil guardado");
     await tenantPage.reload();
     await expect(tenantPage.getByLabel("Nombre comercial")).toHaveValue(
       tenant.name,
@@ -83,7 +65,7 @@ test("real services complete the deterministic multi-tenant happy path", async (
     await expect(tenantPage).toHaveURL(/\/assistant$/);
     await tenantPage.getByLabel("Respuestas automáticas activas").check();
     await tenantPage.getByRole("button", { name: "Guardar y activar" }).click();
-    await expect(tenantPage.getByRole("status")).toHaveText(
+    await expect(tenantPage.locator(".assistant-feedback").getByRole("status")).toHaveText(
       "Asistente guardado",
     );
     await tenantPage.reload();
@@ -91,11 +73,14 @@ test("real services complete the deterministic multi-tenant happy path", async (
       tenantPage.getByLabel("Respuestas automáticas activas"),
     ).toBeChecked();
     await tenantPage.getByRole("link", { name: "Servicios", exact: true }).click();
-    await tenantPage.getByLabel("Nombre", { exact: true }).fill(`Servicio ${tenant.name}`);
-    await tenantPage.getByLabel("Duración (minutos)").fill("30");
-    await tenantPage.getByLabel("Precio (ARS)").fill("1000");
-    await tenantPage.getByRole("button", { name: "Crear servicio", exact: true }).click();
-    await expect(tenantPage.getByText(`Servicio ${tenant.name}`, { exact: true })).toBeVisible();
+    const serviceForm = tenantPage.getByRole("form", { name: "Crear servicio", exact: true });
+    await serviceForm.getByLabel("Nombre", { exact: true }).fill(`Servicio ${tenant.name}`);
+    await serviceForm.getByLabel("Duración (minutos)", { exact: true }).fill("30");
+    await serviceForm.getByLabel("Precio (ARS)", { exact: true }).fill("1000");
+    await serviceForm.getByRole("button", { name: "Crear servicio", exact: true }).click();
+    await expect(serviceForm.getByRole("status")).toHaveText("Servicio creado");
+    await expect(tenantPage.getByRole("list", { name: "Catálogo de servicios", exact: true })
+      .getByRole("heading", { name: `Servicio ${tenant.name}`, exact: true })).toBeVisible();
     await tenantPage.getByRole("link", { name: "WhatsApp" }).click();
     await expect(tenantPage).toHaveURL(/\/whatsapp$/);
     await tenantPage.getByRole("button", { name: "Vincular WhatsApp" }).click();
@@ -109,8 +94,8 @@ test("real services complete the deterministic multi-tenant happy path", async (
     await expect(qrImage).toHaveAttribute("src", /^data:image\/png;base64,/);
     visibleQr++;
     await expect(
-      tenantPage.getByText("Conectado", { exact: true }),
-    ).toBeVisible({ timeout: 15_000 });
+      tenantPage.locator('[data-ui="whatsapp-status"]').getByRole("status"),
+    ).toHaveText("Conectado", { timeout: 15_000 });
     await expect(qrImage).toBeHidden();
     await expect(
       tenantPage.getByRole("button", { name: "WhatsApp vinculado" }),
@@ -365,7 +350,9 @@ test("real services complete the deterministic multi-tenant happy path", async (
       response.url().endsWith(`/api/me/appointments/${saved[0].id}`) && response.status() === 200);
     await appointment.click();
     expect(await (await detailResponse).json()).toEqual(saved[0]);
-    const detail = businessPage.getByRole("region", { name: "Detalle del turno", exact: true });
+    const dialog = businessPage.getByRole("dialog", { name: "Detalle del turno", exact: true });
+    await expect(dialog).toBeVisible();
+    const detail = dialog.getByRole("region", { name: "Detalle del turno", exact: true });
     await expect(detail.getByText("Confirmado", { exact: true })).toBeVisible();
     await expect(detail.getByText("IA", { exact: true })).toBeVisible();
   }
