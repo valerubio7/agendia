@@ -1,12 +1,5 @@
 import { expect, type Page } from "@playwright/test";
-import { test } from "./support/fixtures.ts";
-
-async function login(page: Page, url: string, email: string, password: string) {
-  await page.goto(url);
-  await page.getByLabel("Correo", { exact: true }).fill(email);
-  await page.getByLabel("Contraseña", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Ingresar", exact: true }).click();
-}
+import { createBusinessInAdminUi, login, test } from "./support/fixtures.ts";
 
 test("Horario reads only the tenant calendar and retries safely", async ({ browser, page, system }, testInfo) => {
   const password = "calendar tenant password safe";
@@ -14,11 +7,7 @@ test("Horario reads only the tenant calendar and retries safely", async ({ brows
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
   for (const [index, email] of tenants.entries()) {
-    await page.getByLabel("Nombre", { exact: true }).fill(`Estudio Horario ${index}`);
-    await page.getByLabel("Correo del usuario", { exact: true }).fill(email);
-    await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
-    await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
-    await expect(page.getByRole("cell", { name: `Estudio Horario ${index}`, exact: true })).toBeVisible();
+    await createBusinessInAdminUi(page, { name: `Estudio Horario ${index}`, email, password });
   }
   const adminReads: string[] = [];
   page.on("request", request => {
@@ -72,7 +61,7 @@ test("Horario reads only the tenant calendar and retries safely", async ({ brows
     expect(await read.json()).toEqual({ weeklySchedule });
     await business.reload();
     await expect(screen.getByRole("heading", { name: "Horario semanal guardado", exact: true })).toBeVisible();
-    const days = screen.locator(".resources-week div");
+    const days = screen.getByRole("region", { name: "Horario semanal", exact: true }).locator("dl > div");
     await expect(days.locator("dt")).toHaveText(["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]);
     await expect(days.nth(0).locator("dd p")).toHaveText(["09:07 – 12:00", "11:00 – 13:00", "13:00 – 13:17"]);
     await expect(days.nth(3).locator("dd")).toHaveText("22:07 – 02:03 (día siguiente)");
@@ -109,9 +98,10 @@ test("Horario reads only the tenant calendar and retries safely", async ({ brows
     expect(methods.length).toBe(beforeRetry + 1);
     expect(methods.every(method => method === "GET")).toBe(true);
     await expect(screen.getByRole("button", { name: "Editar horario", exact: true })).toHaveCount(1);
+    const closures = screen.getByRole("region", { name: "Cierres del negocio", exact: true });
+    await expect(closures.getByRole("button", { name: "Actualizar cierres", exact: true })).toBeEnabled();
+    await expect(closures.getByRole("button", { name: "Crear cierre", exact: true })).toBeEnabled();
     await expect(screen.getByRole("button")).toHaveCount(3);
-    await expect(screen.getByRole("button", { name: "Actualizar cierres", exact: true })).toHaveCount(1);
-    await expect(screen.getByRole("button", { name: "Crear cierre", exact: true })).toHaveCount(1);
     await expect(screen.getByRole("form")).toHaveCount(0);
   } finally {
     await context.close();
@@ -125,11 +115,7 @@ test("Horario edits raw tenant schedules without defaults or cancel writes", asy
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
   for (const [index, email] of emails.entries()) {
-    await page.getByLabel("Nombre", { exact: true }).fill(`Editor Horario ${index}`);
-    await page.getByLabel("Correo del usuario", { exact: true }).fill(email);
-    await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
-    await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
-    await expect(page.getByRole("cell", { name: `Editor Horario ${index}`, exact: true })).toBeVisible();
+    await createBusinessInAdminUi(page, { name: `Editor Horario ${index}`, email, password });
   }
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const otherContext = await browser.newContext();
@@ -176,7 +162,7 @@ test("Horario edits raw tenant schedules without defaults or cancel writes", asy
     expect(await read(business)).toEqual({ weeklySchedule: null });
     await opener.click();
     await form.getByRole("button", { name: "Guardar horario", exact: true }).click();
-    await expect(business.getByRole("status")).toHaveText("Horario guardado");
+    await expect(business.getByRole("main").locator(".calendar-weekly").getByRole("status")).toHaveText("Horario guardado");
     await expect(opener).toBeFocused();
     expect(bodies).toEqual([{ weeklySchedule: {} }]);
     expect(await read(business)).toEqual({ weeklySchedule: {} });
@@ -194,7 +180,7 @@ test("Horario edits raw tenant schedules without defaults or cancel writes", asy
       await editor.getByLabel("Inicio Lunes 1", { exact: true }).fill(start!);
       await editor.getByLabel("Fin Lunes 1", { exact: true }).fill(end!);
       await form.getByRole("button", { name: "Guardar horario", exact: true }).click();
-      await expect(business.getByRole("main").getByRole("alert")).toContainText("HH:mm distintas");
+      await expect(business.getByRole("main").locator(".calendar-weekly").getByRole("alert")).toContainText("HH:mm distintas");
       expect(bodies).toHaveLength(1);
     }
     expect(await read(business)).toEqual({ weeklySchedule: {} });
@@ -251,11 +237,7 @@ test("Horario serializes pending saves, guards suspended hours and recovers conf
   const email = "calendar-safety@example.test", password = "calendar safety password safe";
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
-  await page.getByLabel("Nombre", { exact: true }).fill("Horario Seguro");
-  await page.getByLabel("Correo del usuario", { exact: true }).fill(email);
-  await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
-  await expect(page.getByRole("cell", { name: "Horario Seguro", exact: true })).toBeVisible();
+  await createBusinessInAdminUi(page, { name: "Horario Seguro", email, password });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const business = await context.newPage();
   let releasePut: (() => void) | undefined;
@@ -418,10 +400,10 @@ test("Horario serializes pending saves, guards suspended hours and recovers conf
     expect(await saved.json()).toEqual({ weeklySchedule: expandedSchedule });
     await expect(form).toHaveCount(0);
     await expect(opener).toBeFocused();
-    await expect(screen.getByRole("status")).toHaveText("Horario guardado");
+    await expect(screen.locator(".calendar-weekly").getByRole("status")).toHaveText("Horario guardado");
     await expect(summary).toContainText("07:03 – 19:11");
     await expect(warning.getByRole("alert")).toHaveText("El horario está guardado, pero no se pudo actualizar la vista.");
-    await expect(screen.locator(':scope > [role="alert"]')).toHaveCount(0);
+    await expect(screen.locator('.calendar-weekly > [role="alert"]')).toHaveCount(0);
     await expect(screen.getByText(/PRIVATE/)).toHaveCount(0);
     expect(counts).toEqual({ PUT: 3, GET: 2 });
     expect(bodies).toEqual([{ weeklySchedule: firstSchedule },
@@ -462,11 +444,7 @@ test("Horario rejects exclusion of a real future confirmed booking independently
   const email = "calendar-future-c2@example.test", password = "calendar future proof password";
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
-  await page.getByLabel("Nombre", { exact: true }).fill("Horario Futuro C2");
-  await page.getByLabel("Correo del usuario", { exact: true }).fill(email);
-  await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
-  await expect(page.getByRole("cell", { name: "Horario Futuro C2", exact: true })).toBeVisible();
+  await createBusinessInAdminUi(page, { name: "Horario Futuro C2", email, password });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const business = await context.newPage();
   try {
@@ -589,11 +567,7 @@ test("Closures read independently in Argentina time without calendar writes", as
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
   for (const [index, email] of emails.entries()) {
-    await page.getByLabel("Nombre", { exact: true }).fill(`Cierres Lectura ${index}`);
-    await page.getByLabel("Correo del usuario", { exact: true }).fill(email);
-    await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
-    await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
-    await expect(page.getByRole("cell", { name: `Cierres Lectura ${index}`, exact: true })).toBeVisible();
+    await createBusinessInAdminUi(page, { name: `Cierres Lectura ${index}`, email, password });
   }
   const adminReads: string[] = [];
   page.on("request", request => {
@@ -728,11 +702,7 @@ for (const interruption of ["initial", "retry"] as const) {
     const email = `closures-logout-${interruption}@example.test`, password = "closure logout safe password";
     await login(page, system.webUrl, system.admin.email, system.admin.password);
     await expect(page).toHaveURL(/\/businesses$/);
-    await page.getByLabel("Nombre", { exact: true }).fill(`Cierres Logout ${interruption}`);
-    await page.getByLabel("Correo del usuario", { exact: true }).fill(email);
-    await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
-    await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
-    await expect(page.getByRole("cell", { name: `Cierres Logout ${interruption}`, exact: true })).toBeVisible();
+    await createBusinessInAdminUi(page, { name: `Cierres Logout ${interruption}`, email, password });
     const context = await browser.newContext({ timezoneId: "UTC", viewport: { width: 1280, height: 900 } });
     const business = await context.newPage();
     let release = () => {};
@@ -810,11 +780,7 @@ test("Closures retain ordered records through refresh failure and interrupted lo
   const email = "closures-refresh@example.test", password = "closure refresh safe password";
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
-  await page.getByLabel("Nombre", { exact: true }).fill("Cierres Actualizar");
-  await page.getByLabel("Correo del usuario", { exact: true }).fill(email);
-  await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
-  await expect(page.getByRole("cell", { name: "Cierres Actualizar", exact: true })).toBeVisible();
+  await createBusinessInAdminUi(page, { name: "Cierres Actualizar", email, password });
   const context = await browser.newContext({ timezoneId: "UTC", viewport: { width: 1280, height: 900 } });
   const business = await context.newPage();
   let release = () => {};
@@ -852,7 +818,7 @@ test("Closures retain ordered records through refresh failure and interrupted lo
       }
     });
     const refresh = region.getByRole("button", { name: "Actualizar cierres", exact: true });
-    await expect(refresh).toBeVisible(); // RED: the ready list has no refresh control on the base.
+    await expect(refresh).toBeVisible();
     let hold = true, fail = true;
     await business.route("**/api/me/business-calendar/closures", async route => {
       expect(route.request().method()).toBe("GET");
@@ -927,11 +893,7 @@ test("Closure CREATE persists Argentina dates and milliseconds, retaining confir
   const email = "closures-create@example.test", password = "closure create safe password";
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
-  await page.getByLabel("Nombre", { exact: true }).fill("Cierres Crear");
-  await page.getByLabel("Correo del usuario", { exact: true }).fill(email);
-  await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
-  await expect(page.getByRole("cell", { name: "Cierres Crear", exact: true })).toBeVisible();
+  await createBusinessInAdminUi(page, { name: "Cierres Crear", email, password });
   const context = await browser.newContext({ timezoneId: "UTC", viewport: { width: 1280, height: 900 } });
   const business = await context.newPage();
   let release = () => {};
@@ -943,7 +905,7 @@ test("Closure CREATE persists Argentina dates and milliseconds, retaining confir
     const region = business.getByRole("region", { name: "Cierres del negocio", exact: true });
     await expect(region.getByText("No hay cierres guardados.", { exact: false })).toBeVisible();
     const create = region.getByRole("button", { name: "Crear cierre", exact: true });
-    await expect(create).toBeVisible(); // RED: no CREATE control exists on the base.
+    await expect(create).toBeVisible();
     const payloads: unknown[] = [];
     let gets = 0, hold = true, failGet = false, failPost = false;
     business.on("request", request => {
@@ -1068,11 +1030,7 @@ test("Cierres rejects a date containing a real future confirmed booking and pres
   const password = "closures future proof password";
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
-  await page.getByLabel("Nombre", { exact: true }).fill("Cierres Futuro Conflicto");
-  await page.getByLabel("Correo del usuario", { exact: true }).fill(email);
-  await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
-  await expect(page.getByRole("cell", { name: "Cierres Futuro Conflicto", exact: true })).toBeVisible();
+  await createBusinessInAdminUi(page, { name: "Cierres Futuro Conflicto", email, password });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const business = await context.newPage();
   try {
@@ -1238,11 +1196,7 @@ test("Closures edit and delete retain identity and recover committed mutations",
   const email = "closures-edit-delete@example.test", password = "closure edits safe password";
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
-  await page.getByLabel("Nombre", { exact: true }).fill("Cierres Editar Eliminar");
-  await page.getByLabel("Correo del usuario", { exact: true }).fill(email);
-  await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
-  await expect(page.getByRole("cell", { name: "Cierres Editar Eliminar", exact: true })).toBeVisible();
+  await createBusinessInAdminUi(page, { name: "Cierres Editar Eliminar", email, password });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const business = await context.newPage();
   let release = () => {};
@@ -1265,7 +1219,7 @@ test("Closures edit and delete retain identity and recover committed mutations",
     const row = region.locator(`[data-closure-id="${original.id}"]`);
     const edit = row.getByRole("button", { name: "Editar cierre", exact: true });
     await expect(row).toBeVisible();
-    await expect(edit).toBeVisible(); // Meaningful RED: the base has no row Edit control.
+    await expect(edit).toBeVisible();
     const counts = { GET: 0, PUT: 0, DELETE: 0, POST: 0, weeklyPUT: 0 };
     const payloads: unknown[] = [];
     business.on("request", request => {
@@ -1520,7 +1474,8 @@ test("Closures edit and delete retain identity and recover committed mutations",
     await expect(business.getByLabel("Correo", { exact: true })).toBeVisible();
     await login(business, system.webUrl, email, password);
     await expect(business).toHaveURL(/\/profile$/);
-    const profileInput = business.getByLabel("Nombre comercial", { exact: true });
+    const profileInput = business.getByRole("form", { name: "Perfil del negocio", exact: true })
+      .getByLabel("Nombre comercial", { exact: true });
     await profileInput.focus();
     release(); hold = false;
     await expect.poll(() => settledMutations).toBe(beforeSettled + 1);
