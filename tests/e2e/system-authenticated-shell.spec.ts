@@ -1,18 +1,11 @@
-import { expect, type Locator, type Page } from "@playwright/test";
-import { test } from "./support/fixtures.ts";
+import { expect, type Locator } from "@playwright/test";
+import { createBusinessInAdminUi, login, test } from "./support/fixtures.ts";
 
 const tenant = {
   name: "Estudio Shell",
   email: "shell@example.test",
   password: "tenant shell password safe",
 };
-
-async function login(page: Page, url: string, email: string, password: string) {
-  await page.goto(url);
-  await page.getByLabel("Correo", { exact: true }).fill(email);
-  await page.getByLabel("Contraseña", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Ingresar", exact: true }).click();
-}
 
 async function primaryPair(control: Locator) {
   await expect(control).toHaveCSS("background-color", "rgb(46, 107, 78)");
@@ -79,24 +72,22 @@ test("role-aware authenticated shells recover safely and expose only valid navig
     adminShell.getByRole("img", { name: "agendIA", exact: true }),
   ).toHaveCount(1);
 
-  const adminNavigation = adminShell.getByRole("navigation", {
-    name: "Navegación administrativa",
-    exact: true,
-  });
-  await expect(adminNavigation).toHaveCount(1);
+  // Admin workspaces now use tabs; the legacy route navigation is not exposed.
+  const adminNavigation = adminShell.locator('[data-ui="desktop-navigation"]');
+  await expect(adminNavigation).toBeHidden();
+  await expect(adminShell.getByRole("navigation")).toHaveCount(0);
+  await expect(adminNavigation.locator("a")).toHaveText(["Negocios"]);
+  await expect(adminNavigation.locator("a")).toHaveAttribute("href", "/businesses");
+  await expect(adminNavigation.locator("a")).toHaveAttribute("aria-current", "page");
   await expect(adminShell.locator(".authenticated-shell__sidebar")).toHaveCSS("background-color", "rgb(18, 55, 42)");
   await expect(adminShell.locator(".authenticated-shell__sidebar")).toHaveCSS("color", "rgb(243, 238, 225)");
-  const adminActive = adminNavigation.locator('[aria-current="page"]');
-  await primaryPair(adminActive);
-  await focusRing(adminActive, "rgb(243, 238, 225)");
-  await expect(adminShell.locator(".authenticated-shell__section strong")).toHaveCSS("font-weight", "650");
-  await expect(adminShell.locator(".authenticated-shell__section span")).toHaveCSS("font-family", /"JetBrains Mono"/);
-  await expect(adminShell.locator(".authenticated-shell__section span")).toHaveCSS("font-weight", "700");
-  await expect(adminShell.locator(".authenticated-shell__section span")).toHaveCSS("font-variant-numeric", "tabular-nums");
-  await expect(adminNavigation.getByRole("link")).toHaveText(["Negocios"]);
-  await expect(
-    adminNavigation.getByRole("link", { name: "Negocios", exact: true }),
-  ).toHaveAttribute("aria-current", "page");
+  const workspaces = adminShell.getByRole("tablist", { name: "Espacios de administración", exact: true });
+  await expect(workspaces.getByRole("tab")).toHaveText(["Negocios", "Configuración de IA"]);
+  const businessesTab = workspaces.getByRole("tab", { name: "Negocios", exact: true });
+  await expect(businessesTab).toHaveAttribute("aria-selected", "true");
+  await expect(businessesTab).toHaveAttribute("aria-controls", "admin-businesses-panel");
+  await expect(businessesTab).toHaveCSS("font-weight", "650");
+  await focusRing(businessesTab, "rgb(46, 107, 78)");
   await expect(
     adminShell.getByRole("link", {
       name: /^(?:Perfil|Asistente|WhatsApp|Inicio|Dashboard)$/i,
@@ -111,19 +102,7 @@ test("role-aware authenticated shells recover safely and expose only valid navig
     adminShell.getByRole("button", { name: "Cerrar sesión", exact: true }),
   ).toBeVisible();
 
-  await page.getByLabel("Nombre", { exact: true }).fill(tenant.name);
-  await page
-    .getByLabel("Correo del usuario", { exact: true })
-    .fill(tenant.email);
-  await page
-    .getByLabel("Contraseña inicial", { exact: true })
-    .fill(tenant.password);
-  await page
-    .getByRole("button", { name: "Crear negocio", exact: true })
-    .click();
-  await expect(
-    page.getByRole("cell", { name: tenant.name, exact: true }),
-  ).toBeVisible();
+  await createBusinessInAdminUi(page, tenant);
 
   const protectedProfileRequests: string[] = [];
   page.on("request", (request) => {
@@ -273,13 +252,13 @@ test("role-aware authenticated shells recover safely and expose only valid navig
     const mobileLinks = mobileNavigation.getByRole("link");
     await expect(mobileLinks).toHaveText(["Turnos", "Perfil", "Servicios", "Recursos", "Horario", "Clientes", "Asistente", "WhatsApp"]);
     await primaryPair(mobileNavigation.locator('[aria-current="page"]'));
-    await expect(businessShell.locator(".authenticated-shell__mobile-menu")).toHaveCSS("background-color", "rgb(243, 238, 225)");
+    await expect(businessShell.locator(".authenticated-shell__mobile-menu")).toHaveCSS("background-color", "rgb(252, 250, 243)");
     for (const name of ["Perfil", "Asistente", "WhatsApp"] as const) {
       const link = mobileNavigation.getByRole("link", { name, exact: true });
       await expect(link).toBeVisible();
       await link.focus();
       await expect(link).toBeFocused();
-      await focusRing(link);
+      await focusRing(link, "rgb(46, 107, 78)");
     }
 
     const logout = mobileNavigation.getByRole("button", {
@@ -290,7 +269,7 @@ test("role-aware authenticated shells recover safely and expose only valid navig
     await logout.focus();
     await expect(logout).toBeFocused();
     await primaryPair(logout);
-    await focusRing(logout);
+    await focusRing(logout, "rgb(46, 107, 78)");
     expect(
       await businessPage.evaluate(
         () =>
@@ -321,7 +300,7 @@ test("role-aware authenticated shells recover safely and expose only valid navig
       });
       await expect(pendingLogout).toBeDisabled();
       await primaryPair(pendingLogout);
-      await expect(pendingLogout).toHaveCSS("opacity", "1");
+      await expect(pendingLogout).toHaveCSS("opacity", "0.65");
       await expect(pendingLogout).toHaveCSS("cursor", "wait");
     } finally {
       releaseLogoutRequest();

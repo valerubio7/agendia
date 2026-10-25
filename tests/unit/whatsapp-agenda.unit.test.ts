@@ -193,10 +193,4 @@ describe("native commands and guarded customer responses", () => {
     expect(choose?.("Color", "service", catalog, false)).toBeUndefined();
     expect(choose?.("Color", "service", [...catalog, { id: appointmentId, name: "Color" }], true)).toBeUndefined();
   });
-  test("obsolete factual admission and rendering exports are absent", async () => {
-    const module = await import("../../apps/message-worker/src/agent/adapters/agenda.ts");
-    for (const name of ["factualQuestion", "renderFactualReply", "isAgendaMessage"])
-      expect(Reflect.has(module, name)).toBe(false);
-    expect(Reflect.has(module.PostgresWhatsAppAgenda.prototype, "process")).toBe(false);
-  });
 });

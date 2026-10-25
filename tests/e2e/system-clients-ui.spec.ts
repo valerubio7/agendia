@@ -1,28 +1,13 @@
-import { expect, type Page, type Request } from "@playwright/test";
-import { test } from "./support/fixtures.ts";
-
-async function login(page: Page, url: string, email: string, password: string) {
-  await page.goto(url);
-  await page.getByLabel("Correo", { exact: true }).fill(email);
-  await page.getByLabel("Contraseña", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Ingresar", exact: true }).click();
-}
+import { expect, type Request } from "@playwright/test";
+import { createBusinessInAdminUi, login, test } from "./support/fixtures.ts";
 
 test("Clientes searches and edits owned identities with complete appointment history and safe recovery", async ({ browser, page, system }, testInfo) => {
   test.setTimeout(180_000);
   const password = "clients UI tenant password", email = "clients-ui@example.test";
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
-  await page.getByLabel("Nombre", { exact: true }).fill("Estudio Clientes");
-  await page.getByLabel("Correo del usuario", { exact: true }).fill(email);
-  await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
-  await expect(page.getByRole("cell", { name: "Estudio Clientes", exact: true })).toBeVisible();
-  await page.getByLabel("Nombre", { exact: true }).fill("Otro negocio clientes");
-  await page.getByLabel("Correo del usuario", { exact: true }).fill("other-clients@example.test");
-  await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
-  await expect(page.getByRole("cell", { name: "Otro negocio clientes", exact: true })).toBeVisible();
+  await createBusinessInAdminUi(page, { name: "Estudio Clientes", email, password });
+  await createBusinessInAdminUi(page, { name: "Otro negocio clientes", email: "other-clients@example.test", password });
   await page.goto(`${system.webUrl}/clients`);
   await expect(page.locator('main[data-state="denied"]')).toBeVisible();
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
@@ -237,11 +222,7 @@ test("Clientes fences an uncertain standalone POST across reload until GET confi
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   await page.waitForURL(/\/businesses$/);
   for (const [name, email] of [["Cliente incierto", "uncertain@example.test"], ["Cliente separado", "separate@example.test"]] as const) {
-    await page.getByLabel("Nombre", { exact: true }).fill(name);
-    await page.getByLabel("Correo del usuario", { exact: true }).fill(email);
-    await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
-    await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
-    await page.getByRole("cell", { name, exact: true }).waitFor({ state: "visible" });
+    await createBusinessInAdminUi(page, { name, email, password });
   }
   const context = await browser.newContext();
   const business = await context.newPage();
@@ -258,7 +239,8 @@ test("Clientes fences an uncertain standalone POST across reload until GET confi
     expect(seed.status()).toBe(201);
     await business.reload();
     await screen.getByRole("list", { name: "Clientes del negocio", exact: true }).getByRole("listitem").waitFor();
-    await screen.getByRole("button", { name: "Crear cliente", exact: true }).click();
+    const create = screen.locator(".clients-heading").getByRole("button", { name: "Crear cliente", exact: true });
+    await create.click();
     const form = screen.getByRole("form", { name: "Crear cliente", exact: true });
     const draft = { Nombre: " Alicia ", Apellido: " Gómez ", Teléfono: "11 2345-6789" };
     for (const [label, value] of Object.entries(draft)) await form.getByLabel(label, { exact: true }).fill(value);
@@ -283,11 +265,11 @@ test("Clientes fences an uncertain standalone POST across reload until GET confi
       if (reload) await business.reload();
       for (const [label, value] of Object.entries(draft)) {
         await expect(form.getByLabel(label, { exact: true })).toHaveValue(value);
-        await expect(form.getByLabel(label, { exact: true })).toBeDisabled(); // Independent RED: current draft is editable.
+        await expect(form.getByLabel(label, { exact: true })).toBeDisabled();
       }
       await expect(form.locator('button[type="submit"]')).toBeDisabled();
       await expect(form.getByRole("button", { name: "Cancelar", exact: true })).toBeDisabled();
-      await expect(screen.locator(":scope > button").filter({ hasText: /^Crear cliente$/ })).toBeDisabled();
+      await expect(create).toBeDisabled();
       await expect(screen.getByRole("form", { name: "Buscar clientes", exact: true }).getByRole("textbox")).toBeDisabled();
       await expect(screen.getByRole("form", { name: "Buscar clientes", exact: true }).getByRole("button")).toBeDisabled();
       await expect(screen.getByRole("list", { name: "Clientes del negocio", exact: true }).getByRole("button").first()).toBeDisabled();
@@ -299,7 +281,7 @@ test("Clientes fences an uncertain standalone POST across reload until GET confi
     await login(business, system.webUrl, "separate@example.test", password);
     await business.waitForURL(/\/profile$/);
     await business.goto(`${system.webUrl}/clients`);
-    await expect(screen.getByRole("button", { name: "Crear cliente", exact: true })).toBeEnabled();
+    await expect(create).toBeEnabled();
     await expect(form).toHaveCount(0);
     await expect(screen.getByText("Todavía no hay clientes.", { exact: true })).toBeVisible();
     await expect(screen.getByText(/Alicia|Gómez|2345-6789/)).toHaveCount(0);
@@ -358,7 +340,7 @@ test("Clientes fences an uncertain standalone POST across reload until GET confi
         original.call(this, key, value);
       };
     });
-    await screen.getByRole("button", { name: "Crear cliente", exact: true }).click();
+    await create.click();
     for (const [label, value] of Object.entries(draft)) await form.getByLabel(label, { exact: true }).fill(value);
     await form.locator('button[type="submit"]').click();
     await expect(screen.getByRole("alert").filter({ hasText: "No pudimos proteger" })).toBeVisible();
@@ -377,11 +359,7 @@ test("Clientes creates standalone owned identities with canonical detail and GET
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   await page.waitForURL(/\/businesses$/);
   for (const [name, userEmail] of [["Clientes independientes", email], ["Otros clientes independientes", otherEmail]] as const) {
-    await page.getByLabel("Nombre", { exact: true }).fill(name);
-    await page.getByLabel("Correo del usuario", { exact: true }).fill(userEmail);
-    await page.getByLabel("Contraseña inicial", { exact: true }).fill(password);
-    await page.getByRole("button", { name: "Crear negocio", exact: true }).click();
-    await page.getByRole("cell", { name, exact: true }).waitFor({ state: "visible" });
+    await createBusinessInAdminUi(page, { name, email: userEmail, password });
   }
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const otherContext = await browser.newContext({ viewport: { width: 360, height: 900 } });
@@ -399,8 +377,7 @@ test("Clientes creates standalone owned identities with canonical detail and GET
     await business.waitForURL(/\/profile$/);
     await business.goto(`${system.webUrl}/clients`);
     const screen = business.getByRole("main");
-    const create = screen.getByRole("button", { name: "Crear cliente", exact: true });
-    // This is the first assertion: the base screen lacks standalone creation.
+    const create = screen.locator(".clients-heading").getByRole("button", { name: "Crear cliente", exact: true });
     await expect(create).toBeVisible();
     await expect(business).toHaveURL(`${system.webUrl}/clients`);
     await expect(screen.getByText("Todavía no hay clientes.", { exact: true })).toBeVisible();

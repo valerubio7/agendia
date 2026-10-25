@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page, type Route } from "@playwright/test";
-import { test } from "./support/fixtures.ts";
+import { createBusinessInAdminUi, login, test } from "./support/fixtures.ts";
 
 const tenant = {
   name: "Estudio Conversación Directa",
@@ -12,13 +12,6 @@ const metadataLabels = [
   "Vinculado desde",
   "Última conexión",
 ] as const;
-
-async function login(page: Page, url: string, email: string, password: string) {
-  await page.goto(url);
-  await page.getByLabel("Correo", { exact: true }).fill(email);
-  await page.getByLabel("Contraseña", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Ingresar", exact: true }).click();
-}
 
 async function expectNoHorizontalOverflow(page: Page) {
   expect(
@@ -50,69 +43,43 @@ async function expectPair(locator: Locator, color: string, background: string) {
   await expect(locator).toHaveCSS("background-color", background);
 }
 
-async function expectBridgeBrand(screen: Locator, mobile: boolean) {
-  const node = screen.locator(".whatsapp-bridge__node--agendia");
-  const brand = node.locator(".brand.whatsapp-bridge__brand");
-  const image = brand.locator('img.brand__image[src="/brand/logo-symbol-inverse.svg"]');
+async function expectShellBrand(shell: Locator) {
+  // The current channel workspace uses the official shell lockup, not a decorative bridge.
+  const brand = shell.getByRole("img", { name: "agendIA", exact: true });
+  const image = brand.locator('img[src="/brand/logo-inverse-outlined.svg"]');
+  await expect(brand).toHaveCount(1);
+  await expect(brand).toBeVisible();
   await expect(image).toHaveCount(1);
-  await expect(node.locator("strong")).toHaveCount(0);
-  await expect(brand).toHaveAttribute("aria-hidden", "true");
   await expect(image).toHaveAttribute("alt", "");
-  await expect(node.locator('xpath=..')).toHaveAttribute("aria-hidden", "true");
-  await expect(node.getByRole("img")).toHaveCount(0);
   await expect.poll(() => image.evaluate((el: HTMLImageElement) => el.complete &&
-    Number.isFinite(el.naturalWidth) && Number.isFinite(el.naturalHeight) &&
-    el.naturalWidth > 0 && el.naturalHeight > 0 && el.naturalWidth === el.naturalHeight)).toBe(true);
+    el.naturalWidth > 0 && el.naturalHeight > 0)).toBe(true);
   for (const target of [brand, image]) {
     for (const property of ["box-shadow", "filter", "transform"] as const) {
       await expect(target).toHaveCSS(property, "none");
     }
   }
   await expect(image).toHaveCSS("object-fit", "contain");
-  await expect(node).toHaveCSS("background-color", "rgb(18, 55, 42)");
-  for (const side of ["top", "right", "bottom", "left"]) {
-    await expect(brand).toHaveCSS(`padding-${side}`, "22px");
-  }
-  const fit = await brand.evaluate((el) => {
-    const rect = (e: Element) => {
-      const r = e.getBoundingClientRect();
-      return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height };
-    };
-    const node = el.parentElement!;
-    const image = el.querySelector("img")!;
-    const provider = node.parentElement!.querySelector(".whatsapp-bridge__node--whatsapp")!;
-    const n = rect(node), b = rect(el), i = rect(image), p = rect(provider);
-    const s = getComputedStyle(node);
-    const inner = { left: n.left + parseFloat(s.borderLeftWidth), right: n.right - parseFloat(s.borderRightWidth),
-      top: n.top + parseFloat(s.borderTopWidth), bottom: n.bottom - parseFloat(s.borderBottomWidth) };
-    const clipped: string[] = [];
-    for (let a = el.parentElement; a; a = a.parentElement) {
-      const r = rect(a), style = getComputedStyle(a);
-      if ((/(hidden|clip|scroll|auto)/.test(style.overflowX) && (b.left < r.left || b.right > r.right)) ||
-          (/(hidden|clip|scroll|auto)/.test(style.overflowY) && (b.top < r.top || b.bottom > r.bottom))) clipped.push(a.className);
-    }
-    return { node: n, brand: b, image: i, provider: p, inner, clipped };
+  const fit = await image.evaluate((el: HTMLImageElement) => {
+    const image = el.getBoundingClientRect(), brand = el.parentElement!.getBoundingClientRect();
+    return { width: image.width, height: image.height, ratio: el.naturalWidth / el.naturalHeight,
+      contained: image.left >= brand.left && image.right <= brand.right && image.top >= brand.top && image.bottom <= brand.bottom,
+      inViewport: brand.left >= 0 && brand.right <= document.documentElement.clientWidth };
   });
-  expect([fit.image.width, fit.image.height]).toEqual([24, 24]);
-  expect([fit.brand.width, fit.brand.height]).toEqual([68, 68]);
-  expect(fit.brand.left).toBeGreaterThanOrEqual(fit.inner.left);
-  expect(fit.brand.right).toBeLessThanOrEqual(fit.inner.right);
-  expect(fit.brand.top).toBeGreaterThanOrEqual(fit.inner.top);
-  expect(fit.brand.bottom).toBeLessThanOrEqual(fit.inner.bottom);
-  expect(fit.brand.right).toBeLessThan(fit.provider.left);
-  expect(fit.clipped).toEqual([]);
-  expect(Math.abs(fit.node.width - (mobile ? 70 : 73.6))).toBeLessThanOrEqual(1 / 64);
-  expect(Math.abs(fit.node.height - (mobile ? 70 : 73.6))).toBeLessThanOrEqual(1 / 64);
-  expect(Math.abs(fit.provider.width - (mobile ? 65.6 : 73.6))).toBeLessThanOrEqual(1 / 64);
-  expect(Math.abs(fit.provider.height - (mobile ? 65.6 : 73.6))).toBeLessThanOrEqual(1 / 64);
-  console.log("WhatsApp official brand fit", mobile ? "mobile360" : "desktop1280", JSON.stringify(fit));
+  expect(fit.height).toBe(32);
+  expect(Math.abs(fit.width / fit.height - fit.ratio)).toBeLessThan(0.01);
+  expect(fit.contained).toBe(true);
+  expect(fit.inViewport).toBe(true);
 }
 
 const paper = "rgb(243, 238, 225)";
-const white = "rgb(255, 255, 255)";
+const ink = "rgb(28, 38, 32)";
+const muted = "rgb(76, 91, 83)";
 const pine = "rgb(46, 107, 78)";
-const ok = "rgb(46, 125, 79)";
-const danger = "rgb(179, 58, 31)";
+const pineDeep = "rgb(18, 55, 42)";
+const pineSoft = "rgb(223, 233, 225)";
+const coral = "rgb(255, 107, 73)";
+const coralInk = "rgb(168, 58, 26)";
+const dangerSoft = "rgb(243, 217, 211)";
 
 test("the redesigned WhatsApp screen completes the real linking lifecycle responsively", async ({
   browser,
@@ -123,19 +90,7 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
 
-  await page.getByLabel("Nombre", { exact: true }).fill(tenant.name);
-  await page
-    .getByLabel("Correo del usuario", { exact: true })
-    .fill(tenant.email);
-  await page
-    .getByLabel("Contraseña inicial", { exact: true })
-    .fill(tenant.password);
-  await page
-    .getByRole("button", { name: "Crear negocio", exact: true })
-    .click();
-  await expect(
-    page.getByRole("cell", { name: tenant.name, exact: true }),
-  ).toBeVisible();
+  await createBusinessInAdminUi(page, tenant);
 
   const tenantContext = await browser.newContext({
     viewport: { width: 1280, height: 900 },
@@ -203,15 +158,13 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
     await expect(screen).toHaveCount(1);
     await expect(hero).toBeVisible();
     await expect(
-      hero.getByText("Canal de atención", { exact: true }),
+      hero.getByRole("heading", { level: 1, name: "WhatsApp", exact: true }),
     ).toBeVisible();
-    await expect(
-      hero.getByRole("heading", {
-        level: 1,
-        name: "Tu negocio, a una conversación de distancia.",
-        exact: true,
-      }),
-    ).toBeVisible();
+    await expect(statusPanel.getByRole("heading", { name: "Conexión del canal", exact: true })).toBeVisible();
+    await expect(screen.getByRole("heading", { name: "Información del vínculo", exact: true })).toBeVisible();
+    await expect(linkPanel.getByRole("heading", { name: "Conectá con un código temporal", exact: true })).toBeVisible();
+    await expect(linkPanel.getByRole("list", { name: "Pasos para vincular", exact: true }).getByRole("listitem")).toHaveCount(3);
+    await expect(linkPanel.getByText("QR aún no solicitado", { exact: true })).toBeVisible();
     await expect(statusPanel).toBeVisible();
     await expect(currentStatus).toHaveText(
       /^(Requiere vinculación|Desconectado)$/,
@@ -222,24 +175,23 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
     await expect(qrImage).toBeHidden();
     await expectNoHorizontalOverflow(tenantPage);
 
-    await expectBridgeBrand(screen, false);
-    const symbolResponse = await tenantPage.request.get(new URL("/brand/logo-symbol-inverse.svg", tenantPage.url()).href);
+    await expectShellBrand(shell);
+    const symbolResponse = await tenantPage.request.get(new URL("/brand/logo-inverse-outlined.svg", tenantPage.url()).href);
     expect(symbolResponse.ok()).toBe(true);
     const symbol = await symbolResponse.text();
-    expect(symbol).toContain('viewBox="0 0 120 120"');
+    expect(symbol).toContain('viewBox="0 0 388 120"');
     expect(symbol).toContain('fill="#F3EEE1"');
     expect(symbol).toContain('fill="#FF6B49"');
-    await expect(screen.locator(".whatsapp-security-note")).toHaveCSS("font-weight", "450");
-    await expectPair(hero, paper, "rgb(18, 55, 42)");
+    await expect(screen.locator(".whatsapp-security-note")).toHaveText("El QR es temporal y no expone credenciales persistentes.");
+    await expectPair(screen.locator(".whatsapp-security-note"), ink, "rgb(246, 232, 200)");
     await expect(hero.getByRole("heading", { level: 1 })).toHaveCSS("font-weight", "650");
     await expect(hero.getByRole("heading", { level: 1 })).toHaveCSS("font-family", /Source Sans 3/);
-    await expect(hero.locator(".whatsapp-hero__eyebrow")).toHaveCSS("font-weight", "650");
-    await expect(metadata.locator("dd").first()).toHaveCSS("font-family", /JetBrains Mono/);
-    await expect(metadata.locator("dd").first()).toHaveCSS("font-weight", "450");
+    await expect(metadata.locator("dd").first()).toHaveCSS("font-family", /Source Sans 3/);
+    await expect(metadata.locator("dd").first()).toHaveCSS("font-weight", "600");
     await expect(metadata.locator("dd").first()).toHaveCSS("font-variant-numeric", "tabular-nums");
     const initialState = await statusPanel.getAttribute("data-status");
-    await expectPair(currentStatus, initialState === "link_required" ? "rgb(28, 38, 32)" : white,
-      initialState === "link_required" ? "rgb(233, 180, 76)" : pine);
+    await expectPair(currentStatus, initialState === "link_required" ? ink : muted,
+      initialState === "link_required" ? "rgb(246, 232, 200)" : paper);
 
     await expect(screen.locator("input, select, textarea, form")).toHaveCount(
       0,
@@ -256,8 +208,8 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
       ),
     ).toHaveCount(0);
 
-    await expectPair(action, white, pine);
-    await expect(action).toHaveCSS("font-weight", "650");
+    await expectPair(action, ink, coral);
+    await expect(action).toHaveCSS("font-weight", "600");
     // Real keyboard modality, never programmatic focus or forced DOM state.
     for (let attempt = 0; attempt < 12 && !(await action.evaluate((el) => el === document.activeElement)); attempt++) {
       await tenantPage.keyboard.press("Tab");
@@ -268,7 +220,7 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
     await tenantPage.keyboard.press("Tab");
     await expect(action).toBeFocused();
     expect(await action.evaluate((el) => el.matches(":focus-visible"))).toBe(true);
-    await expect(action).toHaveCSS("outline-color", "rgb(168, 58, 26)");
+    await expect(action).toHaveCSS("outline-color", pine);
     await tenantPage.screenshot({ path: testInfo.outputPath("whatsapp-desktop.png"), fullPage: true });
 
     // Schema-correct mocked UI-state coverage; not a real provider failure.
@@ -290,18 +242,18 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
       await tenantPage.reload();
       await expect(statusPanel).toHaveAttribute("data-status", "error");
       await expect(currentStatus).toHaveText("Error de conexión");
-      await expectPair(currentStatus, white, danger);
+      await expectPair(currentStatus, coralInk, dangerSoft);
       await action.click();
       const pending = linkPanel.getByRole("button", { name: "Esperando conexión…", exact: true });
       await expect(pending).toBeDisabled();
-      await expectPair(pending, white, pine);
+      await expectPair(pending, muted, paper);
       await expect(pending).toHaveCSS("opacity", "1");
       await expect(pending).toHaveCSS("cursor", "default");
       await tenantPage.screenshot({ path: testInfo.outputPath("whatsapp-mocked-pending.png"), fullPage: true });
       releaseLink();
       const alert = screen.getByRole("alert");
       await expect(alert).toBeVisible();
-      await expectPair(alert, white, danger);
+      await expectPair(alert, coralInk, dangerSoft);
       await expect(action).toBeEnabled();
       await tenantPage.screenshot({ path: testInfo.outputPath("whatsapp-mocked-error.png"), fullPage: true });
     } finally {
@@ -321,7 +273,7 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
       await tenantPage.reload();
       await expect(statusPanel).toHaveAttribute("data-status", "disconnected");
       await expect(currentStatus).toHaveText("Desconectado");
-      await expectPair(currentStatus, white, pine);
+      await expectPair(currentStatus, muted, paper);
       await tenantPage.screenshot({ path: testInfo.outputPath("whatsapp-mocked-disconnected.png"), fullPage: true });
     } finally {
       await tenantPage.unroute(statusUrl, disconnectedStatus);
@@ -337,8 +289,8 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
 
     await expect(qrImage).toBeVisible();
     await expect(qrImage).toHaveAttribute("src", /^data:image\/png;base64,/);
-    await expectPair(action, white, pine);
-    await expectPair(screen.locator('.whatsapp-feedback [role="status"]'), white, ok);
+    await expectPair(action, muted, paper);
+    await expectPair(screen.locator('.whatsapp-feedback [role="status"]'), pineDeep, pineSoft);
     await tenantPage.screenshot({ path: testInfo.outputPath("whatsapp-qr.png"), fullPage: true });
 
     await expect(currentStatus).toHaveText("Conectado", { timeout: 15_000 });
@@ -349,14 +301,16 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
     await expect(action).toHaveText("WhatsApp vinculado");
     await expect(action).toBeDisabled();
 
-    await expectPair(currentStatus, white, ok);
-    await expectPair(action, white, ok);
-    await expectPair(screen.locator('.whatsapp-feedback [role="status"]'), white, ok);
+    await expectPair(currentStatus, pineDeep, pineSoft);
+    await expectPair(action, muted, paper);
+    await expectPair(screen.locator('.whatsapp-feedback [role="status"]'), pineDeep, pineSoft);
+    await expect(linkPanel.getByRole("heading", { name: "Canal vinculado", exact: true })).toBeVisible();
+    await expect(linkPanel.getByText("Verificación completa", { exact: true })).toBeVisible();
     await tenantPage.screenshot({ path: testInfo.outputPath("whatsapp-connected.png"), fullPage: true });
 
     await tenantPage.setViewportSize({ width: 360, height: 800 });
     await expectReachable(hero);
-    await expectBridgeBrand(screen, true);
+    await expectShellBrand(shell);
     await expectReachable(statusPanel);
     await expect(currentStatus).toHaveText("Conectado");
     for (const label of metadataLabels) {
