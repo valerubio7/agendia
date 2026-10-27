@@ -266,7 +266,7 @@ test("late admin mutation and refresh responses cannot overwrite a newer session
     await intercepted;
     try {
       await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
-      await expect(page).toHaveURL(/\/$/);
+      await expect(page).toHaveURL(/\/admin\/login$/);
       await login(page, system.webUrl, system.admin.email, system.admin.password);
       const management = await openManagement(businessRow(page, directory, name));
       await management.getByLabel(`Nombre de ${name}`, { exact: true }).fill(`${name} nuevo`);

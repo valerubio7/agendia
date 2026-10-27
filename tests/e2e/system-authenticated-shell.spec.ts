@@ -61,7 +61,14 @@ test("role-aware authenticated shells recover safely and expose only valid navig
     await focusRing(recoveryLink);
   }
   await page.setViewportSize({ width: 1280, height: 800 });
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await page.goto(`${system.webUrl}/businesses`);
+  const adminRecovery = page.locator('main[data-state="session-recovery"]');
+  const adminRecoveryLink = adminRecovery.getByRole("link", { name: "Ir a iniciar sesión", exact: true });
+  await expect(adminRecoveryLink).toHaveAttribute("href", "/admin/login");
+  await adminRecoveryLink.click();
+  await expect(page).toHaveURL(`${system.webUrl}/admin/login`);
+  await expect(page.getByRole("heading", { name: "Acceso de administración", exact: true })).toBeVisible();
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
 
   const adminShell = page.locator(
@@ -104,6 +111,13 @@ test("role-aware authenticated shells recover safely and expose only valid navig
 
   await createBusinessInAdminUi(page, tenant);
 
+  await adminShell.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
+  await expect(page).toHaveURL(`${system.webUrl}/admin/login`);
+  await expect(page.getByRole("heading", { name: "Acceso de administración", exact: true })).toBeVisible();
+  // Entrances do not restrict valid credentials by role.
+  await login(page, `${system.webUrl}/login`, system.admin.email, system.admin.password);
+  await expect(page).toHaveURL(/\/businesses$/);
+
   const protectedProfileRequests: string[] = [];
   page.on("request", (request) => {
     if (new URL(request.url()).pathname === "/api/me/business-profile") {
@@ -139,7 +153,7 @@ test("role-aware authenticated shells recover safely and expose only valid navig
   const businessPage = await businessContext.newPage();
 
   try {
-    await login(businessPage, system.webUrl, tenant.email, tenant.password);
+    await login(businessPage, `${system.webUrl}/login`, tenant.email, tenant.password);
     await expect(businessPage).toHaveURL(/\/profile$/);
 
     const businessShell = businessPage.locator(
@@ -307,6 +321,15 @@ test("role-aware authenticated shells recover safely and expose only valid navig
     }
 
     await expect(businessPage).toHaveURL(system.webUrl + "/");
+    await expect(businessPage.getByRole("heading", { name: "Iniciar sesión", exact: true })).toBeVisible();
+
+    await login(businessPage, `${system.webUrl}/admin/login`, tenant.email, tenant.password);
+    await expect(businessPage).toHaveURL(/\/profile$/);
+    await businessPage.goto(`${system.webUrl}/businesses`);
+    const adminDenied = businessPage.locator('main[data-state="denied"]');
+    await expect(adminDenied.getByRole("heading", { name: "No tenés acceso a este panel", exact: true })).toBeVisible();
+    await expect(adminDenied.getByRole("link", { name: "Ir a iniciar sesión", exact: true }))
+      .toHaveAttribute("href", "/admin/login");
   } finally {
     await businessContext.close();
   }
