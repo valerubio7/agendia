@@ -148,7 +148,7 @@ export async function runWhatsAppLinkMonitor({
   }
 }
 
-export function LivePanel({ mode }: { mode: Mode }) {
+export function LivePanel({ mode, loginTitle = "Iniciar sesión" }: { mode: Mode; loginTitle?: string }) {
   const router = useRouter();
   const [data, setData] = useState<unknown>(null),
     [notice, setNotice] = useState(""),
@@ -645,7 +645,7 @@ export function LivePanel({ mode }: { mode: Mode }) {
 
     try {
       await api.logout();
-      router.replace("/");
+      router.replace(mode === "admin" ? "/admin/login" : "/");
     } catch (cause) {
       setError(await api.errorMessage(cause));
       logoutPendingRef.current = false;
@@ -671,6 +671,7 @@ export function LivePanel({ mode }: { mode: Mode }) {
   if (mode === "login")
     return (
       <LoginScreen
+        title={loginTitle}
         feedback={feedback}
         loginPending={loginPending}
         submitAction={submitLogin}
@@ -679,6 +680,7 @@ export function LivePanel({ mode }: { mode: Mode }) {
   if (viewState !== "ready")
     return (
       <TerminalAuthenticatedState
+        loginHref={mode === "admin" ? "/admin/login" : "/"}
         state={viewState}
         message={error}
         retryAction={() => void load()}
