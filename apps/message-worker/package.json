@@ -3,7 +3,7 @@
   "version": "0.8.0",
   "private": true,
   "type": "module",
-  "scripts": { "start": "AGENDIA_RUN_MESSAGE_WORKER=1 node --import tsx src/index.ts" },
+  "scripts": { "start": "AGENDIA_RUN_MESSAGE_WORKER=1 bun src/index.ts" },
   "dependencies": {
     "@agendia/ai-deepseek": "workspace:*",
     "@agendia/db": "workspace:*",
