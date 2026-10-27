@@ -58,11 +58,15 @@ jobs:
       - name: Integration tests
         run: bun run test:integration
 
-  browser:
-    name: Playwright
+  browser_shards:
+    name: Playwright shard ${{ matrix.shard }}/3
     needs: validation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     env:
       CI: "true"
     steps:
@@ -82,14 +86,24 @@ jobs:
         run: bunx --no-install playwright install --with-deps chromium
       # Script selects the single e2e project from playwright.config.ts; fixtures own their services.
       - name: Browser tests
-        run: bun run test:e2e
+        run: bun run test:e2e --shard=${{ matrix.shard }}/3
       - name: Upload Playwright diagnostics
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: playwright-results
+          name: playwright-results-${{ matrix.shard }}
           path: |
             test-results/
             playwright-report/
           if-no-files-found: warn
           retention-days: 7
+
+  browser:
+    name: Playwright
+    needs: browser_shards
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - name: Require every shard to succeed
+        run: test "${{ needs.browser_shards.result }}" = "success"
