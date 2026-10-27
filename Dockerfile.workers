@@ -1,0 +1,41 @@
+FROM oven/bun:1.4.0-debian AS production-dependencies
+WORKDIR /app
+COPY package.json bun.lock bunfig.toml ./
+COPY apps/api/package.json ./apps/api/package.json
+COPY apps/web/package.json ./apps/web/package.json
+COPY apps/message-worker/package.json ./apps/message-worker/package.json
+COPY apps/whatsapp-manager/package.json ./apps/whatsapp-manager/package.json
+COPY packages/auth/package.json ./packages/auth/package.json
+COPY packages/contracts/package.json ./packages/contracts/package.json
+COPY packages/db/package.json ./packages/db/package.json
+COPY packages/domain/package.json ./packages/domain/package.json
+COPY packages/ai-deepseek/package.json ./packages/ai-deepseek/package.json
+COPY packages/whatsapp-baileys/package.json ./packages/whatsapp-baileys/package.json
+RUN bun install --frozen-lockfile --production
+
+FROM oven/bun:1.4.0-debian AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=production-dependencies /app/package.json ./package.json
+COPY --from=production-dependencies /app/node_modules ./node_modules
+COPY --from=production-dependencies /app/apps ./apps
+COPY --from=production-dependencies /app/packages ./packages
+COPY tsconfig.json ./tsconfig.json
+COPY apps/message-worker/src ./apps/message-worker/src
+COPY apps/whatsapp-manager/src ./apps/whatsapp-manager/src
+COPY packages/db/src ./packages/db/src
+COPY packages/domain/src ./packages/domain/src
+COPY packages/contracts/src ./packages/contracts/src
+COPY packages/ai-deepseek/src ./packages/ai-deepseek/src
+COPY packages/whatsapp-baileys/src ./packages/whatsapp-baileys/src
+USER bun
+
+FROM runtime AS message-worker
+WORKDIR /app/apps/message-worker
+ENV AGENDIA_RUN_MESSAGE_WORKER=1
+CMD ["bun", "src/index.ts"]
+
+FROM runtime AS whatsapp-manager
+WORKDIR /app/apps/whatsapp-manager
+ENV AGENDIA_RUN_WHATSAPP_MANAGER=1
+CMD ["bun", "src/index.ts"]
