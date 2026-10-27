@@ -9,6 +9,17 @@ test("login preserves its approved semantic, responsive, and pending-state contr
   system,
 }) => {
   await page.setViewportSize({ width: 360, height: 800 });
+  for (const [path, title] of [
+    ["/admin/login", "Acceso de administración"],
+    ["/login", "Iniciar sesión"],
+  ] as const) {
+    await page.goto(`${system.webUrl}${path}`);
+    await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
+    await expect(page.getByLabel("Correo", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("Contraseña", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Ingresar", exact: true })).toBeEnabled();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  }
   await page.goto(system.webUrl);
 
   await expect(page).toHaveTitle("agendIA");
