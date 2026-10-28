@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { AI_SYSTEM_INSTRUCTIONS, AGENT_SYSTEM_PROMPT } from "@agendia/domain";
 import {
-  AGENT_BEHAVIOR_PROMPT, AGENT_RESPONSE_PROMPT,
+  AGENT_CORE_INSTRUCTIONS, AGENT_RESPONSE_INSTRUCTIONS,
   AGENT_SYSTEM_PROMPT as leafSystemInstructions,
 } from "../../packages/domain/src/agent/system-prompt.ts";
 import { buildDeepSeekRequest, DeepSeekAdapter } from "../../packages/ai-deepseek/src/deepseek-adapter.ts";
@@ -37,11 +37,11 @@ Preferencia: para seleccionar, usá resourceReference de una lectura fresca de r
 Son solo metadatos, no elegibilidad de asignación; preservá la política del catálogo de la DAL. Un turno Confirmed ya iniciado permite notas, no preferencia. La procedencia NO es intención; el alcance del consentimiento de propuestas no cambia. Rechazá las vinculaciones inválidas sin recurrir al mecanismo heredado.`;
 
 test("canonical static system preserves base guardrails and single-newline composition exactly", () => {
-  expect(AGENT_BEHAVIOR_PROMPT).toBe(currentBase);
+  expect(AGENT_CORE_INSTRUCTIONS).toBe(currentBase);
   expect(leafSystemInstructions).toBe(AGENT_SYSTEM_PROMPT);
-  expect(AGENT_SYSTEM_PROMPT).toBe(AGENT_BEHAVIOR_PROMPT + "\n" + AGENT_RESPONSE_PROMPT);
-  expect(AGENT_BEHAVIOR_PROMPT).toContain("El estado pendiente no demuestra ejecución.");
-  expect(AGENT_RESPONSE_PROMPT.startsWith("## Formato de respuesta\nLa salida final debe ser únicamente un objeto JSON:\n")).toBe(true);
+  expect(AGENT_SYSTEM_PROMPT).toBe(AGENT_CORE_INSTRUCTIONS + "\n" + AGENT_RESPONSE_INSTRUCTIONS);
+  expect(AGENT_CORE_INSTRUCTIONS).toContain("El estado pendiente no demuestra ejecución.");
+  expect(AGENT_RESPONSE_INSTRUCTIONS.startsWith("## Formato de respuesta\nLa salida final debe ser únicamente un objeto JSON:\n")).toBe(true);
 });
 
 test("response instructions advertise selective prose without granting operation or semantic authority", () => {
@@ -52,7 +52,7 @@ test("response instructions advertise selective prose without granting operation
     "rechazado o que pide aclaración", "Redactá TODAS las respuestas al cliente", "confirm_quote", "El DNI, la cobertura médica y los nombres visibles de perfil",
     "Nunca sustituyas por prosa la preparación ni el guardado de un turno",
     "No se permiten campos adicionales", "selectores kind/facts/ask", "pruebas", "operaciones",
-  ]) expect(AGENT_RESPONSE_PROMPT).toContain(boundary);
+  ]) expect(AGENT_RESPONSE_INSTRUCTIONS).toContain(boundary);
 });
 
 test("native names policy distinguishes own-name interpretation from authenticated provenance", () => {
@@ -60,7 +60,7 @@ test("native names policy distinguishes own-name interpretation from authenticat
     "miembros anteriores autenticados del grupo actual", "historial ni resúmenes", "Conservá los campos omitidos", "ninguna frase mágica",
     "nombres de terceros", "cliente registrado", "no demuestra la titularidad semántica del nombre", "entrega nueva",
     "aceptación distinta y posterior", "El DNI, la cobertura médica y los nombres visibles de perfil"])
-    expect(AGENT_RESPONSE_PROMPT).toContain(boundary);
+    expect(AGENT_RESPONSE_INSTRUCTIONS).toContain(boundary);
 });
 
 test("metadata interpretation preserves literal provenance, separate lifecycle rules and metadata-only policy", () => {
@@ -68,7 +68,7 @@ test("metadata interpretation preserves literal provenance, separate lifecycle r
     "Para borrar con null, omití start", "resourceReference", "no elegibilidad de asignación", "preservá la política del catálogo de la DAL",
     "Confirmed ya iniciado permite notas, no preferencia", "NO es intención", "el alcance del consentimiento de propuestas no cambia",
     "Rechazá las vinculaciones inválidas sin recurrir al mecanismo heredado", "negaciones, hipótesis o historial"])
-    expect(AGENT_BEHAVIOR_PROMPT).toContain(boundary);
+    expect(AGENT_CORE_INSTRUCTIONS).toContain(boundary);
 });
 
 test("legacy generate keeps its separate system and supplementary-instruction contract", () => {
@@ -103,7 +103,7 @@ test("native converse serializes the supplied canonical system without the legac
     { role: "user", content: "fixture-customer" },
   ], tools: [], maxOutputCharacters: 4000, correlationId: "native" });
   expect(wire).toEqual(expect.objectContaining({ messages: [
-    { role: "system", content: currentBase + "\n" + AGENT_RESPONSE_PROMPT }, { role: "user", content: "fixture-customer" },
+    { role: "system", content: currentBase + "\n" + AGENT_RESPONSE_INSTRUCTIONS }, { role: "user", content: "fixture-customer" },
   ] }));
   expect(JSON.stringify(wire)).not.toContain(AI_SYSTEM_INSTRUCTIONS);
 });
