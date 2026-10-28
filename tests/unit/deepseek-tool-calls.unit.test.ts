@@ -34,7 +34,7 @@ describe("native tool conversations", () => {
         { name: "Corte", durationMinutes: 30, priceArs: 1500 },
       ], hasMore: false } }) }] });
     expect(final.message.toolCalls).toEqual([]);
-    expect(final.message.content).toBe("Corte: 30 minutos, ARS 1500");
+    expect(final.message.content).toBe(JSON.stringify({ text: "Corte: 30 minutos, ARS 1500" }));
     const wire = JSON.parse(transport.calls[1]!);
     expect(wire.messages.at(-1)).toMatchObject({ role: "tool", tool_call_id: tool.id });
   });

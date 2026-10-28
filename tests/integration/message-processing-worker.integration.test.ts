@@ -115,7 +115,7 @@ describe("PostgreSQL messaging workers", () => {
     let earlyCalls = 0;
     await new PostgresAiJobProcessor(pools, { generate: async () => { throw new Error('Unexpected generate'); }, converse: async () => {
       earlyCalls++;
-      return { message: { role: 'assistant', content: '{"kind":"reply","ask":"clarify"}', toolCalls: [] }, providerId: 'test', usageTokens: 1 };
+      return { message: { role: 'assistant', content: '{"text":"¿Podés aclarar qué necesitás?"}', toolCalls: [] }, providerId: 'test', usageTokens: 1 };
     } } as AiProvider & ToolConversationProvider).process({ businessId: A, messageId: after.payload.messageId, correlationId: 'early' });
     expect(earlyCalls).toBe(0);
     const dispatcher = new AiOutboxDispatcher(pools, boss, immediateOutboxRecovery);
@@ -241,7 +241,7 @@ describe("PostgreSQL messaging workers", () => {
       calls.push(JSON.stringify(request));
       const message = calls.length === 1
         ? { role: 'assistant' as const, content: null, toolCalls: [{ id: 'business', name: 'read_business', arguments: {} }] }
-        : { role: 'assistant' as const, content: '{"kind":"reply","facts":["read_business"],"businessFields":["address"]}', toolCalls: [] };
+        : { role: 'assistant' as const, content: JSON.stringify({ text: 'Dirección registrada: "RETAINED_ADDRESS".' }), toolCalls: [] };
       return { message, providerId: 'native-mock', usageTokens: 1 };
     } };
     const worker = new PostgresAiJobProcessor(pools, provider, 500);
@@ -403,7 +403,7 @@ describe("PostgreSQL messaging workers", () => {
       generate: async () => { throw new Error('Unexpected generate'); },
       converse: async request => {
         requests.push(request);
-        return { message: { role: 'assistant', content: '{"kind":"reply","ask":"clarify"}', toolCalls: [] }, providerId: 'test', usageTokens: 1 };
+        return { message: { role: 'assistant', content: '{"text":"¿Podés aclarar qué necesitás?"}', toolCalls: [] }, providerId: 'test', usageTokens: 1 };
       },
     } as AiProvider & ToolConversationProvider, 500);
     const job = { businessId: A, messageId: row.id, correlationId: 'native-800' };
@@ -486,7 +486,7 @@ describe("PostgreSQL messaging workers", () => {
           generate: async () => { throw new Error('Unexpected generate'); },
           converse: async () => {
             calls.push("called");
-            return { message: { role: 'assistant', content: '{"kind":"reply","ask":"clarify"}', toolCalls: [] }, providerId: "id", usageTokens: 1 };
+            return { message: { role: 'assistant', content: '{"text":"¿Podés aclarar qué necesitás?"}', toolCalls: [] }, providerId: "id", usageTokens: 1 };
           },
         } as AiProvider & ToolConversationProvider,
         500,
@@ -513,7 +513,7 @@ describe("PostgreSQL messaging workers", () => {
           generate: async () => { throw new Error('Unexpected generate'); },
           converse: async (request) => {
             aiCalls.push(request);
-            return { message: { role: 'assistant', content: '{"kind":"reply","ask":"clarify"}', toolCalls: [] }, providerId: "id", usageTokens: 1 };
+            return { message: { role: 'assistant', content: '{"text":"¿Podés aclarar qué necesitás?"}', toolCalls: [] }, providerId: "id", usageTokens: 1 };
           },
         } as AiProvider & ToolConversationProvider,
         300,
@@ -620,7 +620,7 @@ describe("PostgreSQL messaging workers", () => {
         pools,
         {
           generate: async () => { throw new Error('Unexpected generate'); },
-          converse: async () => ({ message: { role: 'assistant', content: '{"kind":"reply","ask":"clarify"}', toolCalls: [] }, providerId: 'id', usageTokens: 1 }),
+          converse: async () => ({ message: { role: 'assistant', content: '{"text":"¿Podés aclarar qué necesitás?"}', toolCalls: [] }, providerId: 'id', usageTokens: 1 }),
         } as AiProvider & ToolConversationProvider,
         40,
       ),
@@ -650,7 +650,7 @@ describe("PostgreSQL messaging workers", () => {
           generate: async () => { throw new Error('Unexpected generate'); },
           converse: async (request) => {
             contexts.push(JSON.parse(request.messages[1]!.content!));
-            return { message: { role: 'assistant', content: '{"kind":"reply","ask":"clarify"}', toolCalls: [] }, providerId: "id", usageTokens: 1 };
+            return { message: { role: 'assistant', content: '{"text":"¿Podés aclarar qué necesitás?"}', toolCalls: [] }, providerId: "id", usageTokens: 1 };
           },
         } as AiProvider & ToolConversationProvider,
         500,
@@ -705,7 +705,7 @@ describe("PostgreSQL messaging workers", () => {
     const payloads: any[] = [];
     const worker = new PostgresAiJobProcessor(pools, { generate: async () => { throw new Error('Unexpected generate'); }, converse: async request => {
       payloads.push(request);
-      return { message: { role: 'assistant', content: '{"kind":"reply","ask":"clarify"}', toolCalls: [] }, providerId: 'native-mock', usageTokens: 1 };
+      return { message: { role: 'assistant', content: '{"text":"¿Podés aclarar qué necesitás?"}', toolCalls: [] }, providerId: 'native-mock', usageTokens: 1 };
     } } as AiProvider & ToolConversationProvider);
     await makeEligible();
     const context = tenantContext({ businessId: A, actorId: 'test', role: 'internal_worker', requestId: 'full-source' });
@@ -781,7 +781,7 @@ describe("PostgreSQL messaging workers", () => {
       const requests: any[] = [];
       await new PostgresAiJobProcessor(pools, { generate: async () => { throw new Error('Unexpected generate'); }, converse: async request => {
         requests.push(request);
-        return { message: { role: 'assistant', content: '{"kind":"reply","ask":"clarify"}', toolCalls: [] }, providerId: 'test', usageTokens: 1 };
+        return { message: { role: 'assistant', content: '{"text":"¿Podés aclarar qué necesitás?"}', toolCalls: [] }, providerId: 'test', usageTokens: 1 };
       } } as AiProvider & ToolConversationProvider).process({ businessId: A, messageId: latest.id, correlationId: kind });
       const closed = ['failure', 'provider-failure', 'manual', 'claimed'].includes(kind);
       expect(source!.currentGroup.map(turn => turn.raw_text).join('\n')).toBe(closed ? ' \tcurrent\n ' : 'prior\n \tcurrent\n ');
@@ -829,7 +829,7 @@ describe("PostgreSQL messaging workers", () => {
     };
     const worker = new PostgresAiJobProcessor(pools, { generate: async () => { throw new Error('Unexpected generate'); }, converse: async request => {
       requests.push(request);
-      return { message: { role: 'assistant', content: '{"kind":"reply","ask":"clarify"}', toolCalls: [] }, providerId: 'test', usageTokens: 1 };
+      return { message: { role: 'assistant', content: '{"text":"¿Podés aclarar qué necesitás?"}', toolCalls: [] }, providerId: 'test', usageTokens: 1 };
     } } as AiProvider & ToolConversationProvider);
     await worker.process(first);
     expect(requests).toHaveLength(0);
@@ -1010,7 +1010,8 @@ describe("bounded generation retries through real pg-boss work", () => {
           staged.push(result.status);
           if (mode !== "rejection" && (attempts.length === 1 || mode === "permanent"))
             throw new Error("isolated provider failure after staged cancellation");
-          return { message: { role: "assistant", content: '{"kind":"reply","ask":"clarify"}', toolCalls: [] }, providerId: "retry-double", usageTokens: 1 };
+          return { message: { role: "assistant", content: JSON.stringify({ text: result.status === "staged_action"
+            ? `Cancelación guardada. Turno ${appointment.id}.` : "Indicá explícitamente si querés cancelar tu turno." }), toolCalls: [] }, providerId: "retry-double", usageTokens: 1 };
         },
       };
       const processor = new PostgresAiJobProcessor(pools, provider);

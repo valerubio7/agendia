@@ -141,8 +141,8 @@ describe("agent tool boundary", () => {
     const secret = "private-name-phone-provider-text";
     const outputs = [
       { status: "data", data: secret }, { status: "unavailable_data", code: secret },
-      { status: "clarification", code: secret, message: secret }, { status: "rejected", code: secret },
-      { status: "prepared_quote", quote: secret, message: secret },
+      { status: "clarification", code: secret, reason: secret }, { status: "rejected", code: secret },
+      { status: "prepared_quote", quote: secret },
       { status: "staged_action", operation: secret, appointment: secret },
     ] as const;
     let executions = 0;

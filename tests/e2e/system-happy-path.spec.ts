@@ -1,5 +1,6 @@
 import { expect } from "@playwright/test";
 import { createBusinessInAdminUi, login, test } from "./support/fixtures.ts";
+import { scriptedAgentReply } from "./support/providers.ts";
 import { assertSemanticBoundary } from "./support/system.ts";
 
 const tenants = [
@@ -158,7 +159,7 @@ test("real services complete the deterministic multi-tenant happy path", async (
     ),
   );
   expect(system.providers.baileys.acks.map(ack => ack.text)).toEqual(
-    accepted.map(() => "¿Qué servicio y día querés consultar?"),
+    accepted.map(() => "No se guardó ningún cambio de agenda."),
   );
   system.providers.deepSeek.nativeCalls = [{ name: "read_catalog", arguments: {} }];
   for (const [index, tenant] of tenants.entries()) {
@@ -294,11 +295,7 @@ test("real services complete the deterministic multi-tenant happy path", async (
     expect(nativeRounds[1].messages.at(-1).role).toBe("tool");
     return received;
   };
-  system.providers.deepSeek.nativeFinal = results => {
-    const result = results[0]!;
-    return result.status === "staged_action" ? "Reserva guardada."
-      : "message" in result && result.message ? result.message : "Necesito aclarar tu solicitud.";
-  };
+  system.providers.deepSeek.nativeFinal = scriptedAgentReply;
   system.providers.deepSeek.nativeCalls = [{ name: "prepare_booking", arguments: {
     serviceId: service.id, resourceId: resource.id, startsAt: slot.start,
   } }];

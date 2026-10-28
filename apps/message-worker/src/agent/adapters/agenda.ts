@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import { tenantContext, AppointmentError, type createRuntimePools, type PostgresRepositories,
   type StoredAppointment, type AppointmentAvailabilityOption, type CatalogResource } from "@agendia/db";
 import {
-  argentinaDate, nearbyDate, agendaTime, customerTemporalSelection, emptyAgendaDialogue, explicitQuoteConfirmation,
+  argentinaDate, nearbyDate, customerTemporalSelection, emptyAgendaDialogue, explicitQuoteConfirmation,
   explicitCustomerNames, explicitCancel, explicitNotes, explicitPreference, expressedBookingPreference,
-  quoteTermsEqual, quoteText, missingFieldText, type AgendaDialogue, type AgendaQuote,
+  quoteTermsEqual, type AgendaDialogue,
 } from "../../../../../packages/domain/src/whatsapp/agenda.ts";
 import type { PostgresAiJob } from "../../jobs/ai-job.ts";
 import { AgentToolSession, canonicalAgentDate, AGENT_CALENDAR_TIME_ZONE, emitAgentDiagnostic,
@@ -16,20 +16,28 @@ import { buildAgentMessages } from "../context.ts";
 type Pools = ReturnType<typeof createRuntimePools>;
 type Source = NonNullable<Awaited<ReturnType<PostgresRepositories["loadAiMessage"]>>>;
 type PreparationOutcome = "prepared" | "retained-noop" | "rejected";
-type Reply = { text: string; dialogue: AgendaDialogue; saved?: StoredAppointment; renderedQuote?: string;
-  preparation?: PreparationOutcome;
+type Reply = { reason: string; dialogue: AgendaDialogue; saved?: StoredAppointment; proposal?: true;
+  preparation?: PreparationOutcome; missingFields?: readonly string[];
+  alternatives?: { items: unknown[]; hasMore: boolean; resourceName?: string | null };
   data?: { pending: "retained" | "unchanged" } };
-const unchanged = (text: string, dialogue: AgendaDialogue, awaiting?: readonly string[]): Reply => ({
-  text, dialogue: awaiting ? { ...dialogue, awaiting } : dialogue,
+const unchanged = (reason: string, dialogue: AgendaDialogue, awaiting?: readonly string[]): Reply => ({
+  reason, dialogue: awaiting ? { ...dialogue, awaiting } : dialogue,
+  ...(awaiting ? { missingFields: awaiting } : {}),
 });
-/** Only this renderer attests that the reply contains the retained quote's exact summary. */
-const summaryReply = (dialogue: AgendaDialogue, prefix = ""): Reply => {
-  if (!dialogue.quote) throw new Error("Cannot render an absent agenda quote");
-  return {
-    text: prefix + quoteText(dialogue.quote), dialogue,
-    renderedQuote: JSON.stringify(dialogue.quote),
-  };
+const proposalReply = (dialogue: AgendaDialogue, reason = "PROPOSAL_READY"): Reply => {
+  if (!dialogue.quote) throw new Error("Cannot present an absent agenda quote");
+  return { reason, dialogue, proposal: true };
 };
+const bounded = <T>(items: T[]) => {
+  const selected = items.slice(0, 50);
+  while (selected.length && new TextEncoder().encode(JSON.stringify(selected)).byteLength > 12000) selected.pop();
+  return { items: selected, hasMore: selected.length < items.length };
+};
+const availableSlots = (options: AppointmentAvailabilityOption[]) => bounded(options.map(option => ({
+  startsAt: option.start, resourceId: option.resourceId,
+  serviceId: option.terms.serviceId, durationMinutes: option.terms.durationMinutes, priceArs: option.terms.priceArs,
+  presentation: canonicalAgentDate(option.start, AGENT_CALENDAR_TIME_ZONE),
+})));
 /** Persistent preference comes from customer expressions/retained state, not query or assignment arguments. */
 const trustedPreference = (text: string, resources: readonly { id: string; name: string }[],
   previous?: string | null, unresolved = false, selectedResourceId?: string) => {
@@ -47,11 +55,13 @@ const snapshot = (appointment: StoredAppointment): string => JSON.stringify({
   preference: appointment.customerResourcePreference,
 });
 const actionContext = (now: string) => ({ actor: "customer" as const, channel: "ai" as const, now });
-const namePrompt = (dialogue: AgendaDialogue) => {
+const missingNames = (dialogue: AgendaDialogue): string[] => {
   const fields = dialogue.bookingNameFields ?? dialogue.bookingNames;
-  return missingFieldText(!fields?.firstName && !fields?.lastName ? ["names"]
-    : [...(!fields?.firstName ? ["firstName"] : []), ...(!fields?.lastName ? ["lastName"] : [])]);
+  return [...(!fields?.firstName ? ["firstName"] : []), ...(!fields?.lastName ? ["lastName"] : [])];
 };
+const namesReply = (dialogue: AgendaDialogue): Reply => ({
+  reason: "MISSING_NAMES", dialogue, missingFields: missingNames(dialogue),
+});
 type GuardedMutation = Extract<AgentToolCommand, { name: "cancel" | "notes" | "preference" }>;
 
 export class PostgresWhatsAppAgenda {
@@ -61,7 +71,7 @@ export class PostgresWhatsAppAgenda {
     return tenantContext({ businessId: job.businessId, actorId: "message-worker", role: "internal_worker", requestId: job.correlationId });
   }
   /** T3 entry point: no linguistic admission or proposal-provider call. The callback
-   * selects a closed final response act while holding source/dialogue/calendar fences.
+   * authors a strict final response while holding source/dialogue/calendar fences.
    * Do not send externally from the callback. A staged effect becomes committed only
    * after this method returns committed; any callback/persistence failure rolls back.
    * T3 must bound provider rounds/time because locks live for the callback duration.
@@ -77,18 +87,16 @@ export class PostgresWhatsAppAgenda {
         let dialogue = phone ? await repo.lockAgendaDialogue(job.businessId, source.connection_id, phone) : emptyAgendaDialogue();
         await repo.acquireBusinessCalendarLock({ businessId: job.businessId });
         const actions: { operation: string; appointmentId: string }[] = [];
-        let quoteNeedsDelivery = false;
-        let backendReply: string | undefined;
+        let presentationRevision = 0;
         const rejectPreparation = () => {
           if (actions.length) return; // A staged action reply survives subsequent refusals until outer commit.
           dialogue.quote = null;
+          presentationRevision++;
           dialogue.awaitingNames = false;
           if (dialogue.awaiting?.includes("names")) {
             dialogue.awaiting = dialogue.awaiting.filter(field => field !== "names");
             if (!dialogue.awaiting.length) delete dialogue.awaiting;
           }
-          quoteNeedsDelivery = false;
-          backendReply = undefined;
           namesRevision++;
         };
         // Opaque bindings commit to the trusted runtime scope and the whole quote,
@@ -97,6 +105,17 @@ export class PostgresWhatsAppAgenda {
         const fingerprint = (kind: string, value: unknown) => createHash("sha256").update(JSON.stringify({
           kind, businessId: job.businessId, connectionId: source.connection_id, phone, value,
         })).digest("hex");
+        const issuedPresentations = new Set<string>();
+        const currentPresentationReference = () => fingerprint("quote_presentation", {
+          sourceMessageId: source.id, revision: presentationRevision, quote: dialogue.quote,
+        });
+        const presentationReference = () => {
+          if (!dialogue.quote || dialogue.awaitingNames) return null;
+          const reference = currentPresentationReference();
+          issuedPresentations.add(reference);
+          return reference;
+        };
+        const pendingQuotePresentationReference = presentationReference();
         const cancellationReferences = new Map<string, string>();
         const cancellationReference = (ap: StoredAppointment) => fingerprint("cancellation", {
           sourceMessageId: source.id, text: source.raw_text, appointment: this.agentAppointment(ap),
@@ -139,7 +158,7 @@ export class PostgresWhatsAppAgenda {
         const now = this.clock();
         const pendingPresentation = canonicalAgentDate(dialogue.quote?.startsAt, AGENT_CALENDAR_TIME_ZONE);
         const messages = buildAgentMessages(source, settings.additionalInstructions, now, {
-          pending: structuredClone(dialogue), pendingPresentation, naturalConfirmation, currentEvidence: source.raw_text,
+          pending: structuredClone(dialogue), pendingPresentation, pendingQuotePresentationReference, naturalConfirmation, currentEvidence: source.raw_text,
           namesReference: namesReference(), nameSources,
           calendarTimeZone: AGENT_CALENDAR_TIME_ZONE,
           serverPresentation: canonicalAgentDate(now, AGENT_CALENDAR_TIME_ZONE),
@@ -169,7 +188,7 @@ export class PostgresWhatsAppAgenda {
               const draft = structuredClone(dialogue);
               let reply: Reply;
               if (command.name === "clear_pending") {
-                reply = unchanged("No se guardó ningún turno nuevo ni se cambió un turno existente.", emptyAgendaDialogue());
+                reply = unchanged("PENDING_CLEARED", emptyAgendaDialogue());
               } else if (command.name === "collect_booking_names") {
                 const args = command.arguments, reference = namesReference();
                 if (!reference || args.namesReference !== reference || await inner.findClientByCanonicalPhone(phone!))
@@ -189,9 +208,8 @@ export class PostgresWhatsAppAgenda {
                   // Repeated names are data, not a corrected proposal or consent.
                   if (fields.firstName && fields.lastName)
                     return { result: { status: "data", data: { bookingNameFields: fields } } as const };
-                  const message = namePrompt(draft);
-                  return { result: { status: "clarification", code: "CUSTOMER_INPUT_REQUIRED", message } as const,
-                    reply: unchanged(message, draft) };
+                  return { result: { status: "clarification", code: "CUSTOMER_INPUT_REQUIRED",
+                    reason: "MISSING_NAMES", missingFields: missingNames(draft) } as const, reply: namesReply(draft) };
                 }
                 draft.bookingNameFields = fields;
                 draft.bookingNames = fields.firstName && fields.lastName ? { firstName: fields.firstName, lastName: fields.lastName } : null;
@@ -202,8 +220,8 @@ export class PostgresWhatsAppAgenda {
                   draft.awaitingNames = !draft.bookingNames;
                   if (!draft.awaitingNames) delete draft.awaiting;
                 }
-                reply = draft.awaitingNames ? unchanged(namePrompt(draft), draft, ["names"])
-                  : draft.quote ? summaryReply(draft) : unchanged(missingFieldText(draft.awaiting ?? ["time"]), draft);
+                reply = draft.awaitingNames ? namesReply(draft)
+                  : draft.quote ? proposalReply(draft) : unchanged("MISSING_FIELDS", draft, draft.awaiting ?? ["time"]);
               } else if ((command.name === "notes" || command.name === "preference") && command.arguments.binding) {
                 const args = command.arguments, binding = args.binding!;
                 const member = nameSources.find(row => row.messageId === binding.messageId);
@@ -229,7 +247,7 @@ export class PostgresWhatsAppAgenda {
                   }
                   saved = await inner.setAgendaPreference(job.businessId, ap.id, resourceId, this.clock());
                 }
-                reply = { text: command.name === "notes" ? "Nota guardada." : "Preferencia guardada. No cambia la asignación ni garantiza disponibilidad.",
+                reply = { reason: "METADATA_STAGED",
                   dialogue: emptyAgendaDialogue(), saved };
               } else if (command.name === "prepare_booking" || command.name === "prepare_change") {
                 reply = await this.prepareAgentQuote(inner, job, source, phone!, draft, command);
@@ -245,31 +263,33 @@ export class PostgresWhatsAppAgenda {
                     ? ap => cancellationReference(ap) === command.arguments.binding!.evidenceReference : undefined);
               }
               const result: AgentToolResult = command.name === "clear_pending" ? { status: "data", data: { pending: null } }
-                : reply.data ? { status: "data", data: reply.data }
+                : reply.data ? { status: "data", data: { ...reply.data, reason: reply.reason,
+                    ...(reply.dialogue.quote ? { proposal: structuredClone(reply.dialogue.quote),
+                      presentation: canonicalAgentDate(reply.dialogue.quote.startsAt, AGENT_CALENDAR_TIME_ZONE) } : {}) } }
                 : reply.saved
                 ? { status: "staged_action", operation: command.name, appointment: this.agentAppointment(reply.saved) }
-                : reply.renderedQuote && reply.dialogue.quote
-                  ? { status: "prepared_quote", quote: structuredClone(reply.dialogue.quote), message: reply.text,
+                : reply.proposal && reply.dialogue.quote
+                  ? { status: "prepared_quote", quote: structuredClone(reply.dialogue.quote), reason: reply.reason,
                     presentation: canonicalAgentDate(reply.dialogue.quote.startsAt, AGENT_CALENDAR_TIME_ZONE) }
                   : { status: command.name === "confirm_quote" || command.name === "confirm_quote_naturally" || command.name === "collect_booking_names" || command.name.startsWith("prepare_") ? "clarification" : "rejected",
-                    code: "CUSTOMER_INPUT_REQUIRED", message: reply.text };
+                    code: "CUSTOMER_INPUT_REQUIRED", reason: reply.reason,
+                    missingFields: reply.missingFields ?? (reply.dialogue.awaitingNames ? missingNames(reply.dialogue) : []),
+                    ...(reply.preparation !== "rejected" && reply.dialogue.quote ? { proposal: structuredClone(reply.dialogue.quote) } : {}),
+                    ...(reply.alternatives ? { alternatives: reply.alternatives } : {}) };
               return { result, reply };
             });
             if (result.reply?.preparation === "rejected") {
               // Preparation refusals carry customer context, never rejected selection fields.
               dialogue = result.reply.dialogue;
               rejectPreparation();
-              backendReply = result.reply.text;
             } else if (result.reply) {
-              const previouslyQuoted = quoteNeedsDelivery && dialogue.quote ? JSON.stringify(dialogue.quote) : null;
+              if (JSON.stringify(dialogue.quote) !== JSON.stringify(result.reply.dialogue.quote)) presentationRevision++;
               dialogue = result.reply.dialogue;
               namesRevision++;
-              backendReply = command.name === "clear_pending" ? undefined : result.reply.text;
-              quoteNeedsDelivery = Boolean(dialogue.quote && (result.reply.renderedQuote === JSON.stringify(dialogue.quote)
-                || previouslyQuoted === JSON.stringify(dialogue.quote)));
               if (result.reply.saved) actions.push({ operation: command.name, appointmentId: result.reply.saved.id });
             }
-            return { ...result.result, namesReference: namesReference() };
+            return { ...result.result, namesReference: namesReference(),
+              ...(dialogue.quote && !dialogue.awaitingNames ? { presentationReference: presentationReference() } : {}) };
           } catch (error) {
             if (!(error instanceof AppointmentError)) throw error;
             const errorCode = ["INVALID_INPUT", "UNKNOWN_OWNED_ID", "INELIGIBLE_CATALOG", "UNAVAILABLE", "BUSY", "CLIENT_CONFLICT",
@@ -277,10 +297,10 @@ export class PostgresWhatsAppAgenda {
               "ATTENDANCE_FORBIDDEN", "INVALID_ATTENDANCE_TIME", "BEFORE_START", "CONFIRMATION_REQUIRED"].includes(error.code)
               ? error.code : "UNKNOWN_APPOINTMENT_ERROR";
             emitAgentDiagnostic(this.diagnose, { code: "agent.tool_rejected", toolName: command.name, errorCode });
-            return { status: "rejected", code: "AGENDA_REJECTED" };
+            return { status: "rejected", code: "AGENDA_REJECTED", reason: errorCode };
           }
         }, { message: source.raw_text, recent: source.turns.slice(-12).map(turn => turn.raw_text.slice(0, 2000)),
-          pending: structuredClone(dialogue), pendingPresentation, naturalConfirmation, messages,
+          pending: structuredClone(dialogue), pendingPresentation, pendingQuotePresentationReference, naturalConfirmation, messages,
           namesReference: namesReference(), nameSources: structuredClone(nameSources) }, this.diagnose, rejectPreparation);
         completedSession = session;
         let text: string;
@@ -288,16 +308,17 @@ export class PostgresWhatsAppAgenda {
           text = await converse(session);
           await session.drain();
         } finally { session.close(); await session.drain(); }
-        if (typeof text !== "string" || !text.trim() || text.length > 12000) throw new Error("Invalid agent response");
-        // Valid informational prose cannot replace a backend quote, name request or action reply.
-        // Otherwise the renderer validates the final act and gives current tool failures priority.
-        text = backendReply ?? session.renderResponse(text);
-        if (dialogue.quote && quoteNeedsDelivery && !text.includes(quoteText(dialogue.quote)))
-          text += "\n\n" + quoteText(dialogue.quote);
-        if (!text.trim() || text.length > 12000) throw new Error("Rendered agent response limit");
-        const output = await repo.saveGenerated(job.messageId, job.businessId, text);
+        const final = session.renderResponse(text);
+        if (final.presentedQuoteReference && (!dialogue.quote || dialogue.awaitingNames
+          || !issuedPresentations.has(final.presentedQuoteReference)
+          || final.presentedQuoteReference !== currentPresentationReference()))
+          throw new Error("Invalid quote presentation reference");
+        const output = await repo.saveGenerated(job.messageId, job.businessId, final.text);
         if (!output) throw new Error("Agent source changed before atomic save");
-        if (dialogue.quote && quoteNeedsDelivery) dialogue.quote.outboundId = output.outbound_id;
+        if (dialogue.quote && final.presentedQuoteReference) {
+          dialogue.quote.outboundId = output.outbound_id;
+          dialogue.quote.sourceMessageId = source.id;
+        }
         if (phone) await repo.saveAgendaDialogue(job.businessId, source.connection_id, phone, dialogue);
         await repo.recordAgendaReceipt(job.businessId, job.messageId, output.outbound_id, actions[0]?.operation ?? "agent");
         await repo.appendAudit(job.businessId, {
@@ -326,11 +347,6 @@ export class PostgresWhatsAppAgenda {
     phone: string | null, command: AgentToolCommand, dialogue: AgendaDialogue,
     inspectAppointment: (ap: StoredAppointment) => unknown,
     inspectResource: (resource: CatalogResource) => unknown): Promise<AgentToolResult> {
-    const bounded = <T>(items: T[]) => {
-      const selected = items.slice(0, 50);
-      while (selected.length && new TextEncoder().encode(JSON.stringify(selected)).byteLength > 12000) selected.pop();
-      return { items: selected, hasMore: selected.length < items.length };
-    };
     switch (command.name) {
       case "read_business": {
         const profile = source.profile;
@@ -355,12 +371,7 @@ export class PostgresWhatsAppAgenda {
           emitAgentDiagnostic(this.diagnose, { code: "agent.tool_rejected", toolName: "availability",
             errorCode, referenceFailureKind: kind });
           return { status: "rejected", code: kind === "service" ? "SERVICE_REFERENCE_REQUIRED"
-            : kind === "resource" ? "RESOURCE_REFERENCE_REQUIRED" : "AGENDA_REJECTED",
-            message: kind === "service"
-              ? "Consultá read_catalog y reintentá con el ID devuelto del mismo servicio elegido; si no está o es ambiguo, preguntá sin elegir otro."
-              : kind === "resource"
-                ? "Consultá read_resources y reintentá con el ID devuelto del mismo recurso elegido; si no está o es ambiguo, preguntá sin elegir otro ni quitar la preferencia."
-                : "No se pudo verificar la consulta; no se guardó nada. Actualizá read_catalog/read_resources sin cambiar la elección. Para reprogramar, consultá owned_appointments del remitente actual y usá solo un turno propio elegible; nunca inventes IDs ni borres el contexto retenido. Para una búsqueda nueva, no envíes appointmentId." };
+            : kind === "resource" ? "RESOURCE_REFERENCE_REQUIRED" : "AGENDA_REJECTED" };
         };
         if (!(await repo.listServices()).some(item => item.id === serviceId && item.status === "active"))
           return referenceFailure("service");
@@ -395,16 +406,13 @@ export class PostgresWhatsAppAgenda {
           else dialogue.bookingPreference = resolved.preference;
           dialogue.bookingUnresolvedPreference = resolved.unresolved;
         }
-        if (resolved.unresolved && !resourceId) return { status: "clarification", code: "UNKNOWN_RESOURCE", message: missingFieldText(["resource"]) };
+        if (resolved.unresolved && !resourceId) return { status: "clarification", code: "UNKNOWN_RESOURCE", missingFields: ["resource"] };
         const queryResource = resourceId ?? resolved.preference ?? undefined;
         const options = await repo.listAppointmentAvailability(job.businessId, { serviceId, date: args.date,
           ...(queryResource ? { resourceId: queryResource } : {}) }, { clock: this.clock, ...(appointmentId ? { appointmentId } : {}) });
-        const resourceName = resources.find(item => item.id === queryResource)?.name;
-        return { status: "data", data: { ...bounded(options.map(option => ({ startsAt: option.start, resourceId: option.resourceId,
-          serviceId: option.terms.serviceId, durationMinutes: option.terms.durationMinutes, priceArs: option.terms.priceArs,
-          presentation: canonicalAgentDate(option.start, AGENT_CALENDAR_TIME_ZONE) }))),
-          message: options.length ? this.slotsText(options, resourceName)
-            : `No hay horarios disponibles${resourceName ? ` con ${resourceName}` : ""} para ${args.date}. ¿Querés consultar otro día?` } };
+        return { status: "data", data: { ...availableSlots(options), date: args.date,
+          serviceId, resourceId: queryResource ?? null,
+          resourceName: resources.find(item => item.id === queryResource)?.name ?? null } };
       }
       case "owned_appointments": {
         const client = await repo.findClientByCanonicalPhone(phone!);
@@ -429,12 +437,12 @@ export class PostgresWhatsAppAgenda {
     const pending = dialogue.quote?.kind === (current ? "change" : "book") && (current || bookingContext) ? dialogue.quote : null;
     const retained = current ? dialogue.reschedule ?? dialogue.change : undefined;
     if (current && ((pending && pending.appointmentId !== current.id) || (retained && retained.appointmentId !== current.id)))
-      return outcome("rejected", unchanged("La propuesta corresponde a otro turno. Pedí el cambio por separado; no se guardó nada.", dialogue));
+      return outcome("rejected", unchanged("PROPOSAL_TARGET_MISMATCH", dialogue));
     if (current && ((pending && pending.previous !== snapshot(current)) || (retained && retained.previous !== snapshot(current)))) {
       const next = { ...dialogue };
       delete next.change;
       delete next.reschedule;
-      return outcome("rejected", unchanged("El turno cambió desde tu solicitud. Pedí el cambio nuevamente; no se guardó nada.", next));
+      return outcome("rejected", unchanged("APPOINTMENT_CHANGED", next));
     }
     const serviceId = (args.serviceId ?? pending?.terms.serviceId ?? current!.terms.serviceId).toLowerCase();
     const startsAt = args.startsAt ?? pending?.startsAt ?? current?.startsAt!;
@@ -457,36 +465,38 @@ export class PostgresWhatsAppAgenda {
       ...(binding?.date ? { date: binding.date } : {}), ...(binding?.time ? { time: binding.time } : {}),
     };
     if (resolved.unresolved && (current || (!args.resourceId && (!repeatBook || resolved.unknownPreference))))
-      return outcome("rejected", unchanged(missingFieldText(["resource"]), { ...dialogue, ...next }, ["resource"]));
+      return outcome("rejected", unchanged("UNKNOWN_RESOURCE", { ...dialogue, ...next }, ["resource"]));
     // Assignment/query choices are not persistent preference or temporal evidence.
     const resourceId = current ? args.resourceId?.toLowerCase()
       ?? (resolved.preferred || resolved.removePreference ? resolved.preference ?? undefined : pending?.terms.resourceId ?? resolved.preference ?? undefined)
       : args.resourceId?.toLowerCase() ?? (repeatBook && !resolved.preferred && !resolved.removePreference ? pending.terms.resourceId : resolved.preference ?? undefined);
-    const preferredName = resources.find(item => item.id === resourceId)?.name;
     const options = await repo.listAppointmentAvailability(job.businessId, { serviceId, date: argentinaDate(startsAt),
       ...(resourceId ? { resourceId } : {}) }, { clock: this.clock, ...(current ? { appointmentId: current.id } : {}) });
     const selected = options.find(option => option.startMs === Date.parse(startsAt) && option.resourceId === current?.terms.resourceId)
       ?? options.find(option => option.startMs === Date.parse(startsAt));
-    if (!selected) return outcome("rejected", unchanged(this.slotsText(await this.alternatives(repo, job.businessId, serviceId,
-      argentinaDate(startsAt), resourceId, current?.id), preferredName), { ...dialogue, ...next }, ["time"]));
+    if (!selected) return outcome("rejected", {
+      ...unchanged("SLOT_UNAVAILABLE", { ...dialogue, ...next }, ["time"]),
+      alternatives: { ...availableSlots(await this.alternatives(repo, job.businessId, serviceId,
+        argentinaDate(startsAt), resourceId, current?.id)), resourceName: resources.find(item => item.id === resourceId)?.name ?? null },
+    });
     if (current && selected.startMs === current.startMs && serviceId === current.terms.serviceId
       && selected.resourceId === current.terms.resourceId)
-      return outcome("retained-noop", { text: "El turno ya tiene esos datos. No se guardó ningún cambio.", dialogue: emptyAgendaDialogue(), data: { pending: "unchanged" } });
+      return outcome("retained-noop", { reason: "APPOINTMENT_UNCHANGED", dialogue: emptyAgendaDialogue(), data: { pending: "unchanged" } });
     const client = await repo.findClientByCanonicalPhone(phone);
     const names = current || client ? null : explicitCustomerNames(source.raw_text) ?? (bookingContext ? dialogue.bookingNames : null) ?? null;
     if (pending && Date.parse(pending.startsAt) === selected.startMs && quoteTermsEqual(pending.terms, selected.terms)
       && pending.preference === (resolved.preference ?? null) && pending.names?.firstName === names?.firstName && pending.names?.lastName === names?.lastName) {
-      if (!current && !client && !names) return outcome("retained-noop", unchanged(namePrompt(dialogue), dialogue));
+      if (!current && !client && !names) return outcome("retained-noop", namesReply(dialogue));
       const retainedDialogue = current ? dialogue : { ...dialogue, bookingUnresolvedPreference: resolved.unresolved,
         ...(resolved.preference !== undefined ? { bookingPreference: resolved.preference } : {}) };
-      return outcome("retained-noop", { text: "La propuesta pendiente no cambió. Todavía no se guardó ningún cambio.", dialogue: retainedDialogue, data: { pending: "retained" } });
+      return outcome("retained-noop", { reason: "PROPOSAL_UNCHANGED", dialogue: retainedDialogue, data: { pending: "retained" } });
     }
     if (!current) { next.bookingNames = names; if (names) next.bookingNameFields = { ...names }; }
     next.quote = { kind: current ? "change" : "book", appointmentId: current?.id ?? null, startsAt: selected.start,
       terms: selected.terms, preference: resolved.preference ?? null, previous: current ? snapshot(current) : null,
       names: current ? null : names, sourceMessageId: source.id, outboundId: null };
     next.awaitingNames = !current && !client && !names;
-    return outcome("prepared", next.awaitingNames ? unchanged(namePrompt(next), next, ["names"]) : summaryReply(next));
+    return outcome("prepared", next.awaitingNames ? { ...namesReply(next), dialogue: { ...next, awaiting: ["names"] } } : proposalReply(next));
   }
   private async owned(repo: PostgresRepositories, businessId: string, phone: string, id: string): Promise<StoredAppointment> {
     const current = await repo.getAppointment(businessId, id);
@@ -512,26 +522,15 @@ export class PostgresWhatsAppAgenda {
     return [];
   }
   private async bookingAlternatives(repo: PostgresRepositories, businessId: string, serviceId: string,
-    date: string, dialogue: AgendaDialogue, resourceId?: string, resourceName?: string): Promise<Reply> {
+    date: string, dialogue: AgendaDialogue, resourceId?: string): Promise<Reply> {
     const options = await this.alternatives(repo, businessId, serviceId, date, resourceId);
     const next: AgendaDialogue = { ...dialogue, quote: null, awaitingNames: false };
     // An offer is not a quote or consent. Retain customer data, discard the failed
     // target/time, and bind a short time answer to the actual day being offered.
     delete next.requestedTime;
     if (options[0]) next.requestedDate = argentinaDate(options[0].start);
-    return unchanged(this.slotsText(options, resourceName), next, options.length ? ["time"] : ["date"]);
-  }
-  private slotsText(options: AppointmentAvailabilityOption[], resourceName?: string): string {
-    const scope = resourceName ? ` con ${resourceName}` : "";
-    if (!options.length) return `No hay horarios disponibles${scope} en ese día ni en los días cercanos consultados. ¿Qué otro día te sirve?`;
-    const unique = [...new Map(options.map(option => [option.startMs, option])).values()];
-    // Adaptive response by real day and hour, not a rigid three-slot recommendation.
-    const days = new Map<string, string[]>();
-    for (const option of unique) {
-      const day = argentinaDate(option.start);
-      days.set(day, [...(days.get(day) ?? []), agendaTime(option.start)]);
-    }
-    return `Horarios disponibles${scope}: ${[...days].map(([day, times]) => `${day}: ${times.join(", ")}`).join("; ")}. ¿Cuál elegís?`;
+    return { ...unchanged("SLOT_UNAVAILABLE", next, options.length ? ["time"] : ["date"]),
+      alternatives: { ...availableSlots(options), resourceName: resourceId ? (await repo.getResource(businessId, resourceId))?.name ?? null : null } };
   }
   private async respond(repo: PostgresRepositories, job: PostgresAiJob, source: Source, phone: string,
     dialogue: AgendaDialogue, mutation: GuardedMutation | null,
@@ -552,9 +551,9 @@ export class PostgresWhatsAppAgenda {
         delete dialogue.awaiting;
         dialogue.quote.sourceMessageId = source.id;
         dialogue.quote.outboundId = null;
-        return summaryReply(dialogue);
+        return proposalReply(dialogue);
       }
-      return unchanged(namePrompt(dialogue), dialogue);
+      return namesReply(dialogue);
     }
     // Runtime binding establishes authentic context only; semantics are model risk.
     // Literal confirmation remains an independent received-answer guard.
@@ -563,12 +562,12 @@ export class PostgresWhatsAppAgenda {
     if (!mutation && dialogue.quote && (explicitQuoteConfirmation(source.raw_text) || boundInterpretation)) {
       const quote = dialogue.quote;
       if (!await repo.agendaQuoteDelivered(quote.outboundId, source.connection_id, phone))
-        return summaryReply(dialogue, "Primero necesitás recibir el detalle de la propuesta. ");
-      if (quote.sourceMessageId === source.id) return summaryReply(dialogue);
+        return proposalReply(dialogue, "PROPOSAL_NOT_DELIVERED");
+      if (quote.sourceMessageId === source.id) return proposalReply(dialogue);
       let current: StoredAppointment | null = null;
       if (quote.kind === "change") {
         current = await this.owned(repo, job.businessId, phone, quote.appointmentId!);
-        if (snapshot(current) !== quote.previous) return unchanged("El turno cambió desde la propuesta. Pedí el cambio nuevamente; no se guardó nada.", emptyAgendaDialogue());
+        if (snapshot(current) !== quote.previous) return unchanged("APPOINTMENT_CHANGED", emptyAgendaDialogue());
       }
       const options = await repo.listAppointmentAvailability(job.businessId, {
         serviceId: quote.terms.serviceId, resourceId: quote.terms.resourceId, date: argentinaDate(quote.startsAt),
@@ -578,18 +577,20 @@ export class PostgresWhatsAppAgenda {
         if (!current) {
           const offered = await this.bookingAlternatives(repo, job.businessId, quote.terms.serviceId,
             argentinaDate(quote.startsAt), { ...dialogue, bookingPreference: quote.preference, bookingNames: quote.names },
-            quote.preference ?? undefined, quote.preference ? quote.terms.resourceName : undefined);
-          return { ...offered, text: "El horario ya no está disponible. " + offered.text };
+            quote.preference ?? undefined);
+          return offered;
         }
-        return unchanged("El horario ya no está disponible. " + this.slotsText(await this.alternatives(repo, job.businessId,
-          quote.terms.serviceId, argentinaDate(quote.startsAt), quote.preference ?? undefined, current.id),
-          quote.preference ? quote.terms.resourceName : undefined), emptyAgendaDialogue());
+        return { ...unchanged("SLOT_UNAVAILABLE", emptyAgendaDialogue()), missingFields: ["time"],
+          alternatives: { ...availableSlots(await this.alternatives(repo, job.businessId,
+            quote.terms.serviceId, argentinaDate(quote.startsAt), quote.preference ?? undefined, current.id)),
+            resourceName: quote.preference ? quote.terms.resourceName : null } };
+
       }
       if (!quoteTermsEqual(quote.terms, option.terms)) {
         quote.terms = option.terms;
         quote.sourceMessageId = source.id;
         quote.outboundId = null;
-        return summaryReply(dialogue, "Las condiciones cambiaron. ");
+        return proposalReply(dialogue, "TERMS_CHANGED");
       }
       const preference = quote.preference ? { kind: "chosen" as const, resourceId: quote.preference }
         : quote.kind === "change" && dialogue.reschedule?.preference === null ? { kind: "none" as const } : undefined;
@@ -599,39 +600,39 @@ export class PostgresWhatsAppAgenda {
           serviceId: quote.terms.serviceId, resourceId: quote.terms.resourceId, startRaw: quote.startsAt,
         }, { now, ...(preference ? { customerResourceExpression: preference } : {}) });
       } else {
-        if (!client && !quote.names) return unchanged(missingFieldText(["names"]), { ...dialogue, awaitingNames: true });
+        if (!client && !quote.names) return namesReply({ ...dialogue, awaitingNames: true });
         saved = await repo.createAppointment(job.businessId, {
           serviceId: quote.terms.serviceId, resourceId: quote.terms.resourceId, startRaw: quote.startsAt,
           ...(client ? { clientId: client.id } : { newClient: { ...quote.names!, phone } }),
         }, { now, origin: "ai", ...(preference ? { customerResourceExpression: preference } : {}) });
       }
-      return { text: `Guardado: ${saved.terms.serviceName}, ${argentinaDate(saved.startsAt)} a las ${agendaTime(saved.startsAt)}, ${saved.terms.durationMinutes} minutos, ARS ${saved.terms.priceArs}. Turno ${saved.id}.`, dialogue: emptyAgendaDialogue(), saved };
+      return { reason: "APPOINTMENT_STAGED", dialogue: emptyAgendaDialogue(), saved };
     }
-    if (!mutation) return unchanged("¿Qué servicio y día querés consultar?", dialogue);
+    if (!mutation) return unchanged("NO_CONFIRMATION", dialogue);
     switch (mutation.name) {
       case "cancel": {
-        if (!validateCancellation && !explicitCancel(source.raw_text)) return unchanged("Indicá explícitamente si querés cancelar tu turno.", dialogue);
+        if (!validateCancellation && !explicitCancel(source.raw_text)) return unchanged("CANCELLATION_REQUIRED", dialogue);
         const ap = await this.owned(repo, job.businessId, phone, mutation.arguments.appointmentId);
         // Fresh ownership and snapshot checks are independent of interpreted intent.
         if (validateCancellation && !validateCancellation(ap)) throw new AppointmentError("CONFIRMATION_REQUIRED");
         const saved = await repo.transitionAppointment(job.businessId, ap.id, "cancelled", actionContext(now));
-        return { text: `Cancelación guardada. Turno ${saved.id}.`, dialogue: emptyAgendaDialogue(), saved };
+        return { reason: "CANCELLATION_STAGED", dialogue: emptyAgendaDialogue(), saved };
       }
       case "notes": {
         const notes = explicitNotes(source.raw_text);
-        if (notes === undefined) return unchanged("Escribí «nota: texto» o «borrar nota» para modificar la nota de tu turno.", dialogue);
+        if (notes === undefined) return unchanged("NOTE_REQUEST_REQUIRED", dialogue);
         const ap = await this.owned(repo, job.businessId, phone, mutation.arguments.appointmentId);
         const saved = await repo.setAppointmentNotes(job.businessId, ap.id, { notes }, actionContext(now));
-        return { text: "Nota guardada.", dialogue: emptyAgendaDialogue(), saved };
+        return { reason: "NOTES_STAGED", dialogue: emptyAgendaDialogue(), saved };
       }
       case "preference": {
         const args = mutation.arguments;
         const resource = args.resourceId ? await repo.getResource(job.businessId, args.resourceId) : null;
         if ((args.resourceId && !resource) || !explicitPreference(source.raw_text, resource?.name ?? null))
-          return unchanged("Indicá «prefiero Nombre del recurso» o «sin preferencia». No se guardó ninguna preferencia.", dialogue);
+          return unchanged("PREFERENCE_REQUEST_REQUIRED", dialogue);
         const ap = await this.owned(repo, job.businessId, phone, args.appointmentId);
         const saved = await repo.setAgendaPreference(job.businessId, ap.id, args.resourceId, now);
-        return { text: "Preferencia guardada. No cambia la asignación ni garantiza disponibilidad.", dialogue: emptyAgendaDialogue(), saved };
+        return { reason: "PREFERENCE_STAGED", dialogue: emptyAgendaDialogue(), saved };
       }
     }
   }

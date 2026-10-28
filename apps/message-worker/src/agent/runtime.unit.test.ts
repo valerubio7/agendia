@@ -157,22 +157,22 @@ describe("bounded model-led agent", () => {
       : { status: "data", data: { message: "Volcado completo: 10:00, 11:00, 12:00", items: [{ presentation: { label } }] } });
     const read = calls("availability");
     read.toolCalls[0]!.arguments = { serviceId: "123e4567-e89b-42d3-a456-426614174000", date: "2035-04-02" };
-    const script = scripted([calls("read_catalog"), read, final(JSON.stringify({ kind: "informational_prose", text: wording }))]);
+    const script = scripted([calls("read_catalog"), read, final(JSON.stringify({ text: wording }))]);
     const raw = await converseAgent(script.provider, session, messages(), "test");
-    expect(session.renderResponse(raw)).toBe(wording);
+    expect(session.renderResponse(raw).text).toBe(wording);
     expect(script.requests).toHaveLength(3);
     expect(script.requests[2]!.messages.at(-1)!.content).toContain(label);
   });
   test("informational prose still obeys the 4000-character serialized output ceiling", async () => {
-    const empty = JSON.stringify({ kind: "informational_prose", text: "" });
+    const empty = JSON.stringify({ text: "" });
     for (const length of [4000, 4001]) {
-      const raw = JSON.stringify({ kind: "informational_prose", text: "a".repeat(length - empty.length) });
+      const raw = JSON.stringify({ text: "a".repeat(length - empty.length) });
       expect(raw.length).toBe(length);
       const session = new AgentToolSession(async () => { throw new Error("unexpected tool"); });
       const script = scripted([final(raw)]);
       if (length === 4000) {
         const result = await converseAgent(script.provider, session, messages(), "test");
-        expect(session.renderResponse(result)).toBe("a".repeat(length - empty.length));
+        expect(session.renderResponse(result).text).toBe("a".repeat(length - empty.length));
       } else {
         await expect(converseAgent(script.provider, session, messages(), "test")).rejects.toThrow("Agent output limit");
       }
@@ -225,7 +225,7 @@ describe("bounded model-led agent", () => {
     });
     const provider: ToolConversationProvider = { converse: async request => {
       const last = request.messages.at(-1)!;
-      let message = final('{"kind":"reply"}');
+      let message = final('{"text":"Listo."}');
       if (last.role === "user") {
         message = calls("owned_appointment"); message.toolCalls[0]!.arguments = { appointmentId };
       } else if (last.role === "tool" && last.toolCallId === "owned_appointment_0") {
@@ -236,7 +236,7 @@ describe("bounded model-led agent", () => {
       }
       return { message, providerId: "script", usageTokens: 0 };
     } };
-    expect(await converseAgent(provider, session, [{ role: "user", content: evidence }], "test")).toBe('{"kind":"reply"}');
+    expect(await converseAgent(provider, session, [{ role: "user", content: evidence }], "test")).toBe('{"text":"Listo."}');
     expect(executed).toEqual(["owned_appointment", "cancel"]);
   });
   test("rejects duplicate/unknown calls and malformed output before execution", async () => {
