@@ -23,7 +23,7 @@ export type Business = {
   id: string;
   name: string;
   status: "active" | "suspended";
-  assistantStatus: "active" | "inactive";
+  agentStatus: "active" | "inactive";
   whatsappStatus: "connected" | "disconnected" | "link_required" | "error";
   createdAt: string;
   lastTechnicalActivityAt: string | null;
@@ -67,7 +67,7 @@ export type ServiceInput = {
   durationMinutes: number;
   priceArs: number;
 };
-export type Assistant = {
+export type Agent = {
   style: string;
   businessInstructions: string;
   active: boolean;
@@ -420,10 +420,10 @@ export class ApiClient {
       description: body.description,
       address: body.address,
     });
-  assistant = () => this.call<Partial<Assistant>>("/me/assistant");
-  saveAssistant = (
-    body: Omit<Assistant, "revision"> & { expectedRevision: number },
-  ) => this.call<Assistant>("/me/assistant", "PUT", body);
+  agent = () => this.call<Partial<Agent>>("/me/agent");
+  saveAgent = (
+    body: Omit<Agent, "revision"> & { expectedRevision: number },
+  ) => this.call<Agent>("/me/agent", "PUT", body);
   whatsappStatus = (signal?: AbortSignal) =>
     this.call<WhatsAppStatus>(
       "/me/whatsapp/status",

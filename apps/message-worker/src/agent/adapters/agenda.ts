@@ -7,11 +7,11 @@ import {
   quoteTermsEqual, quoteText, missingFieldText, type AgendaDialogue, type AgendaQuote,
 } from "../../../../../packages/domain/src/whatsapp/agenda.ts";
 import type { PostgresAiJob } from "../../jobs/ai-job.ts";
-import { ReceptionistToolSession, canonicalReceptionistDate, RECEPTIONIST_CALENDAR_TIME_ZONE, emitReceptionistDiagnostic,
-  type ReceptionistToolCommand, type ReceptionistToolResult,
-  type ReceptionistSessionOutcome, type ReceptionistToolDiagnostics } from "../tools.ts";
+import { AgentToolSession, canonicalAgentDate, AGENT_CALENDAR_TIME_ZONE, emitAgentDiagnostic,
+  type AgentToolCommand, type AgentToolResult,
+  type AgentSessionOutcome, type AgentToolDiagnostics } from "../tools.ts";
 
-import { buildReceptionistMessages } from "../context.ts";
+import { buildAgentMessages } from "../context.ts";
 
 type Pools = ReturnType<typeof createRuntimePools>;
 type Source = NonNullable<Awaited<ReturnType<PostgresRepositories["loadAiMessage"]>>>;
@@ -52,11 +52,11 @@ const namePrompt = (dialogue: AgendaDialogue) => {
   return missingFieldText(!fields?.firstName && !fields?.lastName ? ["names"]
     : [...(!fields?.firstName ? ["firstName"] : []), ...(!fields?.lastName ? ["lastName"] : [])]);
 };
-type GuardedMutation = Extract<ReceptionistToolCommand, { name: "cancel" | "notes" | "preference" }>;
+type GuardedMutation = Extract<AgentToolCommand, { name: "cancel" | "notes" | "preference" }>;
 
 export class PostgresWhatsAppAgenda {
   constructor(private pools: Pools, private clock = () => new Date().toISOString(),
-    private diagnose?: ReceptionistToolDiagnostics) {}
+    private diagnose?: AgentToolDiagnostics) {}
   private context(job: PostgresAiJob) {
     return tenantContext({ businessId: job.businessId, actorId: "message-worker", role: "internal_worker", requestId: job.correlationId });
   }
@@ -66,9 +66,9 @@ export class PostgresWhatsAppAgenda {
    * after this method returns committed; any callback/persistence failure rolls back.
    * T3 must bound provider rounds/time because locks live for the callback duration.
    */
-  async withReceptionistSession(job: PostgresAiJob,
-    converse: (session: ReceptionistToolSession) => Promise<string>): Promise<ReceptionistSessionOutcome> {
-    let completedSession: ReceptionistToolSession | undefined;
+  async withAgentSession(job: PostgresAiJob,
+    converse: (session: AgentToolSession) => Promise<string>): Promise<AgentSessionOutcome> {
+    let completedSession: AgentToolSession | undefined;
     try {
       const outcome = await this.pools.worker.run(this.context(job), async repo => {
         const source = await repo.lockAgendaSource(job.messageId);
@@ -99,18 +99,18 @@ export class PostgresWhatsAppAgenda {
         })).digest("hex");
         const cancellationReferences = new Map<string, string>();
         const cancellationReference = (ap: StoredAppointment) => fingerprint("cancellation", {
-          sourceMessageId: source.id, text: source.raw_text, appointment: this.receptionistAppointment(ap),
+          sourceMessageId: source.id, text: source.raw_text, appointment: this.agentAppointment(ap),
         });
         const metadataReferences = { notes: new Map<string, string>(), preference: new Map<string, string>() };
         const metadataReference = (operation: "notes" | "preference", ap: StoredAppointment) => fingerprint(operation, {
-          sourceMessageId: source.id, text: source.raw_text, nameSources, appointment: this.receptionistAppointment(ap),
+          sourceMessageId: source.id, text: source.raw_text, nameSources, appointment: this.agentAppointment(ap),
         });
         const inspectAppointment = (ap: StoredAppointment) => {
           const reference = cancellationReference(ap), notesReference = metadataReference("notes", ap), preferenceReference = metadataReference("preference", ap);
           cancellationReferences.set(ap.id, reference);
           metadataReferences.notes.set(ap.id, notesReference);
           metadataReferences.preference.set(ap.id, preferenceReference);
-          return { ...this.receptionistAppointment(ap), cancellationReference: reference, notesReference, preferenceReference };
+          return { ...this.agentAppointment(ap), cancellationReference: reference, notesReference, preferenceReference };
         };
         const resourceReferences = new Map<string, string>();
         const resourceReference = (resource: CatalogResource) => fingerprint("preference_resource", { sourceMessageId: source.id, text: source.raw_text, resource });
@@ -137,14 +137,14 @@ export class PostgresWhatsAppAgenda {
             quoteFingerprint: fingerprint("quote", dialogue.quote) }) : null;
         const settings = await repo.platformAiInstructions();
         const now = this.clock();
-        const pendingPresentation = canonicalReceptionistDate(dialogue.quote?.startsAt, RECEPTIONIST_CALENDAR_TIME_ZONE);
-        const messages = buildReceptionistMessages(source, settings.additionalInstructions, now, {
+        const pendingPresentation = canonicalAgentDate(dialogue.quote?.startsAt, AGENT_CALENDAR_TIME_ZONE);
+        const messages = buildAgentMessages(source, settings.additionalInstructions, now, {
           pending: structuredClone(dialogue), pendingPresentation, naturalConfirmation, currentEvidence: source.raw_text,
           namesReference: namesReference(), nameSources,
-          calendarTimeZone: RECEPTIONIST_CALENDAR_TIME_ZONE,
-          serverPresentation: canonicalReceptionistDate(now, RECEPTIONIST_CALENDAR_TIME_ZONE),
+          calendarTimeZone: AGENT_CALENDAR_TIME_ZONE,
+          serverPresentation: canonicalAgentDate(now, AGENT_CALENDAR_TIME_ZONE),
         });
-        const session = new ReceptionistToolSession(async command => {
+        const session = new AgentToolSession(async command => {
           const reading = ["read_business", "read_catalog", "read_calendar", "read_resources", "availability", "owned_appointments", "owned_appointment"].includes(command.name);
           if (actions.length && !reading) return { status: "rejected", code: "ACTION_ALREADY_STAGED" };
           if (!phone && !["read_business", "read_catalog", "read_calendar", "read_resources", "availability"].includes(command.name))
@@ -165,7 +165,7 @@ export class PostgresWhatsAppAgenda {
           }
           try {
             const result = await repo.appointmentOperationSavepoint(async inner => {
-              if (reading) return { result: await this.receptionistRead(inner, job, source, phone, command, dialogue, inspectAppointment, inspectResource) };
+              if (reading) return { result: await this.agentRead(inner, job, source, phone, command, dialogue, inspectAppointment, inspectResource) };
               const draft = structuredClone(dialogue);
               let reply: Reply;
               if (command.name === "clear_pending") {
@@ -232,7 +232,7 @@ export class PostgresWhatsAppAgenda {
                 reply = { text: command.name === "notes" ? "Nota guardada." : "Preferencia guardada. No cambia la asignación ni garantiza disponibilidad.",
                   dialogue: emptyAgendaDialogue(), saved };
               } else if (command.name === "prepare_booking" || command.name === "prepare_change") {
-                reply = await this.prepareReceptionistQuote(inner, job, source, phone!, draft, command);
+                reply = await this.prepareAgentQuote(inner, job, source, phone!, draft, command);
               } else {
                 const mutation = command.name === "cancel" || command.name === "notes" || command.name === "preference"
                   ? command : null;
@@ -244,13 +244,13 @@ export class PostgresWhatsAppAgenda {
                   command.name === "cancel" && command.arguments.binding
                     ? ap => cancellationReference(ap) === command.arguments.binding!.evidenceReference : undefined);
               }
-              const result: ReceptionistToolResult = command.name === "clear_pending" ? { status: "data", data: { pending: null } }
+              const result: AgentToolResult = command.name === "clear_pending" ? { status: "data", data: { pending: null } }
                 : reply.data ? { status: "data", data: reply.data }
                 : reply.saved
-                ? { status: "staged_action", operation: command.name, appointment: this.receptionistAppointment(reply.saved) }
+                ? { status: "staged_action", operation: command.name, appointment: this.agentAppointment(reply.saved) }
                 : reply.renderedQuote && reply.dialogue.quote
                   ? { status: "prepared_quote", quote: structuredClone(reply.dialogue.quote), message: reply.text,
-                    presentation: canonicalReceptionistDate(reply.dialogue.quote.startsAt, RECEPTIONIST_CALENDAR_TIME_ZONE) }
+                    presentation: canonicalAgentDate(reply.dialogue.quote.startsAt, AGENT_CALENDAR_TIME_ZONE) }
                   : { status: command.name === "confirm_quote" || command.name === "confirm_quote_naturally" || command.name === "collect_booking_names" || command.name.startsWith("prepare_") ? "clarification" : "rejected",
                     code: "CUSTOMER_INPUT_REQUIRED", message: reply.text };
               return { result, reply };
@@ -276,7 +276,7 @@ export class PostgresWhatsAppAgenda {
               "STATE_LOCKED", "STARTED_STRUCTURE_LOCKED", "LEAD_TIME", "NOTES_LOCKED", "NOT_TRANSITION", "INVALID_ACTION_CONTEXT",
               "ATTENDANCE_FORBIDDEN", "INVALID_ATTENDANCE_TIME", "BEFORE_START", "CONFIRMATION_REQUIRED"].includes(error.code)
               ? error.code : "UNKNOWN_APPOINTMENT_ERROR";
-            emitReceptionistDiagnostic(this.diagnose, { code: "receptionist.tool_rejected", toolName: command.name, errorCode });
+            emitAgentDiagnostic(this.diagnose, { code: "agent.tool_rejected", toolName: command.name, errorCode });
             return { status: "rejected", code: "AGENDA_REJECTED" };
           }
         }, { message: source.raw_text, recent: source.turns.slice(-12).map(turn => turn.raw_text.slice(0, 2000)),
@@ -288,18 +288,18 @@ export class PostgresWhatsAppAgenda {
           text = await converse(session);
           await session.drain();
         } finally { session.close(); await session.drain(); }
-        if (typeof text !== "string" || !text.trim() || text.length > 12000) throw new Error("Invalid receptionist response");
+        if (typeof text !== "string" || !text.trim() || text.length > 12000) throw new Error("Invalid agent response");
         // Valid informational prose cannot replace a backend quote, name request or action reply.
         // Otherwise the renderer validates the final act and gives current tool failures priority.
         text = backendReply ?? session.renderResponse(text);
         if (dialogue.quote && quoteNeedsDelivery && !text.includes(quoteText(dialogue.quote)))
           text += "\n\n" + quoteText(dialogue.quote);
-        if (!text.trim() || text.length > 12000) throw new Error("Rendered receptionist response limit");
+        if (!text.trim() || text.length > 12000) throw new Error("Rendered agent response limit");
         const output = await repo.saveGenerated(job.messageId, job.businessId, text);
-        if (!output) throw new Error("Receptionist source changed before atomic save");
+        if (!output) throw new Error("Agent source changed before atomic save");
         if (dialogue.quote && quoteNeedsDelivery) dialogue.quote.outboundId = output.outbound_id;
         if (phone) await repo.saveAgendaDialogue(job.businessId, source.connection_id, phone, dialogue);
-        await repo.recordAgendaReceipt(job.businessId, job.messageId, output.outbound_id, actions[0]?.operation ?? "receptionist");
+        await repo.recordAgendaReceipt(job.businessId, job.messageId, output.outbound_id, actions[0]?.operation ?? "agent");
         await repo.appendAudit(job.businessId, {
           eventType: actions.length ? "whatsapp.agenda.saved" : "whatsapp.agenda.reply", outcome: "success",
           eventHash: createHash("sha256").update(job.messageId).digest("hex"),
@@ -317,15 +317,15 @@ export class PostgresWhatsAppAgenda {
       return { status: "infrastructure_failure" };
     }
   }
-  private receptionistAppointment(ap: StoredAppointment) {
+  private agentAppointment(ap: StoredAppointment) {
     return { id: ap.id, startsAt: ap.startsAt, terms: ap.terms, state: ap.state,
       notes: ap.notes, preference: ap.customerResourcePreference,
-      presentation: canonicalReceptionistDate(ap.startsAt, RECEPTIONIST_CALENDAR_TIME_ZONE) };
+      presentation: canonicalAgentDate(ap.startsAt, AGENT_CALENDAR_TIME_ZONE) };
   }
-  private async receptionistRead(repo: PostgresRepositories, job: PostgresAiJob, source: Source,
-    phone: string | null, command: ReceptionistToolCommand, dialogue: AgendaDialogue,
+  private async agentRead(repo: PostgresRepositories, job: PostgresAiJob, source: Source,
+    phone: string | null, command: AgentToolCommand, dialogue: AgendaDialogue,
     inspectAppointment: (ap: StoredAppointment) => unknown,
-    inspectResource: (resource: CatalogResource) => unknown): Promise<ReceptionistToolResult> {
+    inspectResource: (resource: CatalogResource) => unknown): Promise<AgentToolResult> {
     const bounded = <T>(items: T[]) => {
       const selected = items.slice(0, 50);
       while (selected.length && new TextEncoder().encode(JSON.stringify(selected)).byteLength > 12000) selected.pop();
@@ -344,15 +344,15 @@ export class PostgresWhatsAppAgenda {
       case "read_calendar": {
         const calendar = await repo.getBusinessCalendar(job.businessId);
         if (!calendar.weeklySchedule) return { status: "unavailable_data", code: "BUSINESS_CALENDAR_MISSING" };
-        return { status: "data", data: { timeZone: RECEPTIONIST_CALENDAR_TIME_ZONE,
+        return { status: "data", data: { timeZone: AGENT_CALENDAR_TIME_ZONE,
           weeklySchedule: calendar.weeklySchedule, closures: bounded(await repo.listBusinessClosures(job.businessId)),
           establishesAvailability: false } };
       }
       case "availability": {
         const args = command.arguments, serviceId = args.serviceId.toLowerCase(), resourceId = args.resourceId?.toLowerCase();
         const referenceFailure = (kind: "service" | "resource" | "appointment_context",
-          errorCode: AppointmentError["code"] = "UNKNOWN_OWNED_ID"): ReceptionistToolResult => {
-          emitReceptionistDiagnostic(this.diagnose, { code: "receptionist.tool_rejected", toolName: "availability",
+          errorCode: AppointmentError["code"] = "UNKNOWN_OWNED_ID"): AgentToolResult => {
+          emitAgentDiagnostic(this.diagnose, { code: "agent.tool_rejected", toolName: "availability",
             errorCode, referenceFailureKind: kind });
           return { status: "rejected", code: kind === "service" ? "SERVICE_REFERENCE_REQUIRED"
             : kind === "resource" ? "RESOURCE_REFERENCE_REQUIRED" : "AGENDA_REJECTED",
@@ -402,7 +402,7 @@ export class PostgresWhatsAppAgenda {
         const resourceName = resources.find(item => item.id === queryResource)?.name;
         return { status: "data", data: { ...bounded(options.map(option => ({ startsAt: option.start, resourceId: option.resourceId,
           serviceId: option.terms.serviceId, durationMinutes: option.terms.durationMinutes, priceArs: option.terms.priceArs,
-          presentation: canonicalReceptionistDate(option.start, RECEPTIONIST_CALENDAR_TIME_ZONE) }))),
+          presentation: canonicalAgentDate(option.start, AGENT_CALENDAR_TIME_ZONE) }))),
           message: options.length ? this.slotsText(options, resourceName)
             : `No hay horarios disponibles${resourceName ? ` con ${resourceName}` : ""} para ${args.date}. ¿Querés consultar otro día?` } };
       }
@@ -419,8 +419,8 @@ export class PostgresWhatsAppAgenda {
    * Actual preference/name context stays separate. Confirmation still requires
    * actual subsequent input and delivered quote evidence.
    */
-  private async prepareReceptionistQuote(repo: PostgresRepositories, job: PostgresAiJob, source: Source, phone: string,
-    dialogue: AgendaDialogue, command: Extract<ReceptionistToolCommand, { name: "prepare_booking" | "prepare_change" }>): Promise<Reply & { preparation: PreparationOutcome }> {
+  private async prepareAgentQuote(repo: PostgresRepositories, job: PostgresAiJob, source: Source, phone: string,
+    dialogue: AgendaDialogue, command: Extract<AgentToolCommand, { name: "prepare_booking" | "prepare_change" }>): Promise<Reply & { preparation: PreparationOutcome }> {
     const outcome = (preparation: PreparationOutcome, reply: Reply) => ({ ...reply, preparation });
     const args = command.arguments;
     const current = command.name === "prepare_change" ? await this.owned(repo, job.businessId, phone, command.arguments.appointmentId) : null;

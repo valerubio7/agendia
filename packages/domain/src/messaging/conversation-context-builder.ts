@@ -1,7 +1,7 @@
 export interface ConversationTurn {
   id?: string;
   sequence: number;
-  role: "customer" | "assistant";
+  role: "customer" | "agent";
   text: string;
   delivery?: "sent" | "failed" | "delivery_unknown";
 }

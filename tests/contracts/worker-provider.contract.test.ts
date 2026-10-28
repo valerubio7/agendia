@@ -19,7 +19,7 @@ import { deepSeekFetchDouble } from "../support/index.ts";
 
 const request: AiGenerateRequest = {
   business: { name: "A" },
-  assistant: { tone: "amable" },
+  agent: { tone: "amable" },
   context: { summary: "s", recent: [] },
   message: "hola",
   maxOutputCharacters: 100,

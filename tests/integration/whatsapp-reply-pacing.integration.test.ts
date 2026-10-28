@@ -16,7 +16,7 @@ beforeAll(async () => {
   await applyPostgresMigrations(db.sql, join(import.meta.dir, "../../packages/db/migrations"));
   await db.sql`insert into businesses(id,name,status) values(${A},'A','active'),(${B},'B','active')`;
   await db.sql`insert into business_profiles(business_id,display_name) values(${A},'A'),(${B},'B')`;
-  await db.sql`insert into assistant_configs(business_id,active) values(${A},true),(${B},true)`;
+  await db.sql`insert into agent_configs(business_id,active) values(${A},true),(${B},true)`;
   await db.sql`insert into whatsapp_connections(id,business_id,session_public_id,state,owner_id,ownership_token)
     values(${connection},${A},${randomUUID()},'CONNECTED','pacing-manager',${ownership})`;
   const managerUrl = await createRoleLogin(db, "pacing_manager", "agendia_whatsapp_runtime");

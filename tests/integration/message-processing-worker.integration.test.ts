@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { PgBoss } from "pg-boss";
-import type { AiProvider, ToolAssistantMessage, ToolConversationProvider } from '@agendia/domain';
+import type { AiProvider, ToolAgentMessage, ToolConversationProvider } from '@agendia/domain';
 import { createRuntimePools, tenantContext, PostgresRepositories } from "@agendia/db";
 import {
   BaileysAuthStateAdapter,
@@ -72,7 +72,7 @@ beforeAll(async () => {
   await db.sql`insert into businesses(id,name,status) values(${A},'Tenant A','active'),(${B},'Tenant B','active')`;
   await db.sql`insert into business_profiles(business_id,display_name,description) values(${A},'A','envíos'),(${B},'B','SECRETO-B')`;
   await db.sql`update business_profiles set description='RETAINED_DESCRIPTION',address='RETAINED_ADDRESS' where business_id=${A}`;
-  await db.sql`insert into assistant_configs(business_id,active,style,business_instructions) values(${A},true,${maximumStyle},${maximumBusinessInstructions}),(${B},false,'STYLE-B','no usar')`;
+  await db.sql`insert into agent_configs(business_id,active,style,business_instructions) values(${A},true,${maximumStyle},${maximumBusinessInstructions}),(${B},false,'STYLE-B','no usar')`;
   await db.sql`insert into whatsapp_connections(id,business_id,session_public_id,state,owner_id) values(${CA},${A},${SA},'CONNECTED','manager-1'),(${CB},${B},${SB},'CONNECTED','manager-2')`;
   await db.sql`update whatsapp_connections set ownership_token=${OWNERSHIP} where id=${CA}`;
   const workerUrl = await createRoleLogin(
@@ -167,7 +167,7 @@ describe("PostgreSQL messaging workers", () => {
     ])
       await inbound.handle(e);
     await db.sql`update businesses set status='suspended' where id=${B}`;
-    await db.sql`update assistant_configs set active=true where business_id=${B}`;
+    await db.sql`update agent_configs set active=true where business_id=${B}`;
     expect(
       (
         await inbound.handle(
@@ -252,23 +252,23 @@ describe("PostgreSQL messaging workers", () => {
     expect(maximumBusinessInstructions.length).toBe(64058);
     expect(Buffer.byteLength(maximumStyle + maximumBusinessInstructions, 'utf8')).toBe(192080);
     expect(Buffer.byteLength(maximumStyle + maximumBusinessInstructions, 'utf8')).toBeGreaterThan(128 * 1024);
-    await expect(worker.process(job)).rejects.toThrow('Receptionist infrastructure failure');
+    await expect(worker.process(job)).rejects.toThrow('Agent infrastructure failure');
     expect(calls).toHaveLength(0);
     expect(await db.sql`select outbound_id from outbound_commands`).toHaveLength(0);
     expect((await db.sql`select processing_state from messages where id=${messageId}`)[0]!.processing_state).toBe('pending');
     // Malformed optional summary cannot rescue oversized required settings or invoke a provider.
     await db.sql`insert into conversation_summaries(business_id,conversation_id,version,covered_through,structured_summary) values(${A},${conversation.id},2,0,${db.sql.json({ facts: [] })})`;
-    await expect(worker.process({ ...job, correlationId: 'invalid-oversized' })).rejects.toThrow('Receptionist infrastructure failure');
+    await expect(worker.process({ ...job, correlationId: 'invalid-oversized' })).rejects.toThrow('Agent infrastructure failure');
     expect(calls).toHaveLength(0);
     await db.sql`update messages set raw_text=repeat('x',800) where id=${messageId}`;
-    await expect(worker.process({ ...job, correlationId: 'oversized-800-retry' })).rejects.toThrow('Receptionist infrastructure failure');
+    await expect(worker.process({ ...job, correlationId: 'oversized-800-retry' })).rejects.toThrow('Agent infrastructure failure');
     expect(calls).toHaveLength(0);
     expect(await db.sql`select outbound_id from outbound_commands`).toHaveLength(0);
-    expect((await db.sql`select style,business_instructions from assistant_configs where business_id=${A}`)[0]).toMatchObject({ style: maximumStyle, business_instructions: maximumBusinessInstructions });
+    expect((await db.sql`select style,business_instructions from agent_configs where business_id=${A}`)[0]).toMatchObject({ style: maximumStyle, business_instructions: maximumBusinessInstructions });
     expect((await db.sql`select processing_state from messages where id=${messageId}`)[0]!.processing_state).toBe('pending');
     await db.sql`update messages set raw_text='¿Dónde están ubicados?' where id=${messageId}`;
     await db.sql`delete from conversation_summaries where business_id=${A} and version=2`;
-    await db.sql`update assistant_configs set style='Estilo A',business_instructions='Instrucciones A' where business_id=${A}`;
+    await db.sql`update agent_configs set style='Estilo A',business_instructions='Instrucciones A' where business_id=${A}`;
     await worker.process(job);
     expect(calls).toHaveLength(2);
     expect(JSON.parse(calls[1]!).messages.at(-1)).toMatchObject({ role: 'tool', toolCallId: 'business', content: JSON.stringify({ status: 'data', data: { displayName: 'A', description: 'RETAINED_DESCRIPTION', address: 'RETAINED_ADDRESS' }, namesReference: null }) });
@@ -418,7 +418,7 @@ describe("PostgreSQL messaging workers", () => {
 
   test("reclaims crashes, deduplicates publication and isolates two tenants", async () => {
     await db.sql`update businesses set status='active' where id=${B}`;
-    await db.sql`update assistant_configs set active=true where business_id=${B}`;
+    await db.sql`update agent_configs set active=true where business_id=${B}`;
     const inbound = new PostgresInboundHandler(pools);
     expect(
       (
@@ -955,7 +955,7 @@ describe("bounded generation retries through real pg-boss work", () => {
       const text = "quería cancelar mi turno";
       const schedule = Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map(day => [day, [{ startMinute: 540, endMinute: 1080 }]]));
       await db.sql`insert into businesses(id,name) values(${business},'Retry fixture')`;
-      await db.sql`insert into assistant_configs(business_id,active,style,business_instructions) values(${business},true,'Breve','Agenda')`;
+      await db.sql`insert into agent_configs(business_id,active,style,business_instructions) values(${business},true,'Breve','Agenda')`;
       await db.sql`insert into business_profiles(business_id,display_name) values(${business},'Retry fixture')`;
       await db.sql`insert into whatsapp_connections(id,business_id,session_public_id,state) values(${connection},${business},${session},'CONNECTED')`;
       await db.sql`insert into business_calendars(business_id,weekly_schedule) values(${business},${db.sql.json(schedule)})`;
@@ -999,7 +999,7 @@ describe("bounded generation retries through real pg-boss work", () => {
         converse: async request => {
           correlations.push(request.correlationId);
           const last = request.messages.at(-1)!;
-          const call = (id: string, name: string, args: NonNullable<ToolAssistantMessage["toolCalls"]>[number]["arguments"]) => ({ message: { role: "assistant" as const, content: null,
+          const call = (id: string, name: string, args: NonNullable<ToolAgentMessage["toolCalls"]>[number]["arguments"]) => ({ message: { role: "assistant" as const, content: null,
             toolCalls: [{ id, name, arguments: args }] }, providerId: "retry-double", usageTokens: 1 });
           if (last.role !== "tool") return mode === "rejection"
             ? call("cancel", "cancel", { appointmentId: randomUUID() })
@@ -1077,7 +1077,7 @@ describe("bounded generation retries through real pg-boss work", () => {
           await processor.process(job.data); // Receipt/source fence also suppresses a duplicate delivery.
           expect(correlations).toHaveLength(before);
           expect(await effects()).toEqual({ outputs: 1, receipts: 1, effects: saved ? 1 : 0 });
-          expect((await db.sql`select operation from whatsapp_agenda_receipts where message_id=${source.id}`)[0]!.operation).toBe(saved ? "cancel" : "receptionist");
+          expect((await db.sql`select operation from whatsapp_agenda_receipts where message_id=${source.id}`)[0]!.operation).toBe(saved ? "cancel" : "agent");
           expect((await db.sql`select text from outbound_commands where source_message_id=${source.id}`)[0]!.text).toBe(saved
             ? `Cancelación guardada. Turno ${appointment.id}.`
             : "Indicá explícitamente si querés cancelar tu turno.");

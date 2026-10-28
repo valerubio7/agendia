@@ -90,7 +90,7 @@ test("role-aware authenticated shells recover safely and expose only valid navig
   await focusRing(businessesTab, "rgb(46, 107, 78)");
   await expect(
     adminShell.getByRole("link", {
-      name: /^(?:Perfil|Asistente|WhatsApp|Inicio|Dashboard)$/i,
+      name: /^(?:Perfil|Agente|WhatsApp|Inicio|Dashboard)$/i,
     }),
   ).toHaveCount(0);
   await expect(
@@ -178,7 +178,7 @@ test("role-aware authenticated shells recover safely and expose only valid navig
       "Recursos",
       "Horario",
       "Clientes",
-      "Asistente",
+      "Agente",
       "WhatsApp",
     ]);
     await expect(
@@ -198,13 +198,13 @@ test("role-aware authenticated shells recover safely and expose only valid navig
     await primaryPair(desktopNavigation.locator('[aria-current="page"]'));
 
     await businessNavigation
-      .getByRole("link", { name: "Asistente", exact: true })
+      .getByRole("link", { name: "Agente", exact: true })
       .click();
-    await expect(businessPage).toHaveURL(/\/assistant$/);
+    await expect(businessPage).toHaveURL(/\/agent$/);
     await expect(businessShell).toHaveCount(1);
     await expect(
       businessNavigation.getByRole("link", {
-        name: "Asistente",
+        name: "Agente",
         exact: true,
       }),
     ).toHaveAttribute("aria-current", "page");
@@ -225,7 +225,7 @@ test("role-aware authenticated shells recover safely and expose only valid navig
     ).toHaveAttribute("aria-current", "page");
     await expect(
       businessNavigation.getByRole("link", {
-        name: "Asistente",
+        name: "Agente",
         exact: true,
       }),
     ).not.toHaveAttribute("aria-current", "page");
@@ -250,10 +250,10 @@ test("role-aware authenticated shells recover safely and expose only valid navig
     await expect(mobileNavigation).toHaveAttribute("open", "");
 
     const mobileLinks = mobileNavigation.getByRole("link");
-    await expect(mobileLinks).toHaveText(["Turnos", "Perfil", "Servicios", "Recursos", "Horario", "Clientes", "Asistente", "WhatsApp"]);
+    await expect(mobileLinks).toHaveText(["Turnos", "Perfil", "Servicios", "Recursos", "Horario", "Clientes", "Agente", "WhatsApp"]);
     await primaryPair(mobileNavigation.locator('[aria-current="page"]'));
     await expect(businessShell.locator(".authenticated-shell__mobile-menu")).toHaveCSS("background-color", "rgb(252, 250, 243)");
-    for (const name of ["Perfil", "Asistente", "WhatsApp"] as const) {
+    for (const name of ["Perfil", "Agente", "WhatsApp"] as const) {
       const link = mobileNavigation.getByRole("link", { name, exact: true });
       await expect(link).toBeVisible();
       await link.focus();

@@ -4,7 +4,7 @@ import "./styles.css";
 
 export const metadata: Metadata = {
   title: "agendIA",
-  description: "Administración segura de asistentes para WhatsApp",
+  description: "Administración segura de agentes para WhatsApp",
   icons: { icon: { url: "/brand/favicon.svg", type: "image/svg+xml" } },
 };
 

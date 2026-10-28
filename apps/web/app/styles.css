@@ -817,13 +817,13 @@ main.login-frame {
 }
 
 /* Profile navigation — horizontal shell, unchanged route controls */
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) {
   position: relative;
   display: flex;
   flex-direction: column;
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar {
   position: static;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -838,13 +838,13 @@ main.login-frame {
   background: var(--pine-deep);
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar > .brand {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar > .brand {
   --brand-height: 32px;
   --brand-clearspace: calc(var(--brand-height) * 11 / 12);
   align-self: center;
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__navigation {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__navigation {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -854,7 +854,7 @@ main.login-frame {
   padding-block: 0.5rem;
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__navigation a {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__navigation a {
   flex: 0 0 auto;
   min-height: 2.75rem;
   padding: 0.65rem 0.75rem;
@@ -868,18 +868,18 @@ main.login-frame {
     border-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__navigation a:hover {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__navigation a:hover {
   border-color: var(--pine);
   background: var(--pine);
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__navigation a[aria-current="page"] {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__navigation a[aria-current="page"] {
   border-color: var(--pine);
   background: var(--pine);
   color: var(--white);
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar > button {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar > button {
   width: auto;
   min-height: 2.75rem;
   margin: 0;
@@ -893,47 +893,47 @@ main.login-frame {
   transition: background-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar > button:hover:not(:disabled) {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar > button:hover:not(:disabled) {
   background: var(--pine);
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar a:focus-visible,
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar > button:focus-visible {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar a:focus-visible,
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar > button:focus-visible {
   outline: 2px solid var(--paper);
   outline-offset: 2px;
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar > button:disabled {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar > button:disabled {
   cursor: wait;
   opacity: 0.65;
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__workspace {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__workspace {
   flex: 1 0 auto;
   width: 100%;
   min-height: 0;
 }
 
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__topbar {
+.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__topbar {
   display: none;
 }
 
 @media (width < 64rem) {
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar {
     grid-template-columns: minmax(0, 1fr);
     padding-inline: 1rem;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar > .brand {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar > .brand {
     justify-self: start;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__navigation,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar > button {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__navigation,
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar > button {
     display: none;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__topbar {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__topbar {
     position: absolute;
     top: 0;
     right: 1rem;
@@ -946,17 +946,17 @@ main.login-frame {
     background: transparent;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-brand,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__section {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-brand,
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__section {
     display: none;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) [data-ui="mobile-navigation"] {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) [data-ui="mobile-navigation"] {
     position: relative;
     display: block;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) [data-ui="mobile-navigation"] > summary {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) [data-ui="mobile-navigation"] > summary {
     display: list-item;
     min-height: 2.75rem;
     padding: 0.65rem 0.85rem;
@@ -971,28 +971,28 @@ main.login-frame {
     transition: background-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) [data-ui="mobile-navigation"] > summary::-webkit-details-marker {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) [data-ui="mobile-navigation"] > summary::-webkit-details-marker {
     display: revert;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) [data-ui="mobile-navigation"] > summary::after {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) [data-ui="mobile-navigation"] > summary::after {
     content: none;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) [data-ui="mobile-navigation"][open] > summary {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) [data-ui="mobile-navigation"][open] > summary {
     list-style-type: disclosure-open;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) [data-ui="mobile-navigation"] > summary:hover {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) [data-ui="mobile-navigation"] > summary:hover {
     background: var(--pine-deep);
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) [data-ui="mobile-navigation"] > summary:focus-visible {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) [data-ui="mobile-navigation"] > summary:focus-visible {
     outline: 2px solid var(--paper);
     outline-offset: 3px;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu {
     position: absolute;
     top: calc(100% + 0.75rem);
     right: 0;
@@ -1009,14 +1009,14 @@ main.login-frame {
     box-shadow: 0 0.75rem 2rem color-mix(in srgb, var(--pine-deep) 12%, transparent);
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu nav {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu nav {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.25rem;
     min-width: 0;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu a {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu a {
     display: flex;
     align-items: center;
     min-width: 0;
@@ -1031,18 +1031,18 @@ main.login-frame {
     transition: background-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu a:hover {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu a:hover {
     background: var(--pine-soft);
     color: var(--pine-deep);
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu a[aria-current="page"] {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu a[aria-current="page"] {
     border-color: var(--pine);
     background: var(--pine);
     color: var(--white);
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu button {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu button {
     width: 100%;
     min-height: 2.75rem;
     padding: 0.65rem 1rem;
@@ -1054,28 +1054,28 @@ main.login-frame {
     transition: background-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu button:hover:not(:disabled) {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu button:hover:not(:disabled) {
     background: var(--pine-deep);
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu a:focus-visible,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu button:focus-visible {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu a:focus-visible,
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu button:focus-visible {
     outline: 2px solid var(--pine);
     outline-offset: 2px;
   }
 
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu button:disabled {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu button:disabled {
     cursor: wait;
     opacity: 0.65;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__navigation a,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar > button,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) [data-ui="mobile-navigation"] > summary,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu a,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.assistant-screen:where([data-ui="assistant-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu button {
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__navigation a,
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar > button,
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) [data-ui="mobile-navigation"] > summary,
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu a,
+  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu button {
     transition: none;
   }
 }
@@ -1328,24 +1328,24 @@ main.login-frame {
   }
 }
 
-/* Assistant — a voice direction studio */
-.assistant-screen,
-.assistant-screen * {
+/* Agent — a voice direction studio */
+.agent-screen,
+.agent-screen * {
   box-sizing: border-box;
 }
 
-.assistant-screen {
-  --assistant-ink: var(--ink);
-  --assistant-night: var(--pine-deep);
-  --assistant-violet: var(--pine);
-  --assistant-lilac: var(--paper);
-  --assistant-line: var(--line);
+.agent-screen {
+  --agent-ink: var(--ink);
+  --agent-night: var(--pine-deep);
+  --agent-violet: var(--pine);
+  --agent-lilac: var(--paper);
+  --agent-line: var(--line);
   width: 100%;
   min-width: 0;
-  color: var(--assistant-ink);
+  color: var(--agent-ink);
 }
 
-.assistant-screen .assistant-hero {
+.agent-screen .agent-hero {
   position: relative;
   min-width: 0;
   display: grid;
@@ -1359,7 +1359,7 @@ main.login-frame {
   box-shadow: 0 1.6rem 4rem rgba(17, 28, 25, 0.2);
 }
 
-.assistant-screen .assistant-hero::before {
+.agent-screen .agent-hero::before {
   position: absolute;
   top: -7rem;
   left: 41%;
@@ -1375,7 +1375,7 @@ main.login-frame {
   pointer-events: none;
 }
 
-.assistant-screen .assistant-hero::after {
+.agent-screen .agent-hero::after {
   position: absolute;
   right: -7rem;
   bottom: -10rem;
@@ -1387,19 +1387,19 @@ main.login-frame {
   pointer-events: none;
 }
 
-.assistant-screen .assistant-hero__copy,
-.assistant-screen .assistant-signal {
+.agent-screen .agent-hero__copy,
+.agent-screen .agent-signal {
   position: relative;
   z-index: 1;
   min-width: 0;
 }
 
-.assistant-screen .assistant-hero__copy {
+.agent-screen .agent-hero__copy {
   align-self: center;
   max-width: 43rem;
 }
 
-.assistant-screen .assistant-hero__eyebrow {
+.agent-screen .agent-hero__eyebrow {
   margin: 0 0 1.1rem;
   color: var(--paper);
   font-family: var(--font-body);
@@ -1409,7 +1409,7 @@ main.login-frame {
   text-transform: uppercase;
 }
 
-.assistant-screen .assistant-hero h1 {
+.agent-screen .agent-hero h1 {
   max-width: 11ch;
   margin: 0;
   color: var(--paper);
@@ -1421,7 +1421,7 @@ main.login-frame {
   text-wrap: balance;
 }
 
-.assistant-screen .assistant-hero__copy > p:last-child {
+.agent-screen .agent-hero__copy > p:last-child {
   max-width: 39rem;
   margin: 1.5rem 0 0;
   color: var(--paper);
@@ -1429,7 +1429,7 @@ main.login-frame {
   line-height: 1.68;
 }
 
-.assistant-screen .assistant-signal {
+.agent-screen .agent-signal {
   align-self: stretch;
   display: grid;
   grid-template-rows: auto minmax(9rem, 1fr) auto;
@@ -1441,7 +1441,7 @@ main.login-frame {
   backdrop-filter: blur(0.8rem);
 }
 
-.assistant-screen .assistant-signal__header {
+.agent-screen .agent-signal__header {
   display: flex;
   justify-content: space-between;
   gap: 1rem;
@@ -1455,42 +1455,42 @@ main.login-frame {
   text-transform: uppercase;
 }
 
-.assistant-signal__brand {
+.agent-signal__brand {
   --brand-height: 24px;
 }
 
-.assistant-screen .assistant-signal__stage {
+.agent-screen .agent-signal__stage {
   position: relative;
   min-height: 9rem;
   overflow: hidden;
 }
 
-.assistant-screen .assistant-signal__orbit,
-.assistant-screen .assistant-signal__core,
-.assistant-screen .assistant-signal__pulse {
+.agent-screen .agent-signal__orbit,
+.agent-screen .agent-signal__core,
+.agent-screen .agent-signal__pulse {
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
 }
 
-.assistant-screen .assistant-signal__orbit {
+.agent-screen .agent-signal__orbit {
   border: 1px solid var(--line);
   border-radius: 50%;
 }
 
-.assistant-screen .assistant-signal__orbit--outer {
+.agent-screen .agent-signal__orbit--outer {
   width: 10.5rem;
   height: 6rem;
 }
 
-.assistant-screen .assistant-signal__orbit--inner {
+.agent-screen .agent-signal__orbit--inner {
   width: 7rem;
   height: 3.7rem;
   border-color: rgba(255, 107, 73, 0.34);
 }
 
-.assistant-screen .assistant-signal__core {
+.agent-screen .agent-signal__core {
   z-index: 2;
   display: grid;
   place-items: center;
@@ -1505,7 +1505,7 @@ main.login-frame {
   box-shadow: 0 0 0 0.45rem rgba(255, 107, 73, 0.08);
 }
 
-.assistant-screen .assistant-signal__pulse {
+.agent-screen .agent-signal__pulse {
   width: 14rem;
   height: 1px;
   background: linear-gradient(
@@ -1516,36 +1516,36 @@ main.login-frame {
   );
 }
 
-.assistant-screen .assistant-signal__pulse::before,
-.assistant-screen .assistant-signal__pulse::after {
+.agent-screen .agent-signal__pulse::before,
+.agent-screen .agent-signal__pulse::after {
   position: absolute;
   top: 50%;
   width: 0.38rem;
   height: 0.38rem;
   border-radius: 50%;
-  background: var(--assistant-lilac);
+  background: var(--agent-lilac);
   content: "";
   transform: translateY(-50%);
 }
 
-.assistant-screen .assistant-signal__pulse::before {
+.agent-screen .agent-signal__pulse::before {
   left: 1.2rem;
 }
 
-.assistant-screen .assistant-signal__pulse::after {
+.agent-screen .agent-signal__pulse::after {
   right: 1.2rem;
   background: var(--coral);
 }
 
-.assistant-screen .assistant-signal__pulse--one {
+.agent-screen .agent-signal__pulse--one {
   transform: translate(-50%, -50%) rotate(32deg);
 }
 
-.assistant-screen .assistant-signal__pulse--two {
+.agent-screen .agent-signal__pulse--two {
   transform: translate(-50%, -50%) rotate(-32deg);
 }
 
-.assistant-screen .assistant-signal__legend {
+.agent-screen .agent-signal__legend {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   margin: 0;
@@ -1554,28 +1554,28 @@ main.login-frame {
   list-style: none;
 }
 
-.assistant-screen .assistant-signal__legend li {
+.agent-screen .agent-signal__legend li {
   min-width: 0;
   padding: 0 0.65rem;
   border-right: 1px solid rgba(241, 238, 227, 0.1);
 }
 
-.assistant-screen .assistant-signal__legend li:first-child {
+.agent-screen .agent-signal__legend li:first-child {
   padding-left: 0.15rem;
 }
 
-.assistant-screen .assistant-signal__legend li:last-child {
+.agent-screen .agent-signal__legend li:last-child {
   padding-right: 0.15rem;
   border-right: 0;
 }
 
-.assistant-screen .assistant-signal__legend span,
-.assistant-screen .assistant-signal__legend strong,
-.assistant-screen .assistant-signal__legend small {
+.agent-screen .agent-signal__legend span,
+.agent-screen .agent-signal__legend strong,
+.agent-screen .agent-signal__legend small {
   display: block;
 }
 
-.assistant-screen .assistant-signal__legend span {
+.agent-screen .agent-signal__legend span {
   margin-bottom: 0.25rem;
   color: var(--paper);
   font-family: var(--font-mono);
@@ -1584,14 +1584,14 @@ main.login-frame {
   font-variant-numeric: tabular-nums;
 }
 
-.assistant-screen .assistant-signal__legend strong {
+.agent-screen .agent-signal__legend strong {
   color: var(--paper);
   font-family: var(--font-display);
   font-size: 0.8rem;
   font-weight: 650;
 }
 
-.assistant-screen .assistant-signal__legend small {
+.agent-screen .agent-signal__legend small {
   margin-top: 0.2rem;
   color: var(--paper);
   font-size: 0.62rem;
@@ -1599,11 +1599,11 @@ main.login-frame {
   overflow-wrap: anywhere;
 }
 
-.assistant-screen .assistant-feedback:empty {
+.agent-screen .agent-feedback:empty {
   display: none;
 }
 
-.assistant-screen .assistant-feedback {
+.agent-screen .agent-feedback {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 0.75rem;
@@ -1611,40 +1611,40 @@ main.login-frame {
   margin: 1.25rem 0 0;
 }
 
-.assistant-screen .assistant-feedback [role="alert"],
-.assistant-screen .assistant-feedback [role="status"] {
+.agent-screen .agent-feedback [role="alert"],
+.agent-screen .agent-feedback [role="status"] {
   margin: 0;
   padding: 1rem 1.15rem;
   border: 1px solid transparent;
   border-left-width: 0.3rem;
   border-radius: 0.85rem;
-  color: var(--assistant-ink);
+  color: var(--agent-ink);
   font-weight: 650;
   line-height: 1.5;
   box-shadow: 0 0.65rem 1.8rem rgba(23, 38, 32, 0.08);
 }
 
-.assistant-screen .assistant-feedback [role="alert"] {
+.agent-screen .agent-feedback [role="alert"] {
   border-color: var(--danger);
   border-left-color: var(--danger);
   background: var(--danger);
   color: var(--white);
 }
 
-.assistant-screen .assistant-feedback [role="status"] {
+.agent-screen .agent-feedback [role="status"] {
   border-color: var(--ok);
   border-left-color: var(--ok);
   background: var(--ok);
   color: var(--white);
 }
 
-.assistant-screen .assistant-conflict-action {
+.agent-screen .agent-conflict-action {
   min-height: 3.25rem;
   align-self: stretch;
   padding: 0.8rem 1.15rem;
-  border: 1px solid var(--assistant-violet);
+  border: 1px solid var(--agent-violet);
   border-radius: 0.85rem;
-  background: var(--assistant-violet);
+  background: var(--agent-violet);
   color: var(--white);
   font-weight: 650;
   white-space: nowrap;
@@ -1656,19 +1656,19 @@ main.login-frame {
     transform 140ms ease;
 }
 
-.assistant-screen .assistant-conflict-action:hover {
+.agent-screen .agent-conflict-action:hover {
   border-color: var(--pine);
   background: var(--pine);
   transform: translateY(-1px);
 }
 
-.assistant-screen .assistant-conflict-action:focus-visible {
+.agent-screen .agent-conflict-action:focus-visible {
   outline: 0.2rem solid var(--focus);
   outline-offset: 0.18rem;
   box-shadow: 0 0 0 0.3rem rgba(255, 107, 73, 0.18);
 }
 
-.assistant-screen .assistant-layout {
+.agent-screen .agent-layout {
   min-width: 0;
   display: grid;
   gap: clamp(1.25rem, 2.5vw, 2rem);
@@ -1676,21 +1676,21 @@ main.login-frame {
   margin-top: clamp(1.5rem, 3vw, 2.5rem);
 }
 
-.assistant-screen .assistant-form {
+.agent-screen .agent-form {
   min-width: 0;
   display: grid;
   gap: clamp(1.25rem, 2.5vw, 2rem);
   margin: 0;
 }
 
-.assistant-screen .assistant-section {
+.agent-screen .agent-section {
   position: relative;
   min-width: 0;
   overflow: hidden;
   scroll-margin-top: 1rem;
 }
 
-.assistant-screen .assistant-section--voice {
+.agent-screen .agent-section--voice {
   padding: clamp(1.1rem, 3vw, 2.25rem);
   border: 1px solid rgba(255, 107, 73, 0.22);
   border-left: 0.45rem solid var(--coral);
@@ -1699,7 +1699,7 @@ main.login-frame {
   box-shadow: 0 1rem 2.8rem rgba(23, 38, 32, 0.07);
 }
 
-.assistant-screen .assistant-section--context {
+.agent-screen .agent-section--context {
   padding: clamp(1.1rem, 3vw, 2.25rem);
   border: 1px solid rgba(241, 238, 227, 0.11);
   border-radius: 1.25rem 0.25rem 1.25rem 1.25rem;
@@ -1708,7 +1708,7 @@ main.login-frame {
   box-shadow: 0 1.3rem 3rem rgba(17, 28, 25, 0.15);
 }
 
-.assistant-screen .assistant-section--limits {
+.agent-screen .agent-section--limits {
   padding: clamp(1.1rem, 3vw, 2.25rem);
   border: 1px dashed rgba(55, 49, 77, 0.42);
   border-radius: 0;
@@ -1721,21 +1721,21 @@ main.login-frame {
     #f1eee6;
 }
 
-.assistant-screen .assistant-section__header {
+.agent-screen .agent-section__header {
   min-width: 0;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: clamp(0.9rem, 2vw, 1.4rem);
   align-items: start;
   padding-bottom: clamp(1rem, 2.4vw, 1.6rem);
-  border-bottom: 1px solid var(--assistant-line);
+  border-bottom: 1px solid var(--agent-line);
 }
 
-.assistant-screen .assistant-section--context .assistant-section__header {
+.agent-screen .agent-section--context .agent-section__header {
   border-bottom-color: rgba(241, 238, 227, 0.13);
 }
 
-.assistant-screen .assistant-section__marker {
+.agent-screen .agent-section__marker {
   width: 3.5rem;
   height: 3.5rem;
   display: flex;
@@ -1746,28 +1746,28 @@ main.login-frame {
   background: var(--coral-soft);
 }
 
-.assistant-screen .assistant-section__marker i {
+.agent-screen .agent-section__marker i {
   width: 0.16rem;
   border-radius: 1rem;
   background: var(--danger);
 }
 
-.assistant-screen .assistant-section__marker i:nth-child(1),
-.assistant-screen .assistant-section__marker i:nth-child(5) {
+.agent-screen .agent-section__marker i:nth-child(1),
+.agent-screen .agent-section__marker i:nth-child(5) {
   height: 0.65rem;
 }
 
-.assistant-screen .assistant-section__marker i:nth-child(2),
-.assistant-screen .assistant-section__marker i:nth-child(4) {
+.agent-screen .agent-section__marker i:nth-child(2),
+.agent-screen .agent-section__marker i:nth-child(4) {
   height: 1.3rem;
 }
 
-.assistant-screen .assistant-section__marker i:nth-child(3) {
+.agent-screen .agent-section__marker i:nth-child(3) {
   height: 2rem;
 }
 
-.assistant-screen .assistant-section__index,
-.assistant-screen .assistant-section__boundary {
+.agent-screen .agent-section__index,
+.agent-screen .agent-section__boundary {
   display: grid;
   place-items: center;
   min-width: 3.5rem;
@@ -1780,7 +1780,7 @@ main.login-frame {
   text-align: center;
 }
 
-.assistant-screen .assistant-section__index {
+.agent-screen .agent-section__index {
   border: 1px solid var(--line);
   border-radius: 0.85rem 0.85rem 0.85rem 0;
   color: var(--paper);
@@ -1788,14 +1788,14 @@ main.login-frame {
   font-variant-numeric: tabular-nums;
 }
 
-.assistant-screen .assistant-section__boundary {
-  border-top: 0.22rem solid var(--assistant-violet);
-  border-bottom: 0.22rem solid var(--assistant-violet);
-  color: var(--assistant-violet);
+.agent-screen .agent-section__boundary {
+  border-top: 0.22rem solid var(--agent-violet);
+  border-bottom: 0.22rem solid var(--agent-violet);
+  color: var(--agent-violet);
   transform: rotate(-3deg);
 }
 
-.assistant-screen .assistant-section__header p {
+.agent-screen .agent-section__header p {
   margin: 0 0 0.25rem;
   color: var(--ink-2);
   font-family: var(--font-body);
@@ -1805,13 +1805,13 @@ main.login-frame {
   text-transform: uppercase;
 }
 
-.assistant-screen .assistant-section--context .assistant-section__header p {
+.agent-screen .agent-section--context .agent-section__header p {
   color: var(--paper);
 }
 
-.assistant-screen .assistant-section__header h2 {
+.agent-screen .agent-section__header h2 {
   margin: 0;
-  color: var(--assistant-ink);
+  color: var(--agent-ink);
   font-family: var(--font-display);
   font-size: clamp(1.5rem, 3vw, 2.1rem);
   font-weight: 650;
@@ -1819,11 +1819,11 @@ main.login-frame {
   line-height: 1.08;
 }
 
-.assistant-screen .assistant-section--context .assistant-section__header h2 {
+.agent-screen .agent-section--context .agent-section__header h2 {
   color: var(--paper);
 }
 
-.assistant-screen .assistant-section__header div > span {
+.agent-screen .agent-section__header div > span {
   display: block;
   max-width: 43rem;
   margin-top: 0.55rem;
@@ -1832,40 +1832,40 @@ main.login-frame {
   line-height: 1.55;
 }
 
-.assistant-screen
-  .assistant-section--context
-  .assistant-section__header
+.agent-screen
+  .agent-section--context
+  .agent-section__header
   div
   > span {
   color: var(--paper);
 }
 
-.assistant-screen .assistant-section__fields {
+.agent-screen .agent-section__fields {
   min-width: 0;
   display: grid;
   gap: 1.15rem;
   margin-top: clamp(1.15rem, 2.5vw, 1.75rem);
 }
 
-.assistant-screen .assistant-field {
+.agent-screen .agent-field {
   min-width: 0;
   display: grid;
   align-content: start;
   gap: 0.45rem;
 }
 
-.assistant-screen .assistant-field__label {
-  color: var(--assistant-ink);
+.agent-screen .agent-field__label {
+  color: var(--agent-ink);
   font-size: 0.88rem;
   font-weight: 650;
   letter-spacing: -0.01em;
 }
 
-.assistant-screen .assistant-section--context .assistant-field__label {
+.agent-screen .agent-section--context .agent-field__label {
   color: var(--paper);
 }
 
-.assistant-screen .assistant-field textarea {
+.agent-screen .agent-field textarea {
   width: 100%;
   max-width: 100%;
   min-height: 9rem;
@@ -1874,7 +1874,7 @@ main.login-frame {
   border-radius: 0.75rem;
   outline: none;
   background: var(--paper);
-  color: var(--assistant-ink);
+  color: var(--agent-ink);
   font-family: var(--font-mono);
   font-weight: 450;
   line-height: 1.58;
@@ -1886,41 +1886,41 @@ main.login-frame {
     background-color 140ms ease;
 }
 
-.assistant-screen .assistant-section--voice .assistant-field textarea {
+.agent-screen .agent-section--voice .agent-field textarea {
   border-radius: 0.3rem 0.85rem 0.85rem 0.85rem;
 }
 
-.assistant-screen .assistant-section--context .assistant-field textarea {
+.agent-screen .agent-section--context .agent-field textarea {
   border-color: var(--line);
   background: var(--paper);
 }
 
-.assistant-screen .assistant-section--limits .assistant-field textarea {
+.agent-screen .agent-section--limits .agent-field textarea {
   border-color: rgba(55, 49, 77, 0.34);
   border-radius: 0;
 }
 
-.assistant-screen .assistant-field textarea:hover {
+.agent-screen .agent-field textarea:hover {
   border-color: var(--pine);
   background: var(--paper);
 }
 
-.assistant-screen .assistant-field textarea:focus-visible {
+.agent-screen .agent-field textarea:focus-visible {
   border-color: var(--focus);
   outline: 0.2rem solid var(--focus);
   background: var(--paper);
   box-shadow: 0 0 0 0.25rem rgba(55, 49, 77, 0.2);
 }
 
-.assistant-screen
-  .assistant-section--context
-  .assistant-field
+.agent-screen
+  .agent-section--context
+  .agent-field
   textarea:focus-visible {
   border-color: var(--focus);
   box-shadow: 0 0 0 0.25rem rgba(188, 180, 223, 0.22);
 }
 
-.assistant-screen .assistant-field__hint {
+.agent-screen .agent-field__hint {
   max-width: 65ch;
   color: var(--ink-2);
   font-size: 0.72rem;
@@ -1928,11 +1928,11 @@ main.login-frame {
   line-height: 1.5;
 }
 
-.assistant-screen .assistant-section--context .assistant-field__hint {
+.agent-screen .agent-section--context .agent-field__hint {
   color: var(--paper);
 }
 
-.assistant-screen .assistant-activation {
+.agent-screen .agent-activation {
   min-width: 0;
   display: grid;
   gap: 1rem;
@@ -1947,12 +1947,12 @@ main.login-frame {
     border-color 160ms ease;
 }
 
-.assistant-screen .assistant-activation--active {
+.agent-screen .agent-activation--active {
   border-color: rgba(47, 110, 82, 0.32);
   background: var(--paper);
 }
 
-.assistant-screen .assistant-activation__status {
+.agent-screen .agent-activation__status {
   display: inline-flex;
   align-items: center;
   justify-self: start;
@@ -1960,7 +1960,7 @@ main.login-frame {
   padding: 0.35rem 0.6rem;
   border: 1px solid rgba(55, 49, 77, 0.2);
   border-radius: 2rem;
-  color: var(--assistant-violet);
+  color: var(--agent-violet);
   font-family: var(--font-body);
   font-size: 0.62rem;
   font-weight: 650;
@@ -1968,27 +1968,27 @@ main.login-frame {
   text-transform: uppercase;
 }
 
-.assistant-screen .assistant-activation__status span {
+.agent-screen .agent-activation__status span {
   width: 0.48rem;
   height: 0.48rem;
   border-radius: 50%;
   background: var(--pine);
 }
 
-.assistant-screen .assistant-activation--active .assistant-activation__status {
+.agent-screen .agent-activation--active .agent-activation__status {
   border-color: rgba(47, 110, 82, 0.28);
   color: var(--pine);
 }
 
-.assistant-screen
-  .assistant-activation--active
-  .assistant-activation__status
+.agent-screen
+  .agent-activation--active
+  .agent-activation__status
   span {
   background: var(--pine);
   box-shadow: 0 0 0 0.22rem rgba(47, 110, 82, 0.13);
 }
 
-.assistant-screen .assistant-activation__copy p {
+.agent-screen .agent-activation__copy p {
   margin: 0 0 0.25rem;
   color: var(--ink-2);
   font-family: var(--font-body);
@@ -1998,11 +1998,11 @@ main.login-frame {
   text-transform: uppercase;
 }
 
-.assistant-screen .assistant-activation--active .assistant-activation__copy p {
+.agent-screen .agent-activation--active .agent-activation__copy p {
   color: var(--pine);
 }
 
-.assistant-screen .assistant-activation__copy h2 {
+.agent-screen .agent-activation__copy h2 {
   margin: 0;
   font-family: var(--font-display);
   font-size: clamp(1.25rem, 2.5vw, 1.65rem);
@@ -2011,7 +2011,7 @@ main.login-frame {
   line-height: 1.12;
 }
 
-.assistant-screen .assistant-activation__copy > span {
+.agent-screen .agent-activation__copy > span {
   display: block;
   max-width: 49rem;
   margin-top: 0.55rem;
@@ -2020,7 +2020,7 @@ main.login-frame {
   line-height: 1.55;
 }
 
-.assistant-screen .assistant-activation__switch {
+.agent-screen .agent-activation__switch {
   position: relative;
   min-height: 3.25rem;
   display: flex;
@@ -2030,18 +2030,18 @@ main.login-frame {
   border: 1px solid rgba(55, 49, 77, 0.2);
   border-radius: 0.85rem;
   background: var(--paper);
-  color: var(--assistant-ink);
+  color: var(--agent-ink);
   cursor: pointer;
 }
 
-.assistant-screen .assistant-activation__switch input {
+.agent-screen .agent-activation__switch input {
   position: absolute;
   width: 1px;
   height: 1px;
   opacity: 0;
 }
 
-.assistant-screen .assistant-activation__track {
+.agent-screen .agent-activation__track {
   width: 3rem;
   height: 1.65rem;
   flex: 0 0 auto;
@@ -2051,7 +2051,7 @@ main.login-frame {
   transition: background-color 160ms ease;
 }
 
-.assistant-screen .assistant-activation__track span {
+.agent-screen .agent-activation__track span {
   display: block;
   width: 1.25rem;
   height: 1.25rem;
@@ -2061,53 +2061,53 @@ main.login-frame {
   transition: transform 160ms ease;
 }
 
-.assistant-screen
-  .assistant-activation__switch
+.agent-screen
+  .agent-activation__switch
   input:checked
-  + .assistant-activation__track {
+  + .agent-activation__track {
   background: var(--pine);
 }
 
-.assistant-screen
-  .assistant-activation__switch
+.agent-screen
+  .agent-activation__switch
   input:checked
-  + .assistant-activation__track
+  + .agent-activation__track
   span {
   transform: translateX(1.35rem);
 }
 
-.assistant-screen
-  .assistant-activation__switch
+.agent-screen
+  .agent-activation__switch
   input:focus-visible
-  + .assistant-activation__track {
+  + .agent-activation__track {
   outline: 0.2rem solid var(--focus);
   outline-offset: 0.2rem;
 }
 
-.assistant-screen .assistant-activation__switch strong {
+.agent-screen .agent-activation__switch strong {
   font-size: 0.8rem;
   font-weight: 650;
   line-height: 1.35;
 }
 
-.assistant-screen .assistant-rail {
+.agent-screen .agent-rail {
   min-width: 0;
   display: grid;
   gap: 0.9rem;
 }
 
-.assistant-screen .assistant-rail__guide,
-.assistant-screen .assistant-save-panel {
+.agent-screen .agent-rail__guide,
+.agent-screen .agent-save-panel {
   border-radius: 1.05rem;
 }
 
-.assistant-screen .assistant-rail__guide {
+.agent-screen .agent-rail__guide {
   padding: 1.3rem;
   border: 1px solid rgba(55, 49, 77, 0.16);
   background: var(--paper);
 }
 
-.assistant-screen .assistant-rail__eyebrow {
+.agent-screen .agent-rail__eyebrow {
   margin: 0 0 0.45rem;
   color: var(--ink-2);
   font-family: var(--font-body);
@@ -2117,7 +2117,7 @@ main.login-frame {
   text-transform: uppercase;
 }
 
-.assistant-screen .assistant-rail h2 {
+.agent-screen .agent-rail h2 {
   margin: 0;
   font-family: var(--font-display);
   font-size: 1.3rem;
@@ -2125,7 +2125,7 @@ main.login-frame {
   letter-spacing: -0.035em;
 }
 
-.assistant-screen .assistant-rail ul {
+.agent-screen .agent-rail ul {
   display: grid;
   gap: 0.75rem;
   margin: 1rem 0 0;
@@ -2133,7 +2133,7 @@ main.login-frame {
   list-style: none;
 }
 
-.assistant-screen .assistant-rail li {
+.agent-screen .agent-rail li {
   position: relative;
   padding-left: 1.25rem;
   color: var(--ink-2);
@@ -2141,31 +2141,31 @@ main.login-frame {
   line-height: 1.5;
 }
 
-.assistant-screen .assistant-rail li::before {
+.agent-screen .agent-rail li::before {
   position: absolute;
   top: 0.43rem;
   left: 0;
   width: 0.5rem;
   height: 0.2rem;
-  background: var(--assistant-violet);
+  background: var(--agent-violet);
   content: "";
 }
 
-.assistant-screen .assistant-save-panel {
+.agent-screen .agent-save-panel {
   padding: 1.1rem;
   background: var(--pine-deep);
   color: var(--paper);
   box-shadow: 0 1rem 2.5rem rgba(36, 31, 54, 0.2);
 }
 
-.assistant-screen .assistant-save-panel p {
+.agent-screen .agent-save-panel p {
   margin: 0 0 0.9rem;
   color: var(--paper);
   font-size: 0.75rem;
   line-height: 1.5;
 }
 
-.assistant-screen .assistant-save-panel button {
+.agent-screen .agent-save-panel button {
   width: 100%;
   min-height: 3.25rem;
   padding: 0.8rem 1rem;
@@ -2182,139 +2182,139 @@ main.login-frame {
     transform 140ms ease;
 }
 
-.assistant-screen .assistant-save-panel button:hover:not(:disabled) {
+.agent-screen .agent-save-panel button:hover:not(:disabled) {
   background: var(--coral-ink);
   box-shadow: 0 0.9rem 1.9rem rgba(17, 14, 28, 0.36);
   transform: translateY(-1px);
 }
 
-.assistant-screen .assistant-save-panel button:focus-visible {
+.agent-screen .agent-save-panel button:focus-visible {
   outline: 0.2rem solid var(--focus);
   outline-offset: 0.18rem;
 }
 
-.assistant-screen .assistant-save-panel button:disabled {
+.agent-screen .agent-save-panel button:disabled {
   cursor: wait;
   opacity: 0.72;
   box-shadow: none;
 }
 
 @media (min-width: 48rem) {
-  .assistant-screen .assistant-section__fields {
+  .agent-screen .agent-section__fields {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .assistant-screen .assistant-activation {
+  .agent-screen .agent-activation {
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .assistant-screen .assistant-activation__status {
+  .agent-screen .agent-activation__status {
     grid-row: 1;
   }
 
-  .assistant-screen .assistant-activation__copy {
+  .agent-screen .agent-activation__copy {
     grid-column: 2;
     grid-row: 1 / span 2;
   }
 
-  .assistant-screen .assistant-activation__switch {
+  .agent-screen .agent-activation__switch {
     grid-column: 1;
     grid-row: 2;
   }
 }
 
 @media (min-width: 70rem) {
-  .assistant-screen .assistant-hero {
+  .agent-screen .agent-hero {
     grid-template-columns: minmax(0, 1.45fr) minmax(18rem, 0.75fr);
     align-items: center;
   }
 
-  .assistant-screen .assistant-layout {
+  .agent-screen .agent-layout {
     grid-template-columns: minmax(0, 1fr) minmax(15rem, 17rem);
   }
 
-  .assistant-screen .assistant-rail {
+  .agent-screen .agent-rail {
     position: sticky;
     top: 1.5rem;
   }
 }
 
 @media (max-width: 47.5rem) {
-  .assistant-screen {
+  .agent-screen {
     padding: 0.85rem 0.75rem 2rem;
   }
 
-  .assistant-screen .assistant-hero {
+  .agent-screen .agent-hero {
     padding: 1.35rem 1.1rem;
     border-radius: 1rem;
   }
 
-  .assistant-screen .assistant-feedback {
+  .agent-screen .agent-feedback {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .assistant-screen .assistant-conflict-action {
+  .agent-screen .agent-conflict-action {
     width: 100%;
     white-space: normal;
   }
 
-  .assistant-screen .assistant-hero h1 {
+  .agent-screen .agent-hero h1 {
     font-size: clamp(2.35rem, 13vw, 3.25rem);
   }
 
-  .assistant-screen .assistant-signal {
+  .agent-screen .agent-signal {
     padding: 0.85rem;
   }
 
-  .assistant-screen .assistant-signal__legend li {
+  .agent-screen .agent-signal__legend li {
     padding: 0 0.4rem;
   }
 
-  .assistant-screen .assistant-section--voice,
-  .assistant-screen .assistant-section--context,
-  .assistant-screen .assistant-section--limits {
+  .agent-screen .agent-section--voice,
+  .agent-screen .agent-section--context,
+  .agent-screen .agent-section--limits {
     padding: 1.05rem 0.9rem;
   }
 
-  .assistant-screen .assistant-section__header {
+  .agent-screen .agent-section__header {
     grid-template-columns: 2.75rem minmax(0, 1fr);
     gap: 0.75rem;
   }
 
-  .assistant-screen .assistant-section__marker,
-  .assistant-screen .assistant-section__index,
-  .assistant-screen .assistant-section__boundary {
+  .agent-screen .agent-section__marker,
+  .agent-screen .agent-section__index,
+  .agent-screen .agent-section__boundary {
     width: 2.75rem;
     min-width: 2.75rem;
     height: 2.75rem;
     min-height: 2.75rem;
   }
 
-  .assistant-screen .assistant-section__header h2 {
+  .agent-screen .agent-section__header h2 {
     font-size: 1.45rem;
   }
 
-  .assistant-screen .assistant-section__header div > span {
+  .agent-screen .agent-section__header div > span {
     font-size: 0.82rem;
   }
 
-  .assistant-screen .assistant-field textarea {
+  .agent-screen .agent-field textarea {
     min-height: 8.5rem;
   }
 
-  .assistant-screen .assistant-activation {
+  .agent-screen .agent-activation {
     padding: 1.05rem 0.9rem;
   }
 
-  .assistant-screen .assistant-rail {
+  .agent-screen .agent-rail {
     position: static;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .assistant-screen *,
-  .assistant-screen *::before,
-  .assistant-screen *::after {
+  .agent-screen *,
+  .agent-screen *::before,
+  .agent-screen *::after {
     scroll-behavior: auto;
     transition-duration: 0.01ms;
   }
@@ -3317,7 +3317,7 @@ main.login-frame {
 .admin-status--business-active, .admin-status--business-suspended { padding: 0.3rem 0.55rem; border-radius: 0.375rem; background: var(--pine-soft); font-weight: 650; }
 .admin-status--business-suspended { background: var(--danger-soft); }
 .admin-status::before { content: ""; flex: 0 0 auto; width: 0.375rem; height: 0.375rem; border-radius: 50%; background: currentColor; }
-.admin-status--business-active, .admin-status--assistant-active, .admin-status--whatsapp-connected { color: var(--pine); }
+.admin-status--business-active, .admin-status--agent-active, .admin-status--whatsapp-connected { color: var(--pine); }
 .admin-status--business-suspended, .admin-status--whatsapp-error { color: var(--coral-ink); }
 .admin-status--whatsapp-link_required { color: var(--coral-ink); }
 .admin-manage-label { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; color: var(--pine-deep); font-size: 0.875rem; font-weight: 650; }
@@ -6055,9 +6055,9 @@ main.clients-screen[aria-labelledby="clients-title"] ::selection {
   }
 }
 
-/* Asistente only: native prose editors with an explicit, external apply action. */
-main.assistant-screen[data-ui="assistant-screen"] {
-  --assistant-stroke: color-mix(in srgb, var(--pine-deep) 32%, var(--sand));
+/* Agente only: native prose editors with an explicit, external apply action. */
+main.agent-screen[data-ui="agent-screen"] {
+  --agent-stroke: color-mix(in srgb, var(--pine-deep) 32%, var(--sand));
   width: 100%;
   min-width: 0;
   max-width: 82rem;
@@ -6067,27 +6067,27 @@ main.assistant-screen[data-ui="assistant-screen"] {
   line-height: 1.5;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] :is(h1, h2, p, label, button, strong, span, li) {
+main.agent-screen[data-ui="agent-screen"] :is(h1, h2, p, label, button, strong, span, li) {
   overflow-wrap: anywhere;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-heading {
+main.agent-screen[data-ui="agent-screen"] .agent-heading {
   margin-bottom: 1.5rem;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-heading h1 {
+main.agent-screen[data-ui="agent-screen"] .agent-heading h1 {
   margin: 0;
   font-size: 2rem;
   letter-spacing: -0.025em;
   line-height: 1.2;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-feedback {
+main.agent-screen[data-ui="agent-screen"] .agent-feedback {
   gap: 0.75rem;
   margin: 0 0 1.5rem;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-feedback :is([role="alert"], [role="status"]) {
+main.agent-screen[data-ui="agent-screen"] .agent-feedback :is([role="alert"], [role="status"]) {
   padding: 0.75rem 1rem;
   border: 1px solid var(--pine);
   border-radius: 0.5rem;
@@ -6098,16 +6098,16 @@ main.assistant-screen[data-ui="assistant-screen"] .assistant-feedback :is([role=
   box-shadow: none;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-feedback [role="alert"] {
+main.agent-screen[data-ui="agent-screen"] .agent-feedback [role="alert"] {
   border-color: var(--danger);
   background: var(--danger-soft);
   color: var(--coral-ink);
 }
 
-main.assistant-screen[data-ui="assistant-screen"] button {
+main.agent-screen[data-ui="agent-screen"] button {
   min-height: 2.75rem;
   padding: 0.6rem 0.9rem;
-  border: 1px solid var(--assistant-stroke);
+  border: 1px solid var(--agent-stroke);
   border-radius: 0.5rem;
   background: var(--surface);
   color: var(--ink);
@@ -6122,39 +6122,39 @@ main.assistant-screen[data-ui="assistant-screen"] button {
     border-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
-main.assistant-screen[data-ui="assistant-screen"] button:hover:not(:disabled) {
+main.agent-screen[data-ui="agent-screen"] button:hover:not(:disabled) {
   border-color: var(--pine);
   background: var(--pine-soft);
   box-shadow: none;
   transform: none;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] button:active:not(:disabled) {
+main.agent-screen[data-ui="agent-screen"] button:active:not(:disabled) {
   transform: translateY(1px);
 }
 
-main.assistant-screen[data-ui="assistant-screen"] button:focus-visible {
+main.agent-screen[data-ui="agent-screen"] button:focus-visible {
   outline: 2px solid var(--pine);
   outline-offset: 3px;
   box-shadow: none;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] button:disabled {
+main.agent-screen[data-ui="agent-screen"] button:disabled {
   cursor: wait;
   opacity: 0.6;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-layout {
+main.agent-screen[data-ui="agent-screen"] .agent-layout {
   grid-template-columns: minmax(0, 1fr);
   gap: 1.5rem;
   margin: 0;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-form {
+main.agent-screen[data-ui="agent-screen"] .agent-form {
   gap: 1.5rem;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-section {
+main.agent-screen[data-ui="agent-screen"] .agent-section {
   padding: 1.5rem;
   overflow: visible;
   border: 0;
@@ -6165,14 +6165,14 @@ main.assistant-screen[data-ui="assistant-screen"] .assistant-section {
   box-shadow: none;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-section__header {
+main.agent-screen[data-ui="agent-screen"] .agent-section__header {
   grid-template-columns: minmax(0, 1fr);
   gap: 0;
   padding: 0;
   border: 0;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-section__header p {
+main.agent-screen[data-ui="agent-screen"] .agent-section__header p {
   margin: 0 0 0.375rem;
   color: var(--ink-2);
   font-size: 0.875rem;
@@ -6181,14 +6181,14 @@ main.assistant-screen[data-ui="assistant-screen"] .assistant-section__header p {
   text-transform: none;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-section__header h2 {
+main.agent-screen[data-ui="agent-screen"] .agent-section__header h2 {
   color: var(--ink);
   font-size: 1.375rem;
   letter-spacing: -0.02em;
   line-height: 1.3;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-section__header div > span {
+main.agent-screen[data-ui="agent-screen"] .agent-section__header div > span {
   max-width: 70ch;
   margin-top: 0.5rem;
   color: var(--ink-2);
@@ -6196,27 +6196,27 @@ main.assistant-screen[data-ui="assistant-screen"] .assistant-section__header div
   line-height: 1.5;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-section__fields {
+main.agent-screen[data-ui="agent-screen"] .agent-section__fields {
   grid-template-columns: minmax(0, 1fr);
   gap: 1rem;
   margin-top: 1.25rem;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-field {
+main.agent-screen[data-ui="agent-screen"] .agent-field {
   gap: 0.5rem;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-field__label {
+main.agent-screen[data-ui="agent-screen"] .agent-field__label {
   color: var(--ink);
   font-size: 0.9375rem;
   letter-spacing: normal;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-field textarea {
+main.agent-screen[data-ui="agent-screen"] .agent-field textarea {
   min-width: 0;
   min-height: 12rem;
   padding: 0.8rem 1rem;
-  border: 1px solid var(--assistant-stroke);
+  border: 1px solid var(--agent-stroke);
   border-radius: 0.625rem;
   background: var(--white);
   color: var(--ink);
@@ -6230,12 +6230,12 @@ main.assistant-screen[data-ui="assistant-screen"] .assistant-field textarea {
   transition: border-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-field textarea:hover {
+main.agent-screen[data-ui="agent-screen"] .agent-field textarea:hover {
   border-color: var(--pine);
   background: var(--white);
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-field textarea:focus-visible {
+main.agent-screen[data-ui="agent-screen"] .agent-field textarea:focus-visible {
   border-color: var(--pine);
   outline: 2px solid var(--pine);
   outline-offset: 2px;
@@ -6243,14 +6243,14 @@ main.assistant-screen[data-ui="assistant-screen"] .assistant-field textarea:focu
   box-shadow: none;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-field__hint {
+main.agent-screen[data-ui="agent-screen"] .agent-field__hint {
   max-width: 70ch;
   color: var(--ink-2);
   font-size: 0.8125rem;
   line-height: 1.5;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-activation {
+main.agent-screen[data-ui="agent-screen"] .agent-activation {
   grid-template-columns: minmax(0, 1fr);
   gap: 0.875rem;
   padding: 1.5rem;
@@ -6260,12 +6260,12 @@ main.assistant-screen[data-ui="assistant-screen"] .assistant-activation {
   box-shadow: none;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] :is(.assistant-activation__status, .assistant-activation__copy, .assistant-activation__switch) {
+main.agent-screen[data-ui="agent-screen"] :is(.agent-activation__status, .agent-activation__copy, .agent-activation__switch) {
   grid-column: auto;
   grid-row: auto;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-activation__status {
+main.agent-screen[data-ui="agent-screen"] .agent-activation__status {
   padding: 0.2rem 0.5rem;
   border-color: var(--sand);
   border-radius: 0.375rem;
@@ -6275,22 +6275,22 @@ main.assistant-screen[data-ui="assistant-screen"] .assistant-activation__status 
   text-transform: none;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-activation__status span {
+main.agent-screen[data-ui="agent-screen"] .agent-activation__status span {
   background: var(--ink-2);
   box-shadow: none;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-activation--active .assistant-activation__status {
+main.agent-screen[data-ui="agent-screen"] .agent-activation--active .agent-activation__status {
   border-color: var(--pine);
   color: var(--pine-deep);
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-activation--active .assistant-activation__status span {
+main.agent-screen[data-ui="agent-screen"] .agent-activation--active .agent-activation__status span {
   background: var(--pine);
   box-shadow: none;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-activation__copy p {
+main.agent-screen[data-ui="agent-screen"] .agent-activation__copy p {
   margin-bottom: 0.375rem;
   color: var(--ink-2);
   font-size: 0.875rem;
@@ -6299,55 +6299,55 @@ main.assistant-screen[data-ui="assistant-screen"] .assistant-activation__copy p 
   text-transform: none;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-activation__copy h2 {
+main.agent-screen[data-ui="agent-screen"] .agent-activation__copy h2 {
   font-size: 1.125rem;
   letter-spacing: -0.015em;
   line-height: 1.35;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-activation__copy > span {
+main.agent-screen[data-ui="agent-screen"] .agent-activation__copy > span {
   max-width: 70ch;
   margin-top: 0.5rem;
   font-size: 0.9375rem;
   line-height: 1.5;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-activation__switch {
+main.agent-screen[data-ui="agent-screen"] .agent-activation__switch {
   justify-self: start;
   max-width: 100%;
   min-height: 3rem;
   padding: 0.65rem 0.75rem;
-  border-color: var(--assistant-stroke);
+  border-color: var(--agent-stroke);
   border-radius: 0.5rem;
   background: var(--surface);
   transition: border-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-activation__switch:hover {
+main.agent-screen[data-ui="agent-screen"] .agent-activation__switch:hover {
   border-color: var(--pine);
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-activation__switch strong {
+main.agent-screen[data-ui="agent-screen"] .agent-activation__switch strong {
   min-width: 0;
   font-size: 0.9375rem;
   font-weight: 600;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-activation__track span {
+main.agent-screen[data-ui="agent-screen"] .agent-activation__track span {
   box-shadow: none;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-activation__switch input:focus-visible + .assistant-activation__track {
+main.agent-screen[data-ui="agent-screen"] .agent-activation__switch input:focus-visible + .agent-activation__track {
   outline: 2px solid var(--pine);
   outline-offset: 3px;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-rail {
+main.agent-screen[data-ui="agent-screen"] .agent-rail {
   position: static;
   gap: 1.5rem;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-rail__guide {
+main.agent-screen[data-ui="agent-screen"] .agent-rail__guide {
   padding: 1.25rem 0 0;
   border: 0;
   border-top: 1px solid var(--sand);
@@ -6355,7 +6355,7 @@ main.assistant-screen[data-ui="assistant-screen"] .assistant-rail__guide {
   background: transparent;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-rail__eyebrow {
+main.agent-screen[data-ui="agent-screen"] .agent-rail__eyebrow {
   color: var(--ink-2);
   font-size: 0.875rem;
   font-weight: 400;
@@ -6363,29 +6363,29 @@ main.assistant-screen[data-ui="assistant-screen"] .assistant-rail__eyebrow {
   text-transform: none;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-rail h2 {
+main.agent-screen[data-ui="agent-screen"] .agent-rail h2 {
   font-size: 1.125rem;
   letter-spacing: -0.015em;
   line-height: 1.35;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-rail ul {
+main.agent-screen[data-ui="agent-screen"] .agent-rail ul {
   gap: 0.75rem;
   margin-top: 0.875rem;
   padding-left: 1.125rem;
   list-style: disc;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-rail li {
+main.agent-screen[data-ui="agent-screen"] .agent-rail li {
   padding: 0;
   font-size: 0.9375rem;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-rail li::before {
+main.agent-screen[data-ui="agent-screen"] .agent-rail li::before {
   content: none;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-save-panel {
+main.agent-screen[data-ui="agent-screen"] .agent-save-panel {
   padding: 0;
   border-radius: 0;
   background: transparent;
@@ -6393,7 +6393,7 @@ main.assistant-screen[data-ui="assistant-screen"] .assistant-save-panel {
   box-shadow: none;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-save-panel p {
+main.agent-screen[data-ui="agent-screen"] .agent-save-panel p {
   margin: 0 0 0.75rem;
   padding: 0.75rem 1rem;
   border-radius: 0.5rem;
@@ -6403,46 +6403,46 @@ main.assistant-screen[data-ui="assistant-screen"] .assistant-save-panel p {
   line-height: 1.5;
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-save-panel button {
+main.agent-screen[data-ui="agent-screen"] .agent-save-panel button {
   border-color: var(--coral);
   background: var(--coral);
   color: var(--ink);
 }
 
-main.assistant-screen[data-ui="assistant-screen"] .assistant-save-panel button:hover:not(:disabled) {
+main.agent-screen[data-ui="agent-screen"] .agent-save-panel button:hover:not(:disabled) {
   border-color: var(--coral-ink);
   background: var(--coral-soft);
   color: var(--ink);
 }
 
-main.assistant-screen[data-ui="assistant-screen"] ::selection {
+main.agent-screen[data-ui="agent-screen"] ::selection {
   background: var(--pine-soft);
   color: var(--pine-deep);
 }
 
 @media (min-width: 64rem) {
-  main.assistant-screen[data-ui="assistant-screen"] .assistant-layout {
+  main.agent-screen[data-ui="agent-screen"] .agent-layout {
     grid-template-columns: minmax(0, 1fr) 16rem;
     gap: 2rem;
   }
 }
 
 @media (max-width: 47.5rem) {
-  main.assistant-screen[data-ui="assistant-screen"] {
+  main.agent-screen[data-ui="agent-screen"] {
     padding: 1.5rem 1rem 2rem;
   }
 
-  main.assistant-screen[data-ui="assistant-screen"] .assistant-heading h1 {
+  main.agent-screen[data-ui="agent-screen"] .agent-heading h1 {
     font-size: 1.75rem;
   }
 
-  main.assistant-screen[data-ui="assistant-screen"] :is(.assistant-section, .assistant-activation) {
+  main.agent-screen[data-ui="agent-screen"] :is(.agent-section, .agent-activation) {
     padding: 1.25rem 1rem;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  main.assistant-screen[data-ui="assistant-screen"] :is(button, textarea, .assistant-activation, .assistant-activation__switch, .assistant-activation__track, .assistant-activation__track span) {
+  main.agent-screen[data-ui="agent-screen"] :is(button, textarea, .agent-activation, .agent-activation__switch, .agent-activation__track, .agent-activation__track span) {
     transition: none;
   }
 }

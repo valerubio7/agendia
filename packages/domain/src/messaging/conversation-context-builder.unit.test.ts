@@ -8,9 +8,9 @@ function history() {
   const repository = new InMemoryConversationHistory();
   repository.append("tenant-a", "chat-a", [
     { sequence: 1, role: "customer", text: "Necesito información" },
-    { sequence: 2, role: "assistant", text: "El envío demora dos días", delivery: "sent" },
+    { sequence: 2, role: "agent", text: "El envío demora dos días", delivery: "sent" },
     { sequence: 3, role: "customer", text: "Perfecto, recordar mi dirección" },
-    { sequence: 4, role: "assistant", text: "¿Cuál es tu zona?", delivery: "sent" },
+    { sequence: 4, role: "agent", text: "¿Cuál es tu zona?", delivery: "sent" },
     { sequence: 5, role: "customer", text: "¿Cuándo llega el envío?" },
   ]);
   repository.saveSummary("tenant-a", "chat-a", {
@@ -27,7 +27,7 @@ describe("complete-history conversation context representation", () => {
       id: `m${index + 1}`, sequence: index + 1, role: "customer" as const,
       text: index === 10 ? " \t" + "😀".repeat(9000) + "\n " : `turn-${index + 1}`,
     })));
-    repository.append("tenant-a", "chat-a", [{ sequence: 61, role: "assistant", text: "ambiguous", delivery: "delivery_unknown" }]);
+    repository.append("tenant-a", "chat-a", [{ sequence: 61, role: "agent", text: "ambiguous", delivery: "delivery_unknown" }]);
     const result = new ConversationContextBuilder(repository).build({
       businessId: "tenant-a", conversationId: "chat-a",
       currentGroupIds: ["m59", "m60"],
@@ -68,9 +68,9 @@ describe("complete-history conversation context representation", () => {
     expect(JSON.stringify(result)).not.toContain("SECRETO OTRO TENANT");
   });
 
-  test("uses only confirmed assistant turns without a representation budget", () => {
+  test("uses only confirmed agent turns without a representation budget", () => {
     const repository = history();
-    repository.append("tenant-a", "chat-a", [{ sequence: 6, role: "assistant", text: "No entregado", delivery: "failed" }]);
+    repository.append("tenant-a", "chat-a", [{ sequence: 6, role: "agent", text: "No entregado", delivery: "failed" }]);
     const result = new ConversationContextBuilder(repository).build({ businessId: "tenant-a", conversationId: "chat-a" });
     expect(result.status).toBe("ready");
     expect(JSON.stringify(result)).not.toContain("No entregado");

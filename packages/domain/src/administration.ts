@@ -3,7 +3,7 @@ import type { AuthService } from "@agendia/auth";
 import type { AuditEvent } from "@agendia/contracts";
 import { buildAuditEvent } from "@agendia/contracts";
 
-export interface BusinessState { id: string; name: string; status: "active" | "suspended"; assistantActive: boolean; whatsappStatus: "link_required" | "connected" | "disconnected" | "error"; createdAt: string; lastTechnicalActivityAt: string | null; }
+export interface BusinessState { id: string; name: string; status: "active" | "suspended"; agentActive: boolean; whatsappStatus: "link_required" | "connected" | "disconnected" | "error"; createdAt: string; lastTechnicalActivityAt: string | null; }
 export class InMemoryAdministrationStore { businesses: BusinessState[] = []; audit: AuditEvent[] = []; outbox: string[] = []; }
 
 export class AdministrationService {
@@ -12,7 +12,7 @@ export class AdministrationService {
   async createBusiness(input: { name: string; userEmail: string; initialPassword: string; requestId: string }): Promise<BusinessState> {
     const name = input.name.trim();
     if (!name) throw new Error("Business name is required");
-    const business: BusinessState = { id: randomUUID(), name, status: "active", assistantActive: false, whatsappStatus: "link_required", createdAt: new Date().toISOString(), lastTechnicalActivityAt: null };
+    const business: BusinessState = { id: randomUUID(), name, status: "active", agentActive: false, whatsappStatus: "link_required", createdAt: new Date().toISOString(), lastTechnicalActivityAt: null };
     await this.auth.createIdentity({ email: input.userEmail, password: input.initialPassword, role: "business_user", businessId: business.id });
     this.store.businesses.push(business);
     this.store.audit.push(
@@ -43,7 +43,7 @@ export class AdministrationService {
   project(businessId: string) {
     const business = this.store.businesses.find((item) => item.id === businessId);
     if (!business) return null;
-    return { id: business.id, name: business.name, status: business.status, assistantStatus: business.assistantActive ? "active" as const : "inactive" as const, whatsappStatus: business.whatsappStatus, createdAt: business.createdAt, lastTechnicalActivityAt: business.lastTechnicalActivityAt };
+    return { id: business.id, name: business.name, status: business.status, agentStatus: business.agentActive ? "active" as const : "inactive" as const, whatsappStatus: business.whatsappStatus, createdAt: business.createdAt, lastTechnicalActivityAt: business.lastTechnicalActivityAt };
   }
 
   listProjections() { return this.store.businesses.map((business) => this.project(business.id)); }

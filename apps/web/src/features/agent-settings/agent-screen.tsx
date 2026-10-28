@@ -7,11 +7,11 @@ import {
   type FormEventHandler,
   type ReactNode,
 } from "react";
-import type { Assistant } from "../../api/api-client";
-import { ASSISTANT_STYLE_LIMIT, ASSISTANT_BUSINESS_INSTRUCTIONS_LIMIT } from "../../../../../packages/domain/src/agent/config";
+import type { Agent } from "../../api/api-client";
+import { AGENT_STYLE_LIMIT, AGENT_BUSINESS_INSTRUCTIONS_LIMIT } from "../../../../../packages/domain/src/agent/config";
 
-type AssistantScreenProps = {
-  assistant: Partial<Assistant>;
+type AgentScreenProps = {
+  agent: Partial<Agent>;
   feedback: ReactNode;
   conflict: boolean;
   savePending: boolean;
@@ -19,26 +19,26 @@ type AssistantScreenProps = {
   reloadAction: () => void;
 };
 
-type AssistantFieldProps = {
+type AgentFieldProps = {
   label: string;
   name: "style" | "businessInstructions";
   hint: string;
   defaultValue: string;
 };
 
-function AssistantField({
+function AgentField({
   label,
   name,
   hint,
   defaultValue,
-}: AssistantFieldProps) {
-  const limit = name === "style" ? ASSISTANT_STYLE_LIMIT : ASSISTANT_BUSINESS_INSTRUCTIONS_LIMIT;
-  const fieldId = `assistant-${name}`;
+}: AgentFieldProps) {
+  const limit = name === "style" ? AGENT_STYLE_LIMIT : AGENT_BUSINESS_INSTRUCTIONS_LIMIT;
+  const fieldId = `agent-${name}`;
   const hintId = `${fieldId}-hint`;
 
   return (
-    <div className="assistant-field">
-      <label className="assistant-field__label" htmlFor={fieldId}>
+    <div className="agent-field">
+      <label className="agent-field__label" htmlFor={fieldId}>
         {label}
       </label>
       <textarea
@@ -48,46 +48,46 @@ function AssistantField({
         maxLength={limit}
         aria-describedby={hintId}
       />
-      <span className="assistant-field__hint" id={hintId}>
+      <span className="agent-field__hint" id={hintId}>
         {hint} · Hasta {limit.toLocaleString("es-AR")} caracteres
       </span>
     </div>
   );
 }
 
-export function AssistantScreen({
-  assistant,
+export function AgentScreen({
+  agent,
   feedback,
   conflict,
   savePending,
   submitAction,
   reloadAction,
-}: AssistantScreenProps) {
-  const [active, setActive] = useState(Boolean(assistant.active));
+}: AgentScreenProps) {
+  const [active, setActive] = useState(Boolean(agent.active));
   const activationEdits = useRef(0);
   const submittedEdits = useRef(0);
-  const savedActive = Boolean(assistant.active);
+  const savedActive = Boolean(agent.active);
   const activationChanged = active !== savedActive;
 
   useEffect(() => {
-    if (activationEdits.current === submittedEdits.current) setActive(Boolean(assistant.active));
-  }, [assistant.revision, assistant.active]);
+    if (activationEdits.current === submittedEdits.current) setActive(Boolean(agent.active));
+  }, [agent.revision, agent.active]);
 
   return (
-    <main className="assistant-screen" data-ui="assistant-screen">
+    <main className="agent-screen" data-ui="agent-screen">
       <section
-        className="assistant-heading"
-        data-ui="assistant-hero"
-        aria-labelledby="assistant-title"
+        className="agent-heading"
+        data-ui="agent-hero"
+        aria-labelledby="agent-title"
       >
-        <h1 id="assistant-title">Asistente</h1>
+        <h1 id="agent-title">Agente</h1>
       </section>
 
-      <div className="assistant-feedback" aria-label="Estado del guardado">
+      <div className="agent-feedback" aria-label="Estado del guardado">
         {feedback}
         {conflict && (
           <button
-            className="assistant-conflict-action"
+            className="agent-conflict-action"
             type="button"
             onClick={reloadAction}
           >
@@ -96,10 +96,10 @@ export function AssistantScreen({
         )}
       </div>
 
-      <div className="assistant-layout">
+      <div className="agent-layout">
         <form
-          id="assistant-configuration-form"
-          className="assistant-form"
+          id="agent-configuration-form"
+          className="agent-form"
           onSubmit={(event) => {
             if (!savePending) submittedEdits.current = activationEdits.current;
             submitAction(event);
@@ -107,61 +107,61 @@ export function AssistantScreen({
           aria-busy={savePending}
         >
           <section
-            className="assistant-section assistant-section--voice"
-            aria-labelledby="assistant-voice-title"
+            className="agent-section agent-section--voice"
+            aria-labelledby="agent-voice-title"
           >
-            <header className="assistant-section__header">
+            <header className="agent-section__header">
               <div>
                 <p>El carácter de cada mensaje</p>
-                <h2 id="assistant-voice-title">Voz y personalidad</h2>
+                <h2 id="agent-voice-title">Voz y personalidad</h2>
                 <span>
                   Definí los rasgos y el tono que hacen reconocible la forma de
                   hablar de tu negocio.
                 </span>
               </div>
             </header>
-            <div className="assistant-section__fields">
-              <AssistantField
+            <div className="agent-section__fields">
+              <AgentField
                 label="Estilo de atención"
                 name="style"
-                defaultValue={assistant.style ?? ""}
+                defaultValue={agent.style ?? ""}
                 hint="Describí la personalidad y el tono que deben sentirse en la manera de responder"
               />
             </div>
           </section>
 
           <section
-            className="assistant-section assistant-section--context"
-            aria-labelledby="assistant-context-title"
+            className="agent-section agent-section--context"
+            aria-labelledby="agent-context-title"
           >
-            <header className="assistant-section__header">
+            <header className="agent-section__header">
               <div>
                 <p>La dirección de la respuesta</p>
-                <h2 id="assistant-context-title">Contexto y dirección</h2>
+                <h2 id="agent-context-title">Contexto y dirección</h2>
                 <span>
                   Sumá el criterio general y el conocimiento que deben orientar
                   sus respuestas.
                 </span>
               </div>
             </header>
-            <div className="assistant-section__fields">
-              <AssistantField
+            <div className="agent-section__fields">
+              <AgentField
                 label="Indicaciones del negocio"
                 name="businessInstructions"
-                defaultValue={assistant.businessInstructions ?? ""}
+                defaultValue={agent.businessInstructions ?? ""}
                 hint="Agregá instrucciones, conocimiento, reglas y restricciones para sus respuestas"
               />
             </div>
           </section>
 
           <section
-            className={`assistant-activation${
-              active ? " assistant-activation--active" : ""
+            className={`agent-activation${
+              active ? " agent-activation--active" : ""
             }`}
-            data-ui="assistant-activation"
-            aria-label="Control operativo del asistente"
+            data-ui="agent-activation"
+            aria-label="Control operativo del agente"
           >
-            <div className="assistant-activation__status" aria-hidden="true">
+            <div className="agent-activation__status" aria-hidden="true">
               <span />
               {activationChanged
                 ? active
@@ -171,9 +171,9 @@ export function AssistantScreen({
                   ? "Activo"
                   : "En pausa"}
             </div>
-            <div className="assistant-activation__copy">
+            <div className="agent-activation__copy">
               <p>Control operativo</p>
-              <h2 id="assistant-activation-title">
+              <h2 id="agent-activation-title">
                 {activationChanged
                   ? active
                     ? "Se activarán al guardar"
@@ -188,7 +188,7 @@ export function AssistantScreen({
                 horarios de atención y de la conexión de WhatsApp.
               </span>
             </div>
-            <label className="assistant-activation__switch">
+            <label className="agent-activation__switch">
               <input
                 name="active"
                 type="checkbox"
@@ -198,7 +198,7 @@ export function AssistantScreen({
                   setActive(event.target.checked);
                 }}
               />
-              <span className="assistant-activation__track" aria-hidden="true">
+              <span className="agent-activation__track" aria-hidden="true">
                 <span />
               </span>
               <strong>Respuestas automáticas activas</strong>
@@ -207,11 +207,11 @@ export function AssistantScreen({
         </form>
 
         <aside
-          className="assistant-rail"
-          aria-label="Guía para dirigir el asistente"
+          className="agent-rail"
+          aria-label="Guía para dirigir el agente"
         >
-          <div className="assistant-rail__guide">
-            <p className="assistant-rail__eyebrow">Criterios claros</p>
+          <div className="agent-rail__guide">
+            <p className="agent-rail__eyebrow">Criterios claros</p>
             <h2>Escribí para orientar</h2>
             <ul>
               <li>Usá indicaciones concretas y sin contradicciones.</li>
@@ -219,13 +219,13 @@ export function AssistantScreen({
               <li>Revisá que los límites sean explícitos.</li>
             </ul>
           </div>
-          <div className="assistant-save-panel" data-ui="assistant-save-panel">
+          <div className="agent-save-panel" data-ui="agent-save-panel">
             <p>
               Los cambios de dirección y activación se aplican cuando guardás.
             </p>
             <button
               type="submit"
-              form="assistant-configuration-form"
+              form="agent-configuration-form"
               disabled={savePending}
             >
               {savePending

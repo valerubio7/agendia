@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { ReceptionistToolSession, receptionistToolDefinitions, parseReceptionistTool } from "./tools.ts";
+import { AgentToolSession, agentToolDefinitions, parseAgentTool } from "./tools.ts";
 
-import { canonicalReceptionistDate as canonicalDate } from "./tools.ts";
+import { canonicalAgentDate as canonicalDate } from "./tools.ts";
 const id = "123e4567-e89b-42d3-a456-426614174000";
-describe("canonical receptionist date presentation", () => {
+describe("canonical agent date presentation", () => {
   const zone = "America/Argentina/Buenos_Aires";
   test("2035-04-02 is canonically Monday, not Wednesday", () => {
     expect(canonicalDate("2035-04-02T10:00:00-03:00", zone)).toEqual({
@@ -23,92 +23,92 @@ describe("canonical receptionist date presentation", () => {
       expect(canonicalDate("2035-04-02T10:00:00-03:00", invalidZone)).toBeNull();
   });
 });
-describe("receptionist tool boundary", () => {
+describe("agent tool boundary", () => {
   test("native definitions are a closed strict allowlist", () => {
-    expect(receptionistToolDefinitions.length).toBeGreaterThan(8);
-    for (const definition of receptionistToolDefinitions) {
+    expect(agentToolDefinitions.length).toBeGreaterThan(8);
+    for (const definition of agentToolDefinitions) {
       expect(definition.parameters.type).toBe("object");
       expect(definition.parameters.additionalProperties).toBe(false);
-      expect(parseReceptionistTool("arbitrary_sql", {})).toBeNull();
+      expect(parseAgentTool("arbitrary_sql", {})).toBeNull();
     }
   });
   test("rejects tenant, sender and ownership claims even on otherwise valid tools", () => {
     for (const field of ["businessId", "tenantId", "phone", "clientId", "confirmed", "owner"]) {
-      expect(parseReceptionistTool("read_business", { [field]: id })).toBeNull();
-      expect(parseReceptionistTool("prepare_booking", { serviceId: id, startsAt: "2035-04-02T10:00:00-03:00", [field]: id })).toBeNull();
+      expect(parseAgentTool("read_business", { [field]: id })).toBeNull();
+      expect(parseAgentTool("prepare_booking", { serviceId: id, startsAt: "2035-04-02T10:00:00-03:00", [field]: id })).toBeNull();
     }
-    expect(parseReceptionistTool("confirm_quote", { confirmed: true })).toBeNull();
-    expect(parseReceptionistTool("prepare_booking", { serviceId: id, startsAt: "2035-04-02T10:00:00-03:00",
+    expect(parseAgentTool("confirm_quote", { confirmed: true })).toBeNull();
+    expect(parseAgentTool("prepare_booking", { serviceId: id, startsAt: "2035-04-02T10:00:00-03:00",
       presentation: canonicalDate("2035-04-02T10:00:00-03:00", "America/Argentina/Buenos_Aires") })).toBeNull();
   });
   test("validates IDs, real dates, instants and text limits", () => {
-    expect(parseReceptionistTool("availability", { serviceId: id, date: "2035-02-30" })).toBeNull();
-    expect(parseReceptionistTool("availability", { serviceId: "bad", date: "2035-04-02" })).toBeNull();
-    expect(parseReceptionistTool("prepare_booking", { serviceId: id, startsAt: "tomorrow" })).toBeNull();
-    expect(parseReceptionistTool("notes", { appointmentId: id, notes: "x".repeat(2001) })).toBeNull();
-    expect(parseReceptionistTool("prepare_change", { appointmentId: id })).toBeNull();
-    expect(parseReceptionistTool("availability", { serviceId: id, date: "2035-04-02" })?.name).toBe("availability");
+    expect(parseAgentTool("availability", { serviceId: id, date: "2035-02-30" })).toBeNull();
+    expect(parseAgentTool("availability", { serviceId: "bad", date: "2035-04-02" })).toBeNull();
+    expect(parseAgentTool("prepare_booking", { serviceId: id, startsAt: "tomorrow" })).toBeNull();
+    expect(parseAgentTool("notes", { appointmentId: id, notes: "x".repeat(2001) })).toBeNull();
+    expect(parseAgentTool("prepare_change", { appointmentId: id })).toBeNull();
+    expect(parseAgentTool("availability", { serviceId: id, date: "2035-04-02" })?.name).toBe("availability");
   });
   test("natural confirmation requires bounded exact evidence and opaque bindings, not a boolean", () => {
     const valid = { evidence: "dale reservame ese", evidenceReference: "a".repeat(64), quoteFingerprint: "b".repeat(64) };
-    expect(parseReceptionistTool("confirm_quote_naturally", valid)?.name).toBe("confirm_quote_naturally");
+    expect(parseAgentTool("confirm_quote_naturally", valid)?.name).toBe("confirm_quote_naturally");
     for (const field of ["evidence", "evidenceReference", "quoteFingerprint"]) {
       const missing: Record<string, string> = { ...valid };
       delete missing[field];
-      expect(parseReceptionistTool("confirm_quote_naturally", missing)).toBeNull();
+      expect(parseAgentTool("confirm_quote_naturally", missing)).toBeNull();
     }
     for (const field of ["confirmed", "businessId", "phone", "appointmentId"]) {
-      expect(parseReceptionistTool("confirm_quote_naturally", { ...valid, [field]: true })).toBeNull();
+      expect(parseAgentTool("confirm_quote_naturally", { ...valid, [field]: true })).toBeNull();
     }
-    expect(parseReceptionistTool("confirm_quote_naturally", { ...valid, quoteFingerprint: "old" })).toBeNull();
-    expect(parseReceptionistTool("confirm_quote_naturally", { ...valid, evidence: "x".repeat(12001) })).toBeNull();
+    expect(parseAgentTool("confirm_quote_naturally", { ...valid, quoteFingerprint: "old" })).toBeNull();
+    expect(parseAgentTool("confirm_quote_naturally", { ...valid, evidence: "x".repeat(12001) })).toBeNull();
   });
   test("native cancellation extends the strict legacy contract with a complete binding, never consent flags", () => {
     const binding = { evidence: "quería cancelar mi turno", evidenceReference: "a".repeat(64) };
-    expect(parseReceptionistTool("cancel", { appointmentId: id, binding })?.name).toBe("cancel");
-    expect(parseReceptionistTool("cancel", { appointmentId: id })?.name).toBe("cancel");
+    expect(parseAgentTool("cancel", { appointmentId: id, binding })?.name).toBe("cancel");
+    expect(parseAgentTool("cancel", { appointmentId: id })?.name).toBe("cancel");
     for (const invalid of [{}, { evidence: binding.evidence }, { evidenceReference: binding.evidenceReference },
       { ...binding, evidence: "" }, { ...binding, evidenceReference: "forged" }, { ...binding, confirmed: true }])
-      expect(parseReceptionistTool("cancel", { appointmentId: id, binding: invalid })).toBeNull();
-    expect(parseReceptionistTool("cancel", { appointmentId: id, binding, confirmed: true })).toBeNull();
+      expect(parseAgentTool("cancel", { appointmentId: id, binding: invalid })).toBeNull();
+    expect(parseAgentTool("cancel", { appointmentId: id, binding, confirmed: true })).toBeNull();
   });
   test("booking name patches require a draft reference and strict literal field provenance", () => {
     const field = { value: "María", messageId: id, start: 0 };
     const args = { namesReference: "a".repeat(64), firstName: field };
-    expect(parseReceptionistTool("collect_booking_names", args)?.name).toBe("collect_booking_names");
+    expect(parseAgentTool("collect_booking_names", args)?.name).toBe("collect_booking_names");
     for (const invalid of [{}, { firstName: field }, { namesReference: args.namesReference },
       { ...args, namesReference: "forged" }, { ...args, confirmed: true },
       ...[{}, { ...field, start: -1 }, { ...field, start: 0.5 }, { ...field, value: " " },
         { ...field, value: "x".repeat(101) }, { ...field, proof: true }].map(firstName => ({ ...args, firstName }))])
-      expect(parseReceptionistTool("collect_booking_names", invalid)).toBeNull();
-    expect(receptionistToolDefinitions).toHaveLength(16);
+      expect(parseAgentTool("collect_booking_names", invalid)).toBeNull();
+    expect(agentToolDefinitions).toHaveLength(16);
   });
   test("native metadata bindings require complete member evidence and operation-specific selection fields", () => {
     const binding = { evidenceReference: "a".repeat(64), messageId: id, evidence: "Anotá: café ☕" };
     const notes = { appointmentId: id, notes: "café ☕", binding: { ...binding, start: 7 } };
     const preference = { appointmentId: id, resourceId: id, binding: { ...binding, resourceReference: "b".repeat(64) } };
     for (const [name, args] of [["notes", notes], ["preference", preference]] as const) {
-      expect(parseReceptionistTool(name, args)?.name).toBe(name);
+      expect(parseAgentTool(name, args)?.name).toBe(name);
       for (const invalid of [{}, { ...args.binding, messageId: "forged" }, { ...args.binding, evidence: "" },
         { ...args.binding, evidenceReference: "old" }, { ...args.binding, confirmed: true }])
-        expect(parseReceptionistTool(name, { ...args, binding: invalid })).toBeNull();
+        expect(parseAgentTool(name, { ...args, binding: invalid })).toBeNull();
     }
-    expect(parseReceptionistTool("notes", { ...notes, binding })).toBeNull();
-    for (const start of [-1, 0.5]) expect(parseReceptionistTool("notes", { ...notes, binding: { ...binding, start } })).toBeNull();
-    expect(parseReceptionistTool("notes", { ...notes, notes: "x".repeat(2001) })).toBeNull();
-    expect(parseReceptionistTool("notes", { ...notes, binding: null })).toBeNull();
-    expect(parseReceptionistTool("preference", { ...preference, binding: null })).toBeNull();
-    expect(parseReceptionistTool("notes", { ...notes, notes: null, binding })?.name).toBe("notes");
-    expect(parseReceptionistTool("notes", { ...notes, notes: null })).toBeNull(); // Clear cannot carry a span.
-    expect(parseReceptionistTool("preference", { ...preference, binding })).toBeNull();
-    expect(parseReceptionistTool("preference", { ...preference, resourceId: null, binding })?.name).toBe("preference");
-    expect(parseReceptionistTool("preference", { ...preference, resourceId: null })).toBeNull();
-    expect(parseReceptionistTool("notes", { appointmentId: id, notes: null })?.name).toBe("notes");
-    expect(parseReceptionistTool("preference", { appointmentId: id, resourceId: null })?.name).toBe("preference");
+    expect(parseAgentTool("notes", { ...notes, binding })).toBeNull();
+    for (const start of [-1, 0.5]) expect(parseAgentTool("notes", { ...notes, binding: { ...binding, start } })).toBeNull();
+    expect(parseAgentTool("notes", { ...notes, notes: "x".repeat(2001) })).toBeNull();
+    expect(parseAgentTool("notes", { ...notes, binding: null })).toBeNull();
+    expect(parseAgentTool("preference", { ...preference, binding: null })).toBeNull();
+    expect(parseAgentTool("notes", { ...notes, notes: null, binding })?.name).toBe("notes");
+    expect(parseAgentTool("notes", { ...notes, notes: null })).toBeNull(); // Clear cannot carry a span.
+    expect(parseAgentTool("preference", { ...preference, binding })).toBeNull();
+    expect(parseAgentTool("preference", { ...preference, resourceId: null, binding })?.name).toBe("preference");
+    expect(parseAgentTool("preference", { ...preference, resourceId: null })).toBeNull();
+    expect(parseAgentTool("notes", { appointmentId: id, notes: null })?.name).toBe("notes");
+    expect(parseAgentTool("preference", { appointmentId: id, resourceId: null })?.name).toBe("preference");
   });
   test("invalid calls never reach trusted handlers", async () => {
     let calls = 0;
-    const session = new ReceptionistToolSession(async () => { calls++; return { status: "data", data: {} }; });
+    const session = new AgentToolSession(async () => { calls++; return { status: "data", data: {} }; });
     expect((await session.execute("unknown", {})).status).toBe("rejected");
     expect((await session.execute("read_business", { phone: "+123456789" })).status).toBe("rejected");
     expect(calls).toBe(0);
@@ -117,7 +117,7 @@ describe("receptionist tool boundary", () => {
   });
   test("invalid tool diagnostics expose only controlled names, codes and schema categories", async () => {
     const events: unknown[] = [];
-    const session = new ReceptionistToolSession(async () => ({ status: "data", data: {} }), undefined,
+    const session = new AgentToolSession(async () => ({ status: "data", data: {} }), undefined,
       event => events.push(event));
     const secret = "private-name-phone-provider-text";
     for (const [name, args, toolName, schemaIssueCategory] of [
@@ -128,13 +128,13 @@ describe("receptionist tool boundary", () => {
       ["availability", { serviceId: id, date: "2026-02-30" }, "availability", "invalid_value"],
     ] as const) {
       expect(await session.execute(name, args)).toEqual({ status: "rejected", code: "INVALID_TOOL" });
-      expect(events.filter((e: any) => e.code === "receptionist.tool_rejected").at(-1)).toEqual({ code: "receptionist.tool_rejected", toolName,
+      expect(events.filter((e: any) => e.code === "agent.tool_rejected").at(-1)).toEqual({ code: "agent.tool_rejected", toolName,
         errorCode: "INVALID_TOOL", schemaIssueCategory });
     }
     expect(JSON.stringify(events)).not.toContain(secret);
     expect(JSON.stringify(events)).not.toContain(id);
     await session.execute("read_business", {});
-    expect(events.filter((e: any) => e.code === "receptionist.tool_rejected")).toHaveLength(5);
+    expect(events.filter((e: any) => e.code === "agent.tool_rejected")).toHaveLength(5);
   });
   test("completion evidence covers all controlled outcomes without private payloads", async () => {
     const events: unknown[] = [];
@@ -146,13 +146,13 @@ describe("receptionist tool boundary", () => {
       { status: "staged_action", operation: secret, appointment: secret },
     ] as const;
     let executions = 0;
-    const session = new ReceptionistToolSession(async () => outputs[executions++]!, undefined, event => events.push(event));
+    const session = new AgentToolSession(async () => outputs[executions++]!, undefined, event => events.push(event));
     for (const output of outputs) {
       await session.execute("read_business", {});
-      expect(events.at(-1)).toEqual({ code: "receptionist.tool_completed", toolName: "read_business", status: output.status });
+      expect(events.at(-1)).toEqual({ code: "agent.tool_completed", toolName: "read_business", status: output.status });
     }
     await session.execute(secret, { [secret]: secret });
-    expect(events.at(-1)).toEqual({ code: "receptionist.tool_completed", toolName: "unknown", status: "rejected" });
+    expect(events.at(-1)).toEqual({ code: "agent.tool_completed", toolName: "unknown", status: "rejected" });
     expect(executions).toBe(6);
     expect(JSON.stringify(events)).not.toContain(secret);
     expect(JSON.stringify(events)).not.toContain(id);
@@ -160,7 +160,7 @@ describe("receptionist tool boundary", () => {
   test("throwing diagnostics cannot fail or repeat a successful mutation or schema rejection", async () => {
     for (const diagnose of [() => { throw new Error("private logger failure"); }, async () => { throw new Error("private logger failure"); }]) {
       let executions = 0;
-      const session = new ReceptionistToolSession(async () => { executions++; return { status: "staged_action", operation: "cancel", appointment: {} }; },
+      const session = new AgentToolSession(async () => { executions++; return { status: "staged_action", operation: "cancel", appointment: {} }; },
         undefined, diagnose);
       expect((await session.execute("cancel", { appointmentId: id })).status).toBe("staged_action");
       expect((await session.execute("availability", {})).status).toBe("rejected");
@@ -172,7 +172,7 @@ describe("receptionist tool boundary", () => {
   });
   test("bounds calls and closes the capability at transaction end", async () => {
     let calls = 0;
-    const session = new ReceptionistToolSession(async () => { calls++; return { status: "data", data: {} }; });
+    const session = new AgentToolSession(async () => { calls++; return { status: "data", data: {} }; });
     for (let index = 0; index < 16; index++) await session.execute("read_business", {});
     expect((await session.execute("read_business", {})).status).toBe("rejected");
     expect(calls).toBe(16);
@@ -182,7 +182,7 @@ describe("receptionist tool boundary", () => {
   for (const toolName of ["prepare_booking", "prepare_change"] as const)
     for (const rejection of ["schema", "limit", "handler"] as const) test(`preparation rejection observation is serialized: ${toolName}/${rejection}`, async () => {
     const order: string[] = [];
-    const session = new ReceptionistToolSession(async command => {
+    const session = new AgentToolSession(async command => {
       await Promise.resolve();
       order.push(command.name);
       return command.name === "prepare_change" ? { status: "rejected", code: "AGENDA_REJECTED" }
@@ -204,15 +204,15 @@ describe("receptionist tool boundary", () => {
   });
   test("does not turn infrastructure errors into unavailable facts", async () => {
     const events: unknown[] = [];
-    const session = new ReceptionistToolSession(async () => { throw new Error("private database detail"); }, undefined,
+    const session = new AgentToolSession(async () => { throw new Error("private database detail"); }, undefined,
       event => events.push(event));
     await expect(session.execute("read_business", {})).rejects.toThrow("private database detail");
     await expect(session.drain()).rejects.toThrow("private database detail");
-    expect(events).toEqual([{ code: "receptionist.tool_completed", toolName: "read_business", status: "infrastructure_failure" }]);
+    expect(events).toEqual([{ code: "agent.tool_completed", toolName: "read_business", status: "infrastructure_failure" }]);
   });
   test("queued malformed preparation cannot swallow an earlier infrastructure failure", async () => {
     let revoked = false;
-    const session = new ReceptionistToolSession(async () => { throw new Error("infrastructure failure"); },
+    const session = new AgentToolSession(async () => { throw new Error("infrastructure failure"); },
       undefined, undefined, () => { revoked = true; });
     const first = session.execute("read_catalog", {});
     const malformed = session.execute("prepare_change", {});
@@ -222,7 +222,7 @@ describe("receptionist tool boundary", () => {
     expect(revoked).toBe(false);
   });
   test("oversized result aborts rather than silently hiding facts", async () => {
-    const session = new ReceptionistToolSession(async () => ({ status: "data", data: "x".repeat(20000) }));
+    const session = new AgentToolSession(async () => ({ status: "data", data: "x".repeat(20000) }));
     await expect(session.execute("read_business", {})).rejects.toThrow("Tool result limit");
   });
 });

@@ -108,7 +108,7 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
     const { csrfToken } = (await loginResponse.json()) as {
       csrfToken: string;
     };
-    const assistantResponse = await fetch(`${system.apiUrl}/me/assistant`, {
+    const agentResponse = await fetch(`${system.apiUrl}/me/agent`, {
       method: "PUT",
       headers: {
         cookie,
@@ -123,7 +123,7 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
         expectedRevision: 0,
       }),
     });
-    expect(assistantResponse.status).toBe(200);
+    expect(agentResponse.status).toBe(200);
 
     await login(tenantPage, system.webUrl, tenant.email, tenant.password);
     await expect(tenantPage).toHaveURL(/\/profile$/);

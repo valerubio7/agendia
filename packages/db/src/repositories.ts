@@ -329,18 +329,18 @@ export class PostgresRepositories {
   saveFullProfile(businessId: string, p: Record<string, string>) {
     return business.saveFullProfile(this.db, businessId, p);
   }
-  saveAssistant(businessId: string, active: boolean) {
-    return agentSettings.saveAssistant(this.db, businessId, active);
+  saveAgent(businessId: string, active: boolean) {
+    return agentSettings.saveAgent(this.db, businessId, active);
   }
-  async assistant() {
-    return agentSettings.assistant(this.db);
+  async agent() {
+    return agentSettings.agent(this.db);
   }
-  async saveFullAssistant(
+  async saveFullAgent(
     businessId: string,
     p: Record<string, unknown>,
     expected: number,
   ) {
-    return agentSettings.saveFullAssistant(this.db, businessId, p, expected);
+    return agentSettings.saveFullAgent(this.db, businessId, p, expected);
   }
   async whatsapp() {
     return whatsapp.whatsapp(this.db);
@@ -535,10 +535,10 @@ export class PostgresRepositories {
         { display_name: string }[]
       >`select display_name from business_profiles limit 1`
     )[0];
-    const assistant = (
+    const agent = (
       await this.db<
         { active: boolean }[]
-      >`select active from assistant_configs limit 1`
+      >`select active from agent_configs limit 1`
     )[0];
     const inbox = Number(
       (
@@ -556,7 +556,7 @@ export class PostgresRepositories {
     );
     return {
       profile: profile?.display_name ?? null,
-      assistantActive: assistant?.active ?? null,
+      agentActive: agent?.active ?? null,
       inbox,
       outbox,
     };

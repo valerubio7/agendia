@@ -62,7 +62,7 @@ CREATE TABLE business_profiles (
   address varchar(500) NOT NULL DEFAULT '',
   updated_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE TABLE assistant_configs (
+CREATE TABLE agent_configs (
   business_id uuid PRIMARY KEY REFERENCES businesses(id),
   active boolean NOT NULL DEFAULT false,
   revision integer NOT NULL DEFAULT 0 CHECK (revision >= 0),
@@ -484,7 +484,7 @@ CREATE POLICY tenant_records_business_user ON tenant_records FOR ALL TO agendia_
 CREATE POLICY tenant_records_admin_deny ON tenant_records FOR SELECT TO agendia_admin_runtime USING (false);
 DO $$ DECLARE t text; BEGIN
   FOREACH t IN ARRAY ARRAY['audit_events','technical_events','outbox_events','inbox_events',
-    'business_profiles','assistant_configs','services','clients','business_calendars',
+    'business_profiles','agent_configs','services','clients','business_calendars',
     'business_calendar_closures','resources','resource_services','appointments'] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
@@ -544,7 +544,7 @@ CREATE POLICY audit_events_admin_http ON audit_events FOR SELECT TO agendia_admi
 CREATE POLICY audit_events_admin_http_insert ON audit_events FOR INSERT TO agendia_admin_runtime WITH CHECK (business_id = nullif(current_setting('app.tenant_id',true),'')::uuid);
 CREATE POLICY outbox_events_admin_http ON outbox_events FOR INSERT TO agendia_admin_runtime WITH CHECK (business_id = nullif(current_setting('app.tenant_id',true),'')::uuid);
 CREATE POLICY business_profiles_worker ON business_profiles FOR SELECT TO agendia_worker_runtime USING (business_id=nullif(current_setting('app.tenant_id',true),'')::uuid);
-CREATE POLICY assistant_configs_worker ON assistant_configs FOR SELECT TO agendia_worker_runtime USING (business_id=nullif(current_setting('app.tenant_id',true),'')::uuid);
+CREATE POLICY agent_configs_worker ON agent_configs FOR SELECT TO agendia_worker_runtime USING (business_id=nullif(current_setting('app.tenant_id',true),'')::uuid);
 CREATE POLICY whatsapp_connections_worker ON whatsapp_connections FOR SELECT TO agendia_worker_runtime USING (business_id=nullif(current_setting('app.tenant_id',true),'')::uuid);
 CREATE POLICY audit_events_worker_select ON audit_events FOR SELECT TO agendia_worker_runtime USING (business_id=nullif(current_setting('app.tenant_id',true),'')::uuid);
 CREATE POLICY audit_events_worker_insert ON audit_events FOR INSERT TO agendia_worker_runtime WITH CHECK (business_id=nullif(current_setting('app.tenant_id',true),'')::uuid);
@@ -595,7 +595,7 @@ GRANT INSERT, UPDATE ON businesses TO agendia_admin_runtime;
 GRANT SELECT, INSERT, UPDATE ON auth_identities, web_sessions TO agendia_admin_runtime;
 GRANT SELECT ON auth_identities TO agendia_runtime;
 GRANT SELECT, INSERT, UPDATE ON web_sessions TO agendia_runtime;
-GRANT SELECT, INSERT, UPDATE ON business_profiles, assistant_configs, services, clients,
+GRANT SELECT, INSERT, UPDATE ON business_profiles, agent_configs, services, clients,
   business_calendars, resources, appointments TO agendia_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE ON business_calendar_closures TO agendia_runtime;
 GRANT SELECT, INSERT, DELETE ON resource_services TO agendia_runtime;
@@ -621,7 +621,7 @@ GRANT SELECT, DELETE ON whatsapp_link_codes TO agendia_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE ON whatsapp_link_codes TO agendia_whatsapp_runtime;
 GRANT SELECT, INSERT, UPDATE ON conversations, messages TO agendia_whatsapp_runtime;
 GRANT SELECT, UPDATE ON outbound_commands TO agendia_whatsapp_runtime;
-GRANT SELECT ON business_profiles, assistant_configs, whatsapp_connections, conversations, messages,
+GRANT SELECT ON business_profiles, agent_configs, whatsapp_connections, conversations, messages,
   conversation_summaries, outbound_commands TO agendia_worker_runtime;
 GRANT INSERT, UPDATE ON messages, outbound_commands TO agendia_worker_runtime;
 GRANT UPDATE (reply_due_at) ON conversations TO agendia_worker_runtime;
@@ -637,9 +637,9 @@ GRANT INSERT, UPDATE ON appointments TO agendia_worker_runtime;
 
 CREATE VIEW admin_business_status AS
   SELECT b.id,b.name,b.status,b.created_at,b.last_technical_activity_at,
-    CASE WHEN a.active THEN 'active' ELSE 'inactive' END assistant_status,
+    CASE WHEN a.active THEN 'active' ELSE 'inactive' END agent_status,
     coalesce(lower(w.state),'link_required') whatsapp_status
-  FROM businesses b LEFT JOIN assistant_configs a ON a.business_id=b.id
+  FROM businesses b LEFT JOIN agent_configs a ON a.business_id=b.id
   LEFT JOIN whatsapp_connections w ON w.business_id=b.id;
 GRANT SELECT ON admin_business_status TO agendia_admin_runtime;
 
@@ -666,9 +666,9 @@ CREATE TRIGGER technical_events_project_activity
 AFTER INSERT ON technical_events
 FOR EACH ROW EXECUTE FUNCTION project_last_technical_activity();
 
-CREATE FUNCTION route_whatsapp_session(_session uuid) RETURNS TABLE(business_id uuid,connection_id uuid,business_status text,assistant_active boolean)
+CREATE FUNCTION route_whatsapp_session(_session uuid) RETURNS TABLE(business_id uuid,connection_id uuid,business_status text,agent_active boolean)
 LANGUAGE sql SECURITY DEFINER SET search_path=public,pg_temp AS $$
- SELECT w.business_id,w.id,b.status,coalesce(a.active,false) FROM whatsapp_connections w JOIN businesses b ON b.id=w.business_id LEFT JOIN assistant_configs a ON a.business_id=b.id WHERE w.session_public_id=_session AND w.state='CONNECTED'
+ SELECT w.business_id,w.id,b.status,coalesce(a.active,false) FROM whatsapp_connections w JOIN businesses b ON b.id=w.business_id LEFT JOIN agent_configs a ON a.business_id=b.id WHERE w.session_public_id=_session AND w.state='CONNECTED'
 $$;
 CREATE FUNCTION claim_ai_outbox(_token uuid,_limit integer,_stale_ms integer)
 RETURNS TABLE(id uuid,business_id uuid,stable_key text,payload jsonb,publish_attempts integer)

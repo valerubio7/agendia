@@ -53,7 +53,7 @@ const businessStatusLabels: Record<Business["status"], string> = {
   active: "Activo",
   suspended: "Suspendido",
 };
-const assistantStatusLabels: Record<Business["assistantStatus"], string> = {
+const agentStatusLabels: Record<Business["agentStatus"], string> = {
   active: "Activo",
   inactive: "Inactivo",
 };
@@ -247,7 +247,7 @@ export function AdminBusinessesScreen({
         </div>
         <p className="admin-results" role="status">{visibleBusinesses.length} de {businesses.length} negocios</p>
         <div className="admin-directory-heading admin-directory-grid" aria-hidden="true">
-          <span>Negocio</span><span>Operación</span><span>Asistente</span><span>WhatsApp</span><span>Gestión</span>
+          <span>Negocio</span><span>Operación</span><span>Agente</span><span>WhatsApp</span><span>Gestión</span>
         </div>
         <ul className="admin-directory">
           {businesses.map(business => {
@@ -258,7 +258,7 @@ export function AdminBusinessesScreen({
                 <summary className="admin-directory-grid">
                   <strong className="admin-business-name">{business.name}</strong>
                   <span className="admin-directory-state"><small>Operación</small><span className={`admin-status admin-status--business-${business.status}`}>{businessStatusLabels[business.status]}</span></span>
-                  <span className="admin-directory-state"><small>Asistente</small><span className={`admin-status admin-status--assistant-${business.assistantStatus}`}>{assistantStatusLabels[business.assistantStatus]}</span></span>
+                  <span className="admin-directory-state"><small>Agente</small><span className={`admin-status admin-status--agent-${business.agentStatus}`}>{agentStatusLabels[business.agentStatus]}</span></span>
                   <span className="admin-directory-state"><small>WhatsApp</small><span className={`admin-status admin-status--whatsapp-${business.whatsappStatus}`}>{whatsappStatusLabels[business.whatsappStatus]}</span></span>
                   <span className="admin-manage-label">Gestionar <svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5" /></svg></span>
                 </summary>
@@ -365,7 +365,7 @@ export function AdminBusinessesScreen({
           </div>
         </form>
         <details className="admin-base-instructions">
-          <summary><span>Instrucciones base del recepcionista</span><span className="admin-readonly-label">Solo lectura</span></summary>
+          <summary><span>Instrucciones base del agente</span><span className="admin-readonly-label">Solo lectura</span></summary>
           <div>
             <div className="admin-instruction-editor admin-instruction-editor--readonly">
               <div className="admin-instruction-editor__header">
@@ -373,7 +373,7 @@ export function AdminBusinessesScreen({
               </div>
               <textarea id="platform-base-instructions" value={instructions.baseInstructions} readOnly rows={8} aria-describedby="platform-base-help" />
             </div>
-            <p id="platform-base-help">Sistema activo del recepcionista de WhatsApp, de solo lectura. Se modifica únicamente desde el código; no incluye datos de conversaciones.</p>
+            <p id="platform-base-help">Sistema activo del agente de WhatsApp, de solo lectura. Se modifica únicamente desde el código; no incluye datos de conversaciones.</p>
           </div>
         </details>
       </section>

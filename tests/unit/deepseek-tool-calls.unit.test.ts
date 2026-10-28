@@ -18,7 +18,7 @@ const envelope = (message: unknown, finish_reason = "stop") => JSON.stringify({
 const provider = (body: string) => new DeepSeekAdapter({ apiKey: "test-only", fetcher: async () => new Response(body) });
 
 describe("native tool conversations", () => {
-  test("system double performs assistant call, actual result, and final native protocol", async () => {
+  test("system double performs agent call, actual result, and final native protocol", async () => {
     const transport = new DeterministicDeepSeekSystemDouble();
     transport.active = true;
     transport.nativeCalls = [{ name: "read_catalog", arguments: {} }];
@@ -108,7 +108,7 @@ describe("native tool conversations", () => {
     expect(result.message.toolCalls.map(tool => tool.id)).toEqual(["call_1", "call_2"]);
   });
 
-  test("serializes native functions, assistant calls, correlated results and reasoning round-trip", async () => {
+  test("serializes native functions, agent calls, correlated results and reasoning round-trip", async () => {
     let body: any;
     const adapter = new DeepSeekAdapter({ apiKey: "test-only", model: "configured-model", fetcher: async (_, init) => {
       body = JSON.parse(String(init?.body));
@@ -171,7 +171,7 @@ describe("native tool conversations", () => {
   test("validates definitions, bounds and history correlations before fetching", async () => {
     let fetches = 0;
     const adapter = new DeepSeekAdapter({ apiKey: "test-only", fetcher: async () => { fetches++; return new Response("{}"); } });
-    const assistant = { role: "assistant", content: null, toolCalls: [{ id: "call_1", name: "read_catalog", arguments: {} }] } as const;
+    const agent = { role: "assistant", content: null, toolCalls: [{ id: "call_1", name: "read_catalog", arguments: {} }] } as const;
     const result = { role: "tool", toolCallId: "call_1", content: "{}" } as const;
     const invalid: unknown[] = [
       { ...request, tools: [request.tools[0], request.tools[0]] },
@@ -185,16 +185,16 @@ describe("native tool conversations", () => {
       { ...request, maxOutputCharacters: 0 }, { ...request, maxOutputCharacters: 8193 },
       { ...request, messages: [{ role: "user", content: "x".repeat(16385) }] },
       { ...request, messages: [{ role: "user", content: null }] },
-      { ...request, messages: [...request.messages, { ...assistant, providerState: { reasoningContent: "x".repeat(32769) } }, result] },
-      { ...request, messages: [...request.messages, { ...assistant, toolCalls: [{ id: "call_1", name: "read_catalog", arguments: { x: "😀".repeat(4096) } }] }, result] },
+      { ...request, messages: [...request.messages, { ...agent, providerState: { reasoningContent: "x".repeat(32769) } }, result] },
+      { ...request, messages: [...request.messages, { ...agent, toolCalls: [{ id: "call_1", name: "read_catalog", arguments: { x: "😀".repeat(4096) } }] }, result] },
       { ...request, messages: [result] },
-      { ...request, messages: [...request.messages, assistant] },
-      { ...request, messages: [...request.messages, assistant, { ...result, toolCallId: "unknown" }] },
-      { ...request, messages: [...request.messages, assistant, result, result] },
-      { ...request, messages: [...request.messages, assistant, request.messages[1], result] },
-      { ...request, messages: [...request.messages, assistant, result, assistant, result] },
-      { ...request, messages: [...request.messages, { ...assistant, toolCalls: [{ id: "call_1", name: "unknown", arguments: {} }] }, result] },
-      { ...request, messages: [...request.messages, { ...assistant, toolCalls: [{ id: "call_1", name: "read_catalog", arguments: { x: Infinity } }] }, result] },
+      { ...request, messages: [...request.messages, agent] },
+      { ...request, messages: [...request.messages, agent, { ...result, toolCallId: "unknown" }] },
+      { ...request, messages: [...request.messages, agent, result, result] },
+      { ...request, messages: [...request.messages, agent, request.messages[1], result] },
+      { ...request, messages: [...request.messages, agent, result, agent, result] },
+      { ...request, messages: [...request.messages, { ...agent, toolCalls: [{ id: "call_1", name: "unknown", arguments: {} }] }, result] },
+      { ...request, messages: [...request.messages, { ...agent, toolCalls: [{ id: "call_1", name: "read_catalog", arguments: { x: Infinity } }] }, result] },
       { ...request, messages: Array(20).fill({ role: "user", content: "😀".repeat(4000) }) },
     ];
     for (const value of invalid) await expect(adapter.converse(value as ToolConversationRequest)).rejects.toMatchObject({ code: "invalid_request" });

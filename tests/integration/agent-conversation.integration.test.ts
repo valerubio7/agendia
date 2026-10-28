@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { createRuntimePools } from "@agendia/db";
-import type { AiProvider, ToolConversationProvider, ToolConversationRequest, ToolAssistantMessage } from "@agendia/domain";
+import type { AiProvider, ToolConversationProvider, ToolConversationRequest, ToolAgentMessage } from "@agendia/domain";
 import { PostgresAiJobProcessor } from "../../apps/message-worker/src/jobs/ai-job.ts";
 import { PostgresInboundHandler } from "../../apps/whatsapp-manager/src/inbound.ts";
 import { normalizeBaileysMessage } from "../../packages/whatsapp-baileys/src/baileys-gateway.ts";
@@ -16,14 +16,14 @@ beforeAll(async () => {
   pools = createRuntimePools(db.container.getConnectionUri());
 }, 120_000);
 afterAll(async () => { await pools?.end(); await db?.stop(); });
-const finish = (content: string): ToolAssistantMessage => ({ role: "assistant", content, toolCalls: [] });
-const batch = (id: string, name: string, args = {}): ToolAssistantMessage => ({ role: "assistant", content: null,
+const finish = (content: string): ToolAgentMessage => ({ role: "assistant", content, toolCalls: [] });
+const batch = (id: string, name: string, args = {}): ToolAgentMessage => ({ role: "assistant", content: null,
   toolCalls: [{ id, name, arguments: args }], providerState: { reasoningContent: "never public" } });
 async function fixture() {
   const business = randomUUID(), connection = randomUUID(), session = randomUUID(), service = randomUUID(), resource = randomUUID();
   const schedule = Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map(day => [day, [{ startMinute: 540, endMinute: 1080 }]]));
   await db.sql`insert into businesses(id,name) values(${business},'Conversation')`;
-  await db.sql`insert into assistant_configs(business_id,active,style,business_instructions) values(${business},true,'amable','Solo datos reales')`;
+  await db.sql`insert into agent_configs(business_id,active,style,business_instructions) values(${business},true,'amable','Solo datos reales')`;
   await db.sql`insert into business_profiles(business_id,display_name,description,address) values(${business},'Salón','Cortes','Calle real 1')`;
   await db.sql`insert into whatsapp_connections(id,business_id,session_public_id,state) values(${connection},${business},${session},'CONNECTED')`;
   await db.sql`insert into business_calendars(business_id,weekly_schedule) values(${business},${db.sql.json(schedule)})`;
@@ -39,7 +39,7 @@ async function fixture() {
     await db.sql`update conversations set reply_due_at=now()-interval '1 second' where id=${row!.conversation_id}`;
     return { businessId: business, messageId: row!.id as string, correlationId: `conversation:${providerId}` };
   }
-  function worker(script: (request: ToolConversationRequest) => Promise<ToolAssistantMessage>) {
+  function worker(script: (request: ToolConversationRequest) => Promise<ToolAgentMessage>) {
     const requests: ToolConversationRequest[] = [];
     const provider: AiProvider & ToolConversationProvider = {
       generate: async () => { throw new Error("Legacy generation forbidden"); },

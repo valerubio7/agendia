@@ -49,7 +49,7 @@ describe("production PostgreSQL repositories", () => {
     });
     await pools.api.run(context(A), async (repo) => {
       await repo.saveProfile(A, "Comercio A");
-      await repo.saveAssistant(A, true);
+      await repo.saveAgent(A, true);
       await repo.recordInbox(A, "baileys", "incoming-1");
     });
     await pools.manager.run(context(A), async (repo) =>
@@ -60,7 +60,7 @@ describe("production PostgreSQL repositories", () => {
     );
     expect(snapshot).toEqual({
       profile: "Comercio A",
-      assistantActive: true,
+      agentActive: true,
       inbox: 1,
       outbox: 0,
     });
@@ -75,7 +75,7 @@ describe("production PostgreSQL repositories", () => {
     );
     expect(
       await pools.api.run(undefined, (repo) => repo.tenantSnapshot()),
-    ).toEqual({ profile: null, assistantActive: null, inbox: 0, outbox: 0 });
+    ).toEqual({ profile: null, agentActive: null, inbox: 0, outbox: 0 });
     await expect(
       pools.api.run(context(A), (repo) => repo.saveProfile(B, "intrusion")),
     ).rejects.toThrow(/policy|security/i);
@@ -117,7 +117,7 @@ describe("production PostgreSQL repositories", () => {
     );
     expect(snapshot).toEqual({
       profile: "Comercio A",
-      assistantActive: true,
+      agentActive: true,
       inbox: 1,
       outbox: 0,
     });

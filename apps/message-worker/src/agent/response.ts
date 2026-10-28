@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ReceptionistToolCommand, ReceptionistToolResult } from "./tools.ts";
+import type { AgentToolCommand, AgentToolResult } from "./tools.ts";
 
 const factNames = ["read_business", "read_catalog", "read_resources", "read_calendar", "availability",
   "owned_appointments", "owned_appointment"] as const;
@@ -19,9 +19,9 @@ const response = z.discriminatedUnion("kind", [z.object({
   kind: z.literal("informational_prose"),
   text: z.string().min(1).max(4000).refine(value => Boolean(value.trim())),
 }).strict()]);
-export interface ReceptionistFact {
-  name: ReceptionistToolCommand["name"];
-  result: ReceptionistToolResult;
+export interface AgentFact {
+  name: AgentToolCommand["name"];
+  result: AgentToolResult;
 }
 type RecordValue = Record<string, unknown>;
 const record = (value: unknown): RecordValue => value && typeof value === "object" && !Array.isArray(value)
@@ -35,7 +35,7 @@ const terms = (value: RecordValue) => `${text(value.serviceName)}, ${numeric(val
 
 // Selector facts display only repository/tool-owned fields, never opaque bindings
 // or arbitrary object serialization.
-function renderFact({ name, result }: ReceptionistFact, businessFields = ["displayName", "description", "address"]): string {
+function renderFact({ name, result }: AgentFact, businessFields = ["displayName", "description", "address"]): string {
   if (result.status === "unavailable_data") return "Ese dato no está registrado en el negocio.";
   if (result.status !== "data") return "";
   const data = record(result.data);
@@ -86,7 +86,7 @@ function renderFact({ name, result }: ReceptionistFact, businessFields = ["displ
 
 /** This receives only transaction-local tool evidence, never model proof objects.
  * The prose schema validates shape, not factual truth or operation authority. */
-export function renderReceptionistResponse(raw: string, evidence: readonly ReceptionistFact[]): string {
+export function renderAgentResponse(raw: string, evidence: readonly AgentFact[]): string {
   let act: z.infer<typeof response> | undefined;
   try { act = response.parse(JSON.parse(raw)); } catch { /* Closed contract: discard all unbound content. */ }
   const last = evidence.at(-1)?.result;
@@ -104,7 +104,7 @@ export function renderReceptionistResponse(raw: string, evidence: readonly Recep
   const latest = new Map(evidence.filter(item => factNames.includes(item.name as typeof factNames[number]))
     .map(item => [item.name, item]));
   const selected = act?.facts ?? [...latest.keys()];
-  const facts = [...new Set(selected)].map(name => latest.get(name)).filter((item): item is ReceptionistFact => Boolean(item))
+  const facts = [...new Set(selected)].map(name => latest.get(name)).filter((item): item is AgentFact => Boolean(item))
     .map(item => renderFact(item, act?.businessFields)).filter(Boolean);
   const question = act?.ask ? questions[act.ask] : "";
   return [...facts, question].filter(Boolean).join("\n\n") || failure || questions.start;
