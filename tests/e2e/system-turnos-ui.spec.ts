@@ -26,7 +26,7 @@ async function provision(admin: Page, business: Page, system: { webUrl: string; 
     return response.json();
   };
   const read = async (path: string) => {
-    const response = await business.request.get(`${system.webUrl}/api/me/${path}`);
+    const response = await business.request.get(`${system.webUrl}/api/me/${path}`, { maxRetries: 1 });
     expect(response.status()).toBe(200);
     return response.json();
   };

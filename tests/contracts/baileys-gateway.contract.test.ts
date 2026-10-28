@@ -136,7 +136,7 @@ describe("received address evidence at the actual socket boundary", () => {
 describe("WhatsAppGateway contract", () => {
   test("provides an executable production manager bootstrap", () => {
     expect(managerPackage.scripts?.start).toBe(
-      "AGENDIA_RUN_WHATSAPP_MANAGER=1 node --import tsx src/index.ts",
+      "AGENDIA_RUN_WHATSAPP_MANAGER=1 bun src/index.ts",
     );
   });
 
