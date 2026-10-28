@@ -5,7 +5,7 @@ export const AI_SYSTEM_INSTRUCTIONS = "Prioridad inmutable: responde principalme
 export interface AiGenerateRequest {
   additionalInstructions?: string;
   business: Record<string, string>;
-  assistant: Record<string, string>;
+  agent: Record<string, string>;
   context: { summary: string; recent: string[] };
   message: string;
   maxOutputCharacters: number;
@@ -39,7 +39,7 @@ export const ConversationToolCallSchema = z.object({
 }).strict();
 export type ConversationToolCall = z.infer<typeof ConversationToolCallSchema>;
 
-export const ToolAssistantMessageSchema = z.object({
+export const ToolAgentMessageSchema = z.object({
   role: z.literal("assistant"),
   content: z.string().max(TOOL_CONVERSATION_LIMITS.messageCharacters).nullable(),
   toolCalls: z.array(ConversationToolCallSchema).max(TOOL_CONVERSATION_LIMITS.calls).default([]),
@@ -48,11 +48,11 @@ export const ToolAssistantMessageSchema = z.object({
     reasoningContent: z.string().max(TOOL_CONVERSATION_LIMITS.reasoningCharacters),
   }).strict().optional(),
 }).strict().refine(message => message.toolCalls.length > 0 || Boolean(message.content?.trim()));
-export type ToolAssistantMessage = z.infer<typeof ToolAssistantMessageSchema>;
+export type ToolAgentMessage = z.infer<typeof ToolAgentMessageSchema>;
 
 const ToolConversationMessageSchema = z.union([
   z.object({ role: z.enum(["system", "user"]), content: z.string().min(1).max(TOOL_CONVERSATION_LIMITS.messageCharacters) }).strict(),
-  ToolAssistantMessageSchema,
+  ToolAgentMessageSchema,
   z.object({ role: z.literal("tool"), toolCallId: ToolCallIdSchema,
     content: z.string().max(TOOL_CONVERSATION_LIMITS.messageCharacters) }).strict(),
 ]);
@@ -70,7 +70,7 @@ export const ToolConversationRequestSchema = z.object({
 }).strict();
 export type ToolConversationRequest = z.input<typeof ToolConversationRequestSchema>;
 export interface ToolConversationResult {
-  message: ToolAssistantMessage;
+  message: ToolAgentMessage;
   providerId: string;
   usageTokens: number;
 }
@@ -90,7 +90,7 @@ export interface ConversationSummaryContent {
 }
 export interface ConversationSummaryRequest {
   prior: ConversationSummaryContent | null;
-  messages: Array<{ sequence: number; role: "customer" | "assistant"; text: string }>;
+  messages: Array<{ sequence: number; role: "customer" | "agent"; text: string }>;
   correlationId: string;
 }
 export interface ConversationSummarizer {

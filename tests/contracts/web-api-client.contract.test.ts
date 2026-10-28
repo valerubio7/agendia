@@ -454,7 +454,7 @@ describe("Next web client against Fastify contracts", () => {
     expect(panel).not.toContain("location.href");
   });
 
-  test("uses cookie/CSRF and live admin, profile, assistant and WhatsApp contracts", async () => {
+  test("uses cookie/CSRF and live admin, profile, agent and WhatsApp contracts", async () => {
     const admin = new ApiClient(transport, "/api");
     expect(
       (await admin.login("admin@web.test", "correct horse battery staple"))
@@ -538,16 +538,16 @@ describe("Next web client against Fastify contracts", () => {
       tenant.saveProfile({ ...profile, displayName: "" }),
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
     expect((await tenant.profile()).displayName).toBe("Tenant");
-    const assistant = await tenant.saveAssistant({
+    const agent = await tenant.saveAgent({
       style: " helpful\n warm ",
       businessInstructions: " business guidance\n ",
       active: true,
       expectedRevision: 0,
     });
-    expect(assistant).toEqual({ style: " helpful\n warm ", businessInstructions: " business guidance\n ", active: true, revision: 1 });
-    expect(await tenant.assistant()).toEqual(assistant);
+    expect(agent).toEqual({ style: " helpful\n warm ", businessInstructions: " business guidance\n ", active: true, revision: 1 });
+    expect(await tenant.agent()).toEqual(agent);
     await expect(
-      tenant.saveAssistant({ ...assistant, expectedRevision: 0 }),
+      tenant.saveAgent({ ...agent, expectedRevision: 0 }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
     expect((await tenant.whatsappStatus()).status).toBe("link_required");
     await tenant.requestWhatsAppLink();

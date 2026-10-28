@@ -1,3 +1,3 @@
 import { createElement } from "react";
 import { LivePanel } from "../../shell/live-panel";
-export const AssistantView = () => createElement(LivePanel, { mode: "assistant" });
+export const AgentView = () => createElement(LivePanel, { mode: "agent" });

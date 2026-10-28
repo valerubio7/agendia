@@ -454,7 +454,7 @@ describe("forced tenant RLS", () => {
     const connectionB = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
     const conversationB = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
     await admin`insert into business_profiles (business_id, display_name) values (${tenantA}, 'A'), (${tenantB}, 'B')`;
-    await admin`insert into assistant_configs (business_id) values (${tenantA}), (${tenantB})`;
+    await admin`insert into agent_configs (business_id) values (${tenantA}), (${tenantB})`;
     await admin`insert into audit_events (business_id, actor_id, event_type, outcome, request_id, stream_sequence, previous_hash, event_hash, hmac_key_version) values
       (${tenantA}, 'worker', 'ai.failed', 'failure', 'req-audit-a', 1, 'GENESIS', ${"a".repeat(64)}, 'v1'),
       (${tenantB}, 'worker', 'ai.failed', 'failure', 'req-audit-b', 1, 'GENESIS', ${"b".repeat(64)}, 'v1')`;
@@ -474,7 +474,7 @@ describe("forced tenant RLS", () => {
       });
     for (const table of [
       "business_profiles",
-      "assistant_configs",
+      "agent_configs",
       "audit_events",
       "technical_events",
     ]) {

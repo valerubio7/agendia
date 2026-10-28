@@ -98,7 +98,7 @@ export function captureWebDiagnostics(child: DiagnosticChild) {
 }
 
 export const webRuntimeRoutes = [
-  "/", "/businesses", "/profile", "/turnos", "/assistant", "/business-calendar",
+  "/", "/businesses", "/profile", "/turnos", "/agent", "/business-calendar",
   "/clients", "/resources", "/services", "/whatsapp",
 ] as const;
 

@@ -1,31 +1,31 @@
 import type { FastifyInstance } from "fastify";
-import { AssistantConfigInputSchema } from "@agendia/domain";
+import { AgentConfigInputSchema } from "@agendia/domain";
 import type { TenantRouteContext } from "./context.ts";
 
 export function registerAgentSettingsRoutes(
   app: FastifyInstance,
   { pools, requireTenant, context, fail, tenantWrite }: TenantRouteContext,
 ) {
-  app.get("/me/assistant", async (request, reply) => {
+  app.get("/me/agent", async (request, reply) => {
     const auth = await requireTenant(request, reply);
     return auth
       ? ((await pools.api.run(context(auth, request), (repo) =>
-          repo.assistant(),
+          repo.agent(),
         )) ?? {})
       : undefined;
   });
-  app.put("/me/assistant", async (request, reply) => {
+  app.put("/me/agent", async (request, reply) => {
     const auth = await requireTenant(request, reply, true);
     if (!auth) return;
     try {
-      const parsed = AssistantConfigInputSchema.parse(request.body),
+      const parsed = AgentConfigInputSchema.parse(request.body),
         { expectedRevision, ...fields } = parsed;
       const saved = await tenantWrite<object | null>(
         auth,
         request,
-        "assistant.updated",
+        "agent.updated",
         (repo) =>
-          repo.saveFullAssistant(auth.business_id!, fields, expectedRevision),
+          repo.saveFullAgent(auth.business_id!, fields, expectedRevision),
       );
       return (
         saved ?? fail(reply, request, 409, "CONFLICT", "Revision conflict")
@@ -36,7 +36,7 @@ export function registerAgentSettingsRoutes(
         request,
         400,
         "VALIDATION_FAILED",
-        "Invalid assistant fields",
+        "Invalid agent fields",
       );
     }
   });

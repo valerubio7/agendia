@@ -36,17 +36,17 @@ export async function globalReplyPacing(db: Db): Promise<ReplyPacing> {
   if (!row) throw new Error("Global reply pacing singleton missing");
   return ReplyPacingSchema.parse(row);
 }
-export function saveAssistant(db: Db, businessId: string, active: boolean) {
-  return db`insert into assistant_configs (business_id,active) values (${businessId},${active}) on conflict (business_id) do update set active=excluded.active,revision=assistant_configs.revision+1,updated_at=now()`;
+export function saveAgent(db: Db, businessId: string, active: boolean) {
+  return db`insert into agent_configs (business_id,active) values (${businessId},${active}) on conflict (business_id) do update set active=excluded.active,revision=agent_configs.revision+1,updated_at=now()`;
 }
-export async function assistant(db: Db) {
+export async function agent(db: Db) {
   return (
     (
-      await db`select style,business_instructions "businessInstructions",active,revision from assistant_configs limit 1`
+      await db`select style,business_instructions "businessInstructions",active,revision from agent_configs limit 1`
     )[0] ?? null
   );
 }
-export async function saveFullAssistant(
+export async function saveFullAgent(
   db: Db,
   businessId: string,
   p: Record<string, unknown>,
@@ -54,7 +54,7 @@ export async function saveFullAssistant(
 ) {
   return (
     (
-      await db`insert into assistant_configs(business_id,style,business_instructions,active,revision) values(${businessId},${p.style as string},${p.businessInstructions as string},${p.active as boolean},1) on conflict(business_id) do update set style=excluded.style,business_instructions=excluded.business_instructions,active=excluded.active,revision=assistant_configs.revision+1,updated_at=now() where assistant_configs.revision=${expected} returning style,business_instructions "businessInstructions",active,revision`
+      await db`insert into agent_configs(business_id,style,business_instructions,active,revision) values(${businessId},${p.style as string},${p.businessInstructions as string},${p.active as boolean},1) on conflict(business_id) do update set style=excluded.style,business_instructions=excluded.business_instructions,active=excluded.active,revision=agent_configs.revision+1,updated_at=now() where agent_configs.revision=${expected} returning style,business_instructions "businessInstructions",active,revision`
     )[0] ?? null
   );
 }

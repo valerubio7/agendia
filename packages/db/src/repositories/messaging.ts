@@ -11,7 +11,7 @@ export async function routeSession(db: Db, session: string) {
           business_id: string;
           connection_id: string;
           business_status: "active" | "suspended";
-          assistant_active: boolean;
+          agent_active: boolean;
         }[]
       >`select * from route_whatsapp_session(${session}::uuid)`
     )[0] ?? null
@@ -92,7 +92,7 @@ export async function loadAiMessage(db: Db, messageId: string, requireDue = fals
         connection_id: string;
         raw_text: string;
       }[]
-    >`select m.id,m.business_id,m.sequence,m.conversation_id,m.connection_id,m.raw_text from messages m join conversations c on c.id=m.conversation_id and c.business_id=m.business_id join businesses b on b.id=m.business_id join assistant_configs a on a.business_id=b.id join whatsapp_connections w on w.id=m.connection_id where m.id=${messageId} and m.direction='inbound' and m.processing_state='pending' and c.latest_inbound_id=m.id and (not ${requireDue} or c.reply_due_at<=now()) and b.status='active' and a.active and w.state='CONNECTED'`
+    >`select m.id,m.business_id,m.sequence,m.conversation_id,m.connection_id,m.raw_text from messages m join conversations c on c.id=m.conversation_id and c.business_id=m.business_id join businesses b on b.id=m.business_id join agent_configs a on a.business_id=b.id join whatsapp_connections w on w.id=m.connection_id where m.id=${messageId} and m.direction='inbound' and m.processing_state='pending' and c.latest_inbound_id=m.id and (not ${requireDue} or c.reply_due_at<=now()) and b.status='active' and a.active and w.state='CONNECTED'`
   )[0];
   if (!message) return null;
   const profile =
@@ -101,11 +101,11 @@ export async function loadAiMessage(db: Db, messageId: string, requireDue = fals
         Record<string, string>[]
       >`select display_name,description,address from business_profiles limit 1`
     )[0] ?? {};
-  const assistant =
+  const agent =
     (
       await db<
         Record<string, string>[]
-      >`select style,business_instructions from assistant_configs limit 1`
+      >`select style,business_instructions from agent_configs limit 1`
     )[0] ?? {};
   const turns = await db<
     {
@@ -139,7 +139,7 @@ export async function loadAiMessage(db: Db, messageId: string, requireDue = fals
   const summaries = await db<
     { version: number; covered_through: string; structured_summary: any }[]
   >`select version,covered_through,structured_summary from conversation_summaries where conversation_id=${message.conversation_id} and covered_through<=(select coalesce(max(sequence),0) from messages where conversation_id=${message.conversation_id}) order by covered_through desc,version desc`;
-  return { ...message, profile, assistant, turns, summaries, currentGroup };
+  return { ...message, profile, agent, turns, summaries, currentGroup };
 }
 export async function loadSummarySource(db: Db, conversationId: string, coveredThrough: number) {
   const exists = (

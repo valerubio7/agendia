@@ -209,7 +209,7 @@ describe("safe HTTP and event contracts", () => {
     const event = buildAuditEvent({
       businessId: "11111111-1111-4111-8111-111111111111",
       actorId: "user-1",
-      type: "assistant.updated",
+      type: "agent.updated",
       outcome: "success",
       requestId: "req-8",
       metadata: { revision: 2, password: "secret" },

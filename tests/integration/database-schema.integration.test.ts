@@ -15,7 +15,7 @@ async function columns(table: string) {
     where table_schema='public' and table_name=${table} order by ordinal_position`];
 }
 
-test("fresh schema has only retained profile fields and unbounded assistant text with inactive defaults", async () => {
+test("fresh schema has only retained profile fields and unbounded agent text with inactive defaults", async () => {
   expect(await columns("business_profiles")).toEqual([
     { column_name: "business_id", data_type: "uuid", is_nullable: "NO", column_default: null },
     { column_name: "display_name", data_type: "character varying", is_nullable: "NO", column_default: null },
@@ -23,7 +23,9 @@ test("fresh schema has only retained profile fields and unbounded assistant text
     { column_name: "address", data_type: "character varying", is_nullable: "NO", column_default: "''::character varying" },
     { column_name: "updated_at", data_type: "timestamp with time zone", is_nullable: "NO", column_default: "now()" },
   ]);
-  expect(await columns("assistant_configs")).toEqual([
+  expect((await db.sql`select to_regclass('public.agent_configs')::text current_name,
+    to_regclass('public.assistant_configs')::text old_name`)[0]).toEqual({ current_name: "agent_configs", old_name: null });
+  expect(await columns("agent_configs")).toEqual([
     { column_name: "business_id", data_type: "uuid", is_nullable: "NO", column_default: null },
     { column_name: "active", data_type: "boolean", is_nullable: "NO", column_default: "false" },
     { column_name: "revision", data_type: "integer", is_nullable: "NO", column_default: "0" },
@@ -32,13 +34,13 @@ test("fresh schema has only retained profile fields and unbounded assistant text
     { column_name: "business_instructions", data_type: "text", is_nullable: "NO", column_default: "''::text" },
   ]);
   const businessId = randomUUID();
-  await db.sql`insert into businesses(id,name) values(${businessId},'Assistant defaults')`;
-  await db.sql`insert into assistant_configs(business_id) values(${businessId})`;
-  expect((await db.sql`select style,business_instructions,active,revision from assistant_configs where business_id=${businessId}`)[0])
+  await db.sql`insert into businesses(id,name) values(${businessId},'Agent defaults')`;
+  await db.sql`insert into agent_configs(business_id) values(${businessId})`;
+  expect((await db.sql`select style,business_instructions,active,revision from agent_configs where business_id=${businessId}`)[0])
     .toEqual({ style: "", business_instructions: "", active: false, revision: 0 });
   const style = " \n\t😀".repeat(8_000), instructions = " Atención Ελληνικά 😀\n".repeat(8_000);
-  await db.sql`update assistant_configs set style=${style},business_instructions=${instructions},active=true,revision=7 where business_id=${businessId}`;
-  expect((await db.sql`select style,business_instructions,active,revision from assistant_configs where business_id=${businessId}`)[0])
+  await db.sql`update agent_configs set style=${style},business_instructions=${instructions},active=true,revision=7 where business_id=${businessId}`;
+  expect((await db.sql`select style,business_instructions,active,revision from agent_configs where business_id=${businessId}`)[0])
     .toEqual({ style, business_instructions: instructions, active: true, revision: 7 });
 });
 
@@ -83,7 +85,7 @@ test("capability roles, forced tenant policies and owner-only throttle storage r
     await tx`select * from tenant_records`;
   })).rejects.toMatchObject({ code: '42501' });
   const tenantTables = ['tenant_records','audit_events','technical_events','outbox_events','inbox_events',
-    'business_profiles','assistant_configs','whatsapp_connections','whatsapp_auth_records','whatsapp_link_codes',
+    'business_profiles','agent_configs','whatsapp_connections','whatsapp_auth_records','whatsapp_link_codes',
     'conversations','messages','conversation_summaries','outbound_commands','services','clients','business_calendars',
     'business_calendar_closures','resources','resource_services','appointments','appointment_operation_receipts',
     'whatsapp_sender_bindings','whatsapp_received_senders','whatsapp_agenda_dialogues','whatsapp_agenda_receipts'];
@@ -91,6 +93,18 @@ test("capability roles, forced tenant policies and owner-only throttle storage r
     where relnamespace='public'::regnamespace and relname=any(${tenantTables})`;
   expect(flags).toHaveLength(tenantTables.length);
   expect(flags.every(row => row.relrowsecurity && row.relforcerowsecurity)).toBe(true);
+  expect([...await db.sql`select policyname,cmd,roles from pg_policies
+    where schemaname='public' and tablename='agent_configs' order by policyname`]).toEqual([
+    { policyname: "agent_configs_tenant", cmd: "ALL", roles: ["agendia_runtime"] },
+    { policyname: "agent_configs_worker", cmd: "SELECT", roles: ["agendia_worker_runtime"] },
+  ]);
+  for (const role of roles.map(row => row.rolname)) {
+    for (const privilege of ["SELECT", "INSERT", "UPDATE", "DELETE"]) {
+      expect((await db.sql`select has_table_privilege(${role},'public.agent_configs',${privilege}) allowed`)[0]!.allowed)
+        .toBe(role === "agendia_runtime" ? privilege !== "DELETE"
+          : role === "agendia_worker_runtime" && privilege === "SELECT");
+    }
+  }
   const policy = (await db.sql`select cmd,roles,qual,with_check from pg_policies
     where schemaname='public' and tablename='business_profiles' and policyname='business_profiles_tenant'`)[0]!;
   expect(policy).toMatchObject({ cmd: 'ALL', roles: ['agendia_runtime'] });

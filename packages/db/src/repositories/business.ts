@@ -37,7 +37,7 @@ export async function replaceBusinessPassword(db: Db, id: string, passwordPhc: s
   return Boolean(rows[0]);
 }
 export function listBusinesses(db: Db) {
-  return db`select id,name,status,created_at "createdAt",last_technical_activity_at "lastTechnicalActivityAt",assistant_status "assistantStatus",whatsapp_status "whatsappStatus" from admin_business_status order by created_at`;
+  return db`select id,name,status,created_at "createdAt",last_technical_activity_at "lastTechnicalActivityAt",agent_status "agentStatus",whatsapp_status "whatsappStatus" from admin_business_status order by created_at`;
 }
 export async function business(db: Db, id: string) {
   return (

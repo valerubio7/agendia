@@ -7,7 +7,7 @@ import {
 } from "@agendia/domain";
 import { tenantContext, type createRuntimePools } from "@agendia/db";
 import { PostgresWhatsAppAgenda } from "../agent/adapters/agenda.ts";
-import { converseReceptionist } from "../agent/runtime.ts";
+import { converseAgent } from "../agent/runtime.ts";
 import { AiProviderError } from "@agendia/ai-deepseek";
 
 type Pools = ReturnType<typeof createRuntimePools>;
@@ -90,10 +90,10 @@ export class PostgresAiJobProcessor {
     try {
       // Native execution has no language gate or legacy fallback.
       let conversationFailure: unknown;
-      const outcome = await this.agenda.withReceptionistSession(job, async session => {
-        if (!session.context.messages) throw new Error("Missing receptionist context");
+      const outcome = await this.agenda.withAgentSession(job, async session => {
+        if (!session.context.messages) throw new Error("Missing agent context");
         try {
-          return await converseReceptionist(this.conversational, session, [...session.context.messages], job.correlationId);
+          return await converseAgent(this.conversational, session, [...session.context.messages], job.correlationId);
         } catch (error) {
           if (error instanceof AiProviderError || (error instanceof DOMException && error.name === "AbortError"))
             conversationFailure = error;
@@ -103,7 +103,7 @@ export class PostgresAiJobProcessor {
       // Preserve the transport classification only AFTER the transaction rolls
       // back. Never expose provider errors as customer facts or persist success.
       if (outcome.status === "infrastructure_failure")
-        throw conversationFailure ?? new Error("Receptionist infrastructure failure");
+        throw conversationFailure ?? new Error("Agent infrastructure failure");
     } finally {
       await release();
     }
@@ -141,7 +141,7 @@ export class PostgresSummaryJobProcessor {
             role:
               turn.direction === "inbound"
                 ? ("customer" as const)
-                : ("assistant" as const),
+                : ("agent" as const),
             text: turn.raw_text,
           }));
       if (!messages.length) return "stale";

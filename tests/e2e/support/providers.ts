@@ -1,5 +1,5 @@
 import type { SocketFactory } from "@agendia/whatsapp-baileys";
-import type { ReceptionistToolCommand, ReceptionistToolResult } from "../../../apps/message-worker/src/agent/tools.ts";
+import type { AgentToolCommand, AgentToolResult } from "../../../apps/message-worker/src/agent/tools.ts";
 
 type SendOutcome = "ack" | "rejected" | "crash";
 class DeterministicSocket {
@@ -171,8 +171,8 @@ export class DeterministicDeepSeekSystemDouble {
   active = false;
   next: "success" | "timeout" | "error" = "success";
   summaryNext: "success" | "timeout" | "error" = "success";
-  nativeCalls: ReceptionistToolCommand[] | ((messages: Array<{ role: string; content: string | null }>) => ReceptionistToolCommand[]) = [];
-  nativeFinal: ((results: ReceptionistToolResult[]) => string) | null = null;
+  nativeCalls: AgentToolCommand[] | ((messages: Array<{ role: string; content: string | null }>) => AgentToolCommand[]) = [];
+  nativeFinal: ((results: AgentToolResult[]) => string) | null = null;
   private agendaTransport: "success" | "header-deadline" | "body-deadline" | "error" = "success";
   private observedFailure?: () => void;
   agendaAborts = 0;
@@ -245,7 +245,7 @@ export class DeterministicDeepSeekSystemDouble {
       const messages = payload.messages as Array<{ role: string; content: string | null; tool_call_id?: string }>;
       if (messages.at(-1)?.role === "tool") {
         const firstResult = messages.findLastIndex(item => item.role !== "tool") + 1;
-        const results = messages.slice(firstResult).map(item => JSON.parse(item.content!) as ReceptionistToolResult);
+        const results = messages.slice(firstResult).map(item => JSON.parse(item.content!) as AgentToolResult);
         const catalog = results[0]?.status === "data" ? results[0].data as { items?: Array<{ name: string; durationMinutes: number; priceArs: number }> } : null;
         message.content = this.nativeFinal ? this.nativeFinal(results)
           : catalog?.items ? catalog.items.map(item => `${item.name}: ${item.durationMinutes} minutos, ARS ${item.priceArs}`).join("\n") || "No hay servicios activos."

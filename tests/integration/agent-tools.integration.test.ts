@@ -6,7 +6,7 @@ import { PostgresWhatsAppAgenda } from "../../apps/message-worker/src/agent/adap
 import { PostgresInboundHandler } from "../../apps/whatsapp-manager/src/inbound.ts";
 import { normalizeBaileysMessage } from "../../packages/whatsapp-baileys/src/baileys-gateway.ts";
 import { applyPostgresMigrations, startTestPostgres, type TestPostgres } from "../support/index.ts";
-import type { ReceptionistToolSession, ReceptionistToolResult } from "../../apps/message-worker/src/agent/tools.ts";
+import type { AgentToolSession, AgentToolResult } from "../../apps/message-worker/src/agent/tools.ts";
 
 let db: TestPostgres;
 let pools: ReturnType<typeof createRuntimePools>;
@@ -16,17 +16,17 @@ beforeAll(async () => {
   db = await startTestPostgres();
   await applyPostgresMigrations(db.sql, join(import.meta.dir, "../../packages/db/migrations"));
   pools = createRuntimePools(db.container.getConnectionUri());
-  await db.sql`create table public.receptionist_fault_fixture(business_id uuid primary key, enabled boolean not null)`;
-  await db.sql`grant select on public.receptionist_fault_fixture to agendia_worker_runtime`;
-  await db.sql.unsafe(`create function receptionist_receipt_fault() returns trigger language plpgsql as $$
+  await db.sql`create table public.agent_fault_fixture(business_id uuid primary key, enabled boolean not null)`;
+  await db.sql`grant select on public.agent_fault_fixture to agendia_worker_runtime`;
+  await db.sql.unsafe(`create function agent_receipt_fault() returns trigger language plpgsql as $$
     begin
-      if exists(select 1 from public.receptionist_fault_fixture where business_id=NEW.business_id and enabled) then
+      if exists(select 1 from public.agent_fault_fixture where business_id=NEW.business_id and enabled) then
         raise exception 'injected receipt failure';
       end if;
       return NEW;
     end $$;
-    create trigger receptionist_receipt_fault before insert on whatsapp_agenda_receipts
-      for each row execute function receptionist_receipt_fault()`);
+    create trigger agent_receipt_fault before insert on whatsapp_agenda_receipts
+      for each row execute function agent_receipt_fault()`);
 }, 120_000);
 afterAll(async () => { await pools?.end(); await db?.stop(); });
 async function fixture(profile = true, knownClient = true, now = "2035-04-01T08:00:00-03:00") {
@@ -34,7 +34,7 @@ async function fixture(profile = true, knownClient = true, now = "2035-04-01T08:
   const service = randomUUID(), resource = randomUUID();
   const schedule = Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map(day => [day, [{ startMinute: 540, endMinute: 1080 }]]));
   await db.sql`insert into businesses(id,name) values(${business},'Tools')`;
-  await db.sql`insert into assistant_configs(business_id,active) values(${business},true)`;
+  await db.sql`insert into agent_configs(business_id,active) values(${business},true)`;
   if (profile) await db.sql`insert into business_profiles(business_id,display_name,description,address) values(${business},'Tools','Descripción','Dirección')`;
   await db.sql`insert into whatsapp_connections(id,business_id,session_public_id,state) values(${connection},${business},${session},'CONNECTED')`;
   await db.sql`insert into business_calendars(business_id,weekly_schedule) values(${business},${db.sql.json(schedule)})`;
@@ -53,9 +53,9 @@ async function fixture(profile = true, knownClient = true, now = "2035-04-01T08:
   }
   const context = tenantContext({ businessId: business, actorId: "message-worker", role: "internal_worker", requestId: randomUUID() });
   const appointments = () => pools.worker.run(context, repo => repo.listAppointments(business));
-  const run = async (text: string, callback: (tools: ReceptionistToolSession) => Promise<string>) => {
+  const run = async (text: string, callback: (tools: AgentToolSession) => Promise<string>) => {
     let assertionFailure: unknown;
-    const result = await agenda.withReceptionistSession(await receive(text), async tools => {
+    const result = await agenda.withAgentSession(await receive(text), async tools => {
       try { return await callback(tools); }
       catch (error) { assertionFailure = error; throw error; }
     });
@@ -65,7 +65,7 @@ async function fixture(profile = true, knownClient = true, now = "2035-04-01T08:
   };
   return { business, service, resource, agenda, receive, appointments, run, context };
 }
-const data = (result: ReceptionistToolResult) => {
+const data = (result: AgentToolResult) => {
   expect(result.status).toBe("data");
   if (result.status !== "data") throw new Error("Expected data");
   return result.data;
@@ -79,7 +79,7 @@ async function prepareNatural(h: Awaited<ReturnType<typeof fixture>>, delivered 
   if (delivered) await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${result.outboundId}`;
   return result;
 }
-function naturalArguments(tools: ReceptionistToolSession) {
+function naturalArguments(tools: AgentToolSession) {
   const binding = tools.context.naturalConfirmation;
   if (!binding) throw new Error("Expected delivered quote binding");
   return { ...binding, evidence: tools.context.message };
@@ -302,9 +302,9 @@ describe("offer/action response coherence", () => {
     const h = await fixture();
     await prepareNatural(h);
     const [before] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
-    await db.sql`insert into public.receptionist_fault_fixture(business_id,enabled) values(${h.business},true)`;
+    await db.sql`insert into public.agent_fault_fixture(business_id,enabled) values(${h.business},true)`;
     const job = await h.receive("confirmo");
-    const result = await h.agenda.withReceptionistSession(job, async tools => {
+    const result = await h.agenda.withAgentSession(job, async tools => {
       expect((await tools.execute("confirm_quote", {})).status).toBe("staged_action");
       await tools.execute("prepare_booking", {});
       return '{"kind":"reply"}';
@@ -344,7 +344,7 @@ describe("native mismatched selections disclose proposals without attesting mean
       await db.sql`insert into services(id,business_id,name,duration_minutes,price_ars) values(${selectedService},${h.business},'Color',30,2000)`;
       await db.sql`insert into resource_services(business_id,resource_id,service_id) values(${h.business},${h.resource},${selectedService})`;
     }
-    let selection: ReceptionistToolResult;
+    let selection: AgentToolResult;
     await h.run(text, async tools => {
       const slots = data(await tools.execute("availability", { serviceId: selectedService, date: "2035-04-02", appointmentId: appointment!.id })) as { items: { startsAt: string }[] };
       if ("startsAt" in fields) expect(slots.items.some(slot => Date.parse(slot.startsAt) === Date.parse(fields.startsAt))).toBe(true);
@@ -643,7 +643,7 @@ describe("native delivered change consent", () => {
     expect(output!.text).toContain("11:00");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${prepared.outboundId}`;
     const job = await h.receive("dale cambialo");
-    const result = await h.agenda.withReceptionistSession(job, async tools => {
+    const result = await h.agenda.withAgentSession(job, async tools => {
       const args = naturalArguments(tools);
       expect((await tools.execute("confirm_quote_naturally", args)).status).toBe("staged_action");
       expect((await tools.execute("confirm_quote_naturally", args)).status).toBe("rejected");
@@ -655,7 +655,7 @@ describe("native delivered change consent", () => {
     expect(changed).toHaveLength(1);
     expect(changed[0]!.id).toBe(original!.id);
     expect(Date.parse(changed[0]!.startsAt)).toBe(Date.parse(later));
-    expect((await h.agenda.withReceptionistSession(job, async () => { throw new Error("Retry must not execute"); })).status).toBe("not_current");
+    expect((await h.agenda.withAgentSession(job, async () => { throw new Error("Retry must not execute"); })).status).toBe("not_current");
     expect(await h.appointments()).toEqual(changed);
     const [effects] = await db.sql`select count(*)::int count from outbox_events where business_id=${h.business}
       and topic='appointment.changed' and payload->>'sourceMessageId'=${job.messageId}`;
@@ -748,7 +748,7 @@ describe("natural confirmation protocol", () => {
     if (prepared.status !== "committed") throw new Error("Missing quote");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${prepared.outboundId}`;
     const job = await h.receive(fabricated.evidence, false);
-    const result = await h.agenda.withReceptionistSession(job, async tools => {
+    const result = await h.agenda.withAgentSession(job, async tools => {
       expect(tools.context.naturalConfirmation).toBeNull();
       expect(await tools.execute("confirm_quote_naturally", fabricated)).toEqual({ status: "rejected", code: "UNVERIFIED_SENDER" });
       return "No pude verificar tu número.";
@@ -833,14 +833,14 @@ describe("natural confirmation protocol", () => {
   test("natural effects and output roll back on receipt failure, then retry only once", async () => {
     const h = await fixture();
     await prepareNatural(h);
-    await db.sql`insert into public.receptionist_fault_fixture(business_id,enabled) values(${h.business},true)`;
+    await db.sql`insert into public.agent_fault_fixture(business_id,enabled) values(${h.business},true)`;
     const job = await h.receive("dale reservame ese");
-    let staged: ReceptionistToolResult | undefined;
-    const callback = async (tools: ReceptionistToolSession) => {
+    let staged: AgentToolResult | undefined;
+    const callback = async (tools: AgentToolSession) => {
       staged = await tools.execute("confirm_quote_naturally", naturalArguments(tools));
       return "Reservado.";
     };
-    expect((await h.agenda.withReceptionistSession(job, callback)).status).toBe("infrastructure_failure");
+    expect((await h.agenda.withAgentSession(job, callback)).status).toBe("infrastructure_failure");
     expect(staged?.status).toBe("staged_action");
     expect(await h.appointments()).toHaveLength(0);
     const [counts] = await db.sql`select
@@ -848,9 +848,9 @@ describe("natural confirmation protocol", () => {
       (select count(*)::int from whatsapp_agenda_receipts where message_id=${job.messageId}) receipts,
       (select count(*)::int from outbox_events where business_id=${h.business} and topic='appointment.changed') effects`;
     expect(counts).toEqual({ outputs: 0, receipts: 0, effects: 0 });
-    await db.sql`update public.receptionist_fault_fixture set enabled=false where business_id=${h.business}`;
-    expect((await h.agenda.withReceptionistSession(job, callback)).status).toBe("committed");
-    expect((await h.agenda.withReceptionistSession(job, async () => { throw new Error("Retry must not run"); })).status).toBe("not_current");
+    await db.sql`update public.agent_fault_fixture set enabled=false where business_id=${h.business}`;
+    expect((await h.agenda.withAgentSession(job, callback)).status).toBe("committed");
+    expect((await h.agenda.withAgentSession(job, async () => { throw new Error("Retry must not run"); })).status).toBe("not_current");
     expect(await h.appointments()).toHaveLength(1);
   });
 });
@@ -862,7 +862,7 @@ async function savedAppointment(h: Awaited<ReturnType<typeof fixture>>, startsAt
       { now: "2035-04-01T08:00:00-03:00", origin: "manual" });
   });
 }
-async function cancellationArguments(tools: ReceptionistToolSession, appointmentId: string) {
+async function cancellationArguments(tools: AgentToolSession, appointmentId: string) {
   const current = data(await tools.execute("owned_appointment", { appointmentId })) as { cancellationReference: string };
   expect(current.cancellationReference).toMatch(/^[a-f0-9]{64}$/u);
   return { appointmentId, binding: { evidence: tools.context.message, evidenceReference: current.cancellationReference } };
@@ -885,7 +885,7 @@ describe("current-read bound native cancellation (not semantic consent attestati
         return JSON.stringify({ kind: "informational_prose", text: "¿Querés cancelar ese turno?" });
       });
       const job = await h.receive(text);
-      const result = await h.agenda.withReceptionistSession(job, async tools => {
+      const result = await h.agenda.withAgentSession(job, async tools => {
         const args = await cancellationArguments(tools, appointment.id);
         expect((await tools.execute("cancel", args)).status).toBe("staged_action");
         expect((await tools.execute("cancel", args)).status).toBe("rejected");
@@ -898,7 +898,7 @@ describe("current-read bound native cancellation (not semantic consent attestati
       const [output] = await db.sql`select text from outbound_commands where outbound_id=${result.outboundId}`;
       expect(output!.text).toBe(`Cancelación guardada. Turno ${appointment.id}.`);
       expect(await cancellationEffects(job.messageId)).toEqual({ outputs: 1, receipts: 1, effects: 1 });
-      expect((await h.agenda.withReceptionistSession(job, async () => "unused")).status).toBe("not_current");
+      expect((await h.agenda.withAgentSession(job, async () => "unused")).status).toBe("not_current");
     });
   }
   for (const native of [true, false]) test(`selected cancel bypasses pending names; native=${native}`, async () => {
@@ -933,7 +933,7 @@ describe("current-read bound native cancellation (not semantic consent attestati
     let old: Awaited<ReturnType<typeof cancellationArguments>>;
     await h.run("quería cancelar mi turno", async tools => { old = await cancellationArguments(tools, first.id); return '{"kind":"reply"}'; });
     const job = await h.receive("quería cancelar mi turno");
-    expect((await h.agenda.withReceptionistSession(job, async tools => {
+    expect((await h.agenda.withAgentSession(job, async tools => {
       const args = await cancellationArguments(tools, first.id);
       await cancellationArguments(tools, second.id); // Even another freshly inspected OWNED target cannot reuse the first reference.
       for (const invalid of [{ appointmentId: first.id }, { ...args, binding: {} },
@@ -955,7 +955,7 @@ describe("current-read bound native cancellation (not semantic consent attestati
     for (const [owner, sender, trusted] of [[h, "14155552671", true],
       [other, "5491123456789", true], [h, "5491123456789", false]] as const) {
       const job = await owner.receive(args!.binding.evidence, trusted, sender);
-      expect((await owner.agenda.withReceptionistSession(job, async tools => {
+      expect((await owner.agenda.withAgentSession(job, async tools => {
         expect((await tools.execute("cancel", args!)).status).toBe("rejected");
         return '{"kind":"reply"}';
       })).status).toBe("committed");
@@ -967,7 +967,7 @@ describe("current-read bound native cancellation (not semantic consent attestati
     const h = await fixture();
     const appointment = await savedAppointment(h);
     const job = await h.receive("quería cancelar mi turno");
-    expect((await h.agenda.withReceptionistSession(job, async tools => {
+    expect((await h.agenda.withAgentSession(job, async tools => {
       if (change === "already-terminal") await db.sql`update appointments set state='cancelled' where id=${appointment.id}`;
       const args = await cancellationArguments(tools, appointment.id);
       if (change === "snapshot") await db.sql`update appointments set notes='Actualizada' where id=${appointment.id}`;
@@ -984,28 +984,28 @@ describe("current-read bound native cancellation (not semantic consent attestati
     const h = await fixture();
     const appointment = await savedAppointment(h, "2035-04-02T11:00:00-03:00");
     await prepareNatural(h);
-    await db.sql`insert into public.receptionist_fault_fixture(business_id,enabled) values(${h.business},true)`;
+    await db.sql`insert into public.agent_fault_fixture(business_id,enabled) values(${h.business},true)`;
     const job = await h.receive("quería cancelar mi turno");
-    let pending: unknown, staged: ReceptionistToolResult | undefined;
-    const callback = async (tools: ReceptionistToolSession) => {
+    let pending: unknown, staged: AgentToolResult | undefined;
+    const callback = async (tools: AgentToolSession) => {
       if (pending) expect(tools.context.pending).toEqual(pending);
       pending = tools.context.pending;
       staged = await tools.execute("cancel", await cancellationArguments(tools, appointment.id));
       return '{"kind":"reply"}';
     };
-    expect((await h.agenda.withReceptionistSession(job, callback)).status).toBe("infrastructure_failure");
+    expect((await h.agenda.withAgentSession(job, callback)).status).toBe("infrastructure_failure");
     expect(staged!.status).toBe("staged_action");
     expect(await h.appointments()).toEqual([appointment]);
     expect(await cancellationEffects(job.messageId)).toEqual({ outputs: 0, receipts: 0, effects: 0 });
-    await db.sql`update public.receptionist_fault_fixture set enabled=false where business_id=${h.business}`;
-    expect((await h.agenda.withReceptionistSession(job, callback)).status).toBe("committed");
-    expect((await h.agenda.withReceptionistSession(job, callback)).status).toBe("not_current");
+    await db.sql`update public.agent_fault_fixture set enabled=false where business_id=${h.business}`;
+    expect((await h.agenda.withAgentSession(job, callback)).status).toBe("committed");
+    expect((await h.agenda.withAgentSession(job, callback)).status).toBe("not_current");
     expect(await cancellationEffects(job.messageId)).toEqual({ outputs: 1, receipts: 1, effects: 1 });
     expect((await h.appointments())[0]!.state).toBe("cancelled");
   });
 });
 const nameField = (messageId: string, value: string, start = 0) => ({ messageId, value, start });
-const nameRuntime = (tools: ReceptionistToolSession) => tools.context as typeof tools.context & {
+const nameRuntime = (tools: AgentToolSession) => tools.context as typeof tools.context & {
   namesReference: string | null; nameSources: { messageId: string; text: string }[];
 };
 async function pendingNames(h: Awaited<ReturnType<typeof fixture>>) {
@@ -1186,7 +1186,7 @@ describe("native booking names: provenance enforcement, not semantic name owners
     await h.run("¿qué quedó?", async tools => { expect(tools.context.pending).toEqual({ quote: null, awaitingNames: false }); return '{"kind":"reply"}'; });
     expect(await h.appointments()).toHaveLength(0);
     const job = await h.receive("María", false);
-    expect((await h.agenda.withReceptionistSession(job, async tools => {
+    expect((await h.agenda.withAgentSession(job, async tools => {
       expect(nameRuntime(tools).namesReference).toBeNull();
       expect((await tools.execute("collect_booking_names", { namesReference: "a".repeat(64), firstName: nameField(job.messageId, "María") })).status).toBe("rejected");
       return '{"kind":"reply"}';
@@ -1239,7 +1239,7 @@ describe("native booking names: provenance enforcement, not semantic name owners
     expect(client).toEqual({ first_name: "María", last_name: "Pérez" });
   });
 });
-async function metadataArguments(tools: ReceptionistToolSession, appointmentId: string, operation: "notes" | "preference", value: string | null,
+async function metadataArguments(tools: AgentToolSession, appointmentId: string, operation: "notes" | "preference", value: string | null,
   messageId = tools.context.nameSources!.at(-1)!.messageId) {
   const owned = data(await tools.execute("owned_appointment", { appointmentId })) as Record<string, string>;
   expect(owned[`${operation}Reference`]).toMatch(/^[a-f0-9]{64}$/u);
@@ -1318,7 +1318,7 @@ describe("native metadata: authentic provenance, not semantic request attestatio
     expect(effects!.count).toBe(0);
     for (const trusted of [false, true]) {
       const job = await h.receive(text, trusted, trusted ? "14155552671" : "5491123456789");
-      expect((await h.agenda.withReceptionistSession(job, async tools => {
+      expect((await h.agenda.withAgentSession(job, async tools => {
         expect((await tools.execute(operation, old!)).status).toBe("rejected"); return '{"kind":"reply"}';
       })).status).toBe("committed");
     }
@@ -1402,10 +1402,10 @@ describe("native metadata: authentic provenance, not semantic request attestatio
   for (const operation of ["notes", "preference"] as const) test(`${operation} rolls back output/receipt/effect/dialogue then retries once`, async () => {
     const h = await fixture(), ap = await savedAppointment(h, "2035-04-02T11:00:00-03:00");
     await prepareNatural(h);
-    await db.sql`insert into public.receptionist_fault_fixture(business_id,enabled) values(${h.business},true)`;
+    await db.sql`insert into public.agent_fault_fixture(business_id,enabled) values(${h.business},true)`;
     const job = await h.receive("Anotá rampa y mi preferencia por Ana");
-    let staged: ReceptionistToolResult | undefined, pending: unknown;
-    const callback = async (tools: ReceptionistToolSession) => {
+    let staged: AgentToolResult | undefined, pending: unknown;
+    const callback = async (tools: AgentToolSession) => {
       if (pending) expect(tools.context.pending).toEqual(pending);
       pending = tools.context.pending;
       staged = await tools.execute(operation, await metadataArguments(tools, ap.id, operation, operation === "notes" ? "rampa" : h.resource));
@@ -1415,19 +1415,19 @@ describe("native metadata: authentic provenance, not semantic request attestatio
       (select count(*)::int from outbound_commands where source_message_id=${job.messageId}) outputs,
       (select count(*)::int from whatsapp_agenda_receipts where message_id=${job.messageId} and operation=${operation}) receipts,
       (select count(*)::int from outbox_events where topic='appointment.changed' and payload->>'sourceMessageId'=${job.messageId}) effects`)[0];
-    expect((await h.agenda.withReceptionistSession(job, callback)).status).toBe("infrastructure_failure");
+    expect((await h.agenda.withAgentSession(job, callback)).status).toBe("infrastructure_failure");
     expect(staged!.status).toBe("staged_action"); expect(await h.appointments()).toEqual([ap]);
     expect(await counts()).toEqual({ outputs: 0, receipts: 0, effects: 0 });
-    await db.sql`update public.receptionist_fault_fixture set enabled=false where business_id=${h.business}`;
-    expect((await h.agenda.withReceptionistSession(job, callback)).status).toBe("committed");
-    expect((await h.agenda.withReceptionistSession(job, callback)).status).toBe("not_current");
+    await db.sql`update public.agent_fault_fixture set enabled=false where business_id=${h.business}`;
+    expect((await h.agenda.withAgentSession(job, callback)).status).toBe("committed");
+    expect((await h.agenda.withAgentSession(job, callback)).status).toBe("not_current");
     expect(await counts()).toEqual({ outputs: 1, receipts: 1, effects: 1 });
     expect(await h.appointments()).toEqual([{ ...ap, [operation === "notes" ? "notes" : "customerResourcePreference"]: operation === "notes" ? "rampa" : h.resource }]);
     const [dialogue] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
     expect(dialogue!.dialogue).toEqual({ quote: null, awaitingNames: false });
   });
 });
-describe("transactional receptionist tools", () => {
+describe("transactional agent tools", () => {
   test("informal input reaches tools; calendar facts are not availability", async () => {
     const h = await fixture();
     const result = await h.run("che q onda", async tools => {
@@ -1458,14 +1458,14 @@ describe("transactional receptionist tools", () => {
     if (undelivered.status !== "committed") throw new Error("Missing quote output");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${undelivered.outboundId}`;
     const job = await h.receive("confirmo");
-    const saved = await h.agenda.withReceptionistSession(job, async tools => {
+    const saved = await h.agenda.withAgentSession(job, async tools => {
       expect((await tools.execute("confirm_quote", {})).status).toBe("staged_action");
       return "Listo, quedó reservado.";
     });
     expect(saved.status).toBe("committed");
     if (saved.status === "committed") expect(saved.actions).toHaveLength(1);
     expect(await h.appointments()).toHaveLength(1);
-    expect((await h.agenda.withReceptionistSession(job, async () => { throw new Error("Retry must not run"); })).status).toBe("not_current");
+    expect((await h.agenda.withAgentSession(job, async () => { throw new Error("Retry must not run"); })).status).toBe("not_current");
     expect(await h.appointments()).toHaveLength(1);
     const [receipt] = await db.sql`select count(*)::int count from whatsapp_agenda_receipts where message_id=${job.messageId}`;
     expect(receipt!.count).toBe(1);
@@ -1496,13 +1496,13 @@ describe("transactional receptionist tools", () => {
     if (prepared.status !== "committed") throw new Error("Missing quote");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${prepared.outboundId}`;
     const job = await h.receive("confirmo");
-    const result = await h.agenda.withReceptionistSession(job, async tools => {
+    const result = await h.agenda.withAgentSession(job, async tools => {
       expect((await tools.execute("confirm_quote", {})).status).toBe("staged_action");
       throw new Error("private infrastructure detail");
     });
     expect(result).toEqual({ status: "infrastructure_failure" });
     expect(await h.appointments()).toHaveLength(0);
-    const retry = await h.agenda.withReceptionistSession(job, async tools => { await tools.execute("confirm_quote", {}); return "Reservado"; });
+    const retry = await h.agenda.withAgentSession(job, async tools => { await tools.execute("confirm_quote", {}); return "Reservado"; });
     expect(retry.status).toBe("committed");
     expect(await h.appointments()).toHaveLength(1);
   });
@@ -1511,9 +1511,9 @@ describe("transactional receptionist tools", () => {
     const prepared = await h.run("ese", async tools => { await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start }); return "Detalles"; });
     if (prepared.status !== "committed") throw new Error("Missing quote");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${prepared.outboundId}`;
-    await db.sql`insert into public.receptionist_fault_fixture(business_id,enabled) values(${h.business},true)`;
+    await db.sql`insert into public.agent_fault_fixture(business_id,enabled) values(${h.business},true)`;
     const job = await h.receive("confirmo");
-    const result = await h.agenda.withReceptionistSession(job, async tools => { await tools.execute("confirm_quote", {}); return "Reservado"; });
+    const result = await h.agenda.withAgentSession(job, async tools => { await tools.execute("confirm_quote", {}); return "Reservado"; });
     expect(result.status).toBe("infrastructure_failure");
     expect(await h.appointments()).toHaveLength(0);
     const [counts] = await db.sql`select
@@ -1521,8 +1521,8 @@ describe("transactional receptionist tools", () => {
       (select count(*)::int from whatsapp_agenda_receipts where message_id=${job.messageId}) receipts,
       (select count(*)::int from outbox_events where business_id=${h.business} and topic='appointment.changed') effects`;
     expect(counts).toEqual({ outputs: 0, receipts: 0, effects: 0 });
-    await db.sql`update public.receptionist_fault_fixture set enabled=false where business_id=${h.business}`;
-    const retry = await h.agenda.withReceptionistSession(job, async tools => { await tools.execute("confirm_quote", {}); return "Reservado"; });
+    await db.sql`update public.agent_fault_fixture set enabled=false where business_id=${h.business}`;
+    const retry = await h.agenda.withAgentSession(job, async tools => { await tools.execute("confirm_quote", {}); return "Reservado"; });
     expect(retry.status).toBe("committed");
     expect(await h.appointments()).toHaveLength(1);
   });
@@ -1612,7 +1612,7 @@ describe("transactional receptionist tools", () => {
   test("unverified sender cannot read or mutate owned state", async () => {
     const h = await fixture();
     const job = await h.receive("mostrame", false);
-    const result = await h.agenda.withReceptionistSession(job, async tools => {
+    const result = await h.agenda.withAgentSession(job, async tools => {
       expect(await tools.execute("owned_appointments", {})).toEqual({ status: "rejected", code: "UNVERIFIED_SENDER" });
       expect(await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start })).toEqual({ status: "rejected", code: "UNVERIFIED_SENDER" });
       return "No pude verificar el número.";

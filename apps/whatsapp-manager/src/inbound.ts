@@ -56,7 +56,7 @@ export class PostgresInboundHandler {
     let outcome: InboundOutcome = classifyInbound(event);
     if (
       outcome === "accepted" &&
-      (route.business_status !== "active" || !route.assistant_active)
+      (route.business_status !== "active" || !route.agent_active)
     )
       outcome = "automation_inactive";
     const context = tenantContext({

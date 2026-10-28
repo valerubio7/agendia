@@ -35,7 +35,7 @@ beforeAll(async () => {
   db = await startTestPostgres();
   await applyPostgresMigrations(db.sql, join(import.meta.dir, "../../packages/db/migrations"));
   await db.sql`insert into businesses(id,name,status) values(${A},'A','active'),(${B},'B','active')`;
-  await db.sql`insert into assistant_configs(business_id,active) values(${A},true),(${B},false)`;
+  await db.sql`insert into agent_configs(business_id,active) values(${A},true),(${B},false)`;
   await db.sql`insert into whatsapp_connections(id,business_id,session_public_id,state,owner_id) values(${CA},${A},${SA},'CONNECTED','manual-manager'),(${CB},${B},${SB},'CONNECTED','other-manager')`;
   await db.sql`update whatsapp_connections set ownership_token=${OWNERSHIP} where id=${CA}`;
   pools = createRuntimePools(db.container.getConnectionUri());

@@ -61,12 +61,12 @@ test("real services complete the deterministic multi-tenant happy path", async (
     );
     await expect(tenantPage.getByLabel("Descripción", { exact: true })).toHaveValue(tenant.description);
     await expect(tenantPage.getByLabel("Dirección", { exact: true })).toHaveValue(tenant.address);
-    await tenantPage.getByRole("link", { name: "Asistente" }).click();
-    await expect(tenantPage).toHaveURL(/\/assistant$/);
+    await tenantPage.getByRole("link", { name: "Agente" }).click();
+    await expect(tenantPage).toHaveURL(/\/agent$/);
     await tenantPage.getByLabel("Respuestas automáticas activas").check();
     await tenantPage.getByRole("button", { name: "Guardar y activar" }).click();
-    await expect(tenantPage.locator(".assistant-feedback").getByRole("status")).toHaveText(
-      "Asistente guardado",
+    await expect(tenantPage.locator(".agent-feedback").getByRole("status")).toHaveText(
+      "Agente guardado",
     );
     await tenantPage.reload();
     await expect(

@@ -5,7 +5,7 @@ import {
   ApiError,
   api,
   formValues,
-  type Assistant,
+  type Agent,
   type Business,
   type BusinessCalendar,
   type BusinessClosureRequest,
@@ -24,7 +24,7 @@ import {
   TerminalAuthenticatedState,
 } from "./authenticated-shell";
 import { AdminBusinessesScreen } from "../features/administration/admin-businesses-screen";
-import { AssistantScreen } from "../features/agent-settings/assistant-screen";
+import { AgentScreen } from "../features/agent-settings/agent-screen";
 import { ProfileScreen } from "../features/business-profile/profile-screen";
 import { ServicesScreen } from "../features/services/services-screen";
 import { ClientsScreen } from "../features/clients/clients-screen";
@@ -36,7 +36,7 @@ import { WhatsAppScreen } from "../features/whatsapp/whatsapp-screen";
 
 export { formatActivityTimestamp } from "../features/administration/admin-businesses-screen";
 
-type Mode = "login" | "admin" | "profile" | "services" | "resources" | "business-calendar" | "clients" | "turnos" | "assistant" | "whatsapp";
+type Mode = "login" | "admin" | "profile" | "services" | "resources" | "business-calendar" | "clients" | "turnos" | "agent" | "whatsapp";
 type AuthenticatedViewState =
   | "loading"
   | "ready"
@@ -48,7 +48,7 @@ const profileFields = [
   "description",
   "address",
 ] as const;
-const assistantFields = [
+const agentFields = [
   "style",
   "businessInstructions",
   "active",
@@ -158,8 +158,8 @@ export function LivePanel({ mode }: { mode: Mode }) {
     [loginPending, setLoginPending] = useState(false),
     [logoutPending, setLogoutPending] = useState(false),
     [profilePending, setProfilePending] = useState(false),
-    [assistantPending, setAssistantPending] = useState(false),
-    [assistantConflict, setAssistantConflict] = useState(false),
+    [agentPending, setAgentPending] = useState(false),
+    [agentConflict, setAgentConflict] = useState(false),
     [viewState, setViewState] = useState<AuthenticatedViewState>("loading");
 
   const monitorRef = useRef<AbortController | null>(null);
@@ -167,8 +167,8 @@ export function LivePanel({ mode }: { mode: Mode }) {
   const logoutPendingRef = useRef(false);
   const profilePendingRef = useRef(false);
   const profileSaveAttemptRef = useRef(0);
-  const assistantPendingRef = useRef(false);
-  const assistantSaveAttemptRef = useRef(0);
+  const agentPendingRef = useRef(false);
+  const agentSaveAttemptRef = useRef(0);
   const loadAttemptRef = useRef(0);
   const adminRequestRef = useRef<number | null>(null);
   const adminAttemptRef = useRef(0);
@@ -297,9 +297,9 @@ export function LivePanel({ mode }: { mode: Mode }) {
     adminRequestRef.current = null;
     setAdminPending(false);
     setAdminWarning(false);
-    assistantSaveAttemptRef.current += 1;
-    assistantPendingRef.current = false;
-    setAssistantPending(false);
+    agentSaveAttemptRef.current += 1;
+    agentPendingRef.current = false;
+    setAgentPending(false);
     closureOwnerRef.current = null;
     closureRequestRef.current?.abort();
     closureRequestRef.current = null;
@@ -312,7 +312,7 @@ export function LivePanel({ mode }: { mode: Mode }) {
     setData(null);
     setNotice("");
     setError("");
-    setAssistantConflict(false);
+    setAgentConflict(false);
     setQrDataUrl(null);
     setLinking(false);
     setViewState("loading");
@@ -357,8 +357,8 @@ export function LivePanel({ mode }: { mode: Mode }) {
             ? await api.services()
           : mode === "profile"
             ? await api.profile()
-            : mode === "assistant"
-              ? await api.assistant()
+            : mode === "agent"
+              ? await api.agent()
               : await api.whatsappStatus();
     } catch (cause) {
       if (!isCurrent()) return;
@@ -395,10 +395,10 @@ export function LivePanel({ mode }: { mode: Mode }) {
     profileSaveAttemptRef.current += 1;
     profilePendingRef.current = false;
     setProfilePending(false);
-    assistantSaveAttemptRef.current += 1;
-    assistantPendingRef.current = false;
-    setAssistantPending(false);
-    setAssistantConflict(false);
+    agentSaveAttemptRef.current += 1;
+    agentPendingRef.current = false;
+    setAgentPending(false);
+    setAgentConflict(false);
     if (mode === "login") {
       setData(null);
       setNotice("");
@@ -418,8 +418,8 @@ export function LivePanel({ mode }: { mode: Mode }) {
       calendarRequestRef.current = null;
       profileSaveAttemptRef.current += 1;
       profilePendingRef.current = false;
-      assistantSaveAttemptRef.current += 1;
-      assistantPendingRef.current = false;
+      agentSaveAttemptRef.current += 1;
+      agentPendingRef.current = false;
       monitorRef.current?.abort();
       monitorRef.current = null;
     };
@@ -589,41 +589,41 @@ export function LivePanel({ mode }: { mode: Mode }) {
       }
     }
   };
-  const submitAssistant = async (event: FormEvent<HTMLFormElement>) => {
+  const submitAgent = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (assistantPendingRef.current || logoutPendingRef.current) return;
+    if (agentPendingRef.current || logoutPendingRef.current) return;
 
-    const attempt = ++assistantSaveAttemptRef.current;
+    const attempt = ++agentSaveAttemptRef.current;
     const generation = loadAttemptRef.current;
-    const current = () => assistantSaveAttemptRef.current === attempt &&
+    const current = () => agentSaveAttemptRef.current === attempt &&
       loadAttemptRef.current === generation && !logoutPendingRef.current;
-    assistantPendingRef.current = true;
-    setAssistantPending(true);
-    setAssistantConflict(false);
+    agentPendingRef.current = true;
+    setAgentPending(true);
+    setAgentConflict(false);
     setError("");
     setNotice("");
     const form = new FormData(event.currentTarget);
-    const assistant = data as Partial<Assistant>;
+    const agent = data as Partial<Agent>;
 
     try {
-      const savedAssistant = await api.saveAssistant({
-        ...(formValues(form, assistantFields) as Omit<Assistant, "revision">),
-        expectedRevision: assistant.revision ?? 0,
+      const savedAgent = await api.saveAgent({
+        ...(formValues(form, agentFields) as Omit<Agent, "revision">),
+        expectedRevision: agent.revision ?? 0,
       });
       if (!current()) return;
-      setData(savedAssistant);
-      setAssistantConflict(false);
-      setNotice("Asistente guardado");
+      setData(savedAgent);
+      setAgentConflict(false);
+      setNotice("Agente guardado");
     } catch (cause) {
       if (!current()) return;
-      setAssistantConflict(
+      setAgentConflict(
         cause instanceof ApiError && cause.code === "CONFLICT",
       );
       setError(await api.errorMessage(cause));
     } finally {
       if (current()) {
-        assistantPendingRef.current = false;
-        setAssistantPending(false);
+        agentPendingRef.current = false;
+        setAgentPending(false);
       }
     }
   };
@@ -633,9 +633,9 @@ export function LivePanel({ mode }: { mode: Mode }) {
     adminAttemptRef.current += 1;
     adminRequestRef.current = null;
     setAdminPending(false);
-    assistantSaveAttemptRef.current += 1;
-    assistantPendingRef.current = false;
-    setAssistantPending(false);
+    agentSaveAttemptRef.current += 1;
+    agentPendingRef.current = false;
+    setAgentPending(false);
     const interruptedClosure = closureRequestRef.current;
     const closureOwner = closureOwnerRef.current;
     interruptedClosure?.abort();
@@ -907,21 +907,21 @@ export function LivePanel({ mode }: { mode: Mode }) {
       </AuthenticatedShell>
     );
   }
-  if (mode === "assistant") {
-    const assistant = data as Partial<Assistant>;
+  if (mode === "agent") {
+    const agent = data as Partial<Agent>;
     return (
       <AuthenticatedShell
         variant="business"
-        activeHref="/assistant"
+        activeHref="/agent"
         logoutPending={logoutPending}
         logoutAction={() => void logout()}
       >
-        <AssistantScreen
-          assistant={assistant}
+        <AgentScreen
+          agent={agent}
           feedback={feedback}
-          conflict={assistantConflict}
-          savePending={assistantPending}
-          submitAction={submitAssistant}
+          conflict={agentConflict}
+          savePending={agentPending}
+          submitAction={submitAgent}
           reloadAction={() => void load()}
         />
       </AuthenticatedShell>
