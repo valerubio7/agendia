@@ -1,0 +1,43 @@
+FROM oven/bun:1.4.0-debian AS dependencies
+WORKDIR /app
+COPY package.json bun.lock bunfig.toml tsconfig.json ./
+COPY apps/api/package.json ./apps/api/package.json
+COPY apps/web/package.json ./apps/web/package.json
+COPY apps/message-worker/package.json ./apps/message-worker/package.json
+COPY apps/whatsapp-manager/package.json ./apps/whatsapp-manager/package.json
+COPY packages/auth/package.json ./packages/auth/package.json
+COPY packages/contracts ./packages/contracts
+COPY packages/db/package.json ./packages/db/package.json
+COPY packages/domain/package.json ./packages/domain/package.json
+COPY packages/ai-deepseek/package.json ./packages/ai-deepseek/package.json
+COPY packages/whatsapp-baileys/package.json ./packages/whatsapp-baileys/package.json
+
+FROM dependencies AS production-dependencies
+RUN bun install --frozen-lockfile --production
+
+FROM dependencies AS build
+RUN bun install --frozen-lockfile
+COPY apps/web ./apps/web
+COPY packages/domain ./packages/domain
+ENV NEXT_TELEMETRY_DISABLED=1
+ARG AGENDIA_API_ORIGIN=http://api:3001
+ENV AGENDIA_API_ORIGIN=${AGENDIA_API_ORIGIN}
+WORKDIR /app/apps/web
+RUN bun --bun node_modules/next/dist/bin/next build
+
+FROM oven/bun:1.4.0-debian AS runtime
+WORKDIR /app
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1
+COPY --from=production-dependencies /app/package.json ./package.json
+COPY --from=production-dependencies /app/node_modules ./node_modules
+COPY --from=production-dependencies /app/apps ./apps
+COPY --from=production-dependencies /app/packages ./packages
+WORKDIR /app/apps/web
+COPY --from=build --chown=bun:bun /app/apps/web/.next ./.next
+COPY --from=build /app/apps/web/public ./public
+COPY --from=build /app/apps/web/next.config.ts ./next.config.ts
+
+USER bun
+EXPOSE 3000
+CMD ["bun", "--bun", "node_modules/next/dist/bin/next", "start", "--hostname", "0.0.0.0", "--port", "3000"]

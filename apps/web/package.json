@@ -11,8 +11,8 @@
     "react-dom": "19.2.8"
   },
   "scripts": {
-    "dev": "next dev",
-    "build": "next build"
+    "dev": "bun --bun next dev",
+    "build": "bun --bun next build"
   },
   "devDependencies": {
     "@types/qrcode": "1.5.6"
