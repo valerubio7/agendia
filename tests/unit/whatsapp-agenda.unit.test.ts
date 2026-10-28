@@ -7,7 +7,7 @@ import {
   type AgendaQuote,
 } from "../../packages/domain/src/whatsapp/agenda.ts";
 import { hasToolConversationProvider } from "@agendia/domain";
-import { parseReceptionistTool } from "../../apps/message-worker/src/agent/tools.ts";
+import { parseAgentTool } from "../../apps/message-worker/src/agent/tools.ts";
 
 const pn = "5491123456789@s.whatsapp.net";
 const lid = "123456789@lid";
@@ -120,12 +120,12 @@ describe("native commands and guarded customer responses", () => {
       ["cancel", { appointmentId }], ["notes", { appointmentId, notes: "model suggestion" }],
       ["preference", { appointmentId, resourceId }], ["confirm_quote", {}],
     ] as const) {
-      expect(parseReceptionistTool(name, args)).not.toBeNull();
-      expect(parseReceptionistTool(name, { ...args, confirmed: true })).toBeNull();
+      expect(parseAgentTool(name, args)).not.toBeNull();
+      expect(parseAgentTool(name, { ...args, confirmed: true })).toBeNull();
     }
     for (const name of ["attendance", "done", "no_show", "reopen", "edit_client", "edit_catalog", "override_terms"])
-      expect(parseReceptionistTool(name, { appointmentId })).toBeNull();
-    expect(parseReceptionistTool("prepare_booking", { serviceId, startsAt: quote.startsAt, phone: "+14155552671", priceArs: 0 })).toBeNull();
+      expect(parseAgentTool(name, { appointmentId })).toBeNull();
+    expect(parseAgentTool("prepare_booking", { serviceId, startsAt: quote.startsAt, phone: "+14155552671", priceArs: 0 })).toBeNull();
   });
   test("native provider capability requires a callable conversation port", () => {
     const generate = async () => ({ text: "hola", providerId: "test", usageTokens: 0 });

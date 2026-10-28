@@ -7,7 +7,7 @@ import {
 interface RoutedSession {
     businessId: string;
     businessStatus: "active" | "suspended";
-    assistantActive: boolean;
+    agentActive: boolean;
 }
 
 export class InMemorySessionRouter {
@@ -69,7 +69,7 @@ export class InboundMessageHandler {
                 });
                 return { outcome: classification };
             }
-            if (classification === "accepted" && (session.businessStatus !== "active" || !session.assistantActive))
+            if (classification === "accepted" && (session.businessStatus !== "active" || !session.agentActive))
                 return { outcome: "automation_inactive" };
             const conversationKey = `${event.sessionPublicId}:${event.remoteJid}`;
             const sequence =

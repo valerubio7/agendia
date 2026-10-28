@@ -1,11 +1,11 @@
 import { z } from "zod";
-import { renderReceptionistResponse, type ReceptionistFact } from "./response.ts";
+import { renderAgentResponse, type AgentResponse } from "./response.ts";
 import { CalendarDateSchema, InstantSchema, type ToolConversationMessage, type ToolConversationRequest } from "@agendia/domain";
 
 // The calendar engine in packages/domain/src/appointments/availability.ts uses this fixed IANA zone;
 // it is not a profile setting or a model-selected timezone.
-export const RECEPTIONIST_CALENDAR_TIME_ZONE = "America/Argentina/Buenos_Aires";
-export interface ReceptionistDatePresentation {
+export const AGENT_CALENDAR_TIME_ZONE = "America/Argentina/Buenos_Aires";
+export interface AgentDatePresentation {
   timeZone: string;
   localDate: string;
   localTime: string;
@@ -13,7 +13,7 @@ export interface ReceptionistDatePresentation {
   label: string;
 }
 /** Presentation only. Never insert these fields into quote terms or fingerprints. */
-export function canonicalReceptionistDate(instant: unknown, timeZone: unknown): ReceptionistDatePresentation | null {
+export function canonicalAgentDate(instant: unknown, timeZone: unknown): AgentDatePresentation | null {
   const parsed = InstantSchema.safeParse(instant);
   if (!parsed.success || typeof timeZone !== "string" || !timeZone) return null;
   try {
@@ -74,7 +74,7 @@ const schemas = {
   }).strict().refine(args => !args.binding || (args.resourceId === null ? args.binding.resourceReference === undefined : args.binding.resourceReference !== undefined)),
 };
 type ToolName = keyof typeof schemas;
-export type ReceptionistToolCommand = {
+export type AgentToolCommand = {
   [Name in ToolName]: { name: Name; arguments: z.infer<(typeof schemas)[Name]> }
 }[ToolName];
 const descriptions: Record<ToolName, string> = {
@@ -95,62 +95,63 @@ const descriptions: Record<ToolName, string> = {
   notes: "Native: binding uses notesReference as evidenceReference, authenticated nameSources messageId/full evidence, and literal UTF-16 start. Null clear omits start. No rewriting. Without binding: legacy guards.",
   preference: "Native metadata only: binding uses preferenceReference, nameSources messageId/full evidence, and fresh resourceReference for non-null selection. Null clear omits resourceReference. Without binding: legacy guards.",
 };
-export const receptionistToolDefinitions: ToolConversationRequest["tools"] = Object.entries(schemas).map(([name, schema]) => ({
+export const agentToolDefinitions: ToolConversationRequest["tools"] = Object.entries(schemas).map(([name, schema]) => ({
   name, description: descriptions[name as ToolName], parameters: z.toJSONSchema(schema) as ToolConversationRequest["tools"][number]["parameters"],
 }));
 
-export type ReceptionistToolDiagnostic = {
-  code: "receptionist.tool_completed";
+export type AgentToolDiagnostic = {
+  code: "agent.tool_completed";
   toolName: ToolName | "unknown";
-  status: ReceptionistToolResult["status"] | "infrastructure_failure";
+  status: AgentToolResult["status"] | "infrastructure_failure";
 } | {
-  code: "receptionist.turn_completed";
+  code: "agent.turn_completed";
   toolCalls: number;
   completedCalls: number;
   failedCalls: number;
 } | {
-  code: "receptionist.tool_rejected";
+  code: "agent.tool_rejected";
   toolName: ToolName | "unknown";
   errorCode: import("@agendia/db").AppointmentError["code"] | "INVALID_TOOL" | "UNKNOWN_APPOINTMENT_ERROR";
   referenceFailureKind?: "service" | "resource" | "appointment_context";
   schemaIssueCategory?: "unknown_tool" | "unexpected_fields" | "invalid_type" | "invalid_value";
 };
-export type ReceptionistToolDiagnostics = (event: ReceptionistToolDiagnostic) => void;
+export type AgentToolDiagnostics = (event: AgentToolDiagnostic) => void;
 
-export function emitReceptionistDiagnostic(diagnose: ReceptionistToolDiagnostics | undefined, event: ReceptionistToolDiagnostic): void {
+export function emitAgentDiagnostic(diagnose: AgentToolDiagnostics | undefined, event: AgentToolDiagnostic): void {
   // Observability must never roll back a mutation or turn its retry into a duplicate.
   try { Promise.resolve(diagnose?.(event)).catch(() => {}); } catch {}
 }
 
-export function parseReceptionistTool(name: string, args: unknown,
-  diagnose?: ReceptionistToolDiagnostics): ReceptionistToolCommand | null {
+export function parseAgentTool(name: string, args: unknown,
+  diagnose?: AgentToolDiagnostics): AgentToolCommand | null {
   if (!Object.hasOwn(schemas, name)) {
-    emitReceptionistDiagnostic(diagnose, { code: "receptionist.tool_rejected", toolName: "unknown", errorCode: "INVALID_TOOL", schemaIssueCategory: "unknown_tool" });
+    emitAgentDiagnostic(diagnose, { code: "agent.tool_rejected", toolName: "unknown", errorCode: "INVALID_TOOL", schemaIssueCategory: "unknown_tool" });
     return null;
   }
   const toolName = name as ToolName;
   const parsed = schemas[toolName].safeParse(args);
-  if (parsed.success) return { name: toolName, arguments: parsed.data } as ReceptionistToolCommand;
+  if (parsed.success) return { name: toolName, arguments: parsed.data } as AgentToolCommand;
   // Never forward Zod issues: paths, unknown keys and messages can contain private input.
   const issue = parsed.error.issues[0];
   const schemaIssueCategory = issue?.code === "unrecognized_keys" ? "unexpected_fields"
     : issue?.code === "invalid_type" ? "invalid_type" : "invalid_value";
-  emitReceptionistDiagnostic(diagnose, { code: "receptionist.tool_rejected", toolName, errorCode: "INVALID_TOOL", schemaIssueCategory });
+  emitAgentDiagnostic(diagnose, { code: "agent.tool_rejected", toolName, errorCode: "INVALID_TOOL", schemaIssueCategory });
   return null;
 }
 
 /** Inside a transaction, staged_action is NOT committed. Only the outer session return
- * attests durability. Final response acts select backend-rendered facts only;
- * the transaction owner renders actual quotes and saved actions without model
- * prose. prepared_quote is no mutation. No result may be sent separately.
+ * attests durability. Results are structured facts for model-authored prose;
+ * prepared_quote is no mutation. No result may be sent separately.
  */
-export type ReceptionistToolResult = (
+export type AgentToolResult = (
   | { status: "data"; data: unknown }
   | { status: "unavailable_data"; code: string }
-  | { status: "clarification" | "rejected"; code: string; message?: string }
-  | { status: "prepared_quote"; quote: unknown; message: string; presentation?: ReceptionistDatePresentation | null }
-  | { status: "staged_action"; operation: string; appointment: unknown }) & { namesReference?: string | null };
-export type ReceptionistSessionOutcome =
+  | { status: "clarification" | "rejected"; code: string; reason?: string; missingFields?: readonly string[];
+      alternatives?: { items: unknown[]; hasMore: boolean; resourceName?: string | null }; proposal?: unknown }
+  | { status: "prepared_quote"; quote: unknown; reason?: string; presentation?: AgentDatePresentation | null }
+  | { status: "staged_action"; operation: string; appointment: unknown }) & {
+    namesReference?: string | null; presentationReference?: string | null };
+export type AgentSessionOutcome =
   | { status: "committed"; outboundId: string; actions: { operation: string; appointmentId: string }[] }
   | { status: "not_current" | "infrastructure_failure" };
 
@@ -170,10 +171,8 @@ export interface NaturalConfirmationBinding {
  * after the callback gives no capability. Infrastructure exceptions must abort
  * the entire transaction; do not turn them into missing business facts.
  */
-export class ReceptionistToolSession {
-  private readonly evidence: ReceptionistFact[] = [];
-  /** Render from private completed tool evidence, not provider-supplied proofs. */
-  renderResponse(raw: string): string { return renderReceptionistResponse(raw, this.evidence); }
+export class AgentToolSession {
+  renderResponse(raw: string): AgentResponse { return renderAgentResponse(raw); }
   private calls = 0;
   private observedCalls = 0;
   private completedCalls = 0;
@@ -182,20 +181,19 @@ export class ReceptionistToolSession {
   private closed = false;
   private tail: Promise<unknown> = Promise.resolve();
   private failure: unknown;
-  constructor(private handler: (command: ReceptionistToolCommand) => Promise<ReceptionistToolResult>,
+  constructor(private handler: (command: AgentToolCommand) => Promise<AgentToolResult>,
     readonly context: Readonly<{ message: string; recent: readonly string[]; pending: unknown;
       naturalConfirmation?: Readonly<NaturalConfirmationBinding> | null; messages?: readonly ToolConversationMessage[];
       namesReference?: string | null; nameSources?: readonly { messageId: string; text: string }[];
-      pendingPresentation?: Readonly<ReceptionistDatePresentation> | null }> = { message: "", recent: [], pending: null },
-    private diagnose?: ReceptionistToolDiagnostics,
+      pendingPresentation?: Readonly<AgentDatePresentation> | null; pendingQuotePresentationReference?: string | null }> = { message: "", recent: [], pending: null },
+    private diagnose?: AgentToolDiagnostics,
     private rejectPreparation?: () => void) {}
-  execute(name: string, args: unknown): Promise<ReceptionistToolResult> {
+  execute(name: string, args: unknown): Promise<AgentToolResult> {
     this.observedCalls++;
     const toolName = Object.hasOwn(schemas, name) ? name as ToolName : "unknown";
-    const completed = (output: ReceptionistToolResult): ReceptionistToolResult => {
+    const completed = (output: AgentToolResult): AgentToolResult => {
       this.completedCalls++;
-      if (toolName !== "unknown") this.evidence.push({ name: toolName, result: structuredClone(output) });
-      emitReceptionistDiagnostic(this.diagnose, { code: "receptionist.tool_completed", toolName, status: output.status });
+      emitAgentDiagnostic(this.diagnose, { code: "agent.tool_completed", toolName, status: output.status });
       return output;
     };
     if (this.closed) return Promise.resolve(completed({ status: "rejected", code: "SESSION_LIMIT" }));
@@ -204,8 +202,8 @@ export class ReceptionistToolSession {
       if (this.closed) return { status: "rejected", code: "SESSION_CLOSED" } as const;
       if (this.failure) throw this.failure;
       // Rejections that bypass the handler still follow invocation order, including batches.
-      const command = overLimit ? null : parseReceptionistTool(name, args, this.diagnose);
-      const output: ReceptionistToolResult = overLimit ? { status: "rejected", code: "SESSION_LIMIT" }
+      const command = overLimit ? null : parseAgentTool(name, args, this.diagnose);
+      const output: AgentToolResult = overLimit ? { status: "rejected", code: "SESSION_LIMIT" }
         : command ? await this.handler(command) : { status: "rejected", code: "INVALID_TOOL" };
       if (new TextEncoder().encode(JSON.stringify(output)).byteLength > 16384) throw new Error("Tool result limit");
       if (output.status === "rejected" && (toolName === "prepare_booking" || toolName === "prepare_change"))
@@ -213,7 +211,7 @@ export class ReceptionistToolSession {
       return output;
     }).then(completed, error => {
       this.failedCalls++;
-      emitReceptionistDiagnostic(this.diagnose, { code: "receptionist.tool_completed", toolName, status: "infrastructure_failure" });
+      emitAgentDiagnostic(this.diagnose, { code: "agent.tool_completed", toolName, status: "infrastructure_failure" });
       throw error;
     });
     this.tail = result.catch(error => { this.failure = error; });
@@ -225,7 +223,7 @@ export class ReceptionistToolSession {
   reportCompletedTurn(): void {
     if (this.turnReported || !this.closed || this.failure || this.completedCalls !== this.observedCalls) return;
     this.turnReported = true;
-    emitReceptionistDiagnostic(this.diagnose, { code: "receptionist.turn_completed", toolCalls: this.observedCalls,
+    emitAgentDiagnostic(this.diagnose, { code: "agent.turn_completed", toolCalls: this.observedCalls,
       completedCalls: this.completedCalls, failedCalls: this.failedCalls });
   }
 }

@@ -41,7 +41,7 @@ export const PRODUCT_HTTP_ROUTES = Object.freeze([
   "/me/business-calendar/closures",
   "/me/business-calendar/closures/:id",
   "/me/business-profile",
-  "/me/assistant",
+  "/me/agent",
   "/me/whatsapp",
   "/me/whatsapp/link",
   "/me/whatsapp/status",

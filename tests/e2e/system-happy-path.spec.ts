@@ -1,5 +1,6 @@
 import { expect } from "@playwright/test";
 import { createBusinessInAdminUi, login, test } from "./support/fixtures.ts";
+import { scriptedAgentReply } from "./support/providers.ts";
 import { assertSemanticBoundary } from "./support/system.ts";
 
 const tenants = [
@@ -61,12 +62,12 @@ test("real services complete the deterministic multi-tenant happy path", async (
     );
     await expect(tenantPage.getByLabel("Descripción", { exact: true })).toHaveValue(tenant.description);
     await expect(tenantPage.getByLabel("Dirección", { exact: true })).toHaveValue(tenant.address);
-    await tenantPage.getByRole("link", { name: "Asistente" }).click();
-    await expect(tenantPage).toHaveURL(/\/assistant$/);
+    await tenantPage.getByRole("link", { name: "Agente" }).click();
+    await expect(tenantPage).toHaveURL(/\/agent$/);
     await tenantPage.getByLabel("Respuestas automáticas activas").check();
     await tenantPage.getByRole("button", { name: "Guardar y activar" }).click();
-    await expect(tenantPage.locator(".assistant-feedback").getByRole("status")).toHaveText(
-      "Asistente guardado",
+    await expect(tenantPage.locator(".agent-feedback").getByRole("status")).toHaveText(
+      "Agente guardado",
     );
     await tenantPage.reload();
     await expect(
@@ -158,7 +159,7 @@ test("real services complete the deterministic multi-tenant happy path", async (
     ),
   );
   expect(system.providers.baileys.acks.map(ack => ack.text)).toEqual(
-    accepted.map(() => "¿Qué servicio y día querés consultar?"),
+    accepted.map(() => "No se guardó ningún cambio de agenda."),
   );
   system.providers.deepSeek.nativeCalls = [{ name: "read_catalog", arguments: {} }];
   for (const [index, tenant] of tenants.entries()) {
@@ -294,11 +295,7 @@ test("real services complete the deterministic multi-tenant happy path", async (
     expect(nativeRounds[1].messages.at(-1).role).toBe("tool");
     return received;
   };
-  system.providers.deepSeek.nativeFinal = results => {
-    const result = results[0]!;
-    return result.status === "staged_action" ? "Reserva guardada."
-      : "message" in result && result.message ? result.message : "Necesito aclarar tu solicitud.";
-  };
+  system.providers.deepSeek.nativeFinal = scriptedAgentReply;
   system.providers.deepSeek.nativeCalls = [{ name: "prepare_booking", arguments: {
     serviceId: service.id, resourceId: resource.id, startsAt: slot.start,
   } }];

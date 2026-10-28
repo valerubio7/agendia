@@ -40,7 +40,7 @@ const navigation: Record<ShellVariant, NavigationConfiguration> = {
       { href: "/resources", label: "Recursos" },
       { href: "/business-calendar", label: "Horario" },
       { href: "/clients", label: "Clientes" },
-      { href: "/assistant", label: "Asistente" },
+      { href: "/agent", label: "Agente" },
       { href: "/whatsapp", label: "WhatsApp" },
     ],
   },

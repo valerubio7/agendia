@@ -56,7 +56,7 @@ async function api(
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
 }
-const assistant = (active: boolean, expectedRevision = 0) => ({
+const agent = (active: boolean, expectedRevision = 0) => ({
   style: "clara y amable",
   businessInstructions: "responder con conocimiento propio, solo texto y sin secretos",
   active,
@@ -176,7 +176,7 @@ test("contains hostile access and provider failures while preserving isolated re
     ),
   ).not.toContain(tenants[0]!.secret);
   expect(
-    (await api(system, authA, "/me/assistant", "PUT", assistant(true))).status,
+    (await api(system, authA, "/me/agent", "PUT", agent(true))).status,
   ).toBe(200);
   expect(
     (
@@ -190,7 +190,7 @@ test("contains hostile access and provider failures while preserving isolated re
     ).status,
   ).toBe(200);
   expect(
-    (await api(system, authB, "/me/assistant", "PUT", assistant(true))).status,
+    (await api(system, authB, "/me/agent", "PUT", agent(true))).status,
   ).toBe(200);
   // Only the initial QR-isolation phase opts out of the 750ms auto-open.
   // Later recovery/reconnect sockets keep the double's default behavior.
@@ -235,17 +235,17 @@ test("contains hostile access and provider failures while preserving isolated re
     openedNotFound: openedQrStatus === 404,
   });
 
-  const linkedAssistantA = await json(
-    await api(system, authA, "/me/assistant"),
+  const linkedAgentA = await json(
+    await api(system, authA, "/me/agent"),
   );
   expect(
     (
       await api(
         system,
         authA,
-        "/me/assistant",
+        "/me/agent",
         "PUT",
-        assistant(false, Number(linkedAssistantA.revision)),
+        agent(false, Number(linkedAgentA.revision)),
       )
     ).status,
   ).toBe(200);
@@ -276,16 +276,16 @@ test("contains hostile access and provider failures while preserving isolated re
     ).status,
   ).toBe(200);
   authA = await login(system, tenants[0]!.email, tenants[0]!.password);
-  const retained = await json(await api(system, authA, "/me/assistant"));
+  const retained = await json(await api(system, authA, "/me/agent"));
   expect(retained).toMatchObject({ active: false });
   expect(
     (
       await api(
         system,
         authA,
-        "/me/assistant",
+        "/me/agent",
         "PUT",
-        assistant(true, Number(retained.revision)),
+        agent(true, Number(retained.revision)),
       )
     ).status,
   ).toBe(200);

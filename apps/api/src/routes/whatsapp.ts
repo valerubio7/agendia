@@ -26,16 +26,16 @@ export function registerWhatsappRoutes(
   app.post("/me/whatsapp/link", async (request, reply) => {
     const auth = await requireTenant(request, reply, true);
     if (!auth) return;
-    const assistant = await pools.api.run(context(auth, request), (repo) =>
-      repo.assistant(),
+    const agent = await pools.api.run(context(auth, request), (repo) =>
+      repo.agent(),
     );
-    if (!assistant || assistant.active !== true)
+    if (!agent || agent.active !== true)
       return fail(
         reply,
         request,
         409,
         "CONFLICT",
-        "Activate the assistant before linking WhatsApp",
+        "Activate the agent before linking WhatsApp",
       );
     const current = await pools.api.run(context(auth, request), (repo) =>
       repo.whatsapp(),

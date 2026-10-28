@@ -65,7 +65,7 @@ export function LoginScreen({
         <Brand className="login-story__brand" inverse />
         <div className="login-story__content">
           <p className="login-story__eyebrow">
-            Tu asistente inteligente para WhatsApp
+            Tu agente inteligente para WhatsApp
           </p>
           <h2 id="login-story-title">
             <span data-ui="login-story-heading-primary">Atendé mejor.</span>{" "}

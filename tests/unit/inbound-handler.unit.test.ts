@@ -22,13 +22,13 @@ const textEvent = (
 
 function harness(
   status: "active" | "suspended" = "active",
-  assistantActive = true,
+  agentActive = true,
 ) {
   const router = new InMemorySessionRouter();
   router.add("session-a", {
     businessId: "tenant-a",
     businessStatus: status,
-    assistantActive,
+    agentActive,
   });
   const repository = new InMemoryInboundRepository();
   return {

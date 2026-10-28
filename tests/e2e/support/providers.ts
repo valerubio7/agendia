@@ -1,5 +1,53 @@
 import type { SocketFactory } from "@agendia/whatsapp-baileys";
-import type { ReceptionistToolCommand, ReceptionistToolResult } from "../../../apps/message-worker/src/agent/tools.ts";
+import type { AgentToolCommand, AgentToolResult } from "../../../apps/message-worker/src/agent/tools.ts";
+
+// Scripted model wording for deterministic guards; never imported by production.
+export function scriptedAgentReply(results: AgentToolResult[], toolName?: string): string {
+  const result = results.find(item => item.status === "staged_action") ?? results.at(-1);
+  const r = result as any;
+  let text = "¿Qué servicio y día querés consultar?";
+  if (r?.status === "prepared_quote") {
+    const q = r.quote, t = q.terms, p = r.presentation;
+    text = (r.reason === "TERMS_CHANGED" ? "Las condiciones cambiaron. " : r.reason === "PROPOSAL_NOT_DELIVERED" ? "Primero necesitás recibir el detalle de la propuesta. " : "")
+      + `${q.kind === "book" ? "Reserva propuesta" : "Cambio propuesto"}: ${t.serviceName}, ${p.localDate} a las ${p.localTime}, ${t.durationMinutes} minutos, ARS ${t.priceArs}. Respondé «confirmo» para guardar. Todavía no está guardado.`;
+  } else if (r?.status === "staged_action") {
+    const ap = r.appointment, t = ap.terms, p = ap.presentation;
+    text = r.operation === "cancel" ? `Cancelación guardada. Turno ${ap.id}.`
+      : r.operation === "notes" ? "Nota guardada."
+      : r.operation === "preference" ? "Preferencia guardada. No cambia la asignación ni garantiza disponibilidad."
+      : `Guardado: ${t.serviceName}, ${p.localDate} a las ${p.localTime}, ${t.durationMinutes} minutos, ARS ${t.priceArs}. Turno ${ap.id}.`;
+  } else if (r?.alternatives || r?.data?.date) {
+    const slots = r.alternatives ?? r.data;
+    const scope = slots.resourceName ? ` con ${slots.resourceName}` : "";
+    const days = new Map<string, Set<string>>();
+    for (const slot of slots.items) {
+      const p = slot.presentation;
+      if (!days.has(p.localDate)) days.set(p.localDate, new Set());
+      days.get(p.localDate)!.add(p.localTime);
+    }
+    text = days.size ? `Horarios disponibles${scope}: ${[...days].map(([day, times]) => `${day}: ${[...times].join(", ")}`).join("; ")}. ¿Cuál elegís?`
+      : `No hay horarios disponibles${scope}${slots.date ? ` para ${slots.date}` : " en ese día ni en los días cercanos consultados"}. ¿Qué otro día te sirve?`;
+    if (r.alternatives) text = "El horario ya no está disponible. " + text;
+  } else if (r?.reason === "MISSING_NAMES") {
+    text = r.missingFields.length === 2 ? "Decime tu nombre y apellido."
+      : r.missingFields.includes("lastName") ? "Decime tu apellido." : "Decime tu nombre.";
+  } else if (r?.reason === "UNKNOWN_RESOURCE" || r?.code === "UNKNOWN_RESOURCE") text = "No reconocí el recurso solicitado. ¿Cuál querés?";
+  else if (r?.reason === "APPOINTMENT_CHANGED") text = "El turno cambió desde la propuesta. Pedí el cambio nuevamente; no se guardó nada.";
+  else if (r?.reason === "CANCELLATION_REQUIRED") text = "Indicá explícitamente si querés cancelar tu turno.";
+  else if (r?.reason === "NOTE_REQUEST_REQUIRED") text = "Escribí «nota: texto» o «borrar nota» para modificar la nota de tu turno.";
+  else if (r?.code === "UNVERIFIED_SENDER") text = "No pude verificar tu número. No se guardó ningún cambio.";
+  else if (r?.status === "rejected" || r?.status === "clarification") text = "No se guardó ningún cambio. No pude verificar la operación. ¿Podés aclarar qué necesitás?";
+  else if (r?.data) {
+    const d = r.data;
+    if (d.pending === "retained") text = "La propuesta pendiente no cambió. Todavía no se guardó ningún cambio.";
+    else if (d.pending === "unchanged") text = "El turno ya tiene esos datos. No se guardó ningún cambio.";
+    else if ("address" in d) text = d.address ? `Dirección registrada: ${JSON.stringify(d.address)}.` : "No hay dirección registrada.";
+    else if (d.weeklySchedule) text = Object.keys(d.weeklySchedule).length ? "Horarios habituales registrados; no establecen disponibilidad." : "No hay horarios habituales registrados.";
+    else if (d.items) text = d.items.length ? d.items.map((item: any) => item.priceArs !== undefined
+      ? `${item.name}: ${item.durationMinutes} minutos, ARS ${item.priceArs}` : item.terms ? `Turno registrado: ${item.terms.serviceName}, ${item.presentation.label}.` : item.name).join("\n") : toolName === "read_catalog" ? "No hay servicios activos registrados." : "No tenés turnos registrados.";
+  }
+  return JSON.stringify({ text, ...(r?.status === "prepared_quote" ? { presentedQuoteReference: r.presentationReference } : {}) });
+}
 
 type SendOutcome = "ack" | "rejected" | "crash";
 class DeterministicSocket {
@@ -171,8 +219,8 @@ export class DeterministicDeepSeekSystemDouble {
   active = false;
   next: "success" | "timeout" | "error" = "success";
   summaryNext: "success" | "timeout" | "error" = "success";
-  nativeCalls: ReceptionistToolCommand[] | ((messages: Array<{ role: string; content: string | null }>) => ReceptionistToolCommand[]) = [];
-  nativeFinal: ((results: ReceptionistToolResult[]) => string) | null = null;
+  nativeCalls: AgentToolCommand[] | ((messages: Array<{ role: string; content: string | null }>) => AgentToolCommand[]) = [];
+  nativeFinal: ((results: AgentToolResult[]) => string) | null = null;
   private agendaTransport: "success" | "header-deadline" | "body-deadline" | "error" = "success";
   private observedFailure?: () => void;
   agendaAborts = 0;
@@ -239,17 +287,14 @@ export class DeterministicDeepSeekSystemDouble {
           openItems: [],
         })
       : "No se guardó ningún cambio de agenda.";
-    let message: Record<string, unknown> = { role: "assistant", content };
+    let message: Record<string, unknown> = { role: "assistant", content: agenda ? JSON.stringify({ text: content }) : content };
     let finish_reason = "stop";
     if (agenda) {
       const messages = payload.messages as Array<{ role: string; content: string | null; tool_call_id?: string }>;
       if (messages.at(-1)?.role === "tool") {
         const firstResult = messages.findLastIndex(item => item.role !== "tool") + 1;
-        const results = messages.slice(firstResult).map(item => JSON.parse(item.content!) as ReceptionistToolResult);
-        const catalog = results[0]?.status === "data" ? results[0].data as { items?: Array<{ name: string; durationMinutes: number; priceArs: number }> } : null;
-        message.content = this.nativeFinal ? this.nativeFinal(results)
-          : catalog?.items ? catalog.items.map(item => `${item.name}: ${item.durationMinutes} minutos, ARS ${item.priceArs}`).join("\n") || "No hay servicios activos."
-          : content;
+        const results = messages.slice(firstResult).map(item => JSON.parse(item.content!) as AgentToolResult);
+        message.content = this.nativeFinal ? this.nativeFinal(results) : scriptedAgentReply(results, payload.messages[firstResult - 1]?.tool_calls?.[0]?.function?.name);
       } else {
         const calls = typeof this.nativeCalls === "function" ? this.nativeCalls(messages) : this.nativeCalls;
         if (calls.length) {

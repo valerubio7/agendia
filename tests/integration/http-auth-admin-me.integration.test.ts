@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { hash, Algorithm } from "@node-rs/argon2";
 import { join } from "node:path";
 import { buildApi } from "../../apps/api/src/app.ts";
-import { buildReceptionistMessages } from "../../apps/message-worker/src/agent/context.ts";
+import { buildAgentMessages } from "../../apps/message-worker/src/agent/context.ts";
 import { createRuntimePools } from "@agendia/db";
 import type { PlatformAiInstructions } from "@agendia/contracts";
 import {
@@ -121,6 +121,14 @@ const csrfBootstrapRegression = async () => {
 };
 
 describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
+  test("agent endpoint requires authentication and removes the old route without mutation", async () => {
+    const before = [...await database.sql`select * from agent_configs`];
+    expect((await request("GET", "/me/agent")).statusCode).toBe(401);
+    expect((await request("PUT", "/me/agent", { origin: ORIGIN, body: {} })).statusCode).toBe(401);
+    for (const method of ["GET", "PUT"] as const)
+      expect((await request(method, "/me/assistant", { origin: ORIGIN, body: {} })).statusCode).toBe(404);
+    expect([...await database.sql`select * from agent_configs`]).toEqual(before);
+  });
   test("sets a secure opaque cookie and enforces expiration, logout, CSRF and Origin", async () => {
     expect(
       (
@@ -324,23 +332,23 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
     ).toBe(401);
   });
 
-  test("requires an active assistant before requesting a WhatsApp link", async () => {
-    await createBusiness("whatsapp-assistant-gate@example.test");
+  test("requires an active agent before requesting a WhatsApp link", async () => {
+    await createBusiness("whatsapp-agent-gate@example.test");
     const tenant = await login(
-      "whatsapp-assistant-gate@example.test",
+      "whatsapp-agent-gate@example.test",
       "tenant initial password safe",
     );
 
-    const missingAssistantLink = await request("POST", "/me/whatsapp/link", {
+    const missingAgentLink = await request("POST", "/me/whatsapp/link", {
       ...tenant,
       origin: ORIGIN,
     });
-    expect(missingAssistantLink.statusCode).toBe(409);
-    expect(missingAssistantLink.json()).toMatchObject({ code: "CONFLICT" });
+    expect(missingAgentLink.statusCode).toBe(409);
+    expect(missingAgentLink.json()).toMatchObject({ code: "CONFLICT" });
 
     expect(
       (
-        await request("PUT", "/me/assistant", {
+        await request("PUT", "/me/agent", {
           ...tenant,
           origin: ORIGIN,
           body: {
@@ -353,16 +361,16 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
       ).json(),
     ).toMatchObject({ active: false, revision: 1 });
 
-    const inactiveAssistantLink = await request("POST", "/me/whatsapp/link", {
+    const inactiveAgentLink = await request("POST", "/me/whatsapp/link", {
       ...tenant,
       origin: ORIGIN,
     });
-    expect(inactiveAssistantLink.statusCode).toBe(409);
-    expect(inactiveAssistantLink.json()).toMatchObject({ code: "CONFLICT" });
+    expect(inactiveAgentLink.statusCode).toBe(409);
+    expect(inactiveAgentLink.json()).toMatchObject({ code: "CONFLICT" });
 
     expect(
       (
-        await request("PUT", "/me/assistant", {
+        await request("PUT", "/me/agent", {
           ...tenant,
           origin: ORIGIN,
           body: {
@@ -384,7 +392,7 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
     ).toBe(202);
   });
 
-  test("derives tenant only from session for profile, assistant and WhatsApp routes", async () => {
+  test("derives tenant only from session for profile, agent and WhatsApp routes", async () => {
     const a = await createBusiness("tenant-a@example.test");
     const b = await createBusiness("tenant-b@example.test");
     const authA = await login(
@@ -459,7 +467,7 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
     ).toBe("A");
     expect(
       (
-        await request("PUT", "/me/assistant", {
+        await request("PUT", "/me/agent", {
           ...authA,
           origin: ORIGIN,
           body: {
@@ -472,39 +480,39 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
         })
       ).json(),
     ).toMatchObject({ style: " \nTenant style ", businessInstructions: "Tenant instructions\n ", active: true, revision: 1 });
-    const savedAssistant = (await request("GET", "/me/assistant", authA)).json();
-    const beforeInvalid = await database.sql`select * from assistant_configs where business_id=${a.business.id}`;
+    const savedAgent = (await request("GET", "/me/agent", authA)).json();
+    const beforeInvalid = await database.sql`select * from agent_configs where business_id=${a.business.id}`;
     for (const body of [
       { personality: "stale", tone: "", instructions: "", knowledge: "", rules: "", restrictions: "", active: false, expectedRevision: 1 },
       { style: "incomplete", active: false, expectedRevision: 1 },
     ]) {
-      expect((await request("PUT", "/me/assistant", { ...authA, origin: ORIGIN, body })).statusCode).toBe(400);
-      expect((await request("GET", "/me/assistant", authA)).json()).toEqual(savedAssistant);
+      expect((await request("PUT", "/me/agent", { ...authA, origin: ORIGIN, body })).statusCode).toBe(400);
+      expect((await request("GET", "/me/agent", authA)).json()).toEqual(savedAgent);
     }
-    expect([...(await database.sql`select * from assistant_configs where business_id=${a.business.id}`)]).toEqual([...beforeInvalid]);
-    expect((await request("PUT", "/me/assistant", { ...authA, origin: ORIGIN, body: { ...savedAssistant, expectedRevision: 0 } })).statusCode).toBe(409);
-    expect((await request("GET", "/me/assistant", authA)).json()).toEqual(savedAssistant);
+    expect([...(await database.sql`select * from agent_configs where business_id=${a.business.id}`)]).toEqual([...beforeInvalid]);
+    expect((await request("PUT", "/me/agent", { ...authA, origin: ORIGIN, body: { ...savedAgent, expectedRevision: 0 } })).statusCode).toBe(409);
+    expect((await request("GET", "/me/agent", authA)).json()).toEqual(savedAgent);
     const maxText = "😀".repeat(8_000);
-    const maximumAssistant = {
+    const maximumAgent = {
       style: `Personalidad:\n${maxText}\n\nTono:\n${maxText}`,
       businessInstructions: ["Instrucciones", "Conocimiento", "Reglas", "Restricciones"]
         .map(label => `${label}:\n${maxText}`).join("\n\n"),
       active: true,
       expectedRevision: 1,
     };
-    const maximumSave = await request("PUT", "/me/assistant", {
-      ...authA, origin: ORIGIN, body: maximumAssistant,
+    const maximumSave = await request("PUT", "/me/agent", {
+      ...authA, origin: ORIGIN, body: maximumAgent,
     });
     expect(maximumSave.statusCode).toBe(200);
     expect(maximumSave.json() as unknown).toEqual({
-      style: maximumAssistant.style,
-      businessInstructions: maximumAssistant.businessInstructions,
+      style: maximumAgent.style,
+      businessInstructions: maximumAgent.businessInstructions,
       active: true,
       revision: 2,
     });
-    expect((await request("GET", "/me/assistant", authA)).json()).toEqual(maximumSave.json());
+    expect((await request("GET", "/me/agent", authA)).json()).toEqual(maximumSave.json());
     expect(
-      (await request("GET", "/me/assistant", authB)).json() as unknown,
+      (await request("GET", "/me/agent", authB)).json() as unknown,
     ).toEqual({});
     expect(
       (await request("GET", "/me/whatsapp/status", authA)).json(),
@@ -549,7 +557,7 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
     ).toBe(true);
     expect(
       (
-        await request("PUT", "/me/assistant", {
+        await request("PUT", "/me/agent", {
           ...authA,
           csrf: authA.csrf,
           body: {},
@@ -573,13 +581,13 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
     const privateData = {
       business: "fixture-private-business", customer: "fixture-private-customer",
       history: "fixture-private-history", summary: "fixture-private-summary",
-      assistant: "fixture-private-assistant", admin: "fixture-supplementary-guidance",
+      agent: "fixture-private-agent", admin: "fixture-supplementary-guidance",
       identity: "fixture-private-identity", quote: "fixture-private-quote",
       evidenceReference: "a".repeat(64), quoteFingerprint: "b".repeat(64),
     };
-    const runtimeMessages = buildReceptionistMessages({
+    const runtimeMessages = buildAgentMessages({
       raw_text: privateData.customer, sequence: "4",
-      profile: { display_name: privateData.business }, assistant: { style: privateData.assistant },
+      profile: { display_name: privateData.business }, agent: { style: privateData.agent },
       currentGroup: [{ id: "4", sequence: "4", raw_text: privateData.customer }],
       turns: [{ id: "3", sequence: "3", direction: "outbound", processing_state: "sent", raw_text: privateData.history }],
       summaries: [{ covered_through: "2", structured_summary: {

@@ -1,4 +1,4 @@
-import { AI_SYSTEM_INSTRUCTIONS, ToolConversationRequestSchema, ToolAssistantMessageSchema, TOOL_CONVERSATION_LIMITS } from "@agendia/domain";
+import { AI_SYSTEM_INSTRUCTIONS, ToolConversationRequestSchema, ToolAgentMessageSchema, TOOL_CONVERSATION_LIMITS } from "@agendia/domain";
 import type { ConversationToolCall, ToolConversationProvider, ToolConversationRequest, ToolConversationResult } from "@agendia/domain";
 import type { AiGenerateRequest, AiGenerateResult, AiProvider, ConversationSummarizer, ConversationSummaryContent, ConversationSummaryRequest } from "@agendia/domain";
 
@@ -29,7 +29,7 @@ export function buildDeepSeekRequest(request: AiGenerateRequest, model = "deepse
         ? AI_SYSTEM_INSTRUCTIONS + "\n\n" + request.additionalInstructions
         : AI_SYSTEM_INSTRUCTIONS },
       { role: "user", content: [
-        delimited("INSTRUCCIONES DEL ASISTENTE", request.assistant),
+        delimited("INSTRUCCIONES DEL AGENTE", request.agent),
         delimited("INFORMACIÓN DEL NEGOCIO", request.business),
         delimited("HISTORIAL DE CONVERSACIÓN", request.context),
         delimited("MENSAJE ACTUAL DEL CLIENTE", request.message),
@@ -193,7 +193,7 @@ function parseToolResponse(payload: unknown, request: ValidToolRequest, usedIds:
     // JSON parsing and the shared schema reject arrays, scalars and non-JSON values.
     calls.push({ id: wire.id as string, name: wire.function.name as string, arguments: JSON.parse(args) });
   }
-  const parsed = ToolAssistantMessageSchema.safeParse({
+  const parsed = ToolAgentMessageSchema.safeParse({
     role: "assistant", content: typeof message.content === "string" ? message.content.trim() : null,
     toolCalls: calls,
     ...(message.reasoning_content !== undefined ? { providerState: { reasoningContent: message.reasoning_content } } : {}),

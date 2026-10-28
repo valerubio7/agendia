@@ -1,11 +1,11 @@
 import { expect, type Locator, type Page, type Route } from "@playwright/test";
 import { createBusinessInAdminUi, login, test } from "./support/fixtures.ts";
-import { ASSISTANT_STYLE_LIMIT, ASSISTANT_BUSINESS_INSTRUCTIONS_LIMIT } from "../../packages/domain/src/agent/config.ts";
+import { AGENT_STYLE_LIMIT, AGENT_BUSINESS_INSTRUCTIONS_LIMIT } from "../../packages/domain/src/agent/config.ts";
 
 const tenant = {
   name: "Estudio Voz Propia",
-  email: "assistant-redesign@example.test",
-  password: "tenant assistant password safe",
+  email: "agent-redesign@example.test",
+  password: "tenant agent password safe",
 };
 
 const values = {
@@ -101,17 +101,17 @@ async function expectOfficialHeaderBrand(page: Page, shell: Locator) {
   }
 }
 
-test("assistant save preserves newer activation draft and advances the next revision", async ({ page, system }) => {
+test("agent save preserves newer activation draft and advances the next revision", async ({ page, system }) => {
   await login(page, system.webUrl, system.admin.email, system.admin.password);
   await expect(page.locator('[data-ui="admin-screen"]')).toBeVisible();
   await createBusinessInAdminUi(page, {
-    name: "Asistente concurrente", email: "assistant-draft@example.test", password: tenant.password,
+    name: "Agente concurrente", email: "agent-draft@example.test", password: tenant.password,
   });
   await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
   await expect(page).toHaveURL(/\/admin\/login$/);
-  await login(page, system.webUrl, "assistant-draft@example.test", tenant.password);
+  await login(page, system.webUrl, "agent-draft@example.test", tenant.password);
   await expect(page).toHaveURL(/\/profile$/);
-  await page.goto(`${system.webUrl}/assistant`);
+  await page.goto(`${system.webUrl}/agent`);
   const active = page.getByRole("checkbox", { name: "Respuestas automáticas activas", exact: true });
   await expect(active).not.toBeChecked();
   const submitted: Array<{ active: boolean; expectedRevision: number }> = [];
@@ -119,7 +119,7 @@ test("assistant save preserves newer activation draft and advances the next revi
   let observed!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
   const mutationObserved = new Promise<void>(resolve => { observed = resolve; });
-  await page.route("**/me/assistant", async route => {
+  await page.route("**/me/agent", async route => {
     if (route.request().method() !== "PUT") return route.continue();
     submitted.push(route.request().postDataJSON());
     const response = await route.fetch();
@@ -139,7 +139,7 @@ test("assistant save preserves newer activation draft and advances the next revi
     await active.uncheck();
     await page.getByLabel("Estilo de atención", { exact: true }).fill("Borrador posterior al envío");
   } finally { release(); }
-  await expect(page.getByRole("status")).toHaveText("Asistente guardado");
+  await expect(page.getByRole("status")).toHaveText("Agente guardado");
   await expect(active).not.toBeChecked();
   await expect(page.getByText("Pausa pendiente", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Estilo de atención", { exact: true })).toHaveValue("Borrador posterior al envío");
@@ -151,16 +151,16 @@ test("assistant save preserves newer activation draft and advances the next revi
   await page.reload();
   await expect(active).not.toBeChecked();
   await expect(page.getByLabel("Estilo de atención", { exact: true })).toHaveValue("Borrador posterior al envío");
-  await page.unroute("**/me/assistant");
-  await page.route("**/me/assistant", route => route.request().method() === "PUT"
+  await page.unroute("**/me/agent");
+  await page.route("**/me/agent", route => route.request().method() === "PUT"
     ? route.fulfill({ status: 409, json: { code: "CONFLICT" } }) : route.continue());
   await active.check();
   await page.getByRole("button", { name: "Guardar y activar", exact: true }).click();
-  await expect(page.locator('[data-ui="assistant-screen"]').getByRole("alert")).toHaveText("Los datos cambiaron. Recargá y volvé a intentar.");
+  await expect(page.locator('[data-ui="agent-screen"]').getByRole("alert")).toHaveText("Los datos cambiaron. Recargá y volvé a intentar.");
   await expect(active).toBeChecked();
   await page.getByRole("button", { name: "Recargar configuración", exact: true }).click();
   await expect(active).not.toBeChecked();
-  await page.unroute("**/me/assistant");
+  await page.unroute("**/me/agent");
 
   let releaseLate!: () => void;
   let observeLate!: () => void;
@@ -168,7 +168,7 @@ test("assistant save preserves newer activation draft and advances the next revi
   const lateHeld = new Promise<void>(resolve => { releaseLate = resolve; });
   const lateObserved = new Promise<void>(resolve => { observeLate = resolve; });
   const lateDelivered = new Promise<void>(resolve => { deliverLate = resolve; });
-  await page.route("**/me/assistant", async route => {
+  await page.route("**/me/agent", async route => {
     if (route.request().method() !== "PUT") return route.continue();
     const response = await route.fetch();
     expect(response.ok()).toBe(true);
@@ -191,10 +191,10 @@ test("assistant save preserves newer activation draft and advances the next revi
   await expect(page.locator('[data-ui="admin-screen"]')).toBeVisible();
   await expect(page.locator('[data-ui="admin-screen"] .admin-feedback').getByRole("status")).toHaveCount(0);
   await expect(page.locator('[data-ui="admin-inventory"]').getByRole("listitem")
-    .filter({ has: page.getByText("Asistente concurrente", { exact: true }) })).toBeVisible();
+    .filter({ has: page.getByText("Agente concurrente", { exact: true }) })).toBeVisible();
 });
 
-test("the redesigned Assistant screen preserves the real configuration workflow responsively", async ({
+test("the redesigned Agent screen preserves the real configuration workflow responsively", async ({
   browser,
   page,
   system,
@@ -213,8 +213,8 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
   try {
     await login(tenantPage, system.webUrl, tenant.email, tenant.password);
     await expect(tenantPage).toHaveURL(/\/profile$/);
-    await tenantPage.goto(`${system.webUrl}/assistant`);
-    await expect(tenantPage).toHaveURL(/\/assistant$/);
+    await tenantPage.goto(`${system.webUrl}/agent`);
+    await expect(tenantPage).toHaveURL(/\/agent$/);
 
     const shell = tenantPage.locator(
       '[data-ui="authenticated-shell"][data-variant="business"]',
@@ -230,10 +230,10 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
       }),
     ).toBeVisible();
 
-    const screen = shell.locator('[data-ui="assistant-screen"]');
-    const heading = screen.getByRole("heading", { level: 1, name: "Asistente", exact: true });
-    const activation = screen.locator('[data-ui="assistant-activation"]');
-    const savePanel = screen.locator('[data-ui="assistant-save-panel"]');
+    const screen = shell.locator('[data-ui="agent-screen"]');
+    const heading = screen.getByRole("heading", { level: 1, name: "Agente", exact: true });
+    const activation = screen.locator('[data-ui="agent-activation"]');
+    const savePanel = screen.locator('[data-ui="agent-save-panel"]');
     await expect(screen).toHaveCount(1);
     await expect(heading).toBeVisible();
     await expect(heading).toHaveCSS("color", "rgb(28, 38, 32)");
@@ -241,7 +241,7 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
     await expect(heading).toHaveCSS("font-family", /Source Sans 3/);
     await expectOfficialHeaderBrand(tenantPage, shell);
     await expectPair(shell.locator(".authenticated-shell__sidebar"), "rgb(243, 238, 225)", "rgb(18, 55, 42)");
-    const guide = screen.getByRole("complementary", { name: "Guía para dirigir el asistente", exact: true });
+    const guide = screen.getByRole("complementary", { name: "Guía para dirigir el agente", exact: true });
     await expect(guide.getByRole("heading", { name: "Escribí para orientar", exact: true })).toBeVisible();
     await expect(guide.getByRole("listitem")).toHaveText([
       "Usá indicaciones concretas y sin contradicciones.",
@@ -265,7 +265,7 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
       ).toBeVisible();
     }
 
-    const form = screen.locator("form#assistant-configuration-form");
+    const form = screen.locator("form#agent-configuration-form");
     await expect(form).toHaveCount(1);
     await expect(activation).toHaveCount(1);
     await expect(savePanel).toHaveCount(1);
@@ -297,7 +297,7 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
       textareas[name] = field;
       await expect(field).toHaveCount(1);
       await expect(field).toHaveAttribute("name", name);
-      await expect(field).toHaveAttribute("maxlength", String(name === "style" ? ASSISTANT_STYLE_LIMIT : ASSISTANT_BUSINESS_INSTRUCTIONS_LIMIT));
+      await expect(field).toHaveAttribute("maxlength", String(name === "style" ? AGENT_STYLE_LIMIT : AGENT_BUSINESS_INSTRUCTIONS_LIMIT));
       expect(await field.evaluate((element) => element.tagName)).toBe(
         "TEXTAREA",
       );
@@ -306,8 +306,8 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
     for (const section of sections) {
       await expectPair(section, "rgb(28, 38, 32)", "rgb(252, 250, 243)");
       await expect(section.locator("h2")).toHaveCSS("font-weight", "650");
-      await expect(section.locator(".assistant-field__label")).toHaveCSS("font-weight", "650");
-      await expect(section.locator(".assistant-field__label")).toHaveCSS("font-family", /Source Sans 3/);
+      await expect(section.locator(".agent-field__label")).toHaveCSS("font-weight", "650");
+      await expect(section.locator(".agent-field__label")).toHaveCSS("font-family", /Source Sans 3/);
       await expectPair(section.locator("textarea"), "rgb(28, 38, 32)", "rgb(255, 255, 255)");
       await expect(section.locator("textarea")).toHaveCSS("font-family", /Source Sans 3/);
       await expect(section.locator("textarea")).toHaveCSS("font-weight", "450");
@@ -321,8 +321,8 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
     await expectPair(save, "rgb(28, 38, 32)", "rgb(255, 107, 73)");
     await expect(save).toHaveCSS("font-weight", "600");
     for (const [, name] of fields) {
-      await expect(textareas[name]).toHaveAttribute("aria-describedby", `assistant-${name}-hint`);
-      await expect(screen.locator(`#assistant-${name}-hint`)).toBeVisible();
+      await expect(textareas[name]).toHaveAttribute("aria-describedby", `agent-${name}-hint`);
+      await expect(screen.locator(`#agent-${name}-hint`)).toBeVisible();
       await expectKeyboardFocus(tenantPage, textareas[name]);
     }
     await active.focus();
@@ -330,12 +330,12 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
     await tenantPage.keyboard.press("Shift+Tab");
     await expect(active).toBeFocused();
     expect(await active.evaluate(element => element.matches(":focus-visible"))).toBe(true);
-    await expect(activation.locator(".assistant-activation__track")).toHaveCSS("outline-color", "rgb(46, 107, 78)");
-    await expect(activation.locator(".assistant-activation__track")).toHaveCSS("outline-style", "solid");
+    await expect(activation.locator(".agent-activation__track")).toHaveCSS("outline-color", "rgb(46, 107, 78)");
+    await expect(activation.locator(".agent-activation__track")).toHaveCSS("outline-style", "solid");
     await expectKeyboardFocus(tenantPage, save);
-    await tenantPage.screenshot({ path: testInfo.outputPath("assistant-desktop.png"), fullPage: true });
+    await tenantPage.screenshot({ path: testInfo.outputPath("agent-desktop.png"), fullPage: true });
     await expect(save).toHaveAttribute("type", "submit");
-    await expect(save).toHaveAttribute("form", "assistant-configuration-form");
+    await expect(save).toHaveAttribute("form", "agent-configuration-form");
     await expect(form.locator("button")).toHaveCount(0);
     await expect(screen.getByRole("button")).toHaveCount(1);
     await expect(screen.getByRole("link")).toHaveCount(0);
@@ -363,7 +363,7 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
     const saveRequestReleased = new Promise<void>((resolve) => {
       releaseSaveRequest = resolve;
     });
-    await tenantPage.route("**/me/assistant", async (route) => {
+    await tenantPage.route("**/me/agent", async (route) => {
       if (route.request().method() !== "PUT") {
         await route.continue();
         return;
@@ -392,13 +392,13 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
     }
     const status = screen.getByRole("status");
     await expect(status).toHaveCount(1);
-    await expect(status).toHaveText("Asistente guardado");
+    await expect(status).toHaveText("Agente guardado");
     await expectPair(status, "rgb(18, 55, 42)", "rgb(223, 233, 225)");
-    await tenantPage.screenshot({ path: testInfo.outputPath("assistant-success.png"), fullPage: true });
-    await tenantPage.unroute("**/me/assistant");
+    await tenantPage.screenshot({ path: testInfo.outputPath("agent-success.png"), fullPage: true });
+    await tenantPage.unroute("**/me/agent");
 
     await tenantPage.reload();
-    await expect(tenantPage).toHaveURL(/\/assistant$/);
+    await expect(tenantPage).toHaveURL(/\/agent$/);
     await expect(
       tenantPage.getByLabel("Estilo de atención", { exact: true }),
     ).toHaveValue(values.style);
@@ -430,7 +430,7 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
         }),
       });
     };
-    await tenantPage.route("**/me/assistant", conflictRoute);
+    await tenantPage.route("**/me/agent", conflictRoute);
 
     await textareas.style.fill(staleStyle);
     await savePanel
@@ -451,17 +451,17 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
     await expectPair(conflictAlert, "rgb(168, 58, 26)", "rgb(243, 217, 211)");
     await expectPair(reloadConfiguration, "rgb(28, 38, 32)", "rgb(252, 250, 243)");
     await expectKeyboardFocus(tenantPage, reloadConfiguration);
-    await tenantPage.screenshot({ path: testInfo.outputPath("assistant-conflict.png"), fullPage: true });
+    await tenantPage.screenshot({ path: testInfo.outputPath("agent-conflict.png"), fullPage: true });
 
-    await tenantPage.unroute("**/me/assistant", conflictRoute);
+    await tenantPage.unroute("**/me/agent", conflictRoute);
     const refreshedConfiguration = tenantPage.waitForResponse(
       (response) =>
         response.request().method() === "GET" &&
-        new URL(response.url()).pathname.endsWith("/me/assistant") &&
+        new URL(response.url()).pathname.endsWith("/me/agent") &&
         response.ok(),
     );
     await Promise.all([refreshedConfiguration, reloadConfiguration.click()]);
-    await expect(tenantPage).toHaveURL(/\/assistant$/);
+    await expect(tenantPage).toHaveURL(/\/agent$/);
     await expect(screen).toBeVisible();
     await expect(textareas.style).toHaveValue(values.style);
     await expect(conflictAlert).toHaveCount(0);
@@ -478,11 +478,11 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
     const refreshedSaveResponse = tenantPage.waitForResponse(
       (response) =>
         response.request().method() === "PUT" &&
-        new URL(response.url()).pathname.endsWith("/me/assistant") &&
+        new URL(response.url()).pathname.endsWith("/me/agent") &&
         response.ok(),
     );
     await Promise.all([refreshedSaveResponse, refreshedSave.click()]);
-    await expect(status).toHaveText("Asistente guardado");
+    await expect(status).toHaveText("Agente guardado");
 
     await tenantPage.setViewportSize({ width: 360, height: 800 });
     for (const [, name] of fields) await expectReachable(textareas[name]);
@@ -495,7 +495,7 @@ test("the redesigned Assistant screen preserves the real configuration workflow 
     await expect(mobileSave).toBeEnabled();
     await expectNoHorizontalOverflow(tenantPage);
     await expectOfficialHeaderBrand(tenantPage, shell);
-    await tenantPage.screenshot({ path: testInfo.outputPath("assistant-mobile.png"), fullPage: true });
+    await tenantPage.screenshot({ path: testInfo.outputPath("agent-mobile.png"), fullPage: true });
   } finally {
     await tenantContext.close();
   }

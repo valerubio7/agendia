@@ -1,6 +1,6 @@
 import { expect, type Locator, type Page, type Route } from "@playwright/test";
 import { login, test } from "./support/fixtures.ts";
-import { RECEPTIONIST_SYSTEM_INSTRUCTIONS } from "../../packages/domain/src/agent/instructions.ts";
+import { AGENT_SYSTEM_INSTRUCTIONS } from "../../packages/domain/src/agent/instructions.ts";
 
 const tenant = {
   name: "Estudio Administración Horizonte",
@@ -294,9 +294,9 @@ test("platform admin saves and reloads additions and global reply waits", async 
   await openInstructions();
   const base = page.getByLabel("Instrucciones base · Solo lectura", { exact: true });
   const notice = page.locator(".admin-feedback").getByRole("status");
-  await expect(base).toHaveValue(RECEPTIONIST_SYSTEM_INSTRUCTIONS);
+  await expect(base).toHaveValue(AGENT_SYSTEM_INSTRUCTIONS);
   await expect(base).toHaveAttribute("readonly", "");
-  await expect(page.getByText("Sistema activo del recepcionista de WhatsApp, de solo lectura. Se modifica únicamente desde el código; no incluye datos de conversaciones.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Sistema activo del agente de WhatsApp, de solo lectura. Se modifica únicamente desde el código; no incluye datos de conversaciones.", { exact: true })).toBeVisible();
   await expect(page.getByText("Se envían como contexto complementario, no como instrucciones de sistema. No reemplazan las reglas base ni las herramientas; su cumplimiento no está garantizado.", { exact: true })).toBeVisible();
   const viewport = page.viewportSize()!;
   const hints = page.getByRole("tabpanel", { name: "Configuración de IA", exact: true })
@@ -340,7 +340,7 @@ test("platform admin saves and reloads additions and global reply waits", async 
   await expect(initialWait).toHaveValue("0");
   await expect(activeWait).toHaveValue("23");
   await expect(reset).toHaveValue("75");
-  await expect(base).toHaveValue(RECEPTIONIST_SYSTEM_INSTRUCTIONS);
+  await expect(base).toHaveValue(AGENT_SYSTEM_INSTRUCTIONS);
   await expect(base).toHaveAttribute("readonly", "");
   await reset.fill("0");
   await page.getByRole("button", { name: "Guardar configuración", exact: true }).click();
@@ -356,7 +356,7 @@ test("platform admin saves and reloads additions and global reply waits", async 
   await page.reload();
   await openInstructions();
   await expect(additions).toHaveValue(`${raw}\nMás instrucciones`);
-  await expect(base).toHaveValue(RECEPTIONIST_SYSTEM_INSTRUCTIONS);
+  await expect(base).toHaveValue(AGENT_SYSTEM_INSTRUCTIONS);
   await expect(initialWait).toHaveValue("0");
   await expect(activeWait).toHaveValue("23");
   await expect(reset).toHaveValue("75");
@@ -474,7 +474,7 @@ test("the redesigned administration screen preserves the real business workflow 
   await expectPair(notice, "rgb(223, 233, 225)", "rgb(18, 55, 42)");
   await expect(directory).toBeVisible();
   await expect(emptyDirectory).toBeHidden();
-  await expect(inventory.locator(".admin-directory-heading > span")).toHaveText(["Negocio", "Operación", "Asistente", "WhatsApp", "Gestión"]);
+  await expect(inventory.locator(".admin-directory-heading > span")).toHaveText(["Negocio", "Operación", "Agente", "WhatsApp", "Gestión"]);
   const createdRow = businessRow(page, directory, tenant.name);
   await expect(createdRow).toHaveCount(1);
   await expect(createdRow.getByText(tenant.name, { exact: true })).toBeVisible();
@@ -483,7 +483,7 @@ test("the redesigned administration screen preserves the real business workflow 
   await expect(createdRow.locator(".admin-directory-state")).toHaveCount(3);
   await page.unroute("**/admin/businesses");
   await expectPair(createdRow.locator(".admin-status--business-active"), "rgb(223, 233, 225)", "rgb(46, 107, 78)");
-  await expectPair(createdRow.locator(".admin-status--assistant-inactive"), "rgba(0, 0, 0, 0)", "rgb(76, 91, 83)");
+  await expectPair(createdRow.locator(".admin-status--agent-inactive"), "rgba(0, 0, 0, 0)", "rgb(76, 91, 83)");
   await expectPair(createdRow.locator(".admin-status--whatsapp-link_required"), "rgba(0, 0, 0, 0)", "rgb(168, 58, 26)");
   await keyboardFocus(page, createdRow.locator("summary"));
   let management = await openManagement(createdRow);
