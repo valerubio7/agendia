@@ -2,12 +2,14 @@ import type { FormEventHandler, ReactNode } from "react";
 import { Brand } from "../../components/brand";
 
 type LoginScreenProps = {
+  title?: string;
   feedback: ReactNode;
   loginPending: boolean;
   submitAction: FormEventHandler<HTMLFormElement>;
 };
 
 export function LoginScreen({
+  title = "Iniciar sesión",
   feedback,
   loginPending,
   submitAction,
@@ -21,7 +23,7 @@ export function LoginScreen({
       >
         <div className="login-card">
           <Brand />
-          <h1 id="login-title">Iniciar sesión</h1>
+          <h1 id="login-title">{title}</h1>
           <p className="login-welcome">Qué bueno verte de nuevo.</p>
           {feedback}
           <form onSubmit={submitAction} aria-busy={loginPending}>

@@ -108,7 +108,7 @@ test("agent save preserves newer activation draft and advances the next revision
     name: "Agente concurrente", email: "agent-draft@example.test", password: tenant.password,
   });
   await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(/\/admin\/login$/);
   await login(page, system.webUrl, "agent-draft@example.test", tenant.password);
   await expect(page).toHaveURL(/\/profile$/);
   await page.goto(`${system.webUrl}/agent`);

@@ -1,0 +1,65 @@
+# Requires a separately provisioned PostgreSQL resource reachable on dokploy-network.
+# Confirm its private hostname/network membership and prepare schema/roles before app startup.
+# URLs must use existing least-privilege logins, never the Dokploy master/migrator login.
+# KMS and link-code keys must be 32-byte base64 values (validated by the applications).
+services:
+  agendia-api-runtime:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      DATABASE_URL: ${API_DATABASE_URL:?API_DATABASE_URL is required}
+      ADMIN_DATABASE_URL: ${ADMIN_DATABASE_URL:?ADMIN_DATABASE_URL is required}
+      APP_ORIGIN: ${APP_ORIGIN:?APP_ORIGIN is required}
+      WHATSAPP_LINK_CODE_KEY: ${WHATSAPP_LINK_CODE_KEY:?WHATSAPP_LINK_CODE_KEY is required}
+    networks:
+      app:
+        aliases:
+          - agendia-api
+      dokploy: {}
+
+  agendia-web:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        AGENDIA_API_ORIGIN: http://agendia-api:3001
+    networks:
+      app: {}
+      dokploy: {}
+
+  agendia-message-worker:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile.workers
+      target: message-worker
+    environment:
+      WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?WORKER_DATABASE_URL is required}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?DEEPSEEK_API_KEY is required}
+    networks:
+      dokploy: {}
+
+  agendia-whatsapp-manager:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile.workers
+      target: whatsapp-manager
+    environment:
+      MANAGER_DATABASE_URL: ${MANAGER_DATABASE_URL:?MANAGER_DATABASE_URL is required}
+      WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?WORKER_DATABASE_URL is required}
+      BAILEYS_KMS_VERSION: ${BAILEYS_KMS_VERSION:?BAILEYS_KMS_VERSION is required}
+      BAILEYS_KMS_KEY: ${BAILEYS_KMS_KEY:?BAILEYS_KMS_KEY is required}
+      WHATSAPP_LINK_CODE_KEY: ${WHATSAPP_LINK_CODE_KEY:?WHATSAPP_LINK_CODE_KEY is required}
+    networks:
+      dokploy: {}
+
+networks:
+  app:
+    internal: true
+  dokploy:
+    external: true
+    name: dokploy-network
