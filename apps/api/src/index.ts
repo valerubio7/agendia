@@ -17,9 +17,9 @@ export async function startApi(env: NodeJS.ProcessEnv = process.env) {
 }
 
 if (import.meta.main) {
+  let stopping = false;
   try {
-    const runtime = await startApi({ ...process.env, API_HOST: process.env.API_HOST ?? "127.0.0.1" });
-    let stopping = false;
+    const runtime = createProductionApi();
     const stop = async () => {
       if (stopping) return;
       stopping = true;
@@ -29,8 +29,11 @@ if (import.meta.main) {
     const shutdown = () => void stop().finally(() => process.exit());
     process.once("SIGINT", shutdown);
     process.once("SIGTERM", shutdown);
+    await runtime.app.listen({ host: process.env.API_HOST ?? "127.0.0.1", port: Number(process.env.API_PORT ?? 3001) });
   } catch {
-    console.error(JSON.stringify({ event: "api.bootstrap", outcome: "failure" }));
-    process.exitCode = 1;
+    if (!stopping) {
+      console.error(JSON.stringify({ event: "api.bootstrap", outcome: "failure" }));
+      process.exitCode = 1;
+    }
   }
 }

@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
 import { createServer } from "node:net";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -61,6 +64,87 @@ test.each([
   } finally {
     if (child.exitCode === null) child.kill("SIGKILL");
     await child.exited;
+  }
+});
+
+test("direct API owns SIGTERM cleanup while listen continuation is held", async () => {
+  const scratch = await mkdtemp(join(tmpdir(), "agendia-api-listen-"));
+  let child: ReturnType<typeof launch> | undefined;
+  try {
+    const preload = join(scratch, "hold-listen.ts");
+    await writeFile(preload, `
+      import { mock } from "bun:test";
+      const fastify = await import(${JSON.stringify(import.meta.resolve("fastify"))});
+      const realFastify = fastify.default;
+      const { RolePool } = await import(${JSON.stringify(new URL("../../packages/db/src/runtime-pools.ts", import.meta.url).href)});
+      const end = RolePool.prototype.end;
+      let poolsEnded = 0;
+      RolePool.prototype.end = async function () {
+        console.log("pool.end");
+        await end.call(this);
+        console.log("pool.closed:" + ++poolsEnded);
+      };
+      mock.module(${JSON.stringify(import.meta.resolve("fastify"))}, () => ({
+        ...fastify,
+        default: (...args) => {
+          const app = realFastify(...args);
+          const listen = app.listen.bind(app);
+          const close = app.close.bind(app);
+          // Never release this gate: shutdown must not await the startup continuation.
+          const gate = Promise.withResolvers();
+          app.listen = async (...options) => {
+            await listen(...options);
+            console.log(JSON.stringify({ bound: app.server.address().port, held: true }));
+            await gate.promise;
+          };
+          app.close = async () => {
+            await close();
+            console.log("app.closed");
+          };
+          return app;
+        },
+      }));
+    `);
+    child = launch(["--preload", preload, "apps/api/src/index.ts"], { API_PORT: "0" });
+    const reader = child.stdout.getReader();
+    let ready = "";
+    while (!ready.includes("\n")) {
+      const chunk = await reader.read();
+      if (chunk.done) throw new Error(`API exited before held listen (${await child.exited}): ${await new Response(child.stderr).text()}`);
+      ready += new TextDecoder().decode(chunk.value);
+    }
+    const remainingOutput = async () => {
+      let output = "";
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        output += new TextDecoder().decode(chunk.value);
+      }
+      reader.releaseLock();
+      return output;
+    };
+    const { bound, held } = JSON.parse(ready);
+    expect(held).toBe(true);
+    const url = `http://127.0.0.1:${bound}/`;
+    const response = await fetch(url, { signal: AbortSignal.timeout(1_000) });
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ statusCode: 404, error: "Not Found" });
+    child.kill("SIGTERM");
+    const [exit, stdout, stderr] = await Promise.all([
+      child.exited, remainingOutput(), new Response(child.stderr).text(),
+    ]);
+    expect({ exit, signal: child.signalCode, stdout, stderr }).toEqual({
+      exit: 0, signal: null,
+      stdout: "app.closed\n" + "pool.end\n".repeat(4) + "pool.closed:1\npool.closed:2\npool.closed:3\npool.closed:4\n",
+      stderr: "",
+    });
+    await expect(fetch(url)).rejects.toThrow();
+  } finally {
+    if (child) {
+      if (child.exitCode === null) child.kill("SIGKILL");
+      await child.exited;
+    }
+    await rm(scratch, { recursive: true, force: true });
   }
 });
 
