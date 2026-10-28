@@ -3,7 +3,7 @@ import { Algorithm, hash } from "@node-rs/argon2";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { PlatformAiInstructionsInputSchema } from "@agendia/contracts";
-import { AGENT_SYSTEM_INSTRUCTIONS } from "@agendia/domain";
+import { AGENT_SYSTEM_PROMPT } from "@agendia/domain";
 import type { TenantUnitOfWork } from "@agendia/db";
 import type { Session, TenantRouteContext } from "./context.ts";
 
@@ -23,7 +23,7 @@ export function registerAdministrationRoutes(
   app.get("/admin/ai-instructions", async (request, reply) => {
     if (!(await requireAdmin(request, reply))) return;
     return {
-      baseInstructions: AGENT_SYSTEM_INSTRUCTIONS,
+      baseInstructions: AGENT_SYSTEM_PROMPT,
       ...await pools.admin.run(undefined, (repo) => repo.platformAiInstructions()),
     };
   });
@@ -33,7 +33,7 @@ export function registerAdministrationRoutes(
     if (!body.success)
       return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid instructions");
     return {
-      baseInstructions: AGENT_SYSTEM_INSTRUCTIONS,
+      baseInstructions: AGENT_SYSTEM_PROMPT,
       ...await pools.admin.run(undefined, (repo) =>
         repo.updatePlatformAiInstructions(body.data.additionalInstructions, body.data.replyPacing)),
     };

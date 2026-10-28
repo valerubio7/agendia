@@ -1,6 +1,6 @@
 import { expect, type Locator, type Page, type Route } from "@playwright/test";
 import { login, test } from "./support/fixtures.ts";
-import { AGENT_SYSTEM_INSTRUCTIONS } from "../../packages/domain/src/agent/instructions.ts";
+import { AGENT_SYSTEM_PROMPT } from "../../packages/domain/src/agent/system-prompt.ts";
 
 const tenant = {
   name: "Estudio Administración Horizonte",
@@ -294,7 +294,7 @@ test("platform admin saves and reloads additions and global reply waits", async 
   await openInstructions();
   const base = page.getByLabel("Instrucciones base · Solo lectura", { exact: true });
   const notice = page.locator(".admin-feedback").getByRole("status");
-  await expect(base).toHaveValue(AGENT_SYSTEM_INSTRUCTIONS);
+  await expect(base).toHaveValue(AGENT_SYSTEM_PROMPT);
   await expect(base).toHaveAttribute("readonly", "");
   await expect(page.getByText("Sistema activo del agente de WhatsApp, de solo lectura. Se modifica únicamente desde el código; no incluye datos de conversaciones.", { exact: true })).toBeVisible();
   await expect(page.getByText("Se envían como contexto complementario, no como instrucciones de sistema. No reemplazan las reglas base ni las herramientas; su cumplimiento no está garantizado.", { exact: true })).toBeVisible();
@@ -340,7 +340,7 @@ test("platform admin saves and reloads additions and global reply waits", async 
   await expect(initialWait).toHaveValue("0");
   await expect(activeWait).toHaveValue("23");
   await expect(reset).toHaveValue("75");
-  await expect(base).toHaveValue(AGENT_SYSTEM_INSTRUCTIONS);
+  await expect(base).toHaveValue(AGENT_SYSTEM_PROMPT);
   await expect(base).toHaveAttribute("readonly", "");
   await reset.fill("0");
   await page.getByRole("button", { name: "Guardar configuración", exact: true }).click();
@@ -356,7 +356,7 @@ test("platform admin saves and reloads additions and global reply waits", async 
   await page.reload();
   await openInstructions();
   await expect(additions).toHaveValue(`${raw}\nMás instrucciones`);
-  await expect(base).toHaveValue(AGENT_SYSTEM_INSTRUCTIONS);
+  await expect(base).toHaveValue(AGENT_SYSTEM_PROMPT);
   await expect(initialWait).toHaveValue("0");
   await expect(activeWait).toHaveValue("23");
   await expect(reset).toHaveValue("75");

@@ -3,9 +3,9 @@ import * as domain from "@agendia/domain";
 
 // Exercise the same public export consumed by the API and native runtime.
 test("public Agent prompt is sectioned Spanish and retains the model-authored contract", () => {
-  expect(domain).toHaveProperty("AGENT_SYSTEM_INSTRUCTIONS");
+  expect(domain).toHaveProperty("AGENT_SYSTEM_PROMPT");
   expect(domain).not.toHaveProperty("RECEPTIONIST_SYSTEM_INSTRUCTIONS");
-  const prompt = Reflect.get(domain, "AGENT_SYSTEM_INSTRUCTIONS") as string;
+  const prompt = Reflect.get(domain, "AGENT_SYSTEM_PROMPT") as string;
   for (const section of [
     "## Identidad y conversación", "## Datos y límites de confianza",
     "## Fechas y disponibilidad", "## Evidencia de acciones",

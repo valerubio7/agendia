@@ -1,5 +1,5 @@
 import {
-  ToolConversationRequestSchema, TOOL_CONVERSATION_LIMITS, AGENT_SYSTEM_INSTRUCTIONS,
+  ToolConversationRequestSchema, TOOL_CONVERSATION_LIMITS, AGENT_SYSTEM_PROMPT,
   type ToolConversationMessage,
 } from "@agendia/domain";
 import { REQUEST_BUDGET_BYTES, requestBytes } from "./limits.ts";
@@ -49,7 +49,7 @@ export function buildAgentMessages(source: AgentSource, administratorSettings: s
   // Keep compact ordinary context in one message. Large settings retain all text
   // in labeled continuation data, without making any part a privileged system role.
   const separateSettings = JSON.stringify(metadata).length > TOOL_CONVERSATION_LIMITS.messageCharacters;
-  const prefix = () => [{ role: "system" as const, content: AGENT_SYSTEM_INSTRUCTIONS },
+  const prefix = () => [{ role: "system" as const, content: AGENT_SYSTEM_PROMPT },
     ...dataMessages(separateSettings ? { ...metadata, agentSettings: null, administratorSettings: null } : metadata, "context"),
     ...(separateSettings ? settingsMessages : [])];
   const history = source.turns.filter(turn => !groupIds.has(turn.id) && Number(turn.sequence) < groupStart
