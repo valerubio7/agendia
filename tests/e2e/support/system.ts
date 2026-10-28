@@ -226,8 +226,8 @@ export async function startSystem(): Promise<SystemHarness> {
       await runtime.dispose();
     });
     web = spawn(
-      join(process.cwd(), "apps/web/node_modules/.bin/next"),
-      ["dev", "--webpack", "--hostname", "127.0.0.1", "--port", String(webPort)],
+      "bun",
+      ["--bun", join(process.cwd(), "apps/web/node_modules/next/dist/bin/next"), "dev", "--webpack", "--hostname", "127.0.0.1", "--port", String(webPort)],
       {
         cwd: runtime.cwd,
         env: webRuntimeEnv(runtime.root, apiOrigin),

@@ -1,0 +1,32 @@
+FROM oven/bun:1.4.0-debian AS runtime-base
+
+WORKDIR /app
+
+COPY package.json bun.lock bunfig.toml tsconfig.json ./
+COPY apps/api ./apps/api
+COPY apps/web/package.json ./apps/web/package.json
+COPY apps/message-worker/package.json ./apps/message-worker/package.json
+COPY apps/whatsapp-manager/package.json ./apps/whatsapp-manager/package.json
+COPY packages/auth ./packages/auth
+COPY packages/contracts ./packages/contracts
+COPY packages/db ./packages/db
+COPY packages/domain ./packages/domain
+COPY packages/ai-deepseek/package.json ./packages/ai-deepseek/package.json
+COPY packages/whatsapp-baileys/package.json ./packages/whatsapp-baileys/package.json
+
+RUN bun install --frozen-lockfile --production
+
+FROM runtime-base AS db-setup
+COPY scripts/db/db-migrate.ts scripts/db/provision-production-db.ts scripts/db/bootstrap-admin.ts ./scripts/db/
+ENV NODE_ENV=production
+USER bun
+CMD ["bun", "--no-env-file", "scripts/db/db-migrate.ts"]
+
+FROM runtime-base AS api
+ENV NODE_ENV=production \
+    API_HOST=0.0.0.0 \
+    API_PORT=3001
+
+USER bun
+EXPOSE 3001
+CMD ["bun", "apps/api/src/index.ts"]

@@ -658,7 +658,7 @@ describe("Next web client against Fastify contracts", () => {
     const client = new ApiClient(async (_input, init) => {
       methods.push(init?.method ?? "GET");
       if (init?.method === "POST")
-        return Response.json({ code: "CONFLICT" }, { status: 409 });
+        return Response.json({ code: "CONFLICT", message: "WhatsApp connection already linked" }, { status: 409 });
       return Response.json({ qr: "existing-current-qr" });
     });
 

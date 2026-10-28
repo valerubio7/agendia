@@ -17,6 +17,7 @@ type AuthenticatedShellProps = {
 };
 
 type TerminalAuthenticatedStateProps = {
+  loginHref?: string;
   state: TerminalState;
   message?: string;
   retryAction?: () => void;
@@ -136,6 +137,7 @@ export function AuthenticatedShell({
 }
 
 export function TerminalAuthenticatedState({
+  loginHref = "/",
   state,
   message,
   retryAction,
@@ -160,7 +162,7 @@ export function TerminalAuthenticatedState({
       <h1>{heading}</h1>
       {message && <p role="alert">{message}</p>}
       <div className="authenticated-terminal__actions">
-        <Link href="/">Ir a iniciar sesión</Link>
+        <Link href={loginHref}>Ir a iniciar sesión</Link>
         {state === "load-error" && retryAction && (
           <button type="button" onClick={retryAction}>
             Volver a intentar
