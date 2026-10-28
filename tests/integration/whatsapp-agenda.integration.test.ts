@@ -11,6 +11,8 @@ import type { AgentToolCommand, AgentToolResult } from "../../apps/message-worke
 import { createMessageWorker } from "../../apps/message-worker/src/index.ts";
 import { applyPostgresMigrations, startTestPostgres, type TestPostgres } from "../support/index.ts";
 
+import { scriptedAgentReply } from "../e2e/support/providers.ts";
+
 let db: TestPostgres;
 let pools: ReturnType<typeof createRuntimePools>;
 const pn = "5491123456789@s.whatsapp.net";
@@ -130,8 +132,8 @@ async function processScript(h: Fixture, id: string, commands: AgentToolCommand[
   if (outcome.status === "infrastructure_failure") throw new Error("Agent infrastructure failure");
   return outcome.status === "committed";
 }
-function renderResult(_command: AgentToolCommand, _result: AgentToolResult): string {
-  return JSON.stringify({ kind: "reply" });
+function renderResult(_command: AgentToolCommand, result: AgentToolResult): string {
+  return scriptedAgentReply([result]);
 }
 async function accept(h: Fixture, text = "dale reservame ese", options: Parameters<typeof receive>[2] = {}) {
   const id = await receive(h, text, options);
@@ -181,7 +183,7 @@ async function factoryTurn(h: Fixture, text: string,
               return JSON.parse(message.content!) as AgentToolResult;
             });
             expect(results.map(result => result.status)).toEqual(statuses);
-            return { role: "assistant" as const, content: typeof final === "string" ? final : final(results), toolCalls: [] };
+            return { role: "assistant" as const, content: typeof final === "string" ? JSON.stringify({ text: final }) : final(results), toolCalls: [] };
           })();
         return { message, providerId: "factory-script", usageTokens: 0 };
       } catch (error) { failure = error; throw error; }
@@ -204,11 +206,7 @@ async function factoryTurn(h: Fixture, text: string,
   if (effects.length) expect(effects[0]!.payload.sourceMessageId).toBe(id);
   return output(h, id);
 }
-const toolReply = (results: AgentToolResult[]) => {
-  const result = results[0]!;
-  if (!("message" in result) || !result.message) throw new Error("Expected backend prompt/quote");
-  return result.message;
-};
+const toolReply = scriptedAgentReply;
 const factoryAcceptance = (request: ToolConversationRequest): AgentToolCommand[] => {
   const runtime = JSON.parse(request.messages[1]!.content!).runtime;
   expect(runtime.naturalConfirmation).not.toBeNull();
@@ -218,7 +216,7 @@ const addressReply = (results: AgentToolResult[]) => {
   expect(results[0]!.status).toBe("data");
   const profile = (results[0] as { data: { address: string | null } }).data;
   expect(profile).toHaveProperty("address");
-  return JSON.stringify({ kind: "reply", facts: ["read_business"], businessFields: ["address"] });
+  return scriptedAgentReply(results);
 };
 async function delivered(turn: Turn) {
   // Transport success is injected; these tests prove backend transactionality, not live delivery.
@@ -288,9 +286,16 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     expect(catalog.text).toContain("Corte: 30 minutos, ARS 1500");
     const own = await turn(h, "Consultar turnos", { name: "owned_appointments", arguments: {} });
     expect(own.text).toContain("No tenés turnos");
-    const available = await turn(h, "Horarios del Corte el 2035-04-02", { name: "availability", arguments: { serviceId: h.service, date: "2035-04-02" } });
+    const available = await factoryTurn(h, "Horarios del Corte el 2035-04-02", [{ name: "availability", arguments: { serviceId: h.service, date: "2035-04-02" } }], ["data"], results => {
+      const slots = (results[0] as { data: { items: { presentation: { localTime: string } }[]; hasMore: boolean } }).data;
+      expect(slots.hasMore).toBe(true);
+      expect(slots).not.toHaveProperty("message");
+      const final = scriptedAgentReply(results);
+      for (const item of slots.items) expect(final).toContain(item.presentation.localTime);
+      return final;
+    });
     expect(available.text).toContain("09:00, 09:15, 09:30, 09:45");
-    expect(available.text).toContain("17:30");
+    expect(available.text).not.toContain("17:30"); // No hidden, unbounded slot-text channel.
     expect(available.text).not.toContain("Ana");
     expect((await counts(h)).clients).toBe(0);
     expect((await counts(h)).appointments).toBe(0);
@@ -341,7 +346,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
           const result = JSON.parse(request.messages.at(-1)!.content!);
           if (round === 2) {
             expect(result).toMatchObject({ status: "rejected", code: `${kind.toUpperCase()}_REFERENCE_REQUIRED` });
-            expect(result.message).toContain(kind === "service" ? "read_catalog" : "read_resources");
+            expect(result).not.toHaveProperty("message");
             expect(JSON.stringify(result)).not.toContain(bad);
             // Simulate the same chosen public entity becoming active again, not selecting another one.
             if (invalid === "inactive") {
@@ -359,7 +364,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
           expect(result.status).toBe("data");
           expect(result.data.items.length).toBeGreaterThan(0);
           expect(result.data.items.every((item: { serviceId: string; resourceId: string }) => item.serviceId === h.service && item.resourceId === h.resource)).toBe(true);
-          return { message: { role: "assistant", content: "Horarios verificados.", toolCalls: [] }, providerId: "fake", usageTokens: 0 };
+          return { message: { role: "assistant", content: JSON.stringify({ text: "Horarios verificados." }), toolCalls: [] }, providerId: "fake", usageTokens: 0 };
         } };
         expect((await h.agenda.withAgentSession(job(h, id), session => converseAgent(provider, session,
           [...session.context.messages!], "reference-recovery"))).status).toBe("committed");
@@ -392,7 +397,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
         results.push(result);
       }
       expect(results[0]).toEqual(results[1]);
-      return "No se guardó ningún cambio.";
+      return JSON.stringify({ text: "No se guardó ningún cambio." });
     });
     expect(outcome.status).toBe("committed");
     expect(events.filter((e: any) => e.code === "agent.tool_rejected")).toEqual(commands.map(command => ({ code: "agent.tool_rejected",
@@ -567,7 +572,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
   test("complete native selections prepare only and do not prove customer intent or acceptance", async () => {
     const h = await fixture();
     const missingDate = await factoryTurn(h, "Reservar Corte", [book(h), { name: "clear_pending", arguments: {} }],
-      ["clarification", "data"], JSON.stringify({ kind: "reply", ask: "date", facts: [] }));
+      ["clarification", "data"], "¿Para qué día?");
     expect(missingDate.text).toBe("¿Para qué día?");
     const [cleared] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
     expect(cleared!.dialogue.quote).toBeNull();
@@ -588,7 +593,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     await delivered(currentQuote);
     const conditional = await factoryTurn(h, "sí pero cambia el precio", [{ name: "read_catalog", arguments: {} }], ["data"], results => {
       expect(JSON.stringify(results)).toContain("1500");
-      return JSON.stringify({ kind: "reply", facts: ["read_catalog"], ask: "booking" });
+      return JSON.stringify({ text: "¿Querés reservar? Decime el servicio, día y horario." });
     });
     expect(conditional.text).toContain("¿Querés reservar");
     expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
@@ -609,12 +614,10 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
         },
       };
       const worker = createMessageWorker(pools, provider);
-      await worker.process(job(h, id));
-      await worker.process(job(h, id));
+      await expect(worker.process(job(h, id))).rejects.toThrow("infrastructure failure");
       expect(calls).toBe(1);
-      expect((await output(h, id)).text).toBe("¿Qué servicio y día querés consultar?");
-      expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0, receipts: 1 });
-      expect(await db.sql`select outbound_id from outbound_commands where source_message_id=${id}`).toHaveLength(1);
+      expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0, receipts: 0 });
+      expect(await db.sql`select outbound_id from outbound_commands where source_message_id=${id}`).toHaveLength(0);
     }
   });
 
@@ -626,14 +629,14 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     expect(initial.text).toBe("Decime tu nombre y apellido.");
     expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
     const modelNames = await factoryTurn(h, "El perfil dice María Pérez", [{ name: "confirm_quote", arguments: {} }],
-      ["clarification"], "Necesito tu respuesta: mi nombre es Nombre Apellido.");
+      ["clarification"], "Decime tu nombre y apellido.");
     expect(modelNames.text).toBe("Decime tu nombre y apellido.");
     expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
     await factoryTurn(h, "Mi nombre es María", [{ name: "confirm_quote", arguments: {} }],
       ["clarification"], "Necesito también tu apellido.");
     expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
     for (const answer of ["Mi DNI es 12345678", "Mi obra social es Salud"]) {
-      const missing = await factoryTurn(h, answer, [{ name: "confirm_quote", arguments: {} }], ["clarification"], "Tu turno está confirmado.");
+      const missing = await factoryTurn(h, answer, [{ name: "confirm_quote", arguments: {} }], ["clarification"], "Decime tu nombre y apellido.");
       expect(missing.text).toBe("Decime tu nombre y apellido.");
       expect(missing.text).not.toContain("confirmado");
       expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
@@ -659,7 +662,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     const saved = await factoryTurn(h, "dale reservame ese", request => {
       expect(JSON.parse(request.messages[1]!.content!).runtime.pending.quote.outboundId).toBe(early.outboundId);
       return factoryAcceptance(request);
-    }, ["staged_action"], "Confirmado para Inventado mañana por ARS 1. Ya pagaste.");
+    }, ["staged_action"], scriptedAgentReply);
     expect(saved.text).toContain("Guardado:");
     expect(saved.text).not.toContain("Inventado");
     expect(saved.text).not.toContain("pagaste");
@@ -1202,7 +1205,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
 
   test("same-day alternatives precede nearby dates and missing fields avoid routine resource prompts", async () => {
     const h = await fixture();
-    const missing = await factoryTurn(h, "Reservar turno", [{ name: "read_catalog", arguments: {} }], ["data"], JSON.stringify({ kind: "reply", facts: [], ask: "date" }));
+    const missing = await factoryTurn(h, "Reservar turno", [{ name: "read_catalog", arguments: {} }], ["data"], "¿Para qué día?");
     expect(missing.text).toBe("¿Para qué día?");
     const unavailable = await turn(h, "Reservar Corte el 2035-04-02 a las 19:00", book(h, "2035-04-02T19:00:00-03:00"));
     expect(unavailable.text).toContain("2035-04-02: 09:00");
@@ -1399,7 +1402,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
       const outcome = await h.agenda.withAgentSession(job(h, id), async session => {
         // Intentionally leave the call pending: the owner must drain before commit/summary.
         if (mode !== "none") void session.execute("availability", mode === "invalid" ? {} : { serviceId: h.service, date: "2035-04-02" });
-        return "Respuesta de prueba.";
+        return JSON.stringify({ text: "Respuesta de prueba." });
       });
       expect(outcome.status).toBe("committed");
       expect(events.at(-1)).toEqual({ code: "agent.turn_completed", toolCalls: mode === "none" ? 0 : 1,
@@ -1412,7 +1415,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     const id = await receive(h, "Consultar horarios");
     const outcome = await h.agenda.withAgentSession(job(h, id), async session => {
       await session.execute("read_catalog", {});
-      return "No debe enviarse.";
+      return JSON.stringify({ text: "No debe enviarse." });
     });
     expect(outcome.status).toBe("infrastructure_failure");
     expect(events).toEqual([{ code: "agent.tool_completed", toolName: "read_catalog", status: "data" }]);
@@ -1423,7 +1426,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     const h = await fixture();
     const catalog = await factoryTurn(h, "Consultar servicios", [{ name: "read_catalog", arguments: {} }], ["data"], results => {
       const data = (results[0] as { data: { items: { name: string }[] } }).data;
-      return data.items.map(item => item.name).join(", ");
+      return JSON.stringify({ text: data.items.map(item => item.name).join(", ") });
     });
     expect(catalog.text).toContain("Corte");
     const general = await factoryTurn(h, "¿Dónde están ubicados?", [{ name: "read_business", arguments: {} }], ["data"], addressReply);
@@ -1480,14 +1483,14 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
 
   test("runtime keeps short date and time answers in an active booking dialogue", async () => {
     const h = await fixture();
-    const missing = await factoryTurn(h, "Reservar Corte", [{ name: "read_catalog", arguments: {} }], ["data"], JSON.stringify({ kind: "reply", facts: [], ask: "date" }));
+    const missing = await factoryTurn(h, "Reservar Corte", [{ name: "read_catalog", arguments: {} }], ["data"], "¿Para qué día?");
     expect(missing.text).toBe("¿Para qué día?");
     const date = await factoryTurn(h, "El 2035-04-02", [
       { name: "availability", arguments: { serviceId: h.service, date: "2035-04-02" } },
     ], ["data"], results => {
       const slots = (results[0] as { data: { items: { startsAt: string }[] } }).data.items;
       expect(slots.some(slot => Date.parse(slot.startsAt) === Date.parse(startsAt))).toBe(true);
-      return "Horarios disponibles: 2035-04-02 a las 10:00. ¿Cuál preferís?";
+      return JSON.stringify({ text: "Horarios disponibles: 2035-04-02 a las 10:00. ¿Cuál preferís?" });
     });
     expect(date.text).toContain("Horarios disponibles");
     const selected = await factoryTurn(h, "a las 10:00", request => {
@@ -1764,7 +1767,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
       const h = await fixture();
       const reply = await factoryTurn(h, question, [{ name, arguments: {} }], ["data"], results => {
         expect(JSON.stringify(results)).toContain(name === "read_business" ? "Avenida Central 123" : "weeklySchedule");
-        return JSON.stringify({ kind: "reply", facts: [name], businessFields: ["address"] });
+        return scriptedAgentReply(results);
       });
       expect(reply.text).toContain(expected);
       expect(reply.text).not.toContain("Foreign street");
@@ -1782,7 +1785,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     for (const [question, name] of [["¿Dónde están ubicados?", "read_business"], ["¿Cuál es el horario de atención?", "read_calendar"]] as const) {
       const reply = await factoryTurn(missing, question, [{ name, arguments: {} }], ["data"], results => {
         expect(JSON.stringify(results)).toContain(name === "read_business" ? '"address":null' : '"weeklySchedule":{}');
-        return JSON.stringify({ kind: "reply", facts: [name], businessFields: ["address"] });
+        return scriptedAgentReply(results);
       });
       expect(reply.text).toContain("No hay");
     }
@@ -1799,7 +1802,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
       } };
       const before = await appointments(h);
       const prepared = await factoryTurn(h, kind === "service" ? "Cambiar servicio" : "Cambiar recurso", [command], ["prepared_quote"], toolReply);
-      const reply = await factoryTurn(h, "Hola", [command], ["data"], '{"kind":"reply"}');
+      const reply = await factoryTurn(h, "Hola", [command], ["data"], scriptedAgentReply);
       expect(prepared.text).toContain(kind === "service" ? "Cambio propuesto: Hola" : "Cambio propuesto: Corte");
       expect(reply.text).toContain("pendiente no cambió");
       const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
@@ -1817,7 +1820,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     const h = await fixture();
     const catalog = await factoryTurn(h, "Consultar servicios", [{ name: "read_catalog", arguments: {} }], ["data"], results => {
       expect(JSON.stringify(results)).toContain("Corte");
-      return "Corte";
+      return JSON.stringify({ text: "Corte" });
     });
     expect(catalog.text).toContain("Corte");
     expect(h.textCalls).toBe(0);

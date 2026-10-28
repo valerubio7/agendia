@@ -46,14 +46,12 @@ test("canonical static system preserves base guardrails and single-newline compo
 
 test("response instructions advertise selective prose without granting operation or semantic authority", () => {
   for (const boundary of [
-    '{"kind":"informational_prose","text":"…"}',
-    '{"kind":"reply","facts":["read_business"],"ask":"date"}',
+    '"text":"…"', "presentedQuoteReference", "pendingQuotePresentationReference",
     "no vacía ni compuesta solo por espacios", "4000 caracteres", "herramientas del turno actual", "No vuelques",
     "literalmente presentation.label", "Reconocé los datos desconocidos", "no demuestra fundamentación semántica",
-    "rechazado o que pide aclaración", 'devolvé {"kind":"reply"}',
-    "backend presenta el resultado real", "confirm_quote", "El DNI, la cobertura médica y los nombres visibles de perfil",
+    "rechazado o que pide aclaración", "Redactá TODAS las respuestas al cliente", "confirm_quote", "El DNI, la cobertura médica y los nombres visibles de perfil",
     "Nunca sustituyas por prosa la preparación ni el guardado de un turno",
-    "No se permiten campos adicionales", "IDs", "pruebas", "operaciones",
+    "No se permiten campos adicionales", "selectores kind/facts/ask", "pruebas", "operaciones",
   ]) expect(AGENT_RESPONSE_INSTRUCTIONS).toContain(boundary);
 });
 
@@ -97,7 +95,7 @@ test("native converse serializes the supplied canonical system without the legac
   let wire: unknown;
   const adapter = new DeepSeekAdapter({ apiKey: "test-only", fetcher: async (_url, init) => {
     wire = JSON.parse(String(init?.body));
-    return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { role: "assistant", content: '{"kind":"reply"}' } }] }),
+    return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { role: "assistant", content: '{"text":"Listo."}' } }] }),
       { headers: { "content-type": "application/json" } });
   } });
   await adapter.converse({ messages: [

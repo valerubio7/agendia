@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { renderAgentResponse, type AgentFact } from "./response.ts";
+import { renderAgentResponse, type AgentResponse } from "./response.ts";
 import { CalendarDateSchema, InstantSchema, type ToolConversationMessage, type ToolConversationRequest } from "@agendia/domain";
 
 // The calendar engine in packages/domain/src/appointments/availability.ts uses this fixed IANA zone;
@@ -140,16 +140,17 @@ export function parseAgentTool(name: string, args: unknown,
 }
 
 /** Inside a transaction, staged_action is NOT committed. Only the outer session return
- * attests durability. Final response acts select backend-rendered facts only;
- * the transaction owner renders actual quotes and saved actions without model
- * prose. prepared_quote is no mutation. No result may be sent separately.
+ * attests durability. Results are structured facts for model-authored prose;
+ * prepared_quote is no mutation. No result may be sent separately.
  */
 export type AgentToolResult = (
   | { status: "data"; data: unknown }
   | { status: "unavailable_data"; code: string }
-  | { status: "clarification" | "rejected"; code: string; message?: string }
-  | { status: "prepared_quote"; quote: unknown; message: string; presentation?: AgentDatePresentation | null }
-  | { status: "staged_action"; operation: string; appointment: unknown }) & { namesReference?: string | null };
+  | { status: "clarification" | "rejected"; code: string; reason?: string; missingFields?: readonly string[];
+      alternatives?: { items: unknown[]; hasMore: boolean; resourceName?: string | null }; proposal?: unknown }
+  | { status: "prepared_quote"; quote: unknown; reason?: string; presentation?: AgentDatePresentation | null }
+  | { status: "staged_action"; operation: string; appointment: unknown }) & {
+    namesReference?: string | null; presentationReference?: string | null };
 export type AgentSessionOutcome =
   | { status: "committed"; outboundId: string; actions: { operation: string; appointmentId: string }[] }
   | { status: "not_current" | "infrastructure_failure" };
@@ -171,9 +172,7 @@ export interface NaturalConfirmationBinding {
  * the entire transaction; do not turn them into missing business facts.
  */
 export class AgentToolSession {
-  private readonly evidence: AgentFact[] = [];
-  /** Render from private completed tool evidence, not provider-supplied proofs. */
-  renderResponse(raw: string): string { return renderAgentResponse(raw, this.evidence); }
+  renderResponse(raw: string): AgentResponse { return renderAgentResponse(raw); }
   private calls = 0;
   private observedCalls = 0;
   private completedCalls = 0;
@@ -186,7 +185,7 @@ export class AgentToolSession {
     readonly context: Readonly<{ message: string; recent: readonly string[]; pending: unknown;
       naturalConfirmation?: Readonly<NaturalConfirmationBinding> | null; messages?: readonly ToolConversationMessage[];
       namesReference?: string | null; nameSources?: readonly { messageId: string; text: string }[];
-      pendingPresentation?: Readonly<AgentDatePresentation> | null }> = { message: "", recent: [], pending: null },
+      pendingPresentation?: Readonly<AgentDatePresentation> | null; pendingQuotePresentationReference?: string | null }> = { message: "", recent: [], pending: null },
     private diagnose?: AgentToolDiagnostics,
     private rejectPreparation?: () => void) {}
   execute(name: string, args: unknown): Promise<AgentToolResult> {
@@ -194,7 +193,6 @@ export class AgentToolSession {
     const toolName = Object.hasOwn(schemas, name) ? name as ToolName : "unknown";
     const completed = (output: AgentToolResult): AgentToolResult => {
       this.completedCalls++;
-      if (toolName !== "unknown") this.evidence.push({ name: toolName, result: structuredClone(output) });
       emitAgentDiagnostic(this.diagnose, { code: "agent.tool_completed", toolName, status: output.status });
       return output;
     };

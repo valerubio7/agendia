@@ -8,6 +8,8 @@ import { PostgresInboundHandler } from "../../apps/whatsapp-manager/src/inbound.
 import { normalizeBaileysMessage } from "../../packages/whatsapp-baileys/src/baileys-gateway.ts";
 import { applyPostgresMigrations, startTestPostgres, type TestPostgres } from "../support/index.ts";
 
+import { scriptedAgentReply } from "../e2e/support/providers.ts";
+
 let db: TestPostgres;
 let pools: ReturnType<typeof createRuntimePools>;
 beforeAll(async () => {
@@ -17,6 +19,9 @@ beforeAll(async () => {
 }, 120_000);
 afterAll(async () => { await pools?.end(); await db?.stop(); });
 const finish = (content: string): ToolAgentMessage => ({ role: "assistant", content, toolCalls: [] });
+const modelReply = (request: ToolConversationRequest) => finish(scriptedAgentReply(
+  request.messages.filter(message => message.role === "tool").map(message => JSON.parse(message.content!)),
+));
 const batch = (id: string, name: string, args = {}): ToolAgentMessage => ({ role: "assistant", content: null,
   toolCalls: [{ id, name, arguments: args }], providerState: { reasoningContent: "never public" } });
 async function fixture() {
@@ -72,7 +77,7 @@ describe("production inbound native conversation with transactional tools", () =
       const slots = JSON.parse(request.messages.at(-1)!.content!);
       expect(slots.data.items[0].presentation.weekday).toBe("martes");
       expect(slots.data.items[0].presentation.timeZone).toBe("America/Argentina/Buenos_Aires");
-      return finish('{"kind":"reply","facts":["read_business","availability"],"businessFields":["address"],"ask":"time"}');
+      return finish(JSON.stringify({ text: 'Dirección registrada: "Calle real 1". Horarios disponibles: 2035-04-03: 09:00. ¿Qué horario elegís?' }));
     });
     await w.processor.process(older);
     expect(w.requests).toHaveLength(0);
@@ -94,7 +99,7 @@ describe("production inbound native conversation with transactional tools", () =
     const quoteWorker = h.worker(async request => {
       if (!round++) return batch("prepare", "prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T10:00:00-03:00" });
       expect(JSON.parse(request.messages.at(-1)!.content!).presentation.weekday).toBe("lunes");
-      return finish('{"kind":"reply"}');
+      return modelReply(request);
     });
     await quoteWorker.processor.process(await h.receive("ese me sirve"));
     expect(await h.appointments()).toHaveLength(0);
@@ -102,7 +107,7 @@ describe("production inbound native conversation with transactional tools", () =
     expect(out[0]!.text).toContain("ARS 1500");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${out[0]!.outbound_id}`;
     round = 0;
-    const changeWorker = h.worker(async () => !round++ ? batch("clear", "clear_pending") : finish('{"kind":"reply","ask":"start"}'));
+    const changeWorker = h.worker(async request => !round++ ? batch("clear", "clear_pending") : finish('{"text":"¿Qué servicio y día querés consultar?"}'));
     await changeWorker.processor.process(await h.receive("no mejor otro"));
     expect(await h.appointments()).toHaveLength(0);
     round = 0;
@@ -121,7 +126,7 @@ describe("production inbound native conversation with transactional tools", () =
         return batch("accept", "confirm_quote_naturally", { ...context.runtime.naturalConfirmation, evidence: context.runtime.currentEvidence });
       }
       expect(request.messages.at(-1)!.content).toContain("staged_action");
-      return finish('{"kind":"reply"}');
+      return modelReply(request);
     });
     const job = await h.receive("dale resrvame ese");
     await acceptWorker.processor.process(job);
@@ -134,7 +139,7 @@ describe("production inbound native conversation with transactional tools", () =
   test("provider failure after staged booking rolls back everything and permits retry", async () => {
     const h = await fixture();
     let round = 0;
-    const prepare = h.worker(async () => !round++ ? batch("prepare", "prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T10:00:00-03:00" }) : finish('{"kind":"reply"}'));
+    const prepare = h.worker(async request => !round++ ? batch("prepare", "prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T10:00:00-03:00" }) : modelReply(request));
     await prepare.processor.process(await h.receive("primero ese"));
     const out = await h.outputs();
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${out[0]!.outbound_id}`;
@@ -153,7 +158,7 @@ describe("production inbound native conversation with transactional tools", () =
     const [source] = await db.sql`select processing_state from messages where id=${job.messageId}`;
     expect(source!.processing_state).toBe("pending");
     round = 0;
-    const retry = h.worker(async request => round === 0 ? script(request) : finish('{"kind":"reply"}'));
+    const retry = h.worker(async request => round === 0 ? script(request) : modelReply(request));
     await retry.processor.process(job);
     expect(await h.appointments()).toHaveLength(1);
     expect(await h.outputs()).toHaveLength(2);
@@ -164,11 +169,11 @@ describe("production inbound native conversation with transactional tools", () =
     const w = h.worker(async request => {
       if (!round++) return batch("ownership", "owned_appointments");
       expect(request.messages.at(-1)!.content).toContain("UNVERIFIED_SENDER");
-      return finish('{"kind":"reply"}');
+      return modelReply(request);
     });
     await w.processor.process(await h.receive("arreglalo", false));
     expect(await h.appointments()).toHaveLength(0);
-    const malformed = h.worker(async () => ({ ...finish(""), toolCalls: [] }));
+    const malformed = h.worker(async request => ({ ...finish(""), toolCalls: [] }));
     const job = await h.receive("algo distinto");
     await expect(malformed.processor.process(job)).rejects.toThrow("infrastructure failure");
     expect(await h.outputs()).toHaveLength(1);

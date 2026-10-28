@@ -12,6 +12,9 @@ let db: TestPostgres;
 let pools: ReturnType<typeof createRuntimePools>;
 const phone = "+5491123456789";
 const start = "2035-04-02T10:00:00-03:00";
+const presented = new WeakMap<AgentToolSession, string | undefined>();
+const final = (tools: AgentToolSession, text = "Respuesta redactada por el modelo.") =>
+  JSON.stringify({ text, presentedQuoteReference: presented.get(tools) });
 beforeAll(async () => {
   db = await startTestPostgres();
   await applyPostgresMigrations(db.sql, join(import.meta.dir, "../../packages/db/migrations"));
@@ -43,6 +46,18 @@ async function fixture(profile = true, knownClient = true, now = "2035-04-01T08:
   await db.sql`insert into resource_services(business_id,resource_id,service_id) values(${business},${resource},${service})`;
   if (knownClient) await db.sql`insert into clients(business_id,first_name,last_name,phone) values(${business},'María','Pérez',${phone})`;
   const agenda = new PostgresWhatsAppAgenda(pools, () => now);
+  const withSession = agenda.withAgentSession.bind(agenda);
+  agenda.withAgentSession = (job, callback) => withSession(job, async tools => {
+    const execute = tools.execute.bind(tools);
+    tools.execute = async (name, args) => {
+      const result = await execute(name, args);
+      if (result.status === "prepared_quote") presented.set(tools, result.presentationReference ?? undefined);
+      if (result.status === "staged_action" || name === "clear_pending"
+        || (name.startsWith("prepare_") && (result.status === "rejected" || result.status === "clarification"))) presented.delete(tools);
+      return result;
+    };
+    return callback(tools);
+  });
   async function receive(text: string, trusted = true, sender = "5491123456789") {
     const providerId = randomUUID();
     const event = normalizeBaileysMessage(session, { key: { id: providerId, remoteJid: `${sender}@s.whatsapp.net` }, message: { conversation: text } }, trusted)!;
@@ -73,7 +88,7 @@ const data = (result: AgentToolResult) => {
 async function prepareNatural(h: Awaited<ReturnType<typeof fixture>>, delivered = true) {
   const result = await h.run("ese horario", async tools => {
     expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start })).status).toBe("prepared_quote");
-    return "Te paso la propuesta.";
+    return final(tools, "Te paso la propuesta.");
   });
   if (result.status !== "committed") throw new Error("Missing quote");
   if (delivered) await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${result.outboundId}`;
@@ -84,11 +99,210 @@ function naturalArguments(tools: AgentToolSession) {
   if (!binding) throw new Error("Expected delivered quote binding");
   return { ...binding, evidence: tools.context.message };
 }
+describe("S4 model-authored atomic output", () => {
+  for (const scenario of ["info", "names", "proposal", "rejection", "success"] as const) test(`exact model wording: ${scenario}`, async () => {
+    const h = await fixture(true, scenario !== "names");
+    if (scenario === "success") await prepareNatural(h);
+    const text = `  Redacción exclusiva del modelo: ${scenario}.\n`;
+    const job = await h.receive(scenario === "success" ? "confirmo" : "ese horario");
+    let assertionFailure: unknown;
+    const result = await h.agenda.withAgentSession(job, async tools => {
+      try {
+        if (scenario === "info") await tools.execute("read_business", {});
+        else if (scenario === "success") {
+          expect((await tools.execute("confirm_quote", {})).status).toBe("staged_action");
+          expect((await tools.execute("prepare_booking", {})).status).toBe("rejected");
+        } else {
+          const outcome = await tools.execute("prepare_booking", { serviceId: scenario === "rejection" ? randomUUID() : h.service, startsAt: start });
+          expect(outcome.status).toBe(scenario === "rejection" ? "rejected" : scenario === "names" ? "clarification" : "prepared_quote");
+          expect(outcome).not.toHaveProperty("message");
+          if (scenario === "names") expect(outcome).toMatchObject({ missingFields: ["firstName", "lastName"] });
+        }
+        return JSON.stringify({ text }); // Omission deliberately does not attest presentation.
+      } catch (error) { assertionFailure = error; throw error; }
+    });
+    if (assertionFailure) throw assertionFailure;
+    expect(result.status).toBe("committed");
+    if (result.status !== "committed") throw new Error("Missing output");
+    expect((await db.sql`select text from outbound_commands where outbound_id=${result.outboundId}`)[0]!.text).toBe(text);
+    expect(result.actions).toHaveLength(scenario === "success" ? 1 : 0);
+    expect(await h.appointments()).toHaveLength(scenario === "success" ? 1 : 0);
+    if (scenario === "proposal") expect((await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`)[0]!.dialogue.quote.outboundId).toBeNull();
+  });
+  test("presentation reference is current, optional, and never inherited by a detour", async () => {
+    const h = await fixture();
+    let first: any;
+    const job = await h.receive("ese horario");
+    const prepared = await h.agenda.withAgentSession(job, async tools => {
+      first = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start });
+      return JSON.stringify({ text: "Esta es mi propuesta elegida.", presentedQuoteReference: first.presentationReference });
+    });
+    expect(first.presentationReference).toMatch(/^[a-f0-9]{64}$/u);
+    expect(prepared.status).toBe("committed");
+    if (prepared.status !== "committed") throw new Error("Missing proposal");
+    await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${prepared.outboundId}`;
+    const detour = await h.agenda.withAgentSession(await h.receive("¿dónde queda?"), async tools => {
+      await tools.execute("read_business", {});
+      return JSON.stringify({ text: "Te cuento la dirección." });
+    });
+    expect(detour.status).toBe("committed");
+    expect((await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`)[0]!.dialogue.quote.outboundId).toBe(prepared.outboundId);
+    const invalid = await h.agenda.withAgentSession(await h.receive("otro horario"), async tools => {
+      await tools.execute("prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T11:00:00-03:00" });
+      return JSON.stringify({ text: "Otra propuesta.", presentedQuoteReference: first.presentationReference });
+    });
+    expect(invalid.status).toBe("infrastructure_failure");
+    expect((await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`)[0]!.dialogue.quote.outboundId).toBe(prepared.outboundId);
+  });
+  for (const invalid of ["missing-names", "revoked", "superseded", "recreated", "consumed", "foreign"] as const)
+    test(`presentation reference refuses ${invalid} with no output or pending changes`, async () => {
+      const h = await fixture(true, invalid !== "missing-names");
+      let foreign: any;
+      if (invalid === "foreign") {
+        const other = await fixture();
+        await other.run("ese", async tools => {
+          foreign = await tools.execute("prepare_booking", { serviceId: other.service, startsAt: start });
+          return JSON.stringify({ text: "Propuesta de otro negocio." });
+        });
+      }
+      const job = await h.receive("confirmo");
+      let observed: any;
+      const result = await h.agenda.withAgentSession(job, async tools => {
+        observed = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start });
+        if (invalid === "revoked") await tools.execute("prepare_booking", {});
+        if (invalid === "superseded" || invalid === "recreated") {
+          await tools.execute("prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T11:00:00-03:00" });
+          if (invalid === "recreated") await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start });
+        }
+        if (invalid === "consumed") await tools.execute("clear_pending", {});
+        return JSON.stringify({ text: "Una propuesta propia.", presentedQuoteReference:
+          invalid === "foreign" ? foreign.presentationReference : observed.presentationReference ?? "f".repeat(64) });
+      });
+      expect(result.status).toBe("infrastructure_failure");
+      if (invalid === "missing-names") expect(observed.presentationReference).toBeUndefined();
+      expect(await h.appointments()).toEqual([]);
+      expect(await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`).toHaveLength(0);
+      expect(await db.sql`select outbound_id from outbound_commands where source_message_id=${job.messageId}`).toHaveLength(0);
+      expect(await db.sql`select message_id from whatsapp_agenda_receipts where message_id=${job.messageId}`).toHaveLength(0);
+      expect(await db.sql`select id from audit_events where business_id=${h.business} and request_id=${job.correlationId}`).toHaveLength(0);
+    });
+  test("omitted reference cannot gain delivery credit; explicit re-presentation requires its exact outbound to be sent", async () => {
+    const h = await fixture();
+    const omitted = await h.run("ese horario", async tools => {
+      await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start });
+      return JSON.stringify({ text: "Te cuento otra cosa." });
+    });
+    if (omitted.status !== "committed") throw new Error("Missing reply");
+    await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${omitted.outboundId}`;
+    await h.run("confirmo", async tools => {
+      expect(tools.context.naturalConfirmation).toBeNull();
+      expect((await tools.execute("confirm_quote", {})).status).toBe("prepared_quote");
+      return JSON.stringify({ text: "Aún no presenté la propuesta." });
+    });
+    const repeated = await h.run("presentala", async tools => {
+      expect(tools.context.naturalConfirmation).toBeNull();
+      expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start })).status).toBe("data");
+      return JSON.stringify({ text: "Mi propuesta presentada de nuevo.", presentedQuoteReference: tools.context.pendingQuotePresentationReference });
+    });
+    if (repeated.status !== "committed") throw new Error("Missing presentation");
+    await h.run("confirmo", async tools => {
+      expect(tools.context.naturalConfirmation).toBeNull();
+      return JSON.stringify({ text: "La entrega todavía falta." });
+    });
+    expect(await h.appointments()).toHaveLength(0);
+    await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${repeated.outboundId}`;
+    await h.run("confirmo", async tools => {
+      expect((tools.context.pending as any).quote.outboundId).toBe(repeated.outboundId);
+      expect((await tools.execute("confirm_quote_naturally", naturalArguments(tools))).status).toBe("staged_action");
+      return JSON.stringify({ text: "Ahora sí, guardé el turno." });
+    });
+    expect(await h.appointments()).toHaveLength(1);
+  });
+  test("change capacity loss exposes missing time without adding persisted awaiting state", async () => {
+    const h = await fixture(), ap = await savedAppointment(h);
+    const later = "2035-04-02T11:00:00-03:00";
+    const proposal = await h.run("más tarde", async tools => {
+      expect((await tools.execute("prepare_change", { appointmentId: ap.id, startsAt: later })).status).toBe("prepared_quote");
+      return final(tools, "Te propongo las 11.");
+    });
+    if (proposal.status !== "committed") throw new Error("Missing proposal");
+    await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${proposal.outboundId}`;
+    await savedAppointment(h, later);
+    const before = await h.appointments();
+    const [countsBefore] = await db.sql`select
+      (select count(*)::int from clients where business_id=${h.business}) clients,
+      (select count(*)::int from outbox_events where business_id=${h.business} and topic='appointment.changed') effects`;
+    const result = await h.run("confirmo", async tools => {
+      const rejected = await tools.execute("confirm_quote", {});
+      expect(rejected).toMatchObject({ status: "clarification", reason: "SLOT_UNAVAILABLE", missingFields: ["time"] });
+      expect(rejected).toHaveProperty("alternatives.items");
+      return JSON.stringify({ text: "Ese horario se ocupó; elegimos otro." });
+    });
+    if (result.status !== "committed") throw new Error("Missing explanation");
+    expect(result.actions).toEqual([]);
+    expect(await h.appointments()).toEqual(before);
+    expect((await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`)[0]!.dialogue)
+      .toEqual({ quote: null, awaitingNames: false });
+    expect((await db.sql`select text from outbound_commands where outbound_id=${result.outboundId}`)[0]!.text)
+      .toBe("Ese horario se ocupó; elegimos otro.");
+    expect((await db.sql`select
+      (select count(*)::int from clients where business_id=${h.business}) clients,
+      (select count(*)::int from outbox_events where business_id=${h.business} and topic='appointment.changed') effects`)[0]).toEqual(countsBefore!);
+  });
+  test("malformed final after new-client booking rolls client, appointment and counters back", async () => {
+    const h = await fixture(true, false);
+    const proposal = await h.run("mi nombre es María Pérez", async tools => {
+      await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start });
+      return final(tools, "Propuesta para María.");
+    });
+    if (proposal.status !== "committed") throw new Error("Missing proposal");
+    await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${proposal.outboundId}`;
+    const before = (await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`)[0]!.dialogue;
+    const job = await h.receive("confirmo");
+    let staged: AgentToolResult | undefined;
+    expect((await h.agenda.withAgentSession(job, async tools => {
+      staged = await tools.execute("confirm_quote", {});
+      return "malformed";
+    })).status).toBe("infrastructure_failure");
+    expect(staged?.status).toBe("staged_action");
+    expect(await h.appointments()).toHaveLength(0);
+    expect(await db.sql`select id from clients where business_id=${h.business}`).toHaveLength(0);
+    expect((await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`)[0]!.dialogue).toEqual(before);
+    expect(await db.sql`select outbound_id from outbound_commands where source_message_id=${job.messageId}`).toHaveLength(0);
+    expect(await db.sql`select message_id from whatsapp_agenda_receipts where message_id=${job.messageId}`).toHaveLength(0);
+    expect(await db.sql`select id from audit_events where business_id=${h.business} and request_id=${job.correlationId}`).toHaveLength(0);
+    expect(await db.sql`select id from outbox_events where business_id=${h.business} and topic='appointment.changed'`).toHaveLength(0);
+    expect((await db.sql`select processing_state from messages where id=${job.messageId}`)[0]!.processing_state).toBe("pending");
+  });
+  for (const raw of ["invalid JSON", '{"text":" "}', '{"text":"x","kind":"reply"}', JSON.stringify({ text: "a".repeat(4000) }),
+    JSON.stringify({ text: "Listo", presentedQuoteReference: "f".repeat(64) })]) test(`invalid final after staged cancellation rolls back all effects: ${raw.slice(0, 60)}`, async () => {
+    const h = await fixture(), ap = await savedAppointment(h, "2035-04-02T12:00:00-03:00");
+    await prepareNatural(h);
+    const before = (await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`)[0]!.dialogue;
+    const job = await h.receive("cancelar mi turno");
+    let staged: AgentToolResult | undefined;
+    const result = await h.agenda.withAgentSession(job, async tools => {
+      staged = await tools.execute("cancel", { appointmentId: ap.id });
+      return raw;
+    });
+    expect(staged?.status).toBe("staged_action");
+    expect(result.status).toBe("infrastructure_failure");
+    expect(await h.appointments()).toEqual([ap]);
+    expect((await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`)[0]!.dialogue).toEqual(before);
+    const [counts] = await db.sql`select
+      (select count(*)::int from outbound_commands where source_message_id=${job.messageId}) outputs,
+      (select count(*)::int from messages where business_id=${h.business} and direction='outbound') replies,
+      (select count(*)::int from whatsapp_agenda_receipts where message_id=${job.messageId}) receipts,
+      (select count(*)::int from audit_events where business_id=${h.business} and request_id=${job.correlationId}) audits,
+      (select count(*)::int from outbox_events where business_id=${h.business} and payload->>'sourceMessageId'=${job.messageId}) effects`;
+    expect(counts).toEqual({ outputs: 0, replies: 0, receipts: 0, audits: 0, effects: 0 });
+  });
+});
 describe("proof-bound customer output", () => {
   for (const wording of ["Hola, ¿en qué puedo ayudarte?", "Tu turno está confirmado."]) {
     test(`prose-only output has no operation effects, not semantic attestation: ${wording}`, async () => {
       const h = await fixture(true, false);
-      const result = await h.run("quiero un turno", async () => JSON.stringify({ kind: "informational_prose", text: wording }));
+      const result = await h.run("quiero un turno", async () => JSON.stringify({ text: wording }));
       if (result.status !== "committed") throw new Error("Missing output");
       const [output] = await db.sql`select text from outbound_commands where outbound_id=${result.outboundId}`;
       expect(output!.text).toBe(wording);
@@ -99,18 +313,6 @@ describe("proof-bound customer output", () => {
       expect(counts).toEqual({ clients: 0, effects: 0 });
     });
   }
-  test("caught backend rejection without a backend reply overrides valid prose", async () => {
-    const h = await fixture();
-    const result = await h.run("ese horario", async tools => {
-      expect(await tools.execute("prepare_booking", { serviceId: randomUUID(), startsAt: start }))
-        .toEqual({ status: "rejected", code: "AGENDA_REJECTED" });
-      return JSON.stringify({ kind: "informational_prose", text: "Todo salió bien." });
-    });
-    if (result.status !== "committed") throw new Error("Missing output");
-    const [output] = await db.sql`select text from outbound_commands where outbound_id=${result.outboundId}`;
-    expect(output!.text).toBe("No se guardó ningún cambio. No pude verificar la operación. ¿Podés aclarar qué necesitás?");
-    expect(await h.appointments()).toHaveLength(0);
-  });
   test("successful availability retry permits selective prose after a rejected reference", async () => {
     const h = await fixture();
     let wording: string;
@@ -121,83 +323,11 @@ describe("proof-bound customer output", () => {
         items: { presentation: { label: string } }[];
       };
       wording = `Podés venir ${slots.items[0]!.presentation.label}. ¿Te sirve?`;
-      return JSON.stringify({ kind: "informational_prose", text: wording });
+      return JSON.stringify({ text: wording });
     });
     if (result.status !== "committed") throw new Error("Missing output");
     const [output] = await db.sql`select text from outbound_commands where outbound_id=${result.outboundId}`;
     expect(output!.text).toBe(wording!);
-  });
-  test("backend missing-names request overrides valid prose", async () => {
-    const h = await fixture(true, false);
-    let expected: string;
-    const result = await h.run("ese horario", async tools => {
-      const reply = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start });
-      expect(reply.status).toBe("clarification");
-      if (reply.status !== "clarification") throw new Error("Missing name request");
-      expected = reply.message!;
-      expect(expected).toBe("Decime tu nombre y apellido.");
-      return JSON.stringify({ kind: "informational_prose", text: "No necesito tu nombre." });
-    });
-    if (result.status !== "committed") throw new Error("Missing output");
-    const [output] = await db.sql`select text from outbound_commands where outbound_id=${result.outboundId}`;
-    expect(output!.text).toBe(expected!);
-    expect(await h.appointments()).toHaveLength(0);
-    const [clients] = await db.sql`select count(*)::int count from clients where business_id=${h.business}`;
-    expect(clients!.count).toBe(0);
-  });
-  test("backend staged saved result overrides valid prose even after another rejected mutation", async () => {
-    const h = await fixture();
-    await prepareNatural(h);
-    let appointmentId: string;
-    const result = await h.run("dale reservame ese", async tools => {
-      const saved = await tools.execute("confirm_quote_naturally", naturalArguments(tools));
-      expect(saved.status).toBe("staged_action");
-      if (saved.status !== "staged_action") throw new Error("Missing saved result");
-      appointmentId = (saved.appointment as { id: string }).id;
-      expect((await tools.execute("confirm_quote_naturally", naturalArguments(tools))).status).toBe("rejected");
-      return JSON.stringify({ kind: "informational_prose", text: "No se guardó nada." });
-    });
-    if (result.status !== "committed") throw new Error("Missing output");
-    const [output] = await db.sql`select text from outbound_commands where outbound_id=${result.outboundId}`;
-    expect(output!.text).toStartWith("Guardado: Corte,");
-    expect(output!.text).toContain(`Turno ${appointmentId!}.`);
-    expect(output!.text).not.toContain("No se guardó nada.");
-    expect(result.actions).toHaveLength(1);
-    expect(await h.appointments()).toHaveLength(1);
-  });
-  for (const prose of ["Te propongo Corte mañana a las 10 por ARS 1.", "Tu turno está confirmado.",
-    JSON.stringify({ kind: "chat", text: "Tu turno está confirmado." }),
-    JSON.stringify({ kind: "confirmation", appointmentId: "forged" })]) {
-    test(`unbound output cannot attest an operation: ${prose}`, async () => {
-      const h = await fixture(true, false);
-      const result = await h.run("quiero un turno", async () => prose);
-      if (result.status !== "committed") throw new Error("Missing output");
-      const [output] = await db.sql`select text from outbound_commands where outbound_id=${result.outboundId}`;
-      expect(output!.text).toBe("¿Qué servicio y día querés consultar?");
-      expect(await h.appointments()).toHaveLength(0);
-      const [counts] = await db.sql`select (select count(*)::int from clients where business_id=${h.business}) clients,
-        (select count(*)::int from outbox_events where business_id=${h.business} and topic='appointment.changed') effects`;
-      expect(counts).toEqual({ clients: 0, effects: 0 });
-    });
-  }
-  for (const raw of ["Tu turno está confirmado. Ya pagaste.",
-    JSON.stringify({ kind: "informational_prose", text: "Tu turno está confirmado. Ya pagaste." })]) test(`prepared quote excludes raw and valid-arm before/after prose: ${raw}`, async () => {
-    const h = await fixture();
-    let expected: string;
-    const result = await h.run("ese horario", async tools => {
-      const quote = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start });
-      expect(quote.status).toBe("prepared_quote");
-      if (quote.status !== "prepared_quote") throw new Error("Missing quote");
-      expected = quote.message;
-      return raw;
-    });
-    if (result.status !== "committed") throw new Error("Missing output");
-    const [output] = await db.sql`select text from outbound_commands where outbound_id=${result.outboundId}`;
-    expect(output!.text).toBe(expected!);
-    expect(output!.text).not.toContain("confirmado");
-    expect(output!.text).not.toContain("pagaste");
-    expect(output!.text).toContain("1500");
-    expect(await h.appointments()).toHaveLength(0);
   });
 });
 describe("offer/action response coherence", () => {
@@ -207,7 +337,7 @@ describe("offer/action response coherence", () => {
       if (delivered) {
         const first = await h.run("mi nombre es María Pérez", async tools => {
           expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start })).status).toBe("prepared_quote");
-          return '{"kind":"reply"}';
+          return final(tools);
         });
         if (first.status !== "committed") throw new Error("Missing A");
         await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${first.outboundId}`;
@@ -224,7 +354,7 @@ describe("offer/action response coherence", () => {
         const [, rejected] = await Promise.all([a, b]);
         expect(rejected.status).toBe(failure === "availability" ? "clarification" : "rejected");
         if (consent) expect((await tools.execute("confirm_quote_naturally", consent)).status).toBe("rejected");
-        return '{"kind":"reply"}';
+        return final(tools);
       });
       if (result.status !== "committed") throw new Error("Missing rejection output");
       const [output] = await db.sql`select text from outbound_commands where outbound_id=${result.outboundId}`;
@@ -236,7 +366,7 @@ describe("offer/action response coherence", () => {
       await h.run("confirmo", async tools => {
         expect(tools.context.naturalConfirmation).toBeNull();
         expect((await tools.execute("confirm_quote", {})).status).not.toBe("staged_action");
-        return '{"kind":"reply"}';
+        return final(tools);
       });
       expect(await h.appointments()).toHaveLength(0);
     });
@@ -246,7 +376,7 @@ describe("offer/action response coherence", () => {
     const result = await h.run("más tarde", async tools => {
       expect((await tools.execute("prepare_change", { appointmentId: ap.id, startsAt: "2035-04-02T11:00:00-03:00" })).status).toBe("prepared_quote");
       expect((await tools.execute("prepare_change", { appointmentId: other.id, startsAt: "2035-04-02T13:00:00-03:00" })).status).toBe("clarification");
-      return '{"kind":"reply"}';
+      return final(tools);
     });
     if (result.status !== "committed") throw new Error("Missing refusal");
     const [output] = await db.sql`select text from outbound_commands where outbound_id=${result.outboundId}`;
@@ -266,9 +396,9 @@ describe("offer/action response coherence", () => {
       await tools.execute("prepare_booking", { serviceId: randomUUID(), startsAt: start });
       const b = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T11:00:00-03:00" });
       expect(b.status).toBe("clarification");
-      expect((b as any).message).toBe("Decime tu apellido.");
+      expect(b).toMatchObject({ missingFields: ["lastName"] });
       expect(b.namesReference).toBeString();
-      return '{"kind":"reply"}';
+      return final(tools);
     });
     await h.run("Pérez", async tools => {
       const member = tools.context.nameSources!.at(-1)!;
@@ -277,7 +407,7 @@ describe("offer/action response coherence", () => {
       expect(b.status).toBe("prepared_quote");
       expect((b as any).quote.names).toEqual({ firstName: "María", lastName: "Pérez" });
       expect(Date.parse((b as any).quote.startsAt)).toBe(Date.parse("2035-04-02T11:00:00-03:00"));
-      return '{"kind":"reply"}';
+      return final(tools);
     });
     expect(await h.appointments()).toHaveLength(0);
   });
@@ -289,11 +419,11 @@ describe("offer/action response coherence", () => {
       await tools.execute("prepare_booking", { serviceId: randomUUID(), startsAt: start });
       await tools.execute("prepare_change", {});
       await tools.execute("clear_pending", {});
-      return '{"kind":"reply"}';
+      return final(tools);
     });
     if (result.status !== "committed") throw new Error("Missing action");
     const [output] = await db.sql`select text from outbound_commands where outbound_id=${result.outboundId}`;
-    expect(output!.text).toStartWith("Guardado:");
+    expect(output!.text).toBe("Respuesta redactada por el modelo.");
     expect(output!.text).not.toContain("Reserva propuesta");
     expect(result.actions).toHaveLength(1);
     expect(await h.appointments()).toHaveLength(1);
@@ -307,7 +437,7 @@ describe("offer/action response coherence", () => {
     const result = await h.agenda.withAgentSession(job, async tools => {
       expect((await tools.execute("confirm_quote", {})).status).toBe("staged_action");
       await tools.execute("prepare_booking", {});
-      return '{"kind":"reply"}';
+      return final(tools);
     });
     expect(result.status).toBe("infrastructure_failure");
     expect(await h.appointments()).toHaveLength(0);
@@ -335,7 +465,7 @@ describe("native mismatched selections disclose proposals without attesting mean
     await prepareNatural(h);
     await h.run("dale reservame ese", async tools => {
       expect((await tools.execute("confirm_quote_naturally", naturalArguments(tools))).status).toBe("staged_action");
-      return "Listo.";
+      return final(tools, "Listo.");
     });
     const [appointment] = await h.appointments();
     let selectedService = h.service;
@@ -350,13 +480,13 @@ describe("native mismatched selections disclose proposals without attesting mean
       if ("startsAt" in fields) expect(slots.items.some(slot => Date.parse(slot.startsAt) === Date.parse(fields.startsAt))).toBe(true);
       selection = await tools.execute("prepare_change", { appointmentId: appointment!.id, serviceId: selectedService,
         ...(name === "resource request cannot change time" ? { resourceId: h.resource } : {}), ...fields });
-      return "Necesito el cambio que querés hacer.";
+      return final(tools, "Necesito el cambio que querés hacer.");
     });
     expect(await h.appointments()).toEqual([appointment!]);
     const changed = selectedService !== h.service || ("startsAt" in fields && Date.parse(fields.startsAt) !== appointment!.startMs);
     expect(selection!.status).toBe(changed ? "prepared_quote" : "data");
     expect(selection!.status).not.toBe("staged_action");
-    if (selection!.status === "prepared_quote") expect(selection!.message).toContain("Cambio propuesto");
+    if (selection!.status === "prepared_quote") expect((selection!.quote as any).kind).toBe("change");
     await h.run("¿qué quedó pendiente?", async tools => {
       const pending = tools.context.pending as any;
       if (changed) {
@@ -364,7 +494,7 @@ describe("native mismatched selections disclose proposals without attesting mean
         expect(Date.parse(pending.quote.startsAt)).toBe("startsAt" in fields ? Date.parse(fields.startsAt) : appointment!.startMs);
         expect(pending.reschedule.date).toBeUndefined(); expect(pending.reschedule.time).toBeUndefined();
       } else expect(pending.quote).toBeNull();
-      return '{"kind":"reply"}';
+      return final(tools);
     });
   });
 });
@@ -380,7 +510,7 @@ describe("native structural selections are proposals, not semantic consent", () 
   for (const kind of ["natural service", "polite service", "natural resource", "negated date", "retained day"] as const) test(kind, async () => {
     const { h, ap, color, alternate } = await structuralFixture(), wednesday = "2035-04-04T11:00:00-03:00";
     if (kind === "retained day") await h.run("el miércoles a las 10", async tools => {
-      expect((await tools.execute("prepare_change", { appointmentId: ap.id, startsAt: "2035-04-04T10:00:00-03:00" })).status).toBe("prepared_quote"); return '{"kind":"reply"}';
+      expect((await tools.execute("prepare_change", { appointmentId: ap.id, startsAt: "2035-04-04T10:00:00-03:00" })).status).toBe("prepared_quote"); return final(tools);
     });
     const text = kind === "natural service" ? "Me gustaría cambiar el servicio a Color" : kind === "polite service" ? "Cambiar servicio a Color por favor"
       : kind === "natural resource" ? "Me gustaría atenderme con Beatriz" : kind === "negated date" ? "No mañana; el miércoles a las 11" : "Reprogramar a las 11";
@@ -392,7 +522,7 @@ describe("native structural selections are proposals, not semantic consent", () 
       expect((result.quote as any).terms.serviceId).toBe(kind.includes("service") ? color : h.service);
       expect((result.quote as any).terms.resourceId).toBe(kind === "natural resource" ? alternate : h.resource);
       expect(Date.parse((result.quote as any).startsAt)).toBe(Date.parse(kind.includes("service") || kind === "natural resource" ? start : wednesday));
-      expect((await tools.execute("confirm_quote", {})).status).not.toBe("staged_action"); return '{"kind":"reply"}';
+      expect((await tools.execute("confirm_quote", {})).status).not.toBe("staged_action"); return final(tools);
     });
     expect(await h.appointments()).toEqual([ap]);
   });
@@ -401,7 +531,7 @@ describe("native structural selections are proposals, not semantic consent", () 
     await db.sql`update appointments set customer_resource_preference_id=${h.resource} where id=${ap.id}`;
     const [before] = await h.appointments();
     const prepared = await h.run("Color con Beatriz el miércoles", async tools => {
-      expect((await tools.execute("prepare_change", { appointmentId: ap.id, serviceId: color, resourceId: alternate, startsAt: later })).status).toBe("prepared_quote"); return '{"kind":"reply"}';
+      expect((await tools.execute("prepare_change", { appointmentId: ap.id, serviceId: color, resourceId: alternate, startsAt: later })).status).toBe("prepared_quote"); return final(tools);
     });
     expect(await h.appointments()).toEqual([before!]);
     if (prepared.status !== "committed") throw new Error("Missing combined proposal");
@@ -411,7 +541,7 @@ describe("native structural selections are proposals, not semantic consent", () 
       original = structuredClone((tools.context.pending as any).quote);
       const consent = naturalArguments(tools);
       expect((await tools.execute("prepare_change", { appointmentId: ap.id, startsAt: "2035-04-04T14:00:00Z" })).status).toBe("data");
-      if (accepts) expect((await tools.execute("confirm_quote_naturally", consent)).status).toBe("staged_action"); return '{"kind":"reply"}';
+      if (accepts) expect((await tools.execute("confirm_quote_naturally", consent)).status).toBe("staged_action"); return final(tools);
     });
     if (repeated.status !== "committed") throw new Error("Missing repeat");
     const [output] = await db.sql`select text from outbound_commands where outbound_id=${repeated.outboundId}`;
@@ -426,22 +556,22 @@ describe("native structural selections are proposals, not semantic consent", () 
   test("saved no-op withdraws an unrelated proposal instead of leaving it confirmable", async () => {
     const { h, ap, color } = await structuralFixture();
     await h.run("Reservar el 2035-04-05 a las 15:00", async tools => {
-      expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: "2035-04-05T15:00:00-03:00" })).status).toBe("prepared_quote"); return '{"kind":"reply"}';
+      expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: "2035-04-05T15:00:00-03:00" })).status).toBe("prepared_quote"); return final(tools);
     }); // This unrelated booking must not supply structural date/time fields.
     await h.run("cambiar solo el servicio", async tools => {
       const result = await tools.execute("prepare_change", { appointmentId: ap.id, serviceId: color });
-      expect((result as any).quote.startsAt).toBe(ap.startsAt); return '{"kind":"reply"}';
+      expect((result as any).quote.startsAt).toBe(ap.startsAt); return final(tools);
     });
     await h.run("dejalo como estaba", async tools => {
-      expect((await tools.execute("prepare_change", { appointmentId: ap.id, serviceId: h.service, resourceId: h.resource, startsAt: ap.startsAt })).status).toBe("data"); return '{"kind":"reply"}';
+      expect((await tools.execute("prepare_change", { appointmentId: ap.id, serviceId: h.service, resourceId: h.resource, startsAt: ap.startsAt })).status).toBe("data"); return final(tools);
     });
-    await h.run("confirmo", async tools => { expect(tools.context.naturalConfirmation).toBeNull(); expect((await tools.execute("confirm_quote", {})).status).toBe("clarification"); return '{"kind":"reply"}'; });
+    await h.run("confirmo", async tools => { expect(tools.context.naturalConfirmation).toBeNull(); expect((await tools.execute("confirm_quote", {})).status).toBe("clarification"); return final(tools); });
     expect(await h.appointments()).toEqual([ap]);
   });
   for (const guard of ["retarget", "stale", "final", "started", "foreign", "ineligible", "unavailable", "unresolved"] as const) test(`structural guard: ${guard}`, async () => {
     const { h, ap, alternate } = await structuralFixture(), later = "2035-04-02T11:00:00-03:00";
     let target = ap.id, resourceId = h.resource;
-    if (guard === "retarget" || guard === "stale") await h.run("más tarde", async tools => { await tools.execute("prepare_change", { appointmentId: ap.id, startsAt: later }); return '{"kind":"reply"}'; });
+    if (guard === "retarget" || guard === "stale") await h.run("más tarde", async tools => { await tools.execute("prepare_change", { appointmentId: ap.id, startsAt: later }); return final(tools); });
     if (guard === "retarget") target = (await savedAppointment(h, "2035-04-02T12:00:00-03:00")).id;
     if (guard === "stale") await db.sql`update appointments set customer_resource_preference_id=${alternate} where id=${ap.id}`;
     if (guard === "final") await db.sql`update appointments set state='cancelled' where id=${ap.id}`;
@@ -451,16 +581,16 @@ describe("native structural selections are proposals, not semantic consent", () 
       resourceId = randomUUID(); await db.sql`insert into resources(id,business_id,name,weekly_schedule) select ${resourceId},${h.business},'Sin servicio',weekly_schedule from resources where id=${h.resource}`;
     }
     if (guard === "unavailable") await savedAppointment(h, later);
-    if (guard === "unresolved") await h.run("prefiero Desconocido", async tools => { await tools.execute("prepare_change", { appointmentId: ap.id, startsAt: later }); return '{"kind":"reply"}'; });
+    if (guard === "unresolved") await h.run("prefiero Desconocido", async tools => { await tools.execute("prepare_change", { appointmentId: ap.id, startsAt: later }); return final(tools); });
     const before = await h.appointments();
     await h.run("Reprogramar mi turno el 2035-04-02 a las 11:00", async tools => {
-      expect((await tools.execute("prepare_change", { appointmentId: target, resourceId, startsAt: later })).status).not.toBe("prepared_quote"); return '{"kind":"reply"}';
+      expect((await tools.execute("prepare_change", { appointmentId: target, resourceId, startsAt: later })).status).not.toBe("prepared_quote"); return final(tools);
     });
     expect(await h.appointments()).toEqual(before);
   });
   for (const change of ["terms", "selection"] as const) test(`changed ${change} requires a fresh delivered proposal`, async () => {
     const { h, ap, color } = await structuralFixture();
-    const first = await h.run("Color", async tools => { expect((await tools.execute("prepare_change", { appointmentId: ap.id, serviceId: color })).status).toBe("prepared_quote"); return '{"kind":"reply"}'; });
+    const first = await h.run("Color", async tools => { expect((await tools.execute("prepare_change", { appointmentId: ap.id, serviceId: color })).status).toBe("prepared_quote"); return final(tools); });
     if (first.status !== "committed") throw new Error("Missing first proposal");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${first.outboundId}`;
     if (change === "terms") await db.sql`update services set price_ars=3000 where id=${color}`;
@@ -468,13 +598,13 @@ describe("native structural selections are proposals, not semantic consent", () 
       const consent = naturalArguments(tools);
       const result = await tools.execute("prepare_change", { appointmentId: ap.id, serviceId: color, ...(change === "selection" ? { startsAt: "2035-04-02T11:00:00-03:00" } : {}) });
       expect(result.status).toBe("prepared_quote"); expect((result as any).quote.outboundId).toBeNull();
-      expect((await tools.execute("confirm_quote_naturally", consent)).status).toBe("rejected"); return '{"kind":"reply"}';
+      expect((await tools.execute("confirm_quote_naturally", consent)).status).toBe("rejected"); return final(tools);
     });
     expect(await h.appointments()).toEqual([ap]);
-    const undelivered = await h.run("confirmo", async tools => { expect((await tools.execute("confirm_quote", {})).status).toBe("prepared_quote"); return '{"kind":"reply"}'; });
+    const undelivered = await h.run("confirmo", async tools => { expect((await tools.execute("confirm_quote", {})).status).toBe("prepared_quote"); return final(tools); });
     if (refreshed.status !== "committed" || undelivered.status !== "committed") throw new Error("Missing refresh");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${undelivered.outboundId}`;
-    await h.run("confirmo", async tools => { expect((await tools.execute("confirm_quote", {})).status).toBe("staged_action"); return '{"kind":"reply"}'; });
+    await h.run("confirmo", async tools => { expect((await tools.execute("confirm_quote", {})).status).toBe("staged_action"); return final(tools); });
     expect((await h.appointments())[0]!.terms.priceArs).toBe(change === "terms" ? 3000 : 2500);
   });
 });
@@ -486,38 +616,38 @@ describe("native booking/query selections are not preference or consent evidence
         serviceId: h.service, resourceId: h.resource, startsAt: "2035-04-04T11:00:00-03:00" });
       expect(result.status).toBe("prepared_quote");
       expect((result as any).quote).toMatchObject({ preference: null, terms: { resourceId: h.resource } });
-      expect(Date.parse((result as any).quote.startsAt)).toBe(Date.parse("2035-04-04T11:00:00-03:00")); return '{"kind":"reply"}';
+      expect(Date.parse((result as any).quote.startsAt)).toBe(Date.parse("2035-04-04T11:00:00-03:00")); return final(tools);
     });
     expect(await h.appointments()).toEqual(ap ? [ap] : []);
   });
   test("availability honors exact typed date/resource despite raw or retained fields, without updating preference", async () => {
     const { h, ap, alternate } = await structuralFixture();
-    await h.run("El 2035-04-02", async tools => { await tools.execute("confirm_quote", {}); return '{"kind":"reply"}'; });
-    await h.run("Prefiero Ana", async tools => { data(await tools.execute("availability", { serviceId: h.service, date: "2035-04-02" })); return '{"kind":"reply"}'; });
+    await h.run("El 2035-04-02", async tools => { await tools.execute("confirm_quote", {}); return final(tools); });
+    await h.run("Prefiero Ana", async tools => { data(await tools.execute("availability", { serviceId: h.service, date: "2035-04-02" })); return final(tools); });
     await h.run("No mañana; el miércoles, ¿y con Beatriz?", async tools => {
       const result = data(await tools.execute("availability", { serviceId: h.service, date: "2035-04-04", resourceId: alternate })) as any;
       expect(result.items.length).toBeGreaterThan(0);
       expect(result.items.every((slot: any) => slot.resourceId === alternate && slot.presentation.localDate === "2035-04-04")).toBe(true);
-      return '{"kind":"reply"}';
+      return final(tools);
     });
     await h.run("¿y ahora?", async tools => {
       expect((tools.context.pending as any).bookingPreference).toBe(h.resource);
-      expect((tools.context.pending as any).requestedDate).toBe("2035-04-02"); return '{"kind":"reply"}';
+      expect((tools.context.pending as any).requestedDate).toBe("2035-04-02"); return final(tools);
     });
     const schedule = { 4: [{ startMinute: 540, endMinute: 1080 }] };
     await db.sql`update resources set weekly_schedule=${db.sql.json(schedule)} where id=${alternate}`;
     await h.run("Ese miércoles", async tools => {
       expect((data(await tools.execute("availability", { serviceId: h.service, date: "2035-04-04", resourceId: alternate })) as any).items).toEqual([]);
-      return '{"kind":"reply"}';
+      return final(tools);
     });
     expect(await h.appointments()).toEqual([ap]);
   });
   for (const accepts of [false, true]) test(`identical delivered BOOK retains omitted resource and current consent; accept=${accepts}`, async () => {
     const { h, ap, alternate } = await structuralFixture();
-    await h.run("Prefiero Ana", async tools => { await tools.execute("availability", { serviceId: h.service, date: "2035-04-04" }); return '{"kind":"reply"}'; });
+    await h.run("Prefiero Ana", async tools => { await tools.execute("availability", { serviceId: h.service, date: "2035-04-04" }); return final(tools); });
     const first = await h.run("con Beatriz el miércoles", async tools => {
       const result = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: "2035-04-04T11:00:00-03:00", resourceId: alternate });
-      expect(result.status).toBe("prepared_quote"); expect((result as any).quote).toMatchObject({ preference: h.resource, terms: { resourceId: alternate } }); return '{"kind":"reply"}';
+      expect(result.status).toBe("prepared_quote"); expect((result as any).quote).toMatchObject({ preference: h.resource, terms: { resourceId: alternate } }); return final(tools);
     });
     if (first.status !== "committed") throw new Error("Missing book proposal");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${first.outboundId}`;
@@ -525,7 +655,7 @@ describe("native booking/query selections are not preference or consent evidence
     const repeated = await h.run(accepts ? "sí, ese" : "¿sigue igual?", async tools => {
       previous = structuredClone((tools.context.pending as any).quote); const consent = naturalArguments(tools);
       expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: "2035-04-04T14:00:00Z" })).status).toBe("data");
-      if (accepts) expect((await tools.execute("confirm_quote_naturally", consent)).status).toBe("staged_action"); return '{"kind":"reply"}';
+      if (accepts) expect((await tools.execute("confirm_quote_naturally", consent)).status).toBe("staged_action"); return final(tools);
     });
     if (repeated.status !== "committed") throw new Error("Missing retained response");
     const [output] = await db.sql`select text from outbound_commands where outbound_id=${repeated.outboundId}`;
@@ -539,7 +669,7 @@ describe("native booking/query selections are not preference or consent evidence
   for (const change of ["slot", "resource", "service", "terms"] as const) test(`changed book ${change} needs fresh delivery/acceptance`, async () => {
     const { h, ap, alternate, color } = await structuralFixture();
     const args = { serviceId: h.service, startsAt: "2035-04-04T11:00:00-03:00", resourceId: h.resource };
-    const first = await h.run("ese turno", async tools => { expect((await tools.execute("prepare_booking", args)).status).toBe("prepared_quote"); return '{"kind":"reply"}'; });
+    const first = await h.run("ese turno", async tools => { expect((await tools.execute("prepare_booking", args)).status).toBe("prepared_quote"); return final(tools); });
     if (first.status !== "committed") throw new Error("Missing first proposal");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${first.outboundId}`;
     if (change === "terms") await db.sql`update services set price_ars=3000 where id=${h.service}`;
@@ -547,13 +677,13 @@ describe("native booking/query selections are not preference or consent evidence
       const old = naturalArguments(tools);
       const result = await tools.execute("prepare_booking", { ...args, ...(change === "slot" ? { startsAt: "2035-04-04T12:00:00-03:00" } : change === "resource" ? { resourceId: alternate } : change === "service" ? { serviceId: color } : {}) });
       expect(result.status).toBe("prepared_quote"); expect((result as any).quote.outboundId).toBeNull();
-      expect((await tools.execute("confirm_quote_naturally", old)).status).toBe("rejected"); return '{"kind":"reply"}';
+      expect((await tools.execute("confirm_quote_naturally", old)).status).toBe("rejected"); return final(tools);
     });
     expect(await h.appointments()).toEqual([ap]);
-    const undelivered = await h.run("confirmo", async tools => { expect((await tools.execute("confirm_quote", {})).status).toBe("prepared_quote"); return '{"kind":"reply"}'; });
+    const undelivered = await h.run("confirmo", async tools => { expect((await tools.execute("confirm_quote", {})).status).toBe("prepared_quote"); return final(tools); });
     if (undelivered.status !== "committed") throw new Error("Missing refreshed delivery");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${undelivered.outboundId}`;
-    await h.run("confirmo", async tools => { expect((await tools.execute("confirm_quote", {})).status).toBe("staged_action"); return '{"kind":"reply"}'; });
+    await h.run("confirmo", async tools => { expect((await tools.execute("confirm_quote", {})).status).toBe("staged_action"); return final(tools); });
     expect(await h.appointments()).toHaveLength(2);
   });
   for (const guard of ["hours", "capacity"] as const) test(`retained BOOK revalidates ${guard} before preserving consent`, async () => {
@@ -564,49 +694,49 @@ describe("native booking/query selections are not preference or consent evidence
     const before = await h.appointments();
     await h.run("dale", async tools => { const consent = naturalArguments(tools);
       expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start })).status).toBe("clarification");
-      expect((await tools.execute("confirm_quote_naturally", consent)).status).toBe("rejected"); return '{"kind":"reply"}'; });
+      expect((await tools.execute("confirm_quote_naturally", consent)).status).toBe("rejected"); return final(tools); });
     expect(await h.appointments()).toEqual(before);
   });
   test("fresh unknown preference blocks a repeated BOOK without a supplied choice", async () => {
     const h = await fixture(); await prepareNatural(h);
     await h.run("Prefiero Desconocida", async tools => {
-      expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start })).status).toBe("clarification"); return '{"kind":"reply"}'; });
+      expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start })).status).toBe("clarification"); return final(tools); });
     expect(await h.appointments()).toHaveLength(0);
   });
   test("temporary assignment does not resolve real unknown preference metadata", async () => {
     const h = await fixture(), args = { serviceId: h.service, startsAt: start };
-    await h.run("Prefiero Desconocida", async tools => { expect((await tools.execute("prepare_booking", args)).status).toBe("clarification"); return '{"kind":"reply"}'; });
-    await h.run("con esa profesional", async tools => { expect((await tools.execute("prepare_booking", { ...args, resourceId: h.resource })).status).toBe("prepared_quote"); return '{"kind":"reply"}'; });
+    await h.run("Prefiero Desconocida", async tools => { expect((await tools.execute("prepare_booking", args)).status).toBe("clarification"); return final(tools); });
+    await h.run("con esa profesional", async tools => { expect((await tools.execute("prepare_booking", { ...args, resourceId: h.resource })).status).toBe("prepared_quote"); return final(tools); });
     await h.run("¿y otros horarios?", async tools => { expect((tools.context.pending as any).bookingUnresolvedPreference).toBe(true);
-      expect((await tools.execute("availability", { serviceId: h.service, date: "2035-04-04" })).status).toBe("clarification"); return '{"kind":"reply"}'; });
-    await h.run("Sin preferencia", async tools => { expect((await tools.execute("prepare_booking", args)).status).toBe("data"); return '{"kind":"reply"}'; });
-    await h.run("¿ahora?", async tools => { expect((tools.context.pending as any).bookingUnresolvedPreference).toBe(false); return '{"kind":"reply"}'; });
+      expect((await tools.execute("availability", { serviceId: h.service, date: "2035-04-04" })).status).toBe("clarification"); return final(tools); });
+    await h.run("Sin preferencia", async tools => { expect((await tools.execute("prepare_booking", args)).status).toBe("data"); return final(tools); });
+    await h.run("¿ahora?", async tools => { expect((tools.context.pending as any).bookingUnresolvedPreference).toBe(false); return final(tools); });
     expect(await h.appointments()).toHaveLength(0);
   });
   for (const text of ["Prefiero Ana", "Prefiero Desconocida"]) test(`new BOOK isolates structural context: ${text}`, async () => {
     const { h, ap } = await structuralFixture();
-    await h.run(text, async tools => { await tools.execute("prepare_change", { appointmentId: ap.id, startsAt: "2035-04-04T11:00:00-03:00" }); return '{"kind":"reply"}'; });
+    await h.run(text, async tools => { await tools.execute("prepare_change", { appointmentId: ap.id, startsAt: "2035-04-04T11:00:00-03:00" }); return final(tools); });
     await h.run("Mi nombre es Elena García", async tools => {
       const result = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: "2035-04-05T12:00:00-03:00" });
-      expect(result.status).toBe("prepared_quote"); expect((result as any).quote).toMatchObject({ names: null, preference: null }); return '{"kind":"reply"}'; });
+      expect(result.status).toBe("prepared_quote"); expect((result as any).quote).toMatchObject({ names: null, preference: null }); return final(tools); });
     await h.run("¿qué quedó?", async tools => { const pending = tools.context.pending as any;
       expect(pending.reschedule).toBeUndefined(); expect(pending.bookingNameFields).toBeUndefined();
-      expect(pending.bookingUnresolvedPreference).toBe(false); return '{"kind":"reply"}'; });
+      expect(pending.bookingUnresolvedPreference).toBe(false); return final(tools); });
     expect(await h.appointments()).toEqual([ap]);
   });
   test("partial names survive complete booking selections without manufacturing temporal evidence", async () => {
     const h = await fixture(true, false), args = { serviceId: h.service, startsAt: "2035-04-04T11:00:00-03:00" };
     await h.run("María", async tools => {
       const draft = await tools.execute("prepare_booking", args), member = tools.context.nameSources!.at(-1)!;
-      expect((await tools.execute("collect_booking_names", { namesReference: draft.namesReference, firstName: nameField(member.messageId, "María") })).status).toBe("clarification"); return '{"kind":"reply"}';
+      expect((await tools.execute("collect_booking_names", { namesReference: draft.namesReference, firstName: nameField(member.messageId, "María") })).status).toBe("clarification"); return final(tools);
     });
     await h.run("No mañana; el miércoles a las 11", async tools => {
       const result = await tools.execute("prepare_booking", args);
-      expect(result).toMatchObject({ status: "clarification", message: "Decime tu apellido." }); return '{"kind":"reply"}';
+      expect(result).toMatchObject({ status: "clarification", missingFields: ["lastName"] }); return final(tools);
     });
     await h.run("¿qué quedó?", async tools => {
       const draft = tools.context.pending as any; expect(draft.bookingNameFields).toEqual({ firstName: "María" });
-      expect(draft.requestedDate).toBeUndefined(); expect(draft.requestedTime).toBeUndefined(); return '{"kind":"reply"}';
+      expect(draft.requestedDate).toBeUndefined(); expect(draft.requestedTime).toBeUndefined(); return final(tools);
     });
     expect(await h.appointments()).toHaveLength(0);
     const [clients] = await db.sql`select count(*)::int count from clients where business_id=${h.business}`; expect(clients!.count).toBe(0);
@@ -618,7 +748,7 @@ describe("native delivered change consent", () => {
     await prepareNatural(h);
     await h.run("dale reservame ese", async tools => {
       expect((await tools.execute("confirm_quote_naturally", naturalArguments(tools))).status).toBe("staged_action");
-      return "Reservado.";
+      return final(tools, "Reservado.");
     });
     const [original] = await h.appointments();
     const later = "2035-04-02T11:00:00-03:00";
@@ -627,7 +757,7 @@ describe("native delivered change consent", () => {
       expect(quote.status).toBe("prepared_quote");
       if (quote.status === "prepared_quote") expect(Date.parse((quote.quote as { startsAt: string }).startsAt)).toBe(Date.parse(later));
       expect((await tools.execute("confirm_quote", {})).status).not.toBe("staged_action");
-      return "Te propongo esta alternativa.";
+      return final(tools, "Te propongo esta alternativa a las 11:00.");
     });
     expect(await h.appointments()).toEqual([original!]);
     await h.run("dale cambialo", async tools => {
@@ -635,7 +765,7 @@ describe("native delivered change consent", () => {
       expect((await tools.execute("confirm_quote_naturally", {
         evidence: tools.context.message, evidenceReference: "a".repeat(64), quoteFingerprint: "b".repeat(64),
       })).status).toBe("clarification");
-      return "Primero necesitás recibir la propuesta.";
+      return final(tools, "Primero necesitás recibir la propuesta.");
     });
     expect(await h.appointments()).toEqual([original!]);
     if (prepared.status !== "committed") throw new Error("Missing change quote");
@@ -647,7 +777,7 @@ describe("native delivered change consent", () => {
       const args = naturalArguments(tools);
       expect((await tools.execute("confirm_quote_naturally", args)).status).toBe("staged_action");
       expect((await tools.execute("confirm_quote_naturally", args)).status).toBe("rejected");
-      return "Cambio guardado.";
+      return final(tools, "Cambio guardado.");
     });
     expect(result.status).toBe("committed");
     if (result.status === "committed") expect(result.actions).toHaveLength(1);
@@ -679,7 +809,7 @@ describe("canonical presentation without quote authority changes", () => {
       snapshot = JSON.stringify(result.quote);
       expect(snapshot).not.toContain("presentation");
       expect(snapshot).not.toContain("weekday");
-      return "Te paso la propuesta.";
+      return final(tools, "Te paso la propuesta.");
     });
     if (prepared.status !== "committed") throw new Error("Missing committed quote");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${prepared.outboundId}`;
@@ -696,7 +826,7 @@ describe("canonical presentation without quote authority changes", () => {
       expect(tools.context.naturalConfirmation).toEqual(binding);
       const owned = data(await tools.execute("owned_appointments", {})) as any;
       expect(owned.items[0].presentation).toMatchObject(expected);
-      return "Listo.";
+      return final(tools, "Listo.");
     });
     expect(await h.appointments()).toHaveLength(1);
   });
@@ -709,7 +839,7 @@ describe("natural confirmation protocol", () => {
       const result = await h.run(evidence, async tools => {
         expect((await tools.execute("confirm_quote", {})).status).toBe("clarification");
         expect((await tools.execute("confirm_quote_naturally", naturalArguments(tools))).status).toBe("staged_action");
-        return "Listo, quedó reservado.";
+        return final(tools, "Listo, quedó reservado.");
       });
       if (result.status === "committed") expect(result.actions).toHaveLength(1);
       expect(await h.appointments()).toHaveLength(1);
@@ -719,7 +849,7 @@ describe("natural confirmation protocol", () => {
     const h = await fixture();
     await prepareNatural(h);
     let previous: ReturnType<typeof naturalArguments>;
-    await h.run("antes dije otra cosa", async tools => { previous = naturalArguments(tools); return "¿Querés aceptar la propuesta?"; });
+    await h.run("antes dije otra cosa", async tools => { previous = naturalArguments(tools); return final(tools, "¿Querés aceptar la propuesta?"); });
     await h.run("dale reservame ese", async tools => {
       const args = naturalArguments(tools);
       for (const invalid of [
@@ -727,7 +857,7 @@ describe("natural confirmation protocol", () => {
         { ...args, evidence: "confirmo" }, { ...args, evidence: "reservame ese" },
         { ...args, evidence: previous!.evidence }, { ...args, evidenceReference: previous!.evidenceReference },
       ]) expect((await tools.execute("confirm_quote_naturally", invalid)).status).toBe("rejected");
-      return "Necesito una confirmación vinculada a esta propuesta.";
+      return final(tools, "Necesito una confirmación vinculada a esta propuesta.");
     });
     expect(await h.appointments()).toHaveLength(0);
   });
@@ -738,12 +868,12 @@ describe("natural confirmation protocol", () => {
       expect(tools.context.naturalConfirmation).toBeNull();
       await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start });
       expect((await tools.execute("confirm_quote_naturally", fabricated)).status).toBe("clarification");
-      return "Primero te paso los detalles.";
+      return final(tools, "Primero te paso los detalles.");
     });
     await h.run(fabricated.evidence, async tools => {
       expect(tools.context.naturalConfirmation).toBeNull();
       expect((await tools.execute("confirm_quote_naturally", fabricated)).status).toBe("clarification");
-      return "Necesitás recibir la propuesta.";
+      return final(tools, "Necesitás recibir la propuesta.");
     });
     if (prepared.status !== "committed") throw new Error("Missing quote");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${prepared.outboundId}`;
@@ -751,7 +881,7 @@ describe("natural confirmation protocol", () => {
     const result = await h.agenda.withAgentSession(job, async tools => {
       expect(tools.context.naturalConfirmation).toBeNull();
       expect(await tools.execute("confirm_quote_naturally", fabricated)).toEqual({ status: "rejected", code: "UNVERIFIED_SENDER" });
-      return "No pude verificar tu número.";
+      return final(tools, "No pude verificar tu número.");
     });
     expect(result.status).toBe("committed");
     expect(await h.appointments()).toHaveLength(0);
@@ -761,13 +891,13 @@ describe("natural confirmation protocol", () => {
     await prepareNatural(h);
     await prepareNatural(other);
     let otherBinding: ReturnType<typeof naturalArguments>;
-    await other.run("dale", async tools => { otherBinding = naturalArguments(tools); return "¿Lo reservamos?"; });
+    await other.run("dale", async tools => { otherBinding = naturalArguments(tools); return final(tools, "¿Lo reservamos?"); });
     await h.run("dale reservame ese", async tools => {
       const args = naturalArguments(tools);
       expect((await tools.execute("confirm_quote_naturally", { ...args, quoteFingerprint: otherBinding!.quoteFingerprint })).status).toBe("rejected");
       await tools.execute("prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T11:00:00-03:00" });
       expect((await tools.execute("confirm_quote_naturally", args)).status).toBe("rejected");
-      return "Te paso la nueva propuesta, que requiere otra confirmación.";
+      return final(tools, "Te paso la nueva propuesta, que requiere otra confirmación.");
     });
     expect(await h.appointments()).toHaveLength(0);
   });
@@ -783,7 +913,7 @@ describe("natural confirmation protocol", () => {
       expect(result.status).toBe("prepared_quote");
       if (result.status === "prepared_quote") expect(result.quote).toHaveProperty("terms.priceArs", 2500);
       expect((await tools.execute("confirm_quote_naturally", args)).status).toBe("rejected");
-      return "Cambiaron las condiciones: necesitás aceptar el detalle actualizado.";
+      return final(tools, "Cambiaron las condiciones: necesitás aceptar el detalle actualizado.");
     });
     expect(await h.appointments()).toHaveLength(0);
     if (fresh.status !== "committed") throw new Error("Missing refreshed quote");
@@ -794,7 +924,7 @@ describe("natural confirmation protocol", () => {
       expect((await tools.execute("confirm_quote_naturally", { ...args, quoteFingerprint: oldFingerprint! })).status).toBe("rejected");
       expect((await tools.execute("confirm_quote_naturally", args)).status).toBe("staged_action");
       expect((await tools.execute("confirm_quote_naturally", args)).status).toBe("rejected");
-      return "Reserva guardada.";
+      return final(tools, "Reserva guardada.");
     });
     expect((await h.appointments())[0]!.terms.priceArs).toBe(2500);
   });
@@ -806,14 +936,14 @@ describe("natural confirmation protocol", () => {
     });
     const prepared = await h.run("más tarde", async tools => {
       await tools.execute("prepare_change", { appointmentId: appointment.id, startsAt: "2035-04-02T11:00:00-03:00" });
-      return "Propuesta de cambio.";
+      return final(tools, "Propuesta de cambio.");
     });
     if (prepared.status !== "committed") throw new Error("Missing change quote");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${prepared.outboundId}`;
     await db.sql`update clients set phone='+14155552671' where business_id=${h.business}`;
     await h.run("dale cambialo", async tools => {
       expect((await tools.execute("confirm_quote_naturally", naturalArguments(tools))).status).toBe("rejected");
-      return "No pude verificar ese turno con tu número.";
+      return final(tools, "No pude verificar ese turno con tu número.");
     });
     expect((await h.appointments())[0]!.startsAt).toBe(start);
   });
@@ -826,7 +956,7 @@ describe("natural confirmation protocol", () => {
     });
     await h.run("dale reservame ese", async tools => {
       expect((await tools.execute("confirm_quote_naturally", naturalArguments(tools))).status).toBe("clarification");
-      return "Ese horario ya no está disponible.";
+      return final(tools, "Ese horario ya no está disponible.");
     });
     expect(await h.appointments()).toHaveLength(1);
   });
@@ -838,7 +968,7 @@ describe("natural confirmation protocol", () => {
     let staged: AgentToolResult | undefined;
     const callback = async (tools: AgentToolSession) => {
       staged = await tools.execute("confirm_quote_naturally", naturalArguments(tools));
-      return "Reservado.";
+      return final(tools, "Reservado.");
     };
     expect((await h.agenda.withAgentSession(job, callback)).status).toBe("infrastructure_failure");
     expect(staged?.status).toBe("staged_action");
@@ -882,21 +1012,21 @@ describe("current-read bound native cancellation (not semantic consent attestati
       // The affirmative case has an actual prior question; the double supplies interpretation, not evidence of LLM understanding.
       if (text === "sí, ese por favor") await h.run("¿mi turno?", async tools => {
         data(await tools.execute("owned_appointment", { appointmentId: appointment.id }));
-        return JSON.stringify({ kind: "informational_prose", text: "¿Querés cancelar ese turno?" });
+        return JSON.stringify({ text: "¿Querés cancelar ese turno?" });
       });
       const job = await h.receive(text);
       const result = await h.agenda.withAgentSession(job, async tools => {
         const args = await cancellationArguments(tools, appointment.id);
         expect((await tools.execute("cancel", args)).status).toBe("staged_action");
         expect((await tools.execute("cancel", args)).status).toBe("rejected");
-        return JSON.stringify({ kind: "informational_prose", text: "No se guardó nada." });
+        return JSON.stringify({ text: "No se guardó nada." });
       });
       expect(result.status).toBe("committed");
       if (result.status !== "committed") throw new Error("Missing cancellation");
       expect(result.actions).toEqual([{ operation: "cancel", appointmentId: appointment.id }]);
       expect(await h.appointments()).toEqual([{ ...appointment, state: "cancelled" }]);
       const [output] = await db.sql`select text from outbound_commands where outbound_id=${result.outboundId}`;
-      expect(output!.text).toBe(`Cancelación guardada. Turno ${appointment.id}.`);
+      expect(output!.text).toBe("No se guardó nada.");
       expect(await cancellationEffects(job.messageId)).toEqual({ outputs: 1, receipts: 1, effects: 1 });
       expect((await h.agenda.withAgentSession(job, async () => "unused")).status).toBe("not_current");
     });
@@ -905,14 +1035,14 @@ describe("current-read bound native cancellation (not semantic consent attestati
     const h = await fixture(true, false);
     await h.run("ese horario", async tools => {
       expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start })).status).toBe("clarification");
-      return '{"kind":"reply"}';
+      return final(tools);
     });
     const appointment = await savedAppointment(h, "2035-04-02T11:00:00-03:00");
     await h.run(native ? "quería cancelar mi turno" : "cancelar mi turno", async tools => {
       expect((tools.context.pending as any).awaitingNames).toBe(true);
       const args = native ? await cancellationArguments(tools, appointment.id) : { appointmentId: appointment.id };
       expect((await tools.execute("cancel", args)).status).toBe("staged_action");
-      return '{"kind":"reply"}';
+      return final(tools);
     });
     expect((await h.appointments())[0]!.state).toBe("cancelled");
   });
@@ -923,7 +1053,7 @@ describe("current-read bound native cancellation (not semantic consent attestati
     await h.run("sí", async tools => {
       expect(tools.context.naturalConfirmation).not.toBeNull();
       expect((await tools.execute("cancel", await cancellationArguments(tools, appointment.id))).status).toBe("staged_action");
-      return '{"kind":"reply"}';
+      return final(tools);
     });
     expect(await h.appointments()).toEqual([{ ...appointment, state: "cancelled" }]);
   });
@@ -931,7 +1061,7 @@ describe("current-read bound native cancellation (not semantic consent attestati
     const h = await fixture();
     const first = await savedAppointment(h), second = await savedAppointment(h, "2035-04-02T11:00:00-03:00");
     let old: Awaited<ReturnType<typeof cancellationArguments>>;
-    await h.run("quería cancelar mi turno", async tools => { old = await cancellationArguments(tools, first.id); return '{"kind":"reply"}'; });
+    await h.run("quería cancelar mi turno", async tools => { old = await cancellationArguments(tools, first.id); return final(tools); });
     const job = await h.receive("quería cancelar mi turno");
     expect((await h.agenda.withAgentSession(job, async tools => {
       const args = await cancellationArguments(tools, first.id);
@@ -941,7 +1071,7 @@ describe("current-read bound native cancellation (not semantic consent attestati
         { ...args, binding: { ...args.binding, evidence: "cancelar" } },
         { ...args, binding: { ...args.binding, evidenceReference: "f".repeat(64) } },
         { ...args, appointmentId: second.id }]) expect((await tools.execute("cancel", invalid)).status).toBe("rejected");
-      return '{"kind":"reply"}';
+      return final(tools);
     })).status).toBe("committed");
     expect(await h.appointments()).toEqual([first, second]);
     expect(await cancellationEffects(job.messageId)).toEqual({ outputs: 1, receipts: 0, effects: 0 });
@@ -950,14 +1080,14 @@ describe("current-read bound native cancellation (not semantic consent attestati
     const h = await fixture(), other = await fixture();
     const appointment = await savedAppointment(h);
     let args: Awaited<ReturnType<typeof cancellationArguments>>;
-    await h.run("quería cancelar mi turno", async tools => { args = await cancellationArguments(tools, appointment.id); return '{"kind":"reply"}'; });
+    await h.run("quería cancelar mi turno", async tools => { args = await cancellationArguments(tools, appointment.id); return final(tools); });
     // The schema permits one connection per business; the other tenant also supplies a distinct connection.
     for (const [owner, sender, trusted] of [[h, "14155552671", true],
       [other, "5491123456789", true], [h, "5491123456789", false]] as const) {
       const job = await owner.receive(args!.binding.evidence, trusted, sender);
       expect((await owner.agenda.withAgentSession(job, async tools => {
         expect((await tools.execute("cancel", args!)).status).toBe("rejected");
-        return '{"kind":"reply"}';
+        return final(tools);
       })).status).toBe("committed");
       expect(await cancellationEffects(job.messageId)).toEqual({ outputs: 1, receipts: 0, effects: 0 });
     }
@@ -974,7 +1104,7 @@ describe("current-read bound native cancellation (not semantic consent attestati
       if (change === "terminal") await db.sql`update appointments set state='cancelled' where id=${appointment.id}`;
       if (change === "ownership") await db.sql`update clients set phone='+14155552671' where business_id=${h.business}`;
       expect((await tools.execute("cancel", args)).status).toBe("rejected");
-      return '{"kind":"reply"}';
+      return final(tools);
     })).status).toBe("committed");
     const [current] = await h.appointments();
     expect(current!.state).toBe(change === "terminal" || change === "already-terminal" ? "cancelled" : "confirmed");
@@ -991,7 +1121,7 @@ describe("current-read bound native cancellation (not semantic consent attestati
       if (pending) expect(tools.context.pending).toEqual(pending);
       pending = tools.context.pending;
       staged = await tools.execute("cancel", await cancellationArguments(tools, appointment.id));
-      return '{"kind":"reply"}';
+      return final(tools);
     };
     expect((await h.agenda.withAgentSession(job, callback)).status).toBe("infrastructure_failure");
     expect(staged!.status).toBe("staged_action");
@@ -1013,7 +1143,7 @@ async function pendingNames(h: Awaited<ReturnType<typeof fixture>>) {
     const result = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start });
     expect(result.status).toBe("clarification");
     expect((result as any).namesReference).toMatch(/^[a-f0-9]{64}$/u);
-    return '{"kind":"reply"}';
+    return final(tools);
   });
 }
 describe("native booking names: provenance enforcement, not semantic name ownership", () => {
@@ -1026,14 +1156,14 @@ describe("native booking names: provenance enforcement, not semantic name owners
         firstName: nameField(current.messageId, "María"), lastName: nameField(current.messageId, "Pérez", 6) });
       expect(result.status).toBe("prepared_quote");
       expect((await tools.execute("confirm_quote", {})).status).not.toBe("staged_action");
-      return '{"kind":"reply"}';
+      return final(tools);
     });
     expect(await h.appointments()).toHaveLength(0);
     const [before] = await db.sql`select count(*)::int count from clients where business_id=${h.business}`;
     expect(before!.count).toBe(0);
     if (quote.status !== "committed") throw new Error("Missing quote");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${quote.outboundId}`;
-    await h.run("confirmo", async tools => { expect((await tools.execute("confirm_quote", {})).status).toBe("staged_action"); return '{"kind":"reply"}'; });
+    await h.run("confirmo", async tools => { expect((await tools.execute("confirm_quote", {})).status).toBe("staged_action"); return final(tools); });
     expect((await h.appointments())[0]!.client).toMatchObject({ firstName: "María", lastName: "Pérez", phone });
   });
   test("authenticated earlier group names are available when the latest fragment asks availability", async () => {
@@ -1046,7 +1176,7 @@ describe("native booking names: provenance enforcement, not semantic name owners
       const draft = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start });
       expect((await tools.execute("collect_booking_names", { namesReference: (draft as any).namesReference,
         firstName: nameField(earlier.messageId, "María"), lastName: nameField(earlier.messageId, "Pérez", 6) })).status).toBe("prepared_quote");
-      return '{"kind":"reply"}';
+      return final(tools);
     });
     expect(await h.appointments()).toHaveLength(0);
   });
@@ -1062,26 +1192,26 @@ describe("native booking names: provenance enforcement, not semantic name owners
           ? (await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start })).namesReference : runtime.namesReference;
         const result = await tools.execute("collect_booking_names", { namesReference: reference, [field]: nameField(current.messageId, value) });
         expect(result.status).toBe(expected ? "clarification" : "prepared_quote");
-        if (expected) expect((result as any).message).toBe(expected);
+        if (expected) expect(result).toMatchObject({ missingFields: ["lastName"] });
         else expect((result as any).quote.names).toEqual({ firstName: "María", lastName: value });
         // An unavailable selection returns alternatives without losing the partial name.
         if (value === "María") expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T23:00:00-03:00" })).status).toBe("clarification");
-        return '{"kind":"reply"}';
+        return final(tools);
       });
     }
     await h.run("otro horario", async tools => {
       const result = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T11:00:00-03:00" });
       expect((result as any).quote.names).toEqual({ firstName: "María", lastName: "Gómez" });
       await tools.execute("clear_pending", {});
-      return '{"kind":"reply"}';
+      return final(tools);
     });
-    await h.run("¿y ahora?", async tools => { expect(tools.context.pending).toEqual({ quote: null, awaitingNames: false }); expect(nameRuntime(tools).namesReference).toBeNull(); return '{"kind":"reply"}'; });
+    await h.run("¿y ahora?", async tools => { expect(tools.context.pending).toEqual({ quote: null, awaitingNames: false }); expect(nameRuntime(tools).namesReference).toBeNull(); return final(tools); });
   });
   for (const accepts of [false, true]) test(`identical names preserve delivered quote authority; later acceptance=${accepts}`, async () => {
     const h = await fixture(true, false);
     const original = await h.run("mi nombre es María Pérez", async tools => {
       expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start })).status).toBe("prepared_quote");
-      return '{"kind":"reply"}';
+      return final(tools);
     });
     if (original.status !== "committed") throw new Error("Missing original");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${original.outboundId}`;
@@ -1094,7 +1224,7 @@ describe("native booking names: provenance enforcement, not semantic name owners
       // This double supplies interpretation; repeated names themselves are never consent.
       if (accepts) expect(await tools.execute("confirm_quote_naturally", consent)).toMatchObject({ status: "staged_action" });
       expect(result.status).toBe("data");
-      return JSON.stringify({ kind: "informational_prose", text: "Gracias, ya tengo tu nombre y apellido." });
+      return JSON.stringify({ text: "Gracias, ya tengo tu nombre y apellido." });
     });
     if (repeated.status !== "committed") throw new Error("Missing repeat reply");
     expect(repeated.actions).toHaveLength(accepts ? 1 : 0);
@@ -1103,7 +1233,7 @@ describe("native booking names: provenance enforcement, not semantic name owners
     expect(clientCount!.count).toBe(accepts ? 1 : 0);
     const [output] = await db.sql`select text from outbound_commands where outbound_id=${repeated.outboundId}`;
     expect(output!.text).not.toContain("Reserva propuesta");
-    if (accepts) expect(output!.text).toStartWith("Guardado:");
+    if (accepts) expect(output!.text).toBe("Gracias, ya tengo tu nombre y apellido.");
     else {
       const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
       expect(pending!.dialogue.quote).toEqual(previousQuote);
@@ -1118,29 +1248,29 @@ describe("native booking names: provenance enforcement, not semantic name owners
     await h.run(value, async tools => {
       const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
       expect(await tools.execute("collect_booking_names", { namesReference: runtime.namesReference, [field]: nameField(current.messageId, value) }))
-        .toMatchObject({ status: "clarification", message: prompt });
-      return '{"kind":"reply"}';
+        .toMatchObject({ status: "clarification", missingFields: [field === "firstName" ? "lastName" : "firstName"] });
+      return final(tools);
     });
     let previous: unknown;
     const repeated = await h.run(value, async tools => {
       previous = structuredClone(tools.context.pending);
       const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
       expect(await tools.execute("collect_booking_names", { namesReference: runtime.namesReference, [field]: nameField(current.messageId, value) }))
-        .toMatchObject({ status: "clarification", message: prompt });
-      return '{"kind":"reply"}';
+        .toMatchObject({ status: "clarification", missingFields: [field === "firstName" ? "lastName" : "firstName"] });
+      return final(tools);
     });
     if (repeated.status !== "committed") throw new Error("Missing partial repeat");
     const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
     const [output] = await db.sql`select text from outbound_commands where outbound_id=${repeated.outboundId}`;
     expect(pending!.dialogue).toEqual(previous);
-    expect(output!.text).toBe(prompt);
+    expect(output!.text).toBe("Respuesta redactada por el modelo.");
     expect(await h.appointments()).toHaveLength(0);
-    await h.run("dejalo", async tools => { await tools.execute("clear_pending", {}); return '{"kind":"reply"}'; });
-    await h.run("¿qué quedó?", async tools => { expect(tools.context.pending).toEqual({ quote: null, awaitingNames: false }); return '{"kind":"reply"}'; });
+    await h.run("dejalo", async tools => { await tools.execute("clear_pending", {}); return final(tools); });
+    await h.run("¿qué quedó?", async tools => { expect(tools.context.pending).toEqual({ quote: null, awaitingNames: false }); return final(tools); });
   });
   test("corrected delivered names invalidate old references, quote consent and delivery", async () => {
     const h = await fixture(true, false);
-    const original = await h.run("mi nombre es María Pérez", async tools => { await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start }); return '{"kind":"reply"}'; });
+    const original = await h.run("mi nombre es María Pérez", async tools => { await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start }); return final(tools); });
     if (original.status !== "committed") throw new Error("Missing original");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${original.outboundId}`;
     const corrected = await h.run("Gómez", async tools => {
@@ -1152,13 +1282,13 @@ describe("native booking names: provenance enforcement, not semantic name owners
       expect((await tools.execute("collect_booking_names", args)).status).toBe("rejected");
       expect((await tools.execute("confirm_quote_naturally", consent)).status).toBe("rejected");
       expect((await tools.execute("confirm_quote", {})).status).not.toBe("staged_action");
-      return '{"kind":"reply"}';
+      return final(tools);
     });
-    const refreshed = await h.run("confirmo", async tools => { expect((await tools.execute("confirm_quote", {})).status).toBe("prepared_quote"); return '{"kind":"reply"}'; });
+    const refreshed = await h.run("confirmo", async tools => { expect((await tools.execute("confirm_quote", {})).status).toBe("prepared_quote"); return final(tools); });
     expect(await h.appointments()).toHaveLength(0);
     if (corrected.status !== "committed" || refreshed.status !== "committed") throw new Error("Missing correction");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${refreshed.outboundId}`;
-    await h.run("confirmo", async tools => { expect((await tools.execute("confirm_quote", {})).status).toBe("staged_action"); return '{"kind":"reply"}'; });
+    await h.run("confirmo", async tools => { expect((await tools.execute("confirm_quote", {})).status).toBe("staged_action"); return final(tools); });
     expect((await h.appointments())[0]!.client.lastName).toBe("Gómez");
   });
   test("invalid draft references, spans and untrusted group members cannot modify fields", async () => {
@@ -1168,7 +1298,7 @@ describe("native booking names: provenance enforcement, not semantic name owners
     let foreignReference: unknown;
     await other.run("María", async tools => {
       foreignReference = (await tools.execute("prepare_booking", { serviceId: other.service, startsAt: start })).namesReference;
-      return '{"kind":"reply"}';
+      return final(tools);
     });
     await h.run("María", async tools => {
       const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
@@ -1181,15 +1311,15 @@ describe("native booking names: provenance enforcement, not semantic name owners
         expect((await tools.execute("collect_booking_names", invalid)).status).toBe("rejected");
       await tools.execute("clear_pending", {});
       expect((await tools.execute("collect_booking_names", patch)).status).toBe("rejected");
-      return '{"kind":"reply"}';
+      return final(tools);
     });
-    await h.run("¿qué quedó?", async tools => { expect(tools.context.pending).toEqual({ quote: null, awaitingNames: false }); return '{"kind":"reply"}'; });
+    await h.run("¿qué quedó?", async tools => { expect(tools.context.pending).toEqual({ quote: null, awaitingNames: false }); return final(tools); });
     expect(await h.appointments()).toHaveLength(0);
     const job = await h.receive("María", false);
     expect((await h.agenda.withAgentSession(job, async tools => {
       expect(nameRuntime(tools).namesReference).toBeNull();
       expect((await tools.execute("collect_booking_names", { namesReference: "a".repeat(64), firstName: nameField(job.messageId, "María") })).status).toBe("rejected");
-      return '{"kind":"reply"}';
+      return final(tools);
     })).status).toBe("committed");
   });
   test("history and identical previous-inbound references cannot become current name evidence", async () => {
@@ -1199,7 +1329,7 @@ describe("native booking names: provenance enforcement, not semantic name owners
     if (prepared.status !== "committed") throw new Error("Missing draft");
     await db.sql`update outbound_commands set state='sent',send_started_at=now(),acknowledged_at=now() where outbound_id=${prepared.outboundId}`;
     let oldReference: string | null | undefined;
-    await h.run("María", async tools => { oldReference = nameRuntime(tools).namesReference; return '{"kind":"reply"}'; });
+    await h.run("María", async tools => { oldReference = nameRuntime(tools).namesReference; return final(tools); });
     await h.run("María", async tools => {
       const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
       expect(runtime.nameSources.some(row => row.messageId === historical.messageId)).toBe(false);
@@ -1209,9 +1339,9 @@ describe("native booking names: provenance enforcement, not semantic name owners
       const replaced = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start });
       expect(replaced.namesReference).not.toBe(args.namesReference);
       expect((await tools.execute("collect_booking_names", args)).status).toBe("rejected");
-      return '{"kind":"reply"}';
+      return final(tools);
     });
-    await h.run("sin nombres", async tools => { expect((tools.context.pending as any).bookingNameFields).toBeUndefined(); return '{"kind":"reply"}'; });
+    await h.run("sin nombres", async tools => { expect((tools.context.pending as any).bookingNameFields).toBeUndefined(); return final(tools); });
     expect(await h.appointments()).toHaveLength(0);
   });
   test("each published member's sender is revalidated when applying its field", async () => {
@@ -1224,7 +1354,7 @@ describe("native booking names: provenance enforcement, not semantic name owners
       await db.sql`update whatsapp_received_senders set phone='+14155552671' where message_id=${earlier.messageId}`;
       expect((await tools.execute("collect_booking_names", { namesReference: runtime.namesReference,
         firstName: nameField(earlier.messageId, "María") })).status).toBe("rejected");
-      return '{"kind":"reply"}';
+      return final(tools);
     });
   });
   test("registered client identity is authoritative and exposes no names capability", async () => {
@@ -1233,7 +1363,7 @@ describe("native booking names: provenance enforcement, not semantic name owners
       const result = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start });
       expect((result as any).namesReference).toBeNull();
       expect((await tools.execute("collect_booking_names", { namesReference: "a".repeat(64), firstName: nameField(randomUUID(), "Otro") })).status).toBe("rejected");
-      return '{"kind":"reply"}';
+      return final(tools);
     });
     const [client] = await db.sql`select first_name,last_name from clients where business_id=${h.business}`;
     expect(client).toEqual({ first_name: "María", last_name: "Pérez" });
@@ -1269,12 +1399,12 @@ describe("native metadata: authentic provenance, not semantic request attestatio
         const args = await metadataArguments(tools, ap.id, operation, value);
         expect((await tools.execute(operation, args)).status).toBe("staged_action");
         expect((await tools.execute(operation, args)).status).toBe("rejected");
-        return '{"kind":"informational_prose","text":"No se guardó nada."}';
+        return '{"text":"No se guardó nada."}';
       });
       expect(await h.appointments()).toEqual([{ ...before!, [operation === "notes" ? "notes" : "customerResourcePreference"]: value }]);
       if (result.status !== "committed") throw new Error("Missing metadata reply");
       const [output] = await db.sql`select text from outbound_commands where outbound_id=${result.outboundId}`;
-      expect(output!.text).toBe(operation === "notes" ? "Nota guardada." : "Preferencia guardada. No cambia la asignación ni garantiza disponibilidad.");
+      expect(output!.text).toBe("No se guardó nada.");
       expect(result.actions).toEqual([{ operation, appointmentId: ap.id }]);
     });
   }
@@ -1283,7 +1413,7 @@ describe("native metadata: authentic provenance, not semantic request attestatio
     const earlier = await h.receive("Por favor dejá escrito: acceso por la rampa ♿");
     await h.run("y avisame por acá", async tools => {
       expect((await tools.execute("notes", await metadataArguments(tools, ap.id, "notes", "acceso por la rampa ♿", earlier.messageId))).status).toBe("staged_action");
-      return '{"kind":"reply"}';
+      return final(tools);
     });
     expect(await h.appointments()).toEqual([{ ...ap, notes: "acceso por la rampa ♿" }]);
   });
@@ -1292,10 +1422,10 @@ describe("native metadata: authentic provenance, not semantic request attestatio
     await db.sql`insert into resources(id,business_id,name,weekly_schedule) select ${alternative},${h.business},'Beatriz',weekly_schedule from resources where id=${h.resource}`;
     const text = operation === "notes" ? "nota: café ☕" : "prefiero Ana", value = operation === "notes" ? "café ☕" : h.resource;
     let old: Awaited<ReturnType<typeof metadataArguments>>, foreignResourceReference: string;
-    await h.run(text, async tools => { old = await metadataArguments(tools, ap.id, operation, value); return '{"kind":"reply"}'; });
+    await h.run(text, async tools => { old = await metadataArguments(tools, ap.id, operation, value); return final(tools); });
     if (operation === "preference") {
       const other = await fixture();
-      await other.run(text, async tools => { foreignResourceReference = (data(await tools.execute("read_resources", {})) as any).items[0].resourceReference; return '{"kind":"reply"}'; });
+      await other.run(text, async tools => { foreignResourceReference = (data(await tools.execute("read_resources", {})) as any).items[0].resourceReference; return final(tools); });
     }
     const result = await h.run(text, async tools => {
       const args = await metadataArguments(tools, ap.id, operation, value), binding = args.binding;
@@ -1310,7 +1440,7 @@ describe("native metadata: authentic provenance, not semantic request attestatio
         operation === "notes" ? { ...args, binding: { ...binding, start: binding.start! + 1 } } : { ...args, binding: { ...binding, resourceReference: foreignResourceReference! } },
         operation === "notes" ? { ...args, notes: "\u0000" } : { ...args, binding: { ...binding, resourceReference: "f".repeat(64) } }])
         expect((await tools.execute(operation, invalid)).status).toBe("rejected");
-      return '{"kind":"reply"}';
+      return final(tools);
     });
     if (result.status === "committed") expect(result.actions).toEqual([]);
     expect(await h.appointments()).toEqual([ap, second]);
@@ -1319,7 +1449,7 @@ describe("native metadata: authentic provenance, not semantic request attestatio
     for (const trusted of [false, true]) {
       const job = await h.receive(text, trusted, trusted ? "14155552671" : "5491123456789");
       expect((await h.agenda.withAgentSession(job, async tools => {
-        expect((await tools.execute(operation, old!)).status).toBe("rejected"); return '{"kind":"reply"}';
+        expect((await tools.execute(operation, old!)).status).toBe("rejected"); return final(tools);
       })).status).toBe("committed");
     }
     expect(await h.appointments()).toEqual([ap, second]);
@@ -1329,7 +1459,7 @@ describe("native metadata: authentic provenance, not semantic request attestatio
     const sourceOwner = origin === "foreign" ? await fixture() : h;
     const member = await sourceOwner.receive(text, origin !== "untrusted");
     if (origin === "history") {
-      const closed = await h.run("hola", async () => '{"kind":"reply"}');
+      const closed = await h.run("hola", async () => '{"text":"Hola."}');
       if (closed.status === "committed") await db.sql`update outbound_commands set state='sent',send_started_at=now(),acknowledged_at=now() where outbound_id=${closed.outboundId}`;
     }
     if (origin === "reassigned") await h.receive("Hola", true, "14155552671");
@@ -1337,7 +1467,7 @@ describe("native metadata: authentic provenance, not semantic request attestatio
       const args = await metadataArguments(tools, ap.id, "notes", "rampa");
       if (origin === "reassigned") await db.sql`update whatsapp_received_senders set phone='+14155552671' where message_id=${member.messageId}`;
       expect((await tools.execute("notes", { ...args, binding: { ...args.binding, messageId: member.messageId, evidence: text } })).status).toBe("rejected");
-      return '{"kind":"reply"}';
+      return final(tools);
     });
     expect(await h.appointments()).toEqual([ap]);
   });
@@ -1355,7 +1485,7 @@ describe("native metadata: authentic provenance, not semantic request attestatio
         if (change === "resource_name") await db.sql`update resources set name='Actualizada' where id=${h.resource}`;
         if (change === "resource_status") await db.sql`update resources set status='suspended' where id=${h.resource}`;
         expected = await h.appointments();
-        expect((await tools.execute(operation, args)).status).toBe("rejected"); return '{"kind":"reply"}';
+        expect((await tools.execute(operation, args)).status).toBe("rejected"); return final(tools);
       });
       expect(await h.appointments()).toEqual(expected!);
     });
@@ -1368,13 +1498,13 @@ describe("native metadata: authentic provenance, not semantic request attestatio
     await db.sql`update services set status='suspended' where id=${h.service}`;
     await db.sql`update resources set status='suspended' where id=${h.resource}`;
     await h.run("Que figure Beatriz como mi preferencia", async tools => {
-      expect((await tools.execute("preference", await metadataArguments(tools, ap.id, "preference", alternative))).status).toBe("staged_action"); return '{"kind":"reply"}';
+      expect((await tools.execute("preference", await metadataArguments(tools, ap.id, "preference", alternative))).status).toBe("staged_action"); return final(tools);
     });
     expect(await h.appointments()).toEqual([{ ...ap, customerResourcePreference: alternative }]);
     await db.sql`update resources set status='suspended' where id=${alternative}`;
     await h.run("prefiero Ana", async tools => {
       expect((data(await tools.execute("read_resources", {})) as any).items).toEqual([]);
-      expect((await tools.execute("preference", { appointmentId: ap.id, resourceId: h.resource })).status).toBe("staged_action"); return '{"kind":"reply"}';
+      expect((await tools.execute("preference", { appointmentId: ap.id, resourceId: h.resource })).status).toBe("staged_action"); return final(tools);
     });
     expect(await h.appointments()).toEqual([{ ...ap, customerResourcePreference: h.resource }]);
   });
@@ -1385,7 +1515,7 @@ describe("native metadata: authentic provenance, not semantic request attestatio
       const [before] = await h.appointments(), allowed = operation === "notes" && state === "started";
       await h.run("Anotá rampa y mi preferencia por Ana", async tools => {
         expect((await tools.execute(operation, await metadataArguments(tools, ap.id, operation, operation === "notes" ? "rampa" : h.resource))).status)
-          .toBe(allowed ? "staged_action" : "rejected"); return '{"kind":"reply"}';
+          .toBe(allowed ? "staged_action" : "rejected"); return final(tools);
       });
       expect(await h.appointments()).toEqual([{ ...before!, ...(allowed ? { notes: "rampa" } : {}) }]);
     });
@@ -1393,7 +1523,7 @@ describe("native metadata: authentic provenance, not semantic request attestatio
   test("literal 2000-character notes save exactly; NUL remains forbidden by the existing DAL", async () => {
     const h = await fixture(), ap = await savedAppointment(h), literal = "á".repeat(2000);
     await h.run(`Anotá: ${literal}`, async tools => {
-      expect((await tools.execute("notes", await metadataArguments(tools, ap.id, "notes", literal))).status).toBe("staged_action"); return '{"kind":"reply"}';
+      expect((await tools.execute("notes", await metadataArguments(tools, ap.id, "notes", literal))).status).toBe("staged_action"); return final(tools);
     });
     await expect(pools.api.run(h.context, repo => repo.setAppointmentNotes(h.business, ap.id, { notes: "\u0000" },
       { actor: "customer", channel: "ai", now: "2035-04-01T08:00:00-03:00" }))).rejects.toMatchObject({ code: "INVALID_INPUT" });
@@ -1409,7 +1539,7 @@ describe("native metadata: authentic provenance, not semantic request attestatio
       if (pending) expect(tools.context.pending).toEqual(pending);
       pending = tools.context.pending;
       staged = await tools.execute(operation, await metadataArguments(tools, ap.id, operation, operation === "notes" ? "rampa" : h.resource));
-      return '{"kind":"reply"}';
+      return final(tools);
     };
     const counts = async () => (await db.sql`select
       (select count(*)::int from outbound_commands where source_message_id=${job.messageId}) outputs,
@@ -1437,7 +1567,7 @@ describe("transactional agent tools", () => {
       expect(slots.items.length).toBeGreaterThan(0);
       expect(data(await tools.execute("owned_appointments", {}))).toEqual({ items: [], hasMore: false });
       expect((await tools.execute("owned_appointment", { appointmentId: randomUUID() })).status).toBe("rejected");
-      return "Respuesta natural y fundamentada.";
+      return final(tools, "Respuesta natural y fundamentada.");
     });
     expect(result.status).toBe("committed");
   });
@@ -1446,13 +1576,13 @@ describe("transactional agent tools", () => {
     const quote = await h.run("me sirve ese", async tools => {
       expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start })).status).toBe("prepared_quote");
       expect((await tools.execute("confirm_quote", {})).status).not.toBe("staged_action");
-      return "Te paso los detalles.";
+      return final(tools, "Te paso los detalles.");
     });
     expect(await h.appointments()).toHaveLength(0);
     expect(quote.status).toBe("committed");
     const undelivered = await h.run("confirmo", async tools => {
       expect((await tools.execute("confirm_quote", {})).status).toBe("prepared_quote");
-      return "Necesitás recibir los detalles.";
+      return final(tools, "Necesitás recibir los detalles.");
     });
     expect(await h.appointments()).toHaveLength(0);
     if (undelivered.status !== "committed") throw new Error("Missing quote output");
@@ -1460,7 +1590,7 @@ describe("transactional agent tools", () => {
     const job = await h.receive("confirmo");
     const saved = await h.agenda.withAgentSession(job, async tools => {
       expect((await tools.execute("confirm_quote", {})).status).toBe("staged_action");
-      return "Listo, quedó reservado.";
+      return final(tools, "Listo, quedó reservado.");
     });
     expect(saved.status).toBe("committed");
     if (saved.status === "committed") expect(saved.actions).toHaveLength(1);
@@ -1481,18 +1611,18 @@ describe("transactional agent tools", () => {
       expect((await tools.execute("prepare_change", { appointmentId: foreign.id, startsAt: start })).status).toBe("rejected");
       expect((await tools.execute("availability", { serviceId: h.service, date: "2035-04-02", appointmentId: foreign.id })).status).toBe("rejected");
       expect((await tools.execute("availability", { serviceId: other.service, date: "2035-04-02" })).status).toBe("rejected");
-      return "No pude verificar ese turno.";
+      return final(tools, "No pude verificar ese turno.");
     });
     await db.sql`update clients set phone='+14155552671' where business_id=${other.business}`;
     await other.run("mostrame", async tools => {
       expect(data(await tools.execute("owned_appointments", {}))).toEqual({ items: [], hasMore: false });
       expect((await tools.execute("owned_appointment", { appointmentId: foreign.id })).status).toBe("rejected");
-      return "No hay turnos con este número.";
+      return final(tools, "No hay turnos con este número.");
     });
   });
   test("callback failure rolls back staged mutation and response, without leaking errors", async () => {
     const h = await fixture();
-    const prepared = await h.run("ese horario", async tools => { await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start }); return "Detalles"; });
+    const prepared = await h.run("ese horario", async tools => { await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start }); return final(tools, "Detalles"); });
     if (prepared.status !== "committed") throw new Error("Missing quote");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${prepared.outboundId}`;
     const job = await h.receive("confirmo");
@@ -1502,18 +1632,18 @@ describe("transactional agent tools", () => {
     });
     expect(result).toEqual({ status: "infrastructure_failure" });
     expect(await h.appointments()).toHaveLength(0);
-    const retry = await h.agenda.withAgentSession(job, async tools => { await tools.execute("confirm_quote", {}); return "Reservado"; });
+    const retry = await h.agenda.withAgentSession(job, async tools => { await tools.execute("confirm_quote", {}); return final(tools, "Reservado"); });
     expect(retry.status).toBe("committed");
     expect(await h.appointments()).toHaveLength(1);
   });
   test("receipt persistence failure rolls back effect and natural output together", async () => {
     const h = await fixture();
-    const prepared = await h.run("ese", async tools => { await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start }); return "Detalles"; });
+    const prepared = await h.run("ese", async tools => { await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start }); return final(tools, "Detalles"); });
     if (prepared.status !== "committed") throw new Error("Missing quote");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${prepared.outboundId}`;
     await db.sql`insert into public.agent_fault_fixture(business_id,enabled) values(${h.business},true)`;
     const job = await h.receive("confirmo");
-    const result = await h.agenda.withAgentSession(job, async tools => { await tools.execute("confirm_quote", {}); return "Reservado"; });
+    const result = await h.agenda.withAgentSession(job, async tools => { await tools.execute("confirm_quote", {}); return final(tools, "Reservado"); });
     expect(result.status).toBe("infrastructure_failure");
     expect(await h.appointments()).toHaveLength(0);
     const [counts] = await db.sql`select
@@ -1522,7 +1652,7 @@ describe("transactional agent tools", () => {
       (select count(*)::int from outbox_events where business_id=${h.business} and topic='appointment.changed') effects`;
     expect(counts).toEqual({ outputs: 0, receipts: 0, effects: 0 });
     await db.sql`update public.agent_fault_fixture set enabled=false where business_id=${h.business}`;
-    const retry = await h.agenda.withAgentSession(job, async tools => { await tools.execute("confirm_quote", {}); return "Reservado"; });
+    const retry = await h.agenda.withAgentSession(job, async tools => { await tools.execute("confirm_quote", {}); return final(tools, "Reservado"); });
     expect(retry.status).toBe("committed");
     expect(await h.appointments()).toHaveLength(1);
   });
@@ -1534,7 +1664,7 @@ describe("transactional agent tools", () => {
       const changed = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: later });
       expect(changed.status).toBe("prepared_quote");
       if (changed.status === "prepared_quote") expect(Date.parse((changed.quote as { startsAt: string }).startsAt)).toBe(Date.parse(later));
-      return "Esta es tu nueva propuesta.";
+      return final(tools, "Esta es tu nueva propuesta a las 11:00.");
     });
     if (prepared.status !== "committed") throw new Error("Missing quote");
     const [output] = await db.sql`select text from outbound_commands where outbound_id=${prepared.outboundId}`;
@@ -1546,7 +1676,7 @@ describe("transactional agent tools", () => {
     });
     await h.run("confirmo", async tools => {
       expect((await tools.execute("confirm_quote", {})).status).toBe("clarification");
-      return "Ese horario ya no está disponible.";
+      return final(tools, "Ese horario ya no está disponible.");
     });
     expect(await h.appointments()).toHaveLength(1);
   });
@@ -1563,7 +1693,7 @@ describe("transactional agent tools", () => {
       expect((await tools.execute("cancel", { appointmentId: appointment.id })).status).toBe("rejected");
       expect((await tools.execute("notes", { appointmentId: appointment.id, notes: "invented" })).status).toBe("rejected");
       expect((await tools.execute("preference", { appointmentId: appointment.id, resourceId: h.resource })).status).toBe("rejected");
-      return "Te propongo este cambio.";
+      return final(tools, "Te propongo este cambio.");
     });
     expect((await h.appointments())[0]!.startsAt).toBe(start);
     if (prepared.status !== "committed") throw new Error("Missing quote");
@@ -1571,17 +1701,17 @@ describe("transactional agent tools", () => {
     await h.run("confirmo", async tools => {
       expect((await tools.execute("confirm_quote", {})).status).toBe("staged_action");
       expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start })).status).toBe("rejected");
-      return "Cambio reservado.";
+      return final(tools, "Cambio reservado.");
     });
     expect(Date.parse((await h.appointments())[0]!.startsAt)).toBe(Date.parse("2035-04-02T11:00:00-03:00"));
     await h.run("nota: necesito acceso", async tools => {
       expect((await tools.execute("notes", { appointmentId: appointment.id, notes: "model replacement" })).status).toBe("staged_action");
-      return "Nota guardada.";
+      return final(tools, "Nota guardada.");
     });
     expect((await h.appointments())[0]!.notes).toBe("necesito acceso");
     await h.run("cancelar mi turno", async tools => {
       expect((await tools.execute("cancel", { appointmentId: appointment.id })).status).toBe("staged_action");
-      return "Turno cancelado.";
+      return final(tools, "Turno cancelado.");
     });
     expect((await h.appointments())[0]!.state).toBe("cancelled");
   });
@@ -1589,23 +1719,23 @@ describe("transactional agent tools", () => {
     const h = await fixture();
     await h.run("prefiero Desconocida", async tools => {
       expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start })).status).toBe("clarification");
-      return "¿Con quién preferís?";
+      return final(tools, "¿Con quién preferís?");
     });
     await h.run("a esa hora", async tools => {
       expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start })).status).toBe("clarification");
-      return "Necesito aclarar el recurso.";
+      return final(tools, "Necesito aclarar el recurso.");
     });
     await h.run("sin preferencia", async tools => {
       expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start })).status).toBe("prepared_quote");
-      return "Te paso el detalle.";
+      return final(tools, "Te paso el detalle.");
     });
     await h.run("ya no quiero reservar", async tools => {
       expect(data(await tools.execute("clear_pending", {}))).toEqual({ pending: null });
-      return "De acuerdo, dejamos la propuesta.";
+      return final(tools, "De acuerdo, dejamos la propuesta.");
     });
     await h.run("confirmo", async tools => {
       expect((await tools.execute("confirm_quote", {})).status).toBe("clarification");
-      return "No hay una propuesta pendiente.";
+      return final(tools, "No hay una propuesta pendiente.");
     });
     expect(await h.appointments()).toHaveLength(0);
   });
@@ -1615,7 +1745,7 @@ describe("transactional agent tools", () => {
     const result = await h.agenda.withAgentSession(job, async tools => {
       expect(await tools.execute("owned_appointments", {})).toEqual({ status: "rejected", code: "UNVERIFIED_SENDER" });
       expect(await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start })).toEqual({ status: "rejected", code: "UNVERIFIED_SENDER" });
-      return "No pude verificar el número.";
+      return final(tools, "No pude verificar el número.");
     });
     expect(result.status).toBe("committed");
   });
@@ -1624,7 +1754,7 @@ describe("transactional agent tools", () => {
     await h.run("hola", async tools => {
       expect((await tools.execute("read_business", {})).status).toBe("unavailable_data");
       expect((await tools.execute("cancel", { appointmentId: randomUUID() })).status).toBe("rejected");
-      return "No hay perfil registrado.";
+      return final(tools, "No hay perfil registrado.");
     });
   });
 });
