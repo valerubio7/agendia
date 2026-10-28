@@ -30,7 +30,7 @@ test("Clientes searches and edits owned identities with complete appointment his
       return response.json();
     };
     const read = async (path: string) => {
-      const response = await business.request.get(`${system.webUrl}/api/me/${path}`);
+      const response = await business.request.get(`${system.webUrl}/api/me/${path}`, { maxRetries: 1 });
       expect(response.status()).toBe(200);
       return response.json();
     };
