@@ -93,7 +93,7 @@ export class PostgresAiJobProcessor {
       const outcome = await this.agenda.withAgentSession(job, async session => {
         if (!session.context.messages) throw new Error("Missing agent context");
         try {
-          return await converseAgent(this.conversational, session, [...session.context.messages], job.correlationId);
+          return await converseAgent(this.conversational, session, [...session.context.messages], job.correlationId, { repairFinalJson: true });
         } catch (error) {
           if (error instanceof AiProviderError || (error instanceof DOMException && error.name === "AbortError"))
             conversationFailure = error;

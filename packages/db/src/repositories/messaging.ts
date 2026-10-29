@@ -117,7 +117,7 @@ export async function loadAiMessage(db: Db, messageId: string, requireDue = fals
       closes_group: boolean;
     }[]
   >`select m.id,m.sequence,m.direction,m.raw_text,m.processing_state,
-      case when m.direction='inbound' then m.processing_state='ai_failed' or exists(
+      case when m.direction='inbound' then m.processing_state in ('ai_failed','silent_completed') or exists(
         select 1 from outbound_commands o where o.business_id=m.business_id
         and o.connection_id=m.connection_id and o.conversation_id=m.conversation_id
         and o.source_message_id=m.id and o.send_started_at is not null)
@@ -205,6 +205,16 @@ export async function saveGenerated(db: Db, messageId: string, businessId: strin
       >`insert into outbound_commands(business_id,conversation_id,connection_id,source_message_id,text,state) values(${businessId},${source.conversation_id},${source.connection_id},${messageId},${text},'generated') on conflict(source_message_id) where source_message_id is not null do nothing returning outbound_id`
     )[0] ?? null
   );
+}
+export async function saveSilentCompletion(db: Db, messageId: string, businessId: string) {
+  await db`select c.id from conversations c join messages m on m.conversation_id=c.id where m.id=${messageId} and m.business_id=${businessId} for update of c`;
+  const [source] = await db<{ conversation_id: string }[]>`update messages set processing_state='silent_completed'
+    where id=${messageId} and business_id=${businessId} and direction='inbound' and processing_state='pending'
+    and exists(select 1 from conversations c where c.id=messages.conversation_id and c.business_id=messages.business_id
+      and c.latest_inbound_id=messages.id and c.reply_due_at<=now()) returning conversation_id`;
+  if (!source) return false;
+  await db`update conversations set reply_due_at=null where id=${source.conversation_id} and business_id=${businessId} and latest_inbound_id=${messageId}`;
+  return true;
 }
 export async function claimOwnedOutbound(db: Db, owner: string, ownership: string[]) {
   return (

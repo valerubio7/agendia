@@ -8,8 +8,13 @@ describe("strict model-authored final response", () => {
     expect(renderAgentResponse(JSON.stringify({ text, presentedQuoteReference: "a".repeat(64) })))
       .toEqual({ text, presentedQuoteReference: "a".repeat(64) });
   });
+  test("accepts explicit silence without pretending to present a quote", () => {
+    expect(renderAgentResponse('{"text":null}')).toEqual({ text: null });
+    expect(() => renderAgentResponse(JSON.stringify({ text: null, presentedQuoteReference: "a".repeat(64) }))).toThrow();
+    expect(() => renderAgentResponse('{"text":null,"unknown":true}')).toThrow();
+  });
   for (const raw of ["not JSON", "null", '"texto"', '{}', '{"text":',
-    ...[null, 1, [], {}, "", " \n\t", "a".repeat(4001)].map(text => JSON.stringify({ text })),
+    ...[1, [], {}, "", " \n\t", "a".repeat(4001)].map(text => JSON.stringify({ text })),
     ...["kind", "facts", "ask", "operation", "proof"].map(key => JSON.stringify({ text: "hola", [key]: "reply" })),
     JSON.stringify({ text: "hola", presentedQuoteReference: "forged" }),
     JSON.stringify({ text: "a".repeat(3990) }),

@@ -136,6 +136,71 @@ describe("production inbound native conversation with transactional tools", () =
     const receipts = await db.sql`select * from whatsapp_agenda_receipts where business_id=${h.business} and message_id=${job.messageId}`;
     expect(receipts).toHaveLength(1);
   });
+  test("a successful format repair commits a staged booking once across job replay", async () => {
+    const h = await fixture();
+    let round = 0;
+    const prepare = h.worker(async request => !round++ ? batch("prepare", "prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T10:00:00-03:00" }) : modelReply(request));
+    await prepare.processor.process(await h.receive("primero ese"));
+    expect(await h.appointments()).toHaveLength(0);
+    const out = await h.outputs();
+    expect(out).toHaveLength(1);
+    await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${out[0]!.outbound_id}`;
+    round = 0;
+    const worker = h.worker(async request => {
+      if (round++ === 0) {
+        const runtime = JSON.parse(request.messages[1]!.content!).runtime;
+        return batch("accept", "confirm_quote_naturally", { ...runtime.naturalConfirmation, evidence: runtime.currentEvidence });
+      }
+      if (round === 2) {
+        expect(JSON.parse(request.messages.at(-1)!.content!).status).toBe("staged_action");
+        return finish("Guardado");
+      }
+      expect(round).toBe(3);
+      expect(request.messages.at(-2)!.content).toBe("Guardado");
+      expect(request.messages.at(-1)!.content).toContain("objeto JSON");
+      expect(request.messages.filter(message => message.role === "tool")).toHaveLength(1);
+      return finish('{"text":"Guardado"}');
+    });
+    const job = await h.receive("dale reservame ese");
+    await worker.processor.process(job);
+    const appointments = await h.appointments(), outputs = await h.outputs();
+    const receipts = await db.sql`select * from whatsapp_agenda_receipts where business_id=${h.business} and message_id=${job.messageId}`;
+    expect(worker.requests).toHaveLength(3);
+    expect(appointments).toHaveLength(1);
+    expect(outputs).toHaveLength(2);
+    expect(outputs.filter(output => output.source_message_id === job.messageId)).toMatchObject([
+      { text: "Guardado", state: "generated" },
+    ]);
+    expect(receipts).toHaveLength(1);
+    await worker.processor.process(job);
+    expect(worker.requests).toHaveLength(3);
+    expect(await h.appointments()).toEqual(appointments);
+    expect(await h.outputs()).toEqual(outputs);
+    expect([...await db.sql`select * from whatsapp_agenda_receipts where business_id=${h.business} and message_id=${job.messageId}`]).toEqual([...receipts]);
+  });
+  test("a format repair cannot execute tools or commit a staged booking", async () => {
+    const h = await fixture();
+    let round = 0;
+    const prepare = h.worker(async request => !round++ ? batch("prepare", "prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T10:00:00-03:00" }) : modelReply(request));
+    await prepare.processor.process(await h.receive("primero ese"));
+    const out = await h.outputs();
+    await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${out[0]!.outbound_id}`;
+    round = 0;
+    const worker = h.worker(async request => {
+      if (round++ === 0) {
+        const runtime = JSON.parse(request.messages[1]!.content!).runtime;
+        return batch("accept", "confirm_quote_naturally", { ...runtime.naturalConfirmation, evidence: runtime.currentEvidence });
+      }
+      return round === 2 ? finish("Guardado") : batch("unexpected", "clear_pending");
+    });
+    const job = await h.receive("dale reservame ese");
+    await expect(worker.processor.process(job)).rejects.toThrow("infrastructure failure");
+    expect(await h.appointments()).toHaveLength(0);
+    expect(await h.outputs()).toHaveLength(1);
+    const [source] = await db.sql`select processing_state from messages where id=${job.messageId}`;
+    expect(source!.processing_state).toBe("pending");
+    expect(worker.requests).toHaveLength(3);
+  });
   test("provider failure after staged booking rolls back everything and permits retry", async () => {
     const h = await fixture();
     let round = 0;
@@ -162,6 +227,60 @@ describe("production inbound native conversation with transactional tools", () =
     await retry.processor.process(job);
     expect(await h.appointments()).toHaveLength(1);
     expect(await h.outputs()).toHaveLength(2);
+  });
+  test("a silent farewell completes once and closes the inbound group before a new request", async () => {
+    const h = await fixture();
+    // Mirror acknowledged delivery, including the actual visible sent-history row.
+    const deliver = async (output: any) => {
+      const providerId = randomUUID();
+      await db.sql`update outbound_commands set state='sent',send_started_at=now(),acknowledged_at=now(),provider_message_id=${providerId} where outbound_id=${output.outbound_id}`;
+      const [row] = await db.sql`update conversations set next_sequence=next_sequence+1 where id=${output.conversation_id} returning next_sequence-1 sequence`;
+      await db.sql`insert into messages(business_id,conversation_id,connection_id,provider_message_id,sequence,direction,raw_text,received_at,processing_state)
+        values(${h.business},${output.conversation_id},${output.connection_id},${providerId},${row!.sequence},'outbound',${output.text},now(),'sent')`;
+    };
+    const reply = h.worker(async () => finish('{"text":"Listo, tu turno quedó confirmado."}'));
+    await reply.processor.process(await h.receive("terminamos"));
+    let outputs = await h.outputs();
+    await deliver(outputs[0]!);
+    const courtesy = h.worker(async request => {
+      expect(request.messages.some(m => m.role === 'assistant' && m.content === 'Listo, tu turno quedó confirmado.')).toBe(true);
+      return finish('{"text":"De nada, hasta luego."}');
+    });
+    await courtesy.processor.process(await h.receive("muchas gracias"));
+    outputs = await h.outputs();
+    await deliver(outputs[1]!);
+    const silent = h.worker(async request => {
+      expect(request.messages.some(m => m.role === 'assistant' && m.content === 'De nada, hasta luego.')).toBe(true);
+      expect(request.messages.at(-1)!.content).toBe('dale hasta luego');
+      return finish('{"text":null}');
+    });
+    const farewell = await h.receive("dale hasta luego");
+    const [before] = await db.sql`select next_sequence from conversations where id=(select conversation_id from messages where id=${farewell.messageId})`;
+    await silent.processor.process(farewell);
+    await silent.processor.process(farewell);
+    expect(silent.requests).toHaveLength(1);
+    expect(await h.outputs()).toHaveLength(2);
+    const [inbound] = await db.sql`select processing_state from messages where id=${farewell.messageId}`;
+    expect(inbound!.processing_state).toBe('silent_completed');
+    const [bookkeeping] = await db.sql`select
+      (select next_sequence from conversations where id=(select conversation_id from messages where id=${farewell.messageId})) sequence,
+      (select reply_due_at from conversations where id=(select conversation_id from messages where id=${farewell.messageId})) due,
+      (select count(*)::int from messages where business_id=${h.business} and direction='outbound') bubbles,
+      (select count(*)::int from outbound_commands where source_message_id=${farewell.messageId}) commands,
+      (select count(*)::int from whatsapp_agenda_receipts where message_id=${farewell.messageId} and outbound_id is null and operation='silent') receipts,
+      (select count(*)::int from audit_events where business_id=${h.business} and request_id=${farewell.correlationId} and event_type='whatsapp.agenda.silent') audits,
+      (select count(*)::int from outbox_events where business_id=${h.business} and topic='appointment.changed') effects`;
+    expect(bookkeeping).toEqual({ sequence: before!.next_sequence, due: null, bubbles: 2, commands: 0, receipts: 1, audits: 1, effects: 0 });
+    expect(await h.appointments()).toHaveLength(0);
+    const fresh = h.worker(async request => {
+      expect(request.messages.at(-1)!.content).toBe("gracias, quisiera otro turno");
+      return finish('{"text":"Claro, ¿para qué día?"}');
+    });
+    const newJob = await h.receive("gracias, quisiera otro turno");
+    await fresh.processor.process(newJob);
+    await fresh.processor.process(newJob);
+    expect(fresh.requests).toHaveLength(1);
+    expect(await h.outputs()).toHaveLength(3);
   });
   test("manual sender and malformed provider input cannot fabricate an effect or fallback", async () => {
     const h = await fixture();

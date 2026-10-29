@@ -2,9 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { hash, Algorithm } from "@node-rs/argon2";
 import { join } from "node:path";
 import { buildApi } from "../../apps/api/src/app.ts";
-import { buildAgentMessages } from "../../apps/message-worker/src/agent/context.ts";
 import { createRuntimePools } from "@agendia/db";
-import type { PlatformAiInstructions } from "@agendia/contracts";
 import {
   applyPostgresMigrations,
   startTestPostgres,
@@ -109,8 +107,8 @@ const csrfBootstrapRegression = async () => {
     }
     const recovered = tabs[0]!.json().csrfToken;
     expect(tabs[1]!.json().csrfToken).toBe(recovered);
-    const save = (csrf: string, origin = ORIGIN) => request("PUT", "/admin/ai-instructions", {
-      cookie: auth.cookie, csrf, origin, body: { additionalInstructions: "" },
+    const save = (csrf: string, origin = ORIGIN) => request("PUT", "/admin/response-timing", {
+      cookie: auth.cookie, csrf, origin, body: { responseTiming: { initialDelaySeconds: 600, activeDelaySeconds: 90, inactivityResetSeconds: 3600 } },
     });
     expect((await save(oldToken)).statusCode).toBe(200);
     expect((await save(recovered)).statusCode).toBe(200);
@@ -566,77 +564,25 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
     ).toBe(403);
   });
 
-  test("restricts global instructions to admins and preserves raw additions with strict mutations", async () => {
-    const url = "/admin/ai-instructions", admin = await adminLogin();
+  test("response timing is admin-only, CSRF-protected, strict and replaces the old route", async () => {
+    const url = "/admin/response-timing", admin = await adminLogin();
+    const policy = { initialDelaySeconds: 0, activeDelaySeconds: 23, inactivityResetSeconds: 75 };
+    const before = [...await database.sql`select * from operational_controls`];
     expect((await request("GET", url)).statusCode).toBe(401);
-    expect((await request("PUT", url, { body: { additionalInstructions: "" } })).statusCode).toBe(401);
+    expect((await request("PUT", url, { body: { responseTiming: policy } })).statusCode).toBe(401);
     await createBusiness("global-denied@example.test");
     const user = await login("global-denied@example.test", "tenant initial password safe");
     expect((await request("GET", url, user)).statusCode).toBe(404);
-    expect((await request("PUT", url, { ...user, origin: ORIGIN, body: { additionalInstructions: "" } })).statusCode).toBe(404);
-    const initial = await request("GET", url, admin);
-    expect(initial.statusCode).toBe(200);
-    expect(initial.json().additionalInstructions).toBe("");
-    const initialConfig = initial.json<PlatformAiInstructions>();
-    const privateData = {
-      business: "fixture-private-business", customer: "fixture-private-customer",
-      history: "fixture-private-history", summary: "fixture-private-summary",
-      agent: "fixture-private-agent", admin: "fixture-supplementary-guidance",
-      identity: "fixture-private-identity", quote: "fixture-private-quote",
-      evidenceReference: "a".repeat(64), quoteFingerprint: "b".repeat(64),
-    };
-    const runtimeMessages = buildAgentMessages({
-      raw_text: privateData.customer, sequence: "4",
-      profile: { display_name: privateData.business }, agent: { style: privateData.agent },
-      currentGroup: [{ id: "4", sequence: "4", raw_text: privateData.customer }],
-      turns: [{ id: "3", sequence: "3", direction: "outbound", processing_state: "sent", raw_text: privateData.history }],
-      summaries: [{ covered_through: "2", structured_summary: {
-        facts: [privateData.summary], requests: [], commitments: [], preferences: [], openItems: [],
-      } }],
-    }, privateData.admin, "2035-04-01T12:00:00Z", {
-      pending: { clientId: privateData.identity, quote: { id: privateData.quote } },
-      currentEvidence: privateData.customer,
-      naturalConfirmation: { evidenceReference: privateData.evidenceReference, quoteFingerprint: privateData.quoteFingerprint },
-    });
-    const systemMessages = runtimeMessages.filter(message => message.role === "system");
-    expect(systemMessages).toHaveLength(1);
-    for (const token of Object.values(privateData)) {
-      expect(JSON.stringify(runtimeMessages.slice(1))).toContain(token);
-      expect(initialConfig.baseInstructions).not.toContain(token);
-    }
-    expect(initialConfig.baseInstructions).toBe(systemMessages[0]!.content!);
-    const policy = { initialDelaySeconds: 0, activeDelaySeconds: 13, inactivityResetSeconds: 55 };
-    expect(initial.json().replyPacing).toEqual({ initialDelaySeconds: 600, activeDelaySeconds: 90, inactivityResetSeconds: 3600 });
-    const body = { additionalInstructions: "  Atención 😀\n\tfin  ", replyPacing: policy };
-    expect((await request("PUT", url, { ...user, origin: ORIGIN, body })).statusCode).toBe(404);
-    for (const protection of [
-      { origin: "https://evil.test", csrf: admin.csrf },
-      { origin: ORIGIN, csrf: "wrong" },
-      { csrf: admin.csrf },
-      { origin: ORIGIN },
-    ]) {
-      expect((await request("PUT", url, { cookie: admin.cookie, ...protection, body })).statusCode).toBe(403);
-    }
-    for (const invalid of [{}, { additionalInstructions: null }, { additionalInstructions: 1 }, { ...body, baseInstructions: "changed" }, { ...body, extra: true }]) {
+    expect((await request("PUT", url, { ...user, origin: ORIGIN, body: { responseTiming: policy } })).statusCode).toBe(404);
+    for (const protection of [{ origin: "https://evil.test", csrf: admin.csrf }, { origin: ORIGIN, csrf: "wrong" }, { csrf: admin.csrf }, { origin: ORIGIN }])
+      expect((await request("PUT", url, { cookie: admin.cookie, ...protection, body: { responseTiming: policy } })).statusCode).toBe(403);
+    for (const invalid of [{}, { additionalInstructions: "legacy" }, { responseTiming: {} }, { responseTiming: { ...policy, activeDelaySeconds: -1 } }, { responseTiming: policy, extra: true }])
       expect((await request("PUT", url, { ...admin, origin: ORIGIN, body: invalid })).statusCode).toBe(400);
-    }
-    expect((await request("PUT", url, { ...admin, origin: ORIGIN, body })).json<typeof initialConfig>()).toEqual({ ...initialConfig, ...body });
-    expect((await request("GET", url, await adminLogin())).json<typeof initialConfig>()).toEqual({ ...initialConfig, ...body });
-    const instructionOnly = { additionalInstructions: "instruction-only update" };
-    expect((await request("PUT", url, { ...admin, origin: ORIGIN, body: instructionOnly })).json<PlatformAiInstructions>()).toEqual({ ...initialConfig, ...body, ...instructionOnly });
-    for (const field of Object.keys(policy)) {
-      for (const value of [-1, 0.5, 604801, "90", null]) {
-        const invalid = { additionalInstructions: "must not persist", replyPacing: { ...policy, [field]: value } };
-        expect((await request("PUT", url, { ...admin, origin: ORIGIN, body: invalid })).statusCode).toBe(400);
-      }
-    }
-    for (const invalid of [null, {}, { ...policy, initialDelaySeconds: 86401 }, { ...policy, activeDelaySeconds: 86401 }, { ...policy, inactivityResetSeconds: 0 }, { ...policy, milliseconds: 600000 }]) {
-      expect((await request("PUT", url, { ...admin, origin: ORIGIN, body: { additionalInstructions: "must not persist", replyPacing: invalid } })).statusCode).toBe(400);
-    }
-    expect((await request("GET", url, await adminLogin())).json<PlatformAiInstructions>()).toEqual({ ...initialConfig, ...body, ...instructionOnly });
-    const cleared = await request("PUT", url, { ...admin, origin: ORIGIN, body: { additionalInstructions: "" } });
-    expect(cleared.statusCode).toBe(200);
-    expect(cleared.json().replyPacing).toEqual(policy);
+    expect([...await database.sql`select * from operational_controls`]).toEqual(before);
+    expect((await request("GET", "/admin/ai-instructions", admin)).statusCode).toBe(404);
+    expect((await request("PUT", "/admin/ai-instructions", { ...admin, origin: ORIGIN, body: { additionalInstructions: "legacy" } })).statusCode).toBe(404);
+    expect((await request("PUT", url, { ...admin, origin: ORIGIN, body: { responseTiming: policy } })).json<{ responseTiming: typeof policy }>()).toEqual({ responseTiming: policy });
+    expect((await request("GET", url, admin)).json<{ responseTiming: typeof policy }>()).toEqual({ responseTiming: policy });
   });
   test("CSRF bootstrap is origin/header/session protected, stable across tabs and compatible with old tokens", csrfBootstrapRegression);
 });

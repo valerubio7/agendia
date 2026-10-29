@@ -48,6 +48,13 @@ describe("safe HTTP and event contracts", () => {
     ).toBe(false);
   });
 
+  test("response timing replaces the removed administrative guidance route", () => {
+    expect(PRODUCT_HTTP_ROUTES as readonly string[]).toContain("/admin/response-timing");
+    expect(PRODUCT_HTTP_ROUTES as readonly string[]).not.toContain("/admin/ai-instructions");
+    expect(toOpenApiDocument().paths).toHaveProperty("/admin/response-timing");
+    expect(toOpenApiDocument().paths).not.toHaveProperty("/admin/ai-instructions");
+  });
+
   test("allowlists service catalog and lifecycle paths in derived OpenAPI", () => {
     const document = toOpenApiDocument();
     for (const route of ["/me/services", "/me/services/:id", "/me/services/:id/status"]) {

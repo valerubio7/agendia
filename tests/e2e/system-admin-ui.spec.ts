@@ -1,6 +1,5 @@
 import { expect, type Locator, type Page, type Route } from "@playwright/test";
 import { login, test } from "./support/fixtures.ts";
-import { AGENT_SYSTEM_INSTRUCTIONS } from "../../packages/domain/src/agent/instructions.ts";
 
 const tenant = {
   name: "Estudio Administración Horizonte",
@@ -135,7 +134,7 @@ async function expectRegistryBrand(shell: Locator) {
   }
 }
 
-for (const failedRead of ["businesses", "ai-instructions"]) {
+for (const failedRead of ["businesses", "response-timing"]) {
   test(`confirmed admin writes survive failed ${failedRead} refresh with GET-only recovery`, async ({ page, system }) => {
     await login(page, system.webUrl, system.admin.email, system.admin.password);
     await expect(page.locator('[data-ui="admin-screen"]')).toBeVisible();
@@ -179,7 +178,7 @@ for (const failedRead of ["businesses", "ai-instructions"]) {
         await create.getByRole("button", { name: "Crear negocio", exact: true }).click();
       } else if (action === "instructions") {
         await openAiConfiguration(page);
-        await page.getByLabel("Indicaciones administrativas complementarias", { exact: true }).fill("Instrucciones confirmadas");
+        await page.getByRole("spinbutton", { name: /^Espera activa \(segundos\)/ }).fill("23");
         await page.getByRole("button", { name: "Guardar configuración", exact: true }).click();
       } else {
         const management = await openManagement(businessRow(page, directory, currentName));
@@ -199,7 +198,7 @@ for (const failedRead of ["businesses", "ai-instructions"]) {
       const newerSecret = action === "password" && mutationCount === 2;
       if (newerSecret) await secret!.evaluate(node => { (node as HTMLInputElement).value = "newer unsent password"; });
       release();
-      await expect(feedback.getByRole("status")).toHaveText(action === "create" ? "Negocio creado" : action === "instructions" ? "Instrucciones guardadas" : "Negocio actualizado");
+      await expect(feedback.getByRole("status")).toHaveText(action === "create" ? "Negocio creado" : action === "instructions" ? "Tiempos guardados" : "Negocio actualizado");
       const warning = feedback.getByRole("alert");
       await expect(warning).toHaveText("No se pudo actualizar la información. Reintentá solo la consulta.");
       if (action === "rename") currentName = "Negocio renombrado confirmado";
@@ -219,7 +218,7 @@ for (const failedRead of ["businesses", "ai-instructions"]) {
     await page.reload();
     await expect(businessRow(page, directory, currentName).getByText("Suspendido", { exact: true })).toBeVisible();
     await openAiConfiguration(page);
-    await expect(page.getByLabel("Indicaciones administrativas complementarias", { exact: true })).toHaveValue("Instrucciones confirmadas");
+    await expect(page.getByRole("spinbutton", { name: /^Espera activa \(segundos\)/ })).toHaveValue("23");
     await page.getByRole("tab", { name: "Negocios", exact: true }).click();
     await page.route("**/admin/businesses/*/user", route => route.fulfill({ status: 500, json: { code: "INTERNAL_ERROR" } }));
     const management = await openManagement(businessRow(page, directory, currentName));
@@ -268,6 +267,7 @@ test("late admin mutation and refresh responses cannot overwrite a newer session
       await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
       await expect(page).toHaveURL(/\/admin\/login$/);
       await login(page, system.webUrl, system.admin.email, system.admin.password);
+      await expect(page.locator('[data-ui="admin-screen"]')).toBeVisible({ timeout: 30_000 });
       const management = await openManagement(businessRow(page, directory, name));
       await management.getByLabel(`Nombre de ${name}`, { exact: true }).fill(`${name} nuevo`);
       await management.getByRole("button", { name: "Renombrar", exact: true }).click();
@@ -283,82 +283,39 @@ test("late admin mutation and refresh responses cannot overwrite a newer session
   }
 });
 
-test("platform admin saves and reloads additions and global reply waits", async ({ page, system }) => {
+test("platform admin saves and reloads global reply waits without guidance controls", async ({ page, system }) => {
   await login(page, system.webUrl, system.admin.email, system.admin.password);
-  const openInstructions = async () => {
-    await openAiConfiguration(page);
-    const details = page.locator(".admin-base-instructions");
-    await details.locator("summary").click();
-    await expect(details).toHaveAttribute("open", "");
-  };
-  await openInstructions();
-  const base = page.getByLabel("Instrucciones base · Solo lectura", { exact: true });
-  const notice = page.locator(".admin-feedback").getByRole("status");
-  await expect(base).toHaveValue(AGENT_SYSTEM_INSTRUCTIONS);
-  await expect(base).toHaveAttribute("readonly", "");
-  await expect(page.getByText("Sistema activo del agente de WhatsApp, de solo lectura. Se modifica únicamente desde el código; no incluye datos de conversaciones.", { exact: true })).toBeVisible();
-  await expect(page.getByText("Se envían como contexto complementario, no como instrucciones de sistema. No reemplazan las reglas base ni las herramientas; su cumplimiento no está garantizado.", { exact: true })).toBeVisible();
-  const viewport = page.viewportSize()!;
-  const hints = page.getByRole("tabpanel", { name: "Configuración de IA", exact: true })
-    .locator("#platform-base-help, #platform-additional-help, .admin-pacing > p, .admin-pacing__fields small");
-  await expect(hints).toHaveCount(6);
-  for (const size of [{ width: 1280, height: 900 }, { width: 900, height: 900 }, { width: 360, height: 800 }]) {
-    await page.setViewportSize(size);
-    for (const hint of await hints.all()) {
-      await expect(hint).toBeVisible();
-      expect(await hint.evaluate(node => {
-        const bounds = node.getBoundingClientRect();
-        const container = node.parentElement!.getBoundingClientRect();
-        return bounds.width > 0 && node.scrollWidth <= node.clientWidth + 1
-          && bounds.left >= container.left && bounds.right <= container.right + 1
-          && bounds.left >= 0 && bounds.right <= document.documentElement.clientWidth + 1;
-      })).toBe(true);
-    }
-    await expectNoHorizontalOverflow(page);
-  }
-  await page.setViewportSize(viewport);
-  const additions = page.getByLabel("Indicaciones administrativas complementarias", { exact: true });
-  const raw = "  Atención 😀\nSegunda línea  ";
-  await additions.fill(raw);
+  await openAiConfiguration(page);
+  const panel = page.getByRole("tabpanel", { name: "Configuración de IA", exact: true });
+  await expect(panel.locator("textarea")).toHaveCount(0);
+  await expect(panel.getByText(/indicaciones administrativas|instrucciones base/i)).toHaveCount(0);
   const initialWait = page.getByRole("spinbutton", { name: /^Espera inicial \(segundos\)/ });
   const activeWait = page.getByRole("spinbutton", { name: /^Espera activa \(segundos\)/ });
   const reset = page.getByRole("spinbutton", { name: /^Reinicio por inactividad \(segundos\)/ });
-  for (const [control, id] of [[base, "platform-base-help"], [additions, "platform-additional-help"],
-    [initialWait, "platform-initial-help"], [activeWait, "platform-active-help"], [reset, "platform-inactivity-help"]] as const)
+  for (const [control, id] of [[initialWait, "platform-initial-help"], [activeWait, "platform-active-help"], [reset, "platform-inactivity-help"]] as const)
     await expect(control).toHaveAttribute("aria-describedby", id);
   await expect(initialWait).toHaveValue("600");
   await expect(activeWait).toHaveValue("90");
   await expect(reset).toHaveValue("3600");
+  for (const size of [{ width: 1280, height: 900 }, { width: 900, height: 900 }, { width: 360, height: 800 }]) {
+    await page.setViewportSize(size);
+    await expectNoHorizontalOverflow(page);
+  }
   await initialWait.fill("0");
   await activeWait.fill("23");
   await reset.fill("75");
   await page.getByRole("button", { name: "Guardar configuración", exact: true }).click();
-  await expect(notice).toHaveText("Instrucciones guardadas");
+  await expect(page.locator(".admin-feedback").getByRole("status")).toHaveText("Tiempos guardados");
   await page.reload();
-  await openInstructions();
-  await expect(additions).toHaveValue(raw);
+  await openAiConfiguration(page);
   await expect(initialWait).toHaveValue("0");
   await expect(activeWait).toHaveValue("23");
   await expect(reset).toHaveValue("75");
-  await expect(base).toHaveValue(AGENT_SYSTEM_INSTRUCTIONS);
-  await expect(base).toHaveAttribute("readonly", "");
   await reset.fill("0");
   await page.getByRole("button", { name: "Guardar configuración", exact: true }).click();
   expect(await reset.evaluate(input => (input as HTMLInputElement).validity.rangeUnderflow)).toBe(true);
   await page.reload();
-  await openInstructions();
-  await expect(reset).toHaveValue("75");
-  await expect(additions).toHaveValue(raw);
-  // Editing only the supplementary text must retain all numeric controls.
-  await additions.fill(`${raw}\nMás instrucciones`);
-  await page.getByRole("button", { name: "Guardar configuración", exact: true }).click();
-  await expect(notice).toHaveText("Instrucciones guardadas");
-  await page.reload();
-  await openInstructions();
-  await expect(additions).toHaveValue(`${raw}\nMás instrucciones`);
-  await expect(base).toHaveValue(AGENT_SYSTEM_INSTRUCTIONS);
-  await expect(initialWait).toHaveValue("0");
-  await expect(activeWait).toHaveValue("23");
+  await openAiConfiguration(page);
   await expect(reset).toHaveValue("75");
 });
 

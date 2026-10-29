@@ -11,7 +11,7 @@ import {
   type BusinessClosureRequest,
   type WeeklySchedule,
   type Profile,
-  type PlatformAiInstructions,
+  type ResponseTiming,
   type Session,
   type Service,
   type Resource,
@@ -53,7 +53,7 @@ const agentFields = [
   "businessInstructions",
   "active",
 ] as const;
-type AdminData = { businesses: Business[]; instructions: PlatformAiInstructions };
+type AdminData = { businesses: Business[]; responseTiming: ResponseTiming };
 const WHATSAPP_QR_LIFECYCLE_MS = 5 * 60_000;
 
 export type WhatsAppLinkMonitorEvent =
@@ -346,7 +346,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión" }: { mode: Mode
     try {
       loaded =
         mode === "admin"
-          ? { businesses: await api.businesses(), instructions: await api.platformAiInstructions() }
+          ? { businesses: await api.businesses(), responseTiming: await api.responseTiming() }
           : mode === "clients" || mode === "turnos"
             ? session
           : mode === "business-calendar"
@@ -520,16 +520,16 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión" }: { mode: Mode
           return false;
         }
       }
-      const [businesses, instructions] = await Promise.allSettled([
-        api.businesses(), api.platformAiInstructions(),
+      const [businesses, responseTiming] = await Promise.allSettled([
+        api.businesses(), api.responseTiming(),
       ]);
       if (!current()) return false;
       setData((state: unknown) => !current() ? state : {
         ...(state as AdminData),
         ...(businesses.status === "fulfilled" ? { businesses: businesses.value } : {}),
-        ...(instructions.status === "fulfilled" ? { instructions: instructions.value } : {}),
+        ...(responseTiming.status === "fulfilled" ? { responseTiming: responseTiming.value } : {}),
       });
-      setAdminWarning(businesses.status === "rejected" || instructions.status === "rejected");
+      setAdminWarning(businesses.status === "rejected" || responseTiming.status === "rejected");
       return true; // Failed refreshes cannot undo the confirmed write.
     } finally {
       if (current()) {
@@ -688,10 +688,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión" }: { mode: Mode
     );
 
   if (mode === "admin") {
-    const { businesses, instructions } = data as {
-      businesses: Business[];
-      instructions: PlatformAiInstructions;
-    };
+    const { businesses, responseTiming } = data as AdminData;
     const reconcileBusiness = (state: AdminData, saved: Business): AdminData => ({
       ...state, businesses: state.businesses.some(row => row.id === saved.id)
         ? state.businesses.map(row => row.id === saved.id ? saved : row)
@@ -706,10 +703,10 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión" }: { mode: Mode
       >
         <AdminBusinessesScreen
           businesses={businesses}
-          instructions={instructions}
-          saveInstructionsAction={(text, replyPacing) => runAdminMutation(
-            () => api.savePlatformAiInstructions(text, replyPacing), "Instrucciones guardadas",
-            (state, instructions) => ({ ...state, instructions }),
+          responseTiming={responseTiming}
+          saveResponseTimingAction={(timing) => runAdminMutation(
+            () => api.saveResponseTiming(timing), "Tiempos guardados",
+            (state, responseTiming) => ({ ...state, responseTiming }),
           )}
           notice={notice}
           error={error}

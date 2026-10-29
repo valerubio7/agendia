@@ -1,33 +1,15 @@
 import { ReplyPacingSchema, type ReplyPacing } from "@agendia/domain";
 import type { Db } from "./shared.ts";
 
-type PlatformAiSettingsRow = ReplyPacing & { additionalInstructions: string };
-function platformAiSettings(row: PlatformAiSettingsRow | undefined) {
-  if (!row) throw new Error("Platform AI instructions singleton missing");
-  const { additionalInstructions, ...replyPacing } = row;
-  return { additionalInstructions, replyPacing: ReplyPacingSchema.parse(replyPacing) };
-}
-
-export async function platformAiInstructions(db: Db) {
-  const [row] = await db<PlatformAiSettingsRow[]>`
-      select additional_instructions "additionalInstructions", initial_delay_seconds "initialDelaySeconds",
-        active_delay_seconds "activeDelaySeconds", inactivity_reset_seconds "inactivityResetSeconds"
-      from operational_controls where singleton`;
-  return platformAiSettings(row);
-}
-export async function updatePlatformAiInstructions(db: Db, additionalInstructions: string, replyPacing?: ReplyPacing) {
-  const policy = replyPacing === undefined ? undefined : ReplyPacingSchema.parse(replyPacing);
-  // Omitted policy columns are not written, including under concurrent instruction-only saves.
-  const values = { additional_instructions: additionalInstructions, ...(policy === undefined ? {} : {
-    initial_delay_seconds: policy.initialDelaySeconds,
-    active_delay_seconds: policy.activeDelaySeconds,
-    inactivity_reset_seconds: policy.inactivityResetSeconds,
-  }) };
-  const [row] = await db<PlatformAiSettingsRow[]>`
-      update operational_controls set ${db(values)} where singleton
-      returning additional_instructions "additionalInstructions", initial_delay_seconds "initialDelaySeconds",
-        active_delay_seconds "activeDelaySeconds", inactivity_reset_seconds "inactivityResetSeconds"`;
-  return platformAiSettings(row);
+export async function updateResponseTiming(db: Db, responseTiming: ReplyPacing): Promise<ReplyPacing> {
+  const policy = ReplyPacingSchema.parse(responseTiming);
+  const [row] = await db<ReplyPacing[]>`
+      update operational_controls set initial_delay_seconds=${policy.initialDelaySeconds},
+        active_delay_seconds=${policy.activeDelaySeconds}, inactivity_reset_seconds=${policy.inactivityResetSeconds}
+      where singleton returning initial_delay_seconds "initialDelaySeconds", active_delay_seconds "activeDelaySeconds",
+        inactivity_reset_seconds "inactivityResetSeconds"`;
+  if (!row) throw new Error("Global reply pacing singleton missing");
+  return ReplyPacingSchema.parse(row);
 }
 export async function globalReplyPacing(db: Db): Promise<ReplyPacing> {
   const [row] = await db<ReplyPacing[]>`

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { DEFAULT_REPLY_PACING, MAX_REPLY_DELAY_SECONDS, MAX_INACTIVITY_RESET_SECONDS, ReplyPacingSchema } from "../../packages/domain/src/index.ts";
-import { PlatformAiInstructionsInputSchema } from "../../packages/contracts/src/http.ts";
+import { ResponseTimingInputSchema } from "../../packages/contracts/src/http.ts";
 
 describe("global reply pacing in integer seconds", () => {
   test("historical defaults and inclusive limits", () => {
@@ -30,11 +30,14 @@ describe("global reply pacing in integer seconds", () => {
     }
   });
 
-  test("instruction-only requests stay compatible; supplied policies must be complete and strict", () => {
-    expect(PlatformAiInstructionsInputSchema.parse({ additionalInstructions: "raw\n " })).toEqual({ additionalInstructions: "raw\n " });
-    expect(PlatformAiInstructionsInputSchema.parse({ additionalInstructions: "", replyPacing: DEFAULT_REPLY_PACING }).replyPacing).toEqual(DEFAULT_REPLY_PACING);
-    for (const policy of [null, {}, { ...DEFAULT_REPLY_PACING, extra: true }, { ...DEFAULT_REPLY_PACING, activeDelaySeconds: -1 }]) {
-      expect(PlatformAiInstructionsInputSchema.safeParse({ additionalInstructions: "", replyPacing: policy }).success).toBe(false);
+  test("response timing saves require a complete, strict policy and no instruction fields", () => {
+    expect(ResponseTimingInputSchema.parse({ responseTiming: DEFAULT_REPLY_PACING })).toEqual({ responseTiming: DEFAULT_REPLY_PACING });
+    for (const value of [null, {}, { responseTiming: null }, { responseTiming: {} },
+      { responseTiming: { ...DEFAULT_REPLY_PACING, extra: true } },
+      { responseTiming: { ...DEFAULT_REPLY_PACING, activeDelaySeconds: -1 } },
+      { responseTiming: DEFAULT_REPLY_PACING, additionalInstructions: "legacy" },
+      { additionalInstructions: "legacy" }]) {
+      expect(ResponseTimingInputSchema.safeParse(value).success).toBe(false);
     }
   });
 });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import type { Business, PlatformAiInstructions } from "../../api/api-client";
+import type { Business, ResponseTiming } from "../../api/api-client";
 // The domain barrel also exports server-only administration code.
 import { MAX_REPLY_DELAY_SECONDS, MAX_INACTIVITY_RESET_SECONDS, ReplyPacingSchema } from "../../../../../packages/domain/src/messaging/reply-pacing.ts";
 
@@ -13,8 +13,8 @@ type CreateBusinessInput = {
 
 type AdminBusinessesScreenProps = {
   businesses: Business[];
-  instructions: PlatformAiInstructions;
-  saveInstructionsAction: (text: string, replyPacing: PlatformAiInstructions["replyPacing"]) => Promise<boolean>;
+  responseTiming: ResponseTiming;
+  saveResponseTimingAction: (timing: ResponseTiming["responseTiming"]) => Promise<boolean>;
   notice: string;
   error: string;
   refreshWarning: boolean;
@@ -65,7 +65,7 @@ const whatsappStatusLabels: Record<Business["whatsappStatus"], string> = {
 };
 
 export function AdminBusinessesScreen({
-  businesses, instructions, saveInstructionsAction, notice, error,
+  businesses, responseTiming, saveResponseTimingAction, notice, error,
   refreshWarning, refreshPending, retryRefreshAction, createAction,
   renameAction, replacePasswordAction, setStatusAction,
 }: AdminBusinessesScreenProps) {
@@ -312,7 +312,7 @@ export function AdminBusinessesScreen({
       </section>
 
       <section id="admin-ai-panel" className="admin-workspace admin-instructions" role="tabpanel" aria-labelledby="admin-ai-tab" hidden={workspace !== "ai"}>
-        <div className="admin-directory-title"><h2>Configuración de IA</h2><p>Contexto y tiempos de respuesta para todos los negocios.</p></div>
+        <div className="admin-directory-title"><h2>Configuración de IA</h2><p>Tiempos de respuesta para todos los negocios.</p></div>
         <form onSubmit={async event => {
           event.preventDefault();
           const form = new FormData(event.currentTarget);
@@ -324,33 +324,22 @@ export function AdminBusinessesScreen({
           ));
           setInstructionsValidationError(parsed.success ? "" : "Ingresá tiempos enteros dentro de los límites indicados.");
           if (!parsed.success) return;
-          await runAction({ kind: "instructions" }, () => saveInstructionsAction(String(form.get("additionalInstructions")), parsed.data));
+          await runAction({ kind: "instructions" }, () => saveResponseTimingAction(parsed.data));
         }} aria-busy={pendingAction?.kind === "instructions"}>
-          <div className="admin-context-fields">
-            <h3>Contexto complementario</h3>
-            <div className="admin-instruction-editor">
-              <div className="admin-instruction-editor__header">
-                <label htmlFor="platform-additional-instructions">Indicaciones administrativas complementarias</label>
-                <span className="admin-instruction-editor__state">{anyPending ? "No editable" : "Editable"}</span>
-              </div>
-              <textarea id="platform-additional-instructions" name="additionalInstructions" defaultValue={instructions.additionalInstructions} rows={6} disabled={anyPending} aria-describedby="platform-additional-help" />
-            </div>
-            <p id="platform-additional-help">Se envían como contexto complementario, no como instrucciones de sistema. No reemplazan las reglas base ni las herramientas; su cumplimiento no está garantizado.</p>
-          </div>
           <fieldset className="admin-pacing">
             <legend>Tiempos de respuesta para todos los negocios</legend>
             <p>Las esperas se expresan en segundos. Cero significa respuesta inmediata. Los cambios no modifican las esperas ya programadas.</p>
             <div className="admin-pacing__fields">
               <label>Espera inicial (segundos)
-                <input name="initialDelaySeconds" type="number" required min={0} max={MAX_REPLY_DELAY_SECONDS} step={1} defaultValue={instructions.replyPacing.initialDelaySeconds} disabled={anyPending} aria-describedby="platform-initial-help" />
+                <input name="initialDelaySeconds" type="number" required min={0} max={MAX_REPLY_DELAY_SECONDS} step={1} defaultValue={responseTiming.responseTiming.initialDelaySeconds} disabled={anyPending} aria-describedby="platform-initial-help" />
                 <small id="platform-initial-help">Antes de la primera respuesta o después de un período de inactividad. Entre 0 y 86400 segundos.</small>
               </label>
               <label>Espera activa (segundos)
-                <input name="activeDelaySeconds" type="number" required min={0} max={MAX_REPLY_DELAY_SECONDS} step={1} defaultValue={instructions.replyPacing.activeDelaySeconds} disabled={anyPending} aria-describedby="platform-active-help" />
+                <input name="activeDelaySeconds" type="number" required min={0} max={MAX_REPLY_DELAY_SECONDS} step={1} defaultValue={responseTiming.responseTiming.activeDelaySeconds} disabled={anyPending} aria-describedby="platform-active-help" />
                 <small id="platform-active-help">Durante una conversación en curso. Entre 0 y 86400 segundos.</small>
               </label>
               <label>Reinicio por inactividad (segundos)
-                <input name="inactivityResetSeconds" type="number" required min={1} max={MAX_INACTIVITY_RESET_SECONDS} step={1} defaultValue={instructions.replyPacing.inactivityResetSeconds} disabled={anyPending} aria-describedby="platform-inactivity-help" />
+                <input name="inactivityResetSeconds" type="number" required min={1} max={MAX_INACTIVITY_RESET_SECONDS} step={1} defaultValue={responseTiming.responseTiming.inactivityResetSeconds} disabled={anyPending} aria-describedby="platform-inactivity-help" />
                 <small id="platform-inactivity-help">Si la inactividad supera este tiempo, vuelve a aplicarse la espera inicial. Entre 1 y 604800 segundos.</small>
               </label>
             </div>
@@ -364,18 +353,6 @@ export function AdminBusinessesScreen({
             <button type="submit" disabled={anyPending}>{pendingAction?.kind === "instructions" ? "Guardando…" : "Guardar configuración"}</button>
           </div>
         </form>
-        <details className="admin-base-instructions">
-          <summary><span>Instrucciones base del agente</span><span className="admin-readonly-label">Solo lectura</span></summary>
-          <div>
-            <div className="admin-instruction-editor admin-instruction-editor--readonly">
-              <div className="admin-instruction-editor__header">
-                <label htmlFor="platform-base-instructions">Instrucciones base · Solo lectura</label>
-              </div>
-              <textarea id="platform-base-instructions" value={instructions.baseInstructions} readOnly rows={8} aria-describedby="platform-base-help" />
-            </div>
-            <p id="platform-base-help">Sistema activo del agente de WhatsApp, de solo lectura. Se modifica únicamente desde el código; no incluye datos de conversaciones.</p>
-          </div>
-        </details>
       </section>
     </main>
   );

@@ -176,13 +176,14 @@ describe("replaceable DeepSeek AI processing", () => {
     await expect(adapter.generate(request)).rejects.toMatchObject({ code: "invalid_response" });
     expect(calls).toBe(1);
   });
-  test("appends full raw platform additions only when nonempty", () => {
+  test("ignores legacy global additions while preserving business instructions", () => {
     const base = buildDeepSeekRequest(request);
     for (const additionalInstructions of ["", " \n\t ", "  Atención 😀\n\tfin  "]) {
-      const body = buildDeepSeekRequest({ ...request, additionalInstructions });
-      expect(body.messages[0]?.content).toBe(additionalInstructions === ""
-        ? AI_SYSTEM_INSTRUCTIONS : AI_SYSTEM_INSTRUCTIONS + "\n\n" + additionalInstructions);
+      const legacyRequest = { ...request, additionalInstructions };
+      const body = buildDeepSeekRequest(legacyRequest);
+      expect(body.messages[0]?.content).toBe(AI_SYSTEM_INSTRUCTIONS);
       expect(body.messages[1]).toEqual(base.messages[1]);
+      expect(body.messages[1]?.content).toContain('"business_instructions":"Prioriza datos del negocio"');
       expect(body.model).toBe(base.model);
     }
   });

@@ -26,7 +26,8 @@ export function canonicalAgentDate(instant: unknown, timeZone: unknown): AgentDa
     const localDate = `${part("year").padStart(4, "0")}-${part("month")}-${part("day")}`;
     const localTime = `${part("hour")}:${part("minute")}`;
     const weekday = part("weekday");
-    return { timeZone, localDate, localTime, weekday, label: `${weekday} ${localDate} a las ${localTime} (${timeZone})` };
+    const month = new Intl.DateTimeFormat("es-AR", { timeZone, month: "long" }).format(new Date(parsed.data));
+    return { timeZone, localDate, localTime, weekday, label: `${weekday} ${Number(part("day"))} de ${month} de ${part("year")} a las ${localTime}` };
   } catch { return null; }
 }
 
@@ -82,11 +83,11 @@ const descriptions: Record<ToolName, string> = {
   read_catalog: "Read active services and current prices and durations; these are not appointment quotes.",
   read_calendar: "Read habitual business hours and closures. This does not establish appointment availability.",
   read_resources: "Read active resources, schedules, service IDs and current-turn resourceReference for preference metadata. No capacity reserved.",
-  availability: "Read actual slots on exactly one date for a tenant service and optional resource. Optional appointmentId is verified as current sender-owned before excluding its occupancy for a change. No reservation.",
+  availability: "Read actual slots on exactly one date for a tenant service and optional resource. startGroups indexes reference returned items and describe quarter-hour start options, not appointment end times; hasMore means results are incomplete. Optional appointmentId is verified as current sender-owned before excluding its occupancy for a change. No reservation.",
   owned_appointments: "Read current sender-owned appointments with target/snapshot-bound cancellationReference, notesReference and preferenceReference.",
   owned_appointment: "Inspect one current sender-owned appointment with cancellationReference, notesReference and preferenceReference. IDs never establish ownership.",
-  prepare_booking: "Prepare a real slot quote, not a booking. Replaces previous pending selection. Confirmation requires later explicit customer consent after quote delivery.",
-  collect_booking_names: "Patch only the customer's own new-booking names in an active draft. Copy its fresh namesReference and literal field values from authenticated nameSources, each with messageId and zero-based UTF-16 start offset. Omitted fields are retained; corrections replace only supplied fields. Never use DNI, insurance, profile, third-person names, history or summaries. Binding authenticates provenance, NOT semantic name ownership. Only prepares a quote or requests missing fields; never books. Use the returned fresh reference for another patch.",
+  prepare_booking: "Prepare a real slot quote, not a booking, including before offering a concrete alternative even when names are missing. Replaces previous pending selection. Confirmation requires later explicit customer consent after quote delivery.",
+  collect_booking_names: "Patch only the customer's own new-booking names in an active draft. Copy its fresh namesReference and literal field values from authenticated nameSources, each with messageId and zero-based UTF-16 start offset. Omitted fields are retained; corrections replace only supplied fields. Never use DNI, insurance, profile, third-person names, history or summaries. Binding authenticates provenance, NOT semantic name ownership. Names alone never authorize booking; completing missing names can stage a booking only after prior clear acceptance of the same delivered quote. Use the returned fresh reference for another patch.",
   prepare_change: "Prepare a sender-owned change quote, not a saved change. Requires later explicit confirmation after delivery.",
   confirm_quote: "Legacy literal confirmation or pending names using the actual received message. Effects are staged until session commit.",
   confirm_quote_naturally: "Interpret clear explicit acceptance of the exact delivered pending quote. Copy the COMPLETE current message as evidence and its runtime naturalConfirmation bindings. Never invoke for ambiguity, hypotheticals, negation or changed conditions: clarify or prepare a fresh quote instead. Backend verifies evidence authenticity and quote context, NOT consent semantics; interpretation can be wrong. Effects remain staged until session commit.",
@@ -153,6 +154,7 @@ export type AgentToolResult = (
     namesReference?: string | null; presentationReference?: string | null };
 export type AgentSessionOutcome =
   | { status: "committed"; outboundId: string; actions: { operation: string; appointmentId: string }[] }
+  | { status: "silent" }
   | { status: "not_current" | "infrastructure_failure" };
 
 /** T3 copies these opaque runtime references plus the exact context.message into
@@ -174,6 +176,7 @@ export interface NaturalConfirmationBinding {
 export class AgentToolSession {
   renderResponse(raw: string): AgentResponse { return renderAgentResponse(raw); }
   private calls = 0;
+  attemptedAgendaChange = false;
   private observedCalls = 0;
   private completedCalls = 0;
   private failedCalls = 0;
@@ -190,6 +193,8 @@ export class AgentToolSession {
     private rejectPreparation?: () => void) {}
   execute(name: string, args: unknown): Promise<AgentToolResult> {
     this.observedCalls++;
+    if (["prepare_booking", "prepare_change", "collect_booking_names", "confirm_quote", "confirm_quote_naturally",
+      "clear_pending", "cancel", "notes", "preference"].includes(name)) this.attemptedAgendaChange = true;
     const toolName = Object.hasOwn(schemas, name) ? name as ToolName : "unknown";
     const completed = (output: AgentToolResult): AgentToolResult => {
       this.completedCalls++;

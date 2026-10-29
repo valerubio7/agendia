@@ -154,9 +154,9 @@ describe("S4 model-authored atomic output", () => {
     expect(invalid.status).toBe("infrastructure_failure");
     expect((await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`)[0]!.dialogue.quote.outboundId).toBe(prepared.outboundId);
   });
-  for (const invalid of ["missing-names", "revoked", "superseded", "recreated", "consumed", "foreign"] as const)
+  for (const invalid of ["revoked", "superseded", "recreated", "consumed", "foreign"] as const)
     test(`presentation reference refuses ${invalid} with no output or pending changes`, async () => {
-      const h = await fixture(true, invalid !== "missing-names");
+      const h = await fixture();
       let foreign: any;
       if (invalid === "foreign") {
         const other = await fixture();
@@ -179,7 +179,6 @@ describe("S4 model-authored atomic output", () => {
           invalid === "foreign" ? foreign.presentationReference : observed.presentationReference ?? "f".repeat(64) });
       });
       expect(result.status).toBe("infrastructure_failure");
-      if (invalid === "missing-names") expect(observed.presentationReference).toBeUndefined();
       expect(await h.appointments()).toEqual([]);
       expect(await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`).toHaveLength(0);
       expect(await db.sql`select outbound_id from outbound_commands where source_message_id=${job.messageId}`).toHaveLength(0);
@@ -248,6 +247,81 @@ describe("S4 model-authored atomic output", () => {
     expect((await db.sql`select
       (select count(*)::int from clients where business_id=${h.business}) clients,
       (select count(*)::int from outbox_events where business_id=${h.business} and topic='appointment.changed') effects`)[0]).toEqual(countsBefore!);
+  });
+  test("silent final after new-client booking rolls client, appointment and counters back", async () => {
+    const h = await fixture(true, false);
+    const proposal = await h.run("mi nombre es María Pérez", async tools => {
+      await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start });
+      return final(tools, "Propuesta para María.");
+    });
+    if (proposal.status !== "committed") throw new Error("Missing proposal");
+    await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${proposal.outboundId}`;
+    const before = (await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`)[0]!.dialogue;
+    const job = await h.receive("confirmo");
+    const [sequence] = await db.sql`select next_sequence from conversations where id=(select conversation_id from messages where id=${job.messageId})`;
+    let staged: AgentToolResult | undefined;
+    const result = await h.agenda.withAgentSession(job, async tools => {
+      staged = await tools.execute("confirm_quote", {});
+      return '{"text":null}';
+    });
+    expect(staged?.status).toBe("staged_action");
+    expect(result.status).toBe("infrastructure_failure");
+    expect(await h.appointments()).toHaveLength(0);
+    expect(await db.sql`select id from clients where business_id=${h.business}`).toHaveLength(0);
+    expect((await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`)[0]!.dialogue).toEqual(before);
+    expect((await db.sql`select next_sequence from conversations where id=(select conversation_id from messages where id=${job.messageId})`)[0]).toEqual(sequence!);
+    const [counts] = await db.sql`select
+      (select count(*)::int from outbound_commands where source_message_id=${job.messageId}) outputs,
+      (select count(*)::int from whatsapp_agenda_receipts where message_id=${job.messageId}) receipts,
+      (select count(*)::int from audit_events where business_id=${h.business} and request_id=${job.correlationId}) audits,
+      (select count(*)::int from outbox_events where business_id=${h.business} and topic='appointment.changed') effects`;
+    expect(counts).toEqual({ outputs: 0, receipts: 0, audits: 0, effects: 0 });
+    expect((await db.sql`select processing_state from messages where id=${job.messageId}`)[0]!.processing_state).toBe("pending");
+  });
+  test("silent final cannot hide a prepared quote", async () => {
+    const h = await fixture();
+    const job = await h.receive("quiero ese horario");
+    const result = await h.agenda.withAgentSession(job, async tools => {
+      expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start })).status).toBe("prepared_quote");
+      return '{"text":null}';
+    });
+    expect(result.status).toBe("infrastructure_failure");
+    expect(await db.sql`select * from whatsapp_agenda_dialogues where business_id=${h.business}`).toHaveLength(0);
+    expect(await db.sql`select * from outbound_commands where source_message_id=${job.messageId}`).toHaveLength(0);
+    expect((await db.sql`select processing_state from messages where id=${job.messageId}`)[0]!.processing_state).toBe("pending");
+  });
+  test("silent receipt failure rolls back its boundary and retry completes exactly once", async () => {
+    const h = await fixture();
+    const job = await h.receive("hasta luego");
+    await db.sql`insert into public.agent_fault_fixture(business_id,enabled) values(${h.business},true)`;
+    expect((await h.agenda.withAgentSession(job, async () => '{"text":null}')).status).toBe("infrastructure_failure");
+    expect((await db.sql`select processing_state from messages where id=${job.messageId}`)[0]!.processing_state).toBe("pending");
+    expect(await db.sql`select * from whatsapp_agenda_receipts where message_id=${job.messageId}`).toHaveLength(0);
+    expect(await db.sql`select * from audit_events where request_id=${job.correlationId}`).toHaveLength(0);
+    await db.sql`update public.agent_fault_fixture set enabled=false where business_id=${h.business}`;
+    expect((await h.agenda.withAgentSession(job, async () => '{"text":null}')).status).toBe("silent");
+    expect((await h.agenda.withAgentSession(job, async () => { throw new Error("duplicate invocation"); })).status).toBe("not_current");
+    expect(await db.sql`select * from whatsapp_agenda_receipts where message_id=${job.messageId}`).toHaveLength(1);
+  });
+  test("silent group boundary remains scoped to the sender and tenant", async () => {
+    const owner = await fixture(), other = await fixture();
+    const ownerFirst = await owner.receive("dato primero");
+    const senderFirst = await owner.receive("otro primero", true, "14155552671");
+    const tenantFirst = await other.receive("tercero primero");
+    const ownerLast = await owner.receive("hasta luego");
+    expect((await owner.agenda.withAgentSession(ownerLast, async tools => {
+      expect(tools.context.nameSources?.map(member => member.messageId)).toEqual([ownerFirst.messageId, ownerLast.messageId]);
+      return '{"text":null}';
+    })).status).toBe("silent");
+    const senderLast = await owner.receive("otro segundo", true, "14155552671");
+    const tenantLast = await other.receive("tercero segundo");
+    const ownerFresh = await owner.receive("nuevo");
+    const sender = await pools.worker.run(owner.context, repo => repo.loadAiMessage(senderLast.messageId));
+    const tenant = await pools.worker.run(other.context, repo => repo.loadAiMessage(tenantLast.messageId));
+    const fresh = await pools.worker.run(owner.context, repo => repo.loadAiMessage(ownerFresh.messageId));
+    expect(sender?.currentGroup.map(member => member.id)).toEqual([senderFirst.messageId, senderLast.messageId]);
+    expect(tenant?.currentGroup.map(member => member.id)).toEqual([tenantFirst.messageId, tenantLast.messageId]);
+    expect(fresh?.currentGroup.map(member => member.id)).toEqual([ownerFresh.messageId]);
   });
   test("malformed final after new-client booking rolls client, appointment and counters back", async () => {
     const h = await fixture(true, false);
@@ -1147,6 +1221,183 @@ async function pendingNames(h: Awaited<ReturnType<typeof fixture>>) {
   });
 }
 describe("native booking names: provenance enforcement, not semantic name ownership", () => {
+  test("delivered 12:15 offer accepted before names creates once without another confirmation", async () => {
+    const h = await fixture(true, false);
+    const offered = await h.run("12:00", async tools => {
+      const quote = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T12:15:00-03:00" });
+      expect(quote.status).toBe("clarification");
+      expect(quote.presentationReference).toMatch(/^[a-f0-9]{64}$/u);
+      return JSON.stringify({ text: "¿Te sirve a las 12:15?", presentedQuoteReference: quote.presentationReference });
+    });
+    if (offered.status !== "committed") throw new Error("Missing offer");
+    await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${offered.outboundId}`;
+    await h.run("si dale", async tools => {
+      expect((await tools.execute("confirm_quote_naturally", naturalArguments(tools))).status).toBe("clarification");
+      return final(tools, "¿Me pasás tu nombre y apellido?");
+    });
+    expect(await h.appointments()).toHaveLength(0);
+    const job = await h.receive("Ojeda Tomas");
+    const callback = async (tools: AgentToolSession) => {
+      const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
+      expect((await tools.execute("collect_booking_names", { namesReference: runtime.namesReference,
+        firstName: nameField(current.messageId, "Ojeda"), lastName: nameField(current.messageId, "Tomas", 6) })).status).toBe("staged_action");
+      return final(tools, "Quedó reservado.");
+    };
+    expect((await h.agenda.withAgentSession(job, callback)).status).toBe("committed");
+    expect((await h.agenda.withAgentSession(job, callback)).status).toBe("not_current");
+    expect(await h.appointments()).toHaveLength(1);
+    expect((await h.appointments())[0]).toMatchObject({ client: { firstName: "Ojeda", lastName: "Tomas", phone } });
+  });
+  for (const text of ["no, 12:15 no", "¿12:15?"]) test(`no interpreted acceptance for ${text} cannot authorize names`, async () => {
+    const h = await fixture(true, false);
+    const offer = await h.run("12:00", async tools => {
+      const quote = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T12:15:00-03:00" });
+      return JSON.stringify({ text: "¿Te sirve?", presentedQuoteReference: quote.presentationReference });
+    });
+    if (offer.status !== "committed") throw new Error("Missing offer");
+    await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${offer.outboundId}`;
+    await h.run(text, async tools => final(tools, "¿Querés reservarlo?"));
+    await h.run("Ojeda Tomas", async tools => {
+      const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
+      expect((await tools.execute("collect_booking_names", { namesReference: runtime.namesReference,
+        firstName: nameField(current.messageId, "Ojeda"), lastName: nameField(current.messageId, "Tomas", 6) })).status).toBe("prepared_quote");
+      return final(tools);
+    });
+    expect(await h.appointments()).toHaveLength(0);
+  });
+  test("changing the selected time discards retained acceptance", async () => {
+    const h = await fixture(true, false);
+    const offer = await h.run("12:00", async tools => {
+      const quote = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T12:15:00-03:00" });
+      return JSON.stringify({ text: "¿Te sirve?", presentedQuoteReference: quote.presentationReference });
+    });
+    if (offer.status !== "committed") throw new Error("Missing offer");
+    await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${offer.outboundId}`;
+    await h.run("si dale", async tools => {
+      expect((await tools.execute("confirm_quote_naturally", naturalArguments(tools))).status).toBe("clarification");
+      return final(tools);
+    });
+    await h.run("mejor 13:00", async tools => {
+      expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T13:00:00-03:00" })).status).toBe("clarification");
+      return final(tools);
+    });
+    await h.run("Ojeda Tomas", async tools => {
+      const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
+      expect((await tools.execute("collect_booking_names", { namesReference: runtime.namesReference,
+        firstName: nameField(current.messageId, "Ojeda"), lastName: nameField(current.messageId, "Tomas", 6) })).status).toBe("prepared_quote");
+      return final(tools);
+    });
+    expect(await h.appointments()).toHaveLength(0);
+  });
+  test("accepted drafts reject invalid and cross-owner name evidence without agenda effects", async () => {
+    const owner = await fixture(true, false), other = await fixture(true, false);
+    async function accept(h: typeof owner) {
+      const offer = await h.run("12:00", async tools => {
+        const quote = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T12:15:00-03:00" });
+        return JSON.stringify({ text: "¿Te sirve?", presentedQuoteReference: quote.presentationReference });
+      });
+      if (offer.status !== "committed") throw new Error("Missing offer");
+      await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${offer.outboundId}`;
+      await h.run("si dale", async tools => {
+        expect((await tools.execute("confirm_quote_naturally", naturalArguments(tools))).status).toBe("clarification");
+        return final(tools);
+      });
+    }
+    await accept(owner);
+    await accept(other);
+    const snapshot = async (h: typeof owner) => ({
+      appointments: await h.appointments(),
+      clients: await db.sql`select * from clients where business_id=${h.business} order by id`,
+      dialogue: (await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business} and phone=${phone}`)[0]!.dialogue,
+      effects: (await db.sql`select count(*)::int count from outbox_events where business_id=${h.business} and topic='appointment.changed'`)[0]!.count,
+      savedAudits: (await db.sql`select count(*)::int count from audit_events where business_id=${h.business} and event_type='whatsapp.agenda.saved'`)[0]!.count,
+      appointmentReceipts: (await db.sql`select count(*)::int count from appointment_operation_receipts where business_id=${h.business}`)[0]!.count,
+    });
+    const beforeOwner = await snapshot(owner), beforeOther = await snapshot(other);
+    expect(beforeOwner.dialogue.acceptedBookingQuote).toBeTruthy();
+    expect(beforeOther.dialogue.acceptedBookingQuote).toBeTruthy();
+    let oldReference: string | null = null, oldMessage = "";
+    const job = await owner.receive("Ojeda Tomas");
+    const [sequenceBefore] = await db.sql`select next_sequence from conversations where id=(select conversation_id from messages where id=${job.messageId})`;
+    const result = await owner.agenda.withAgentSession(job, async tools => {
+      const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
+      oldReference = runtime.namesReference; oldMessage = current.messageId;
+      const args = { namesReference: runtime.namesReference, firstName: nameField(current.messageId, "Ojeda"), lastName: nameField(current.messageId, "Tomas", 6) };
+      for (const invalid of [{ ...args, namesReference: "f".repeat(64) },
+        { ...args, firstName: nameField(current.messageId, "Ojeda", 1) },
+        { ...args, lastName: nameField(randomUUID(), "Tomas", 6) }])
+        expect(await tools.execute("collect_booking_names", invalid)).toMatchObject({ status: "rejected" });
+      return final(tools, "No pude verificar esos datos.");
+    });
+    expect(result).toMatchObject({ status: "committed", actions: [] });
+    if (result.status !== "committed") throw new Error("Missing rejection reply");
+    await db.sql`update outbound_commands set state='sent',send_started_at=now(),acknowledged_at=now() where outbound_id=${result.outboundId}`;
+    expect(await snapshot(owner)).toEqual(beforeOwner);
+    const [bookkeeping] = await db.sql`select
+      (select count(*)::int from outbound_commands where source_message_id=${job.messageId}) outputs,
+      (select count(*)::int from whatsapp_agenda_receipts where message_id=${job.messageId} and operation='agent') receipts,
+      (select count(*)::int from audit_events where business_id=${owner.business} and request_id=${job.correlationId} and event_type='whatsapp.agenda.reply') audits,
+      (select count(*)::int from outbox_events where payload->>'sourceMessageId'=${job.messageId} and topic='appointment.changed') effects,
+      (select next_sequence from conversations where id=(select conversation_id from messages where id=${job.messageId})) sequence`;
+    expect(bookkeeping).toEqual({ outputs: 1, receipts: 1, audits: 1, effects: 0, sequence: sequenceBefore!.next_sequence });
+    const foreignJob = await owner.receive("Ojeda Tomas", true, "14155552671");
+    expect((await owner.agenda.withAgentSession(foreignJob, async tools => {
+      const current = nameRuntime(tools).nameSources.at(-1)!;
+      expect(await tools.execute("collect_booking_names", { namesReference: oldReference,
+        firstName: nameField(current.messageId, "Ojeda"), lastName: nameField(current.messageId, "Tomas", 6) })).toMatchObject({ status: "rejected" });
+      return final(tools);
+    })).status).toBe("committed");
+    expect(await snapshot(owner)).toEqual(beforeOwner);
+    await other.run("Ojeda Tomas", async tools => {
+      const current = nameRuntime(tools).nameSources.at(-1)!;
+      expect(await tools.execute("collect_booking_names", { namesReference: oldReference,
+        firstName: nameField(current.messageId, "Ojeda"), lastName: nameField(current.messageId, "Tomas", 6) })).toMatchObject({ status: "rejected" });
+      return final(tools);
+    });
+    expect(await snapshot(other)).toEqual(beforeOther);
+    await owner.run("Ojeda Tomas", async tools => {
+      const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
+      expect(runtime.nameSources.some(member => member.messageId === oldMessage), "historical message excluded after send boundary").toBe(false);
+      const stale = await tools.execute("collect_booking_names", { namesReference: oldReference, firstName: nameField(current.messageId, "Ojeda") });
+      expect(stale.status, "stale names reference").toBe("rejected");
+      const historical = await tools.execute("collect_booking_names", { namesReference: runtime.namesReference, firstName: nameField(oldMessage, "Ojeda") });
+      expect(historical.status, "historical name source").toBe("rejected");
+      return final(tools);
+    });
+    expect(await snapshot(owner)).toEqual(beforeOwner);
+    expect(await snapshot(other)).toEqual(beforeOther);
+  });
+  test("retained acceptance revalidates terms and rejects forged name spans", async () => {
+    const h = await fixture(true, false);
+    const offer = await h.run("12:15", async tools => {
+      const quote = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T12:15:00-03:00" });
+      return JSON.stringify({ text: "¿Te sirve?", presentedQuoteReference: quote.presentationReference });
+    });
+    if (offer.status !== "committed") throw new Error("Missing offer");
+    await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${offer.outboundId}`;
+    await h.run("si dale", async tools => {
+      expect((await tools.execute("confirm_quote_naturally", naturalArguments(tools))).status).toBe("clarification");
+      return final(tools);
+    });
+    await h.run("Ojeda Tomas", async tools => {
+      const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
+      expect((await tools.execute("collect_booking_names", { namesReference: runtime.namesReference,
+        firstName: nameField(current.messageId, "Ojeda", 1), lastName: nameField(current.messageId, "Tomas", 6) })).status).toBe("rejected");
+      return final(tools);
+    });
+    expect(await h.appointments()).toHaveLength(0);
+    expect((await db.sql`select count(*)::int count from clients where business_id=${h.business}`)[0]!.count).toBe(0);
+    await db.sql`update services set price_ars=2000 where id=${h.service}`;
+    await h.run("Ojeda Tomas", async tools => {
+      const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
+      const result = await tools.execute("collect_booking_names", { namesReference: runtime.namesReference,
+        firstName: nameField(current.messageId, "Ojeda"), lastName: nameField(current.messageId, "Tomas", 6) });
+      expect(result).toMatchObject({ status: "prepared_quote", reason: "TERMS_CHANGED" });
+      return final(tools);
+    });
+    expect(await h.appointments()).toHaveLength(0);
+    expect((await db.sql`select count(*)::int count from clients where business_id=${h.business}`)[0]!.count).toBe(0);
+  });
   test("bare full names prepare only; delivered later acceptance creates the literal client", async () => {
     const h = await fixture(true, false);
     await pendingNames(h);

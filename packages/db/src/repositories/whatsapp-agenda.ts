@@ -49,7 +49,7 @@ export async function agendaQuoteDelivered(db: Db, outboundId: string | null, co
       where o.outbound_id=${outboundId} and o.connection_id=${connectionId} and s.phone=${phone} and o.state='sent'`;
   return !!row;
 }
-export async function recordAgendaReceipt(db: Db, businessId: string, messageId: string, outboundId: string, operation: string) {
+export async function recordAgendaReceipt(db: Db, businessId: string, messageId: string, outboundId: string | null, operation: string) {
   await db`insert into whatsapp_agenda_receipts(business_id,message_id,outbound_id,operation)
       values(${businessId},${messageId},${outboundId},${operation})`;
 }

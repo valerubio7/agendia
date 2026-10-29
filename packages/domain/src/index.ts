@@ -23,5 +23,5 @@ export * from "./whatsapp/connection.ts";
 export * from "./messaging/conversation-context-builder.ts";
 export * from "./messaging/outbound-delivery.ts";
 export * from "./agent/provider.ts";
-export { AGENT_SYSTEM_INSTRUCTIONS } from "./agent/instructions.ts";
+export { AGENT_SYSTEM_PROMPT } from "./agent/system-prompt.ts";
 export * from "./unit-of-work.ts";

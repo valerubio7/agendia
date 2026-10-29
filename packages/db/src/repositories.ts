@@ -245,11 +245,8 @@ export class PostgresRepositories {
   deleteResource(businessId: string, id: string): Promise<boolean> {
     return this.retireCatalogItem(businessId, id, "resources");
   }
-  async platformAiInstructions() {
-    return agentSettings.platformAiInstructions(this.db);
-  }
-  async updatePlatformAiInstructions(additionalInstructions: string, replyPacing?: ReplyPacing) {
-    return agentSettings.updatePlatformAiInstructions(this.db, additionalInstructions, replyPacing);
+  async updateResponseTiming(responseTiming: ReplyPacing) {
+    return agentSettings.updateResponseTiming(this.db, responseTiming);
   }
   async globalReplyPacing(): Promise<ReplyPacing> {
     return agentSettings.globalReplyPacing(this.db);
@@ -438,7 +435,7 @@ export class PostgresRepositories {
   async agendaQuoteDelivered(outboundId: string | null, connectionId: string, phone: string): Promise<boolean> {
     return whatsappAgenda.agendaQuoteDelivered(this.db, outboundId, connectionId, phone);
   }
-  async recordAgendaReceipt(businessId: string, messageId: string, outboundId: string, operation: string) {
+  async recordAgendaReceipt(businessId: string, messageId: string, outboundId: string | null, operation: string) {
     return whatsappAgenda.recordAgendaReceipt(this.db, businessId, messageId, outboundId, operation);
   }
   /** Metadata-only expression does not need an active catalog or reserve capacity. */
@@ -482,6 +479,9 @@ export class PostgresRepositories {
   }
   async saveGenerated(messageId: string, businessId: string, text: string) {
     return messaging.saveGenerated(this.db, messageId, businessId, text);
+  }
+  async saveSilentCompletion(messageId: string, businessId: string) {
+    return messaging.saveSilentCompletion(this.db, messageId, businessId);
   }
   async claimOwnedOutbound(owner: string, ownership: string[]) {
     return messaging.claimOwnedOutbound(this.db, owner, ownership);
