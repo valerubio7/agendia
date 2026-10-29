@@ -1,6 +1,14 @@
 import { expect, test } from "bun:test";
 import * as domain from "@agendia/domain";
 
+test("appointment duration stays internal unless the customer explicitly asks", () => {
+  const prompt = domain.AGENT_SYSTEM_PROMPT;
+  const responses = prompt.split("## Respuestas del modelo\n")[1]!.split("## Presentación de propuestas")[0]!;
+  expect(responses).toContain("La duración del turno es información interna para organizar la agenda.");
+  expect(responses).toContain("No menciones la duración al cliente salvo que la pida explícitamente; en ese caso, respondé con datos reales.");
+  expect(prompt).not.toContain("respondé sobre duración o recurso cuando corresponda");
+});
+
 // Exercise the same public export consumed by the API and native runtime.
 test("public Agent prompt is sectioned Spanish and retains the model-authored contract", () => {
   expect(domain).toHaveProperty("AGENT_SYSTEM_PROMPT");
