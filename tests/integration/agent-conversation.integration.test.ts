@@ -176,7 +176,7 @@ describe("production inbound native conversation with transactional tools", () =
     expect(worker.requests).toHaveLength(3);
     expect(await h.appointments()).toEqual(appointments);
     expect(await h.outputs()).toEqual(outputs);
-    expect(await db.sql`select * from whatsapp_agenda_receipts where business_id=${h.business} and message_id=${job.messageId}`).toEqual(receipts);
+    expect([...await db.sql`select * from whatsapp_agenda_receipts where business_id=${h.business} and message_id=${job.messageId}`]).toEqual([...receipts]);
   });
   test("a format repair cannot execute tools or commit a staged booking", async () => {
     const h = await fixture();
