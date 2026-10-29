@@ -1,5 +1,6 @@
 import type { EventEmitter } from "node:events";
-import { copyFile, mkdir, mkdtemp, readdir, rm, symlink } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { cp, copyFile, mkdir, mkdtemp, readdir, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -14,7 +15,7 @@ async function copySources(from: string, to: string, extensions: RegExp) {
   }
 }
 
-export async function createWebRuntime(repo: string) {
+export async function createWebRuntime(repo: string, buildCwd?: string) {
   const root = await mkdtemp(join(tmpdir(), "agendia-web-e2e-"));
   const cwd = join(root, "apps/web");
   // Ownership is captured, not supplied to cleanup by a caller.
@@ -41,6 +42,9 @@ export async function createWebRuntime(repo: string) {
       await mkdir(dirname(target!), { recursive: true });
       await symlink(source!, target!, "dir");
     }
+    if (buildCwd) await cp(join(buildCwd, ".next"), join(cwd, ".next"), {
+      recursive: true, filter: (source) => source !== join(buildCwd, ".next", "cache"),
+    });
     return { root, cwd, dispose };
   } catch (error) {
     await dispose();
@@ -48,7 +52,41 @@ export async function createWebRuntime(repo: string) {
   }
 }
 
-export function webRuntimeEnv(root: string, apiOrigin: string): NodeJS.ProcessEnv {
+export async function buildWebRuntime(repo: string) {
+  const runtime = await createWebRuntime(repo);
+  let retainRuntime = false;
+  try {
+    const started = Date.now();
+    const child = spawn("bun", ["--bun", join(repo, "apps/web/node_modules/next/dist/bin/next"), "build", "--webpack"], {
+      cwd: runtime.cwd, env: { ...webRuntimeEnv(runtime.root), NODE_ENV: "production" }, stdio: ["ignore", "pipe", "pipe"],
+    });
+    const diagnostics = captureWebDiagnostics(child);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const result = await Promise.race([
+      diagnostics.failed,
+      new Promise<string>((resolve) => { timer = setTimeout(() => resolve("build timed out"), 150_000); }),
+    ]);
+    clearTimeout(timer);
+    if (child.pid && child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+      const exited = await Promise.race([
+        new Promise<boolean>((resolve) => child.once("exit", () => resolve(true))),
+        new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), 5_000); }),
+      ]);
+      clearTimeout(timer);
+      if (!exited) { retainRuntime = true; throw new Error(`Next build child did not exit; runtime retained: ${runtime.root}`); }
+    }
+    if (result === "build timed out" || child.exitCode !== 0)
+      throw new Error(`Next build failed: ${result}\n${diagnostics.logs.join("")}`);
+    console.log(`E2E worker Next build: ${Date.now() - started}ms`);
+    return runtime;
+  } catch (error) {
+    if (!retainRuntime) await runtime.dispose();
+    throw error;
+  }
+}
+
+export function webRuntimeEnv(root: string, apiOrigin?: string): NodeJS.ProcessEnv {
   // Do not forward provider/DB secrets or real Next runtime overrides.
   return {
     PATH: process.env.PATH,
@@ -58,7 +96,7 @@ export function webRuntimeEnv(root: string, apiOrigin: string): NodeJS.ProcessEn
     XDG_CACHE_HOME: join(root, "cache"),
     XDG_CONFIG_HOME: join(root, "config"),
     NEXT_TELEMETRY_DISABLED: "1",
-    AGENDIA_API_ORIGIN: apiOrigin,
+    ...(apiOrigin ? { AGENDIA_API_ORIGIN: apiOrigin } : {}),
   };
 }
 

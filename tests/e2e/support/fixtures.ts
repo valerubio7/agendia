@@ -1,5 +1,6 @@
 import { expect, test as base, type Page } from "@playwright/test";
 import { startSystem, type SystemHarness } from "./system.ts";
+import { buildWebRuntime } from "./web-runtime.ts";
 
 export async function login(page: Page, url: string, email: string, password: string) {
   await page.goto(url);
@@ -32,9 +33,13 @@ export async function createBusinessInAdminUi(page: Page, business: {
   return row;
 }
 
-export const test = base.extend<{ system: SystemHarness }>({
-  system: async ({}, use) => {
-    const system = await startSystem();
+export const test = base.extend<{ system: SystemHarness }, { webBuild: Awaited<ReturnType<typeof buildWebRuntime>> }>({
+  webBuild: [async ({}, use) => {
+    const build = await buildWebRuntime(process.cwd());
+    try { await use(build); } finally { await build.dispose(); }
+  }, { scope: "worker", timeout: 180_000 }],
+  system: async ({ webBuild }, use) => {
+    const system = await startSystem(webBuild.cwd);
     try { await use(system); } finally { await system.stop(); }
   },
 });

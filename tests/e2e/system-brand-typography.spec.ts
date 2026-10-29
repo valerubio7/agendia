@@ -108,8 +108,12 @@ test("official local faces, root tokens and shared roles survive real login/prof
     const style = getComputedStyle(document.documentElement);
     return Object.fromEntries(names.map((name) => [name, style.getPropertyValue(name).trim()]));
   }, Object.keys(tokens));
-  // Next's CSS optimizer serializes this rgba token as equivalent eight-digit hex.
-  expect.soft(actualTokens).toEqual({ ...tokens, "--line": expect.stringMatching(/^(rgba\(28, 38, 32, 0\.16\)|#1c262029)$/) });
+  const normalizeTokens = (values: Record<string, string>) => Object.fromEntries(
+    Object.entries(values).map(([name, value]) => [name, value.replace(/,\s*/g, ",")]),
+  );
+  // Production CSS can remove comma spacing or emit equivalent eight-digit hex.
+  expect.soft(normalizeTokens(actualTokens)).toEqual({ ...normalizeTokens(tokens),
+    "--line": expect.stringMatching(/^(rgba\(28,38,32,0\.16\)|#1c262029)$/) });
   await expect.soft(page.locator("body")).toHaveCSS("font-family", /"Source Sans 3"/);
   await expect.soft(page.locator("body")).toHaveCSS("font-weight", "400");
   await expect.soft(page.locator("html")).toHaveCSS("background-color", "rgb(243, 238, 225)");

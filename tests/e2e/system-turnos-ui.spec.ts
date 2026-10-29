@@ -1,9 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 import { createBusinessInAdminUi, login, test } from "./support/fixtures.ts";
 
-// Stop this focused transaction at its first unexpected failure.
-test.describe.configure({ mode: "serial" });
-
 async function closeTurno(page: Page) {
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: "Cerrar ventana de turno", exact: true }).click();

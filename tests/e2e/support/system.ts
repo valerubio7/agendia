@@ -15,7 +15,8 @@ import {
   startTestPostgres,
 } from "../../support/index.ts";
 import { SystemProviders } from "./providers.ts";
-import { captureWebDiagnostics, createWebRuntime, probeHttp, webRuntimeEnv, warmWebRoutes } from "./web-runtime.ts";
+import { captureWebDiagnostics, createWebRuntime, probeHttp, webRuntimeEnv } from "./web-runtime.ts";
+import { startWebProxy } from "./web-proxy.ts";
 
 const admin = {
   email: "admin@example.test",
@@ -138,7 +139,7 @@ export interface SystemHarness {
   stop(): Promise<void>;
 }
 
-export async function startSystem(): Promise<SystemHarness> {
+export async function startSystem(buildCwd: string): Promise<SystemHarness> {
   const cleanup: Array<() => Promise<void>> = [];
   let stopped = false;
   const stop = async () => {
@@ -167,8 +168,10 @@ export async function startSystem(): Promise<SystemHarness> {
     providers.start();
     cleanup.push(async () => providers.stop());
     const [apiPort, webPort] = await Promise.all([freePort(), freePort()]);
-    const webUrl = `http://localhost:${webPort}`,
-      apiOrigin = `http://127.0.0.1:${apiPort}`;
+    const apiOrigin = `http://127.0.0.1:${apiPort}`;
+    const proxy = await startWebProxy(`http://127.0.0.1:${webPort}`, apiOrigin);
+    cleanup.push(() => proxy.stop());
+    const webUrl = proxy.url;
     const common: NodeJS.ProcessEnv = {
       ...process.env,
       DATABASE_URL: database.container.getConnectionUri(),
@@ -208,7 +211,7 @@ export async function startSystem(): Promise<SystemHarness> {
     );
     cleanup.push(() => worker.stop());
 
-    const runtime = await createWebRuntime(process.cwd());
+    const runtime = await createWebRuntime(process.cwd(), buildCwd);
     let web: ReturnType<typeof spawn> | undefined;
     cleanup.push(async () => {
       if (web && web.pid && web.exitCode === null && web.signalCode === null) {
@@ -227,10 +230,10 @@ export async function startSystem(): Promise<SystemHarness> {
     });
     web = spawn(
       "bun",
-      ["--bun", join(process.cwd(), "apps/web/node_modules/next/dist/bin/next"), "dev", "--webpack", "--hostname", "127.0.0.1", "--port", String(webPort)],
+      ["--bun", join(process.cwd(), "apps/web/node_modules/next/dist/bin/next"), "start", "--hostname", "127.0.0.1", "--port", String(webPort)],
       {
         cwd: runtime.cwd,
-        env: webRuntimeEnv(runtime.root, apiOrigin),
+        env: { ...webRuntimeEnv(runtime.root), NODE_ENV: "production" },
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
@@ -259,7 +262,6 @@ export async function startSystem(): Promise<SystemHarness> {
       };
     };
     await readiness();
-    await warmWebRoutes(webUrl, { diagnostics });
     const connection = async (email: string) => {
       for (let attempt = 0; attempt < 120; attempt++) {
         const row = (
