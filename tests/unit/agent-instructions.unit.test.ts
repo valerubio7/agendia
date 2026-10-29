@@ -18,4 +18,16 @@ test("public Agent prompt is sectioned Spanish and retains the model-authored co
   expect(prompt).toContain('"text":"…"');
   expect(prompt).toContain("presentedQuoteReference");
   expect(prompt).toContain("4000 caracteres");
+  expect(prompt).toContain("Por defecto, no uses emojis");
+  expect(prompt).toContain("tono que indique el negocio");
+  expect(prompt).toContain("ofrecé opciones relevantes");
+  expect(prompt).toContain("preguntas en un mismo mensaje cuando resulte natural");
+  expect(prompt).toContain("confirmación breve y natural");
+  expect(prompt).toContain("sin repetir todos los detalles ya claros");
+  expect(prompt).toContain("servicio y horario sin ambigüedad");
+  expect(prompt).toContain("informá el precio solo si el cliente lo pregunta");
+  expect(prompt).not.toContain("detallá servicio, recurso, fecha, duración y precio reales");
+  expect(prompt).toContain("podés expresarla con palabras naturales");
+  expect(prompt).toContain("sin cambiar la fecha, hora ni zona horaria");
+  expect(prompt).not.toContain("literalmente presentation.label");
 });
