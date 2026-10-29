@@ -154,6 +154,7 @@ export type AgentToolResult = (
     namesReference?: string | null; presentationReference?: string | null };
 export type AgentSessionOutcome =
   | { status: "committed"; outboundId: string; actions: { operation: string; appointmentId: string }[] }
+  | { status: "silent" }
   | { status: "not_current" | "infrastructure_failure" };
 
 /** T3 copies these opaque runtime references plus the exact context.message into
@@ -175,6 +176,7 @@ export interface NaturalConfirmationBinding {
 export class AgentToolSession {
   renderResponse(raw: string): AgentResponse { return renderAgentResponse(raw); }
   private calls = 0;
+  attemptedAgendaChange = false;
   private observedCalls = 0;
   private completedCalls = 0;
   private failedCalls = 0;
@@ -191,6 +193,8 @@ export class AgentToolSession {
     private rejectPreparation?: () => void) {}
   execute(name: string, args: unknown): Promise<AgentToolResult> {
     this.observedCalls++;
+    if (["prepare_booking", "prepare_change", "collect_booking_names", "confirm_quote", "confirm_quote_naturally",
+      "clear_pending", "cancel", "notes", "preference"].includes(name)) this.attemptedAgendaChange = true;
     const toolName = Object.hasOwn(schemas, name) ? name as ToolName : "unknown";
     const completed = (output: AgentToolResult): AgentToolResult => {
       this.completedCalls++;

@@ -97,6 +97,7 @@ export class PostgresWhatsAppAgenda {
         let dialogue = phone ? await repo.lockAgendaDialogue(job.businessId, source.connection_id, phone) : emptyAgendaDialogue();
         await repo.acquireBusinessCalendarLock({ businessId: job.businessId });
         const actions: { operation: string; appointmentId: string }[] = [];
+        const initialDialogue = JSON.stringify(dialogue);
         let presentationRevision = 0;
         const rejectPreparation = () => {
           if (actions.length) return; // A staged action reply survives subsequent refusals until outer commit.
@@ -323,6 +324,17 @@ export class PostgresWhatsAppAgenda {
           await session.drain();
         } finally { session.close(); await session.drain(); }
         const final = session.renderResponse(text);
+        if (final.text === null) {
+          if (session.attemptedAgendaChange || actions.length || JSON.stringify(dialogue) !== initialDialogue)
+            throw new Error("Silent completion cannot hide agenda work");
+          if (!await repo.saveSilentCompletion(job.messageId, job.businessId)) throw new Error("Agent source changed before atomic save");
+          await repo.recordAgendaReceipt(job.businessId, job.messageId, null, "silent");
+          await repo.appendAudit(job.businessId, {
+            eventType: "whatsapp.agenda.silent", outcome: "success",
+            eventHash: createHash("sha256").update(job.messageId).digest("hex"),
+          });
+          return { status: "silent" } as const;
+        }
         if (final.presentedQuoteReference && (!dialogue.quote
           || !issuedPresentations.has(final.presentedQuoteReference)
           || final.presentedQuoteReference !== currentPresentationReference()))
@@ -344,7 +356,7 @@ export class PostgresWhatsAppAgenda {
         });
         return { status: "committed", outboundId: output.outbound_id, actions } as const;
       });
-      if (outcome.status === "committed") completedSession?.reportCompletedTurn();
+      if (outcome.status === "committed" || outcome.status === "silent") completedSession?.reportCompletedTurn();
       return outcome;
     } catch {
       // No SQL/provider details become customer facts, and the pending source remains

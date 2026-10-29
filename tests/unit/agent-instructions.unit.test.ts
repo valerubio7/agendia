@@ -12,6 +12,15 @@ test("appointment duration stays internal unless the customer explicitly asks", 
   expect(responses).toContain("No unas grupos ni infieras horarios intermedios fuera de ellos");
 });
 
+test("courtesy guidance reserves silence for repeated closure-only messages", () => {
+  const prompt = domain.AGENT_SYSTEM_PROMPT;
+  expect(prompt).toContain("podés responder una vez naturalmente");
+  expect(prompt).toContain("solo agradecimientos o despedidas");
+  expect(prompt).toContain('{"text":null}');
+  expect(prompt).toContain("Un pedido nuevo o mixto, aunque incluya agradecimiento o despedida, siempre requiere una respuesta normal");
+  expect(prompt).toContain("Nunca elijas silencio si preparaste o presentaste una propuesta");
+});
+
 // Exercise the same public export consumed by the API and native runtime.
 test("public Agent prompt is sectioned Spanish and retains the model-authored contract", () => {
   expect(domain).toHaveProperty("AGENT_SYSTEM_PROMPT");

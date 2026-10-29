@@ -248,6 +248,81 @@ describe("S4 model-authored atomic output", () => {
       (select count(*)::int from clients where business_id=${h.business}) clients,
       (select count(*)::int from outbox_events where business_id=${h.business} and topic='appointment.changed') effects`)[0]).toEqual(countsBefore!);
   });
+  test("silent final after new-client booking rolls client, appointment and counters back", async () => {
+    const h = await fixture(true, false);
+    const proposal = await h.run("mi nombre es María Pérez", async tools => {
+      await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start });
+      return final(tools, "Propuesta para María.");
+    });
+    if (proposal.status !== "committed") throw new Error("Missing proposal");
+    await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${proposal.outboundId}`;
+    const before = (await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`)[0]!.dialogue;
+    const job = await h.receive("confirmo");
+    const [sequence] = await db.sql`select next_sequence from conversations where id=(select conversation_id from messages where id=${job.messageId})`;
+    let staged: AgentToolResult | undefined;
+    const result = await h.agenda.withAgentSession(job, async tools => {
+      staged = await tools.execute("confirm_quote", {});
+      return '{"text":null}';
+    });
+    expect(staged?.status).toBe("staged_action");
+    expect(result.status).toBe("infrastructure_failure");
+    expect(await h.appointments()).toHaveLength(0);
+    expect(await db.sql`select id from clients where business_id=${h.business}`).toHaveLength(0);
+    expect((await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`)[0]!.dialogue).toEqual(before);
+    expect((await db.sql`select next_sequence from conversations where id=(select conversation_id from messages where id=${job.messageId})`)[0]).toEqual(sequence!);
+    const [counts] = await db.sql`select
+      (select count(*)::int from outbound_commands where source_message_id=${job.messageId}) outputs,
+      (select count(*)::int from whatsapp_agenda_receipts where message_id=${job.messageId}) receipts,
+      (select count(*)::int from audit_events where business_id=${h.business} and request_id=${job.correlationId}) audits,
+      (select count(*)::int from outbox_events where business_id=${h.business} and topic='appointment.changed') effects`;
+    expect(counts).toEqual({ outputs: 0, receipts: 0, audits: 0, effects: 0 });
+    expect((await db.sql`select processing_state from messages where id=${job.messageId}`)[0]!.processing_state).toBe("pending");
+  });
+  test("silent final cannot hide a prepared quote", async () => {
+    const h = await fixture();
+    const job = await h.receive("quiero ese horario");
+    const result = await h.agenda.withAgentSession(job, async tools => {
+      expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start })).status).toBe("prepared_quote");
+      return '{"text":null}';
+    });
+    expect(result.status).toBe("infrastructure_failure");
+    expect(await db.sql`select * from whatsapp_agenda_dialogues where business_id=${h.business}`).toHaveLength(0);
+    expect(await db.sql`select * from outbound_commands where source_message_id=${job.messageId}`).toHaveLength(0);
+    expect((await db.sql`select processing_state from messages where id=${job.messageId}`)[0]!.processing_state).toBe("pending");
+  });
+  test("silent receipt failure rolls back its boundary and retry completes exactly once", async () => {
+    const h = await fixture();
+    const job = await h.receive("hasta luego");
+    await db.sql`insert into public.agent_fault_fixture(business_id,enabled) values(${h.business},true)`;
+    expect((await h.agenda.withAgentSession(job, async () => '{"text":null}')).status).toBe("infrastructure_failure");
+    expect((await db.sql`select processing_state from messages where id=${job.messageId}`)[0]!.processing_state).toBe("pending");
+    expect(await db.sql`select * from whatsapp_agenda_receipts where message_id=${job.messageId}`).toHaveLength(0);
+    expect(await db.sql`select * from audit_events where request_id=${job.correlationId}`).toHaveLength(0);
+    await db.sql`update public.agent_fault_fixture set enabled=false where business_id=${h.business}`;
+    expect((await h.agenda.withAgentSession(job, async () => '{"text":null}')).status).toBe("silent");
+    expect((await h.agenda.withAgentSession(job, async () => { throw new Error("duplicate invocation"); })).status).toBe("not_current");
+    expect(await db.sql`select * from whatsapp_agenda_receipts where message_id=${job.messageId}`).toHaveLength(1);
+  });
+  test("silent group boundary remains scoped to the sender and tenant", async () => {
+    const owner = await fixture(), other = await fixture();
+    const ownerFirst = await owner.receive("dato primero");
+    const senderFirst = await owner.receive("otro primero", true, "14155552671");
+    const tenantFirst = await other.receive("tercero primero");
+    const ownerLast = await owner.receive("hasta luego");
+    expect((await owner.agenda.withAgentSession(ownerLast, async tools => {
+      expect(tools.context.nameSources?.map(member => member.messageId)).toEqual([ownerFirst.messageId, ownerLast.messageId]);
+      return '{"text":null}';
+    })).status).toBe("silent");
+    const senderLast = await owner.receive("otro segundo", true, "14155552671");
+    const tenantLast = await other.receive("tercero segundo");
+    const ownerFresh = await owner.receive("nuevo");
+    const sender = await pools.worker.run(owner.context, repo => repo.loadAiMessage(senderLast.messageId));
+    const tenant = await pools.worker.run(other.context, repo => repo.loadAiMessage(tenantLast.messageId));
+    const fresh = await pools.worker.run(owner.context, repo => repo.loadAiMessage(ownerFresh.messageId));
+    expect(sender?.currentGroup.map(member => member.id)).toEqual([senderFirst.messageId, senderLast.messageId]);
+    expect(tenant?.currentGroup.map(member => member.id)).toEqual([tenantFirst.messageId, tenantLast.messageId]);
+    expect(fresh?.currentGroup.map(member => member.id)).toEqual([ownerFresh.messageId]);
+  });
   test("malformed final after new-client booking rolls client, appointment and counters back", async () => {
     const h = await fixture(true, false);
     const proposal = await h.run("mi nombre es María Pérez", async tools => {
