@@ -80,8 +80,17 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Check Docker readiness
         run: docker info
-      - name: Install Chromium and system dependencies
-        run: bunx --no-install playwright install --with-deps chromium
+      - name: Cache Playwright browser binaries
+        id: chromium-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-${{ hashFiles('bun.lock') }}
+      - name: Install Chromium system dependencies
+        run: bunx --no-install playwright install-deps chromium
+      - name: Install Chromium
+        if: ${{ steps.chromium-cache.outputs.cache-hit != 'true' }}
+        run: bunx --no-install playwright install chromium
       # Script selects the single e2e project from playwright.config.ts; fixtures own their services.
       - name: Browser tests
         run: bun run test:e2e --shard=${{ matrix.shard }}/3
