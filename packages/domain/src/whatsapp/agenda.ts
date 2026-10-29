@@ -75,6 +75,8 @@ export interface AgendaDialogue {
   bookingNames?: AgendaQuote["names"];
   /** Draft-local literal fields; omitted patches retain previously supplied values. */
   bookingNameFields?: { firstName?: string; lastName?: string };
+  /** Exact delivered booking quote accepted before its missing names were supplied. */
+  acceptedBookingQuote?: string;
   /** Missing service/resource choices are scoped to an inspected owned appointment. */
   change?: { appointmentId: string; previous: string; kind: "service" | "resource" };
   /** Owned appointment and inspected structure bind a multi-turn reschedule selection. */
