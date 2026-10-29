@@ -113,6 +113,27 @@ describe("bounded model-led agent", () => {
       expect(script.requests[0]!.messages.at(-1)!.content).toBe(text);
     });
   }
+  test("repairs one invalid final JSON without executing another tool", async () => {
+    const executed: string[] = [];
+    const session = new AgentToolSession(async command => { executed.push(command.name); return { status: "data", data: {} }; });
+    const valid = JSON.stringify({ text: "¿Qué servicio necesitás?" });
+    const script = scripted([calls("read_catalog"), final("¿Qué servicio necesitás?"), final(valid)]);
+    expect(await converseAgent(script.provider, session, messages(), "test", { repairFinalJson: true })).toBe(valid);
+    expect(executed).toEqual(["read_catalog"]);
+    expect(script.requests).toHaveLength(3);
+    expect(script.requests[2]!.messages.at(-2)?.content).toBe("¿Qué servicio necesitás?");
+    expect(script.requests[2]!.messages.at(-1)?.content).toContain("objeto JSON");
+  });
+  test("rejects tool calls and invalid JSON during the single format repair", async () => {
+    for (const second of [calls("read_catalog"), final("sigue inválido")]) {
+      let executed = 0;
+      const session = new AgentToolSession(async () => { executed++; return { status: "data", data: {} }; });
+      const script = scripted([final("respuesta sin JSON"), second]);
+      await expect(converseAgent(script.provider, session, messages(), "test", { repairFinalJson: true })).rejects.toThrow();
+      expect(executed).toBe(0);
+      expect(script.requests).toHaveLength(2);
+    }
+  });
   test("complete serialized batches, rejected calls and private state return only to provider", async () => {
     const executed: string[] = [];
     const session = new AgentToolSession(async command => { executed.push(command.name); return { status: "unavailable_data", code: "NOT_REGISTERED" }; });

@@ -136,6 +136,71 @@ describe("production inbound native conversation with transactional tools", () =
     const receipts = await db.sql`select * from whatsapp_agenda_receipts where business_id=${h.business} and message_id=${job.messageId}`;
     expect(receipts).toHaveLength(1);
   });
+  test("a successful format repair commits a staged booking once across job replay", async () => {
+    const h = await fixture();
+    let round = 0;
+    const prepare = h.worker(async request => !round++ ? batch("prepare", "prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T10:00:00-03:00" }) : modelReply(request));
+    await prepare.processor.process(await h.receive("primero ese"));
+    expect(await h.appointments()).toHaveLength(0);
+    const out = await h.outputs();
+    expect(out).toHaveLength(1);
+    await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${out[0]!.outbound_id}`;
+    round = 0;
+    const worker = h.worker(async request => {
+      if (round++ === 0) {
+        const runtime = JSON.parse(request.messages[1]!.content!).runtime;
+        return batch("accept", "confirm_quote_naturally", { ...runtime.naturalConfirmation, evidence: runtime.currentEvidence });
+      }
+      if (round === 2) {
+        expect(JSON.parse(request.messages.at(-1)!.content!).status).toBe("staged_action");
+        return finish("Guardado");
+      }
+      expect(round).toBe(3);
+      expect(request.messages.at(-2)!.content).toBe("Guardado");
+      expect(request.messages.at(-1)!.content).toContain("objeto JSON");
+      expect(request.messages.filter(message => message.role === "tool")).toHaveLength(1);
+      return finish('{"text":"Guardado"}');
+    });
+    const job = await h.receive("dale reservame ese");
+    await worker.processor.process(job);
+    const appointments = await h.appointments(), outputs = await h.outputs();
+    const receipts = await db.sql`select * from whatsapp_agenda_receipts where business_id=${h.business} and message_id=${job.messageId}`;
+    expect(worker.requests).toHaveLength(3);
+    expect(appointments).toHaveLength(1);
+    expect(outputs).toHaveLength(2);
+    expect(outputs.filter(output => output.source_message_id === job.messageId)).toMatchObject([
+      { text: "Guardado", state: "generated" },
+    ]);
+    expect(receipts).toHaveLength(1);
+    await worker.processor.process(job);
+    expect(worker.requests).toHaveLength(3);
+    expect(await h.appointments()).toEqual(appointments);
+    expect(await h.outputs()).toEqual(outputs);
+    expect(await db.sql`select * from whatsapp_agenda_receipts where business_id=${h.business} and message_id=${job.messageId}`).toEqual(receipts);
+  });
+  test("a format repair cannot execute tools or commit a staged booking", async () => {
+    const h = await fixture();
+    let round = 0;
+    const prepare = h.worker(async request => !round++ ? batch("prepare", "prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T10:00:00-03:00" }) : modelReply(request));
+    await prepare.processor.process(await h.receive("primero ese"));
+    const out = await h.outputs();
+    await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${out[0]!.outbound_id}`;
+    round = 0;
+    const worker = h.worker(async request => {
+      if (round++ === 0) {
+        const runtime = JSON.parse(request.messages[1]!.content!).runtime;
+        return batch("accept", "confirm_quote_naturally", { ...runtime.naturalConfirmation, evidence: runtime.currentEvidence });
+      }
+      return round === 2 ? finish("Guardado") : batch("unexpected", "clear_pending");
+    });
+    const job = await h.receive("dale reservame ese");
+    await expect(worker.processor.process(job)).rejects.toThrow("infrastructure failure");
+    expect(await h.appointments()).toHaveLength(0);
+    expect(await h.outputs()).toHaveLength(1);
+    const [source] = await db.sql`select processing_state from messages where id=${job.messageId}`;
+    expect(source!.processing_state).toBe("pending");
+    expect(worker.requests).toHaveLength(3);
+  });
   test("provider failure after staged booking rolls back everything and permits retry", async () => {
     const h = await fixture();
     let round = 0;
