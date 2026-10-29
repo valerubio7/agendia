@@ -41,7 +41,8 @@ describe("bounded model-led agent", () => {
     expect(context.filter(message => message.role === "system")).toEqual([
       { role: "system", content: AGENT_SYSTEM_PROMPT },
     ]);
-    expect(context[0]!.content).toContain("usá literalmente presentation.label del backend");
+    expect(context[0]!.content).toContain("usá presentation.label del backend como fuente");
+    expect(context[0]!.content).toContain("podés expresarla con palabras naturales, sin cambiar la fecha, hora ni zona horaria");
     expect(context[0]!.content).toContain("Nunca calcules por tu cuenta días de la semana ni conversiones de zona horaria");
     expect(context[0]!.content).toContain("Si no hay una etiqueta canónica, no inventes un día de la semana");
     expect(JSON.stringify(context)).not.toContain('"antes"');
