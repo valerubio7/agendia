@@ -245,11 +245,8 @@ export class PostgresRepositories {
   deleteResource(businessId: string, id: string): Promise<boolean> {
     return this.retireCatalogItem(businessId, id, "resources");
   }
-  async platformAiInstructions() {
-    return agentSettings.platformAiInstructions(this.db);
-  }
-  async updatePlatformAiInstructions(additionalInstructions: string, replyPacing?: ReplyPacing) {
-    return agentSettings.updatePlatformAiInstructions(this.db, additionalInstructions, replyPacing);
+  async updateResponseTiming(responseTiming: ReplyPacing) {
+    return agentSettings.updateResponseTiming(this.db, responseTiming);
   }
   async globalReplyPacing(): Promise<ReplyPacing> {
     return agentSettings.globalReplyPacing(this.db);

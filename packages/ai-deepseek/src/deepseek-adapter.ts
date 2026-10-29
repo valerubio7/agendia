@@ -25,9 +25,7 @@ export function buildDeepSeekRequest(request: AiGenerateRequest, model = "deepse
   return {
     model,
     messages: [
-      { role: "system", content: request.additionalInstructions
-        ? AI_SYSTEM_INSTRUCTIONS + "\n\n" + request.additionalInstructions
-        : AI_SYSTEM_INSTRUCTIONS },
+      { role: "system", content: AI_SYSTEM_INSTRUCTIONS },
       { role: "user", content: [
         delimited("INSTRUCCIONES DEL AGENTE", request.agent),
         delimited("INFORMACIÓN DEL NEGOCIO", request.business),

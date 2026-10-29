@@ -700,8 +700,6 @@ describe("PostgreSQL messaging workers", () => {
     const row = (await db.sql`select id,conversation_id from messages where provider_message_id='full-54'`)[0]!;
     const content = { facts: ['previous'], requests: [], commitments: [], preferences: [], openItems: [] };
     await db.sql`insert into conversation_summaries(business_id,conversation_id,version,covered_through,structured_summary) values(${A},${row.conversation_id},1,54,${db.sql.json(content)}),( ${A},${row.conversation_id},2,55,${db.sql.json({ facts: [] })})`;
-    const additionalInstructions = ' \n\tGlobal Atención 😀  ';
-    await pools.admin.run(undefined, r => r.updatePlatformAiInstructions(additionalInstructions));
     const payloads: any[] = [];
     const worker = new PostgresAiJobProcessor(pools, { generate: async () => { throw new Error('Unexpected generate'); }, converse: async request => {
       payloads.push(request);
@@ -718,7 +716,8 @@ describe("PostgreSQL messaging workers", () => {
       try { return JSON.parse(message.content); } catch { return null; }
     }).filter((value: any) => value?.section === 'currentInput');
     expect(JSON.parse(chunks.map((chunk: any) => chunk.text).join('')).text).toBe(texts.join('\n'));
-    expect(JSON.stringify(payloads[0])).toContain('Global Atención');
+    expect(JSON.stringify(payloads[0])).not.toContain('administratorSettings');
+    expect(JSON.stringify(payloads[0])).toContain('serverTime');
     expect(JSON.stringify(payloads[0])).not.toMatch(/STYLE-B|SECRETO-B/);
     expect((await db.sql`select text from outbound_commands where source_message_id=${row.id}`)[0]!.text).toBe('¿Podés aclarar qué necesitás?');
     expect(await db.sql`select id from messages where conversation_id=${row.conversation_id}`).toHaveLength(55);
@@ -737,7 +736,6 @@ describe("PostgreSQL messaging workers", () => {
     expect(payloads).toHaveLength(2);
     expect(payloads[1].messages.at(-1).content).toBe('next-one\nnext-two');
     expect((await db.sql`select text from outbound_commands where source_message_id=${latest.id}`)[0]!.text).toBe('¿Podés aclarar qué necesitás?');
-    await pools.admin.run(undefined, r => r.updatePlatformAiInstructions(''));
     await db.sql`update outbox_events set published_at=now() where stable_key like 'ai:full-%'`;
   });
 
@@ -904,13 +902,13 @@ describe("PostgreSQL messaging workers", () => {
       join outbox_events o on o.payload->>'messageId'=m.id::text
       where m.provider_message_id=${providerId}`)[0]!;
     try {
-      await pools.admin.run(undefined, r => r.updatePlatformAiInstructions("", policy));
+      await pools.admin.run(undefined, r => r.updateResponseTiming(policy));
       await inbound.handle(event({ remoteJid, providerMessageId: "configured-1", receivedAt: Date.parse("2099-01-01") }));
       const first = await read("configured-1");
       expect(first.reply_due_at.getTime() - first.last_exchange_at.getTime()).toBe(17_000);
       expect(first.next_attempt_at).toEqual(first.reply_due_at);
       expect(first.last_exchange_at.getUTCFullYear()).not.toBe(2099);
-      await pools.admin.run(undefined, r => r.updatePlatformAiInstructions("", { ...policy, initialDelaySeconds: 0, activeDelaySeconds: 0 }));
+      await pools.admin.run(undefined, r => r.updateResponseTiming({ ...policy, initialDelaySeconds: 0, activeDelaySeconds: 0 }));
       expect(await read("configured-1")).toEqual(first);
       await inbound.handle(event({ remoteJid, providerMessageId: "configured-2", receivedAt: 0 }));
       const pending = await read("configured-2");
@@ -922,7 +920,7 @@ describe("PostgreSQL messaging workers", () => {
       const zero = await read("configured-zero");
       expect(zero.reply_due_at).toEqual(zero.last_exchange_at);
       expect(zero.next_attempt_at).toEqual(zero.reply_due_at);
-      await pools.admin.run(undefined, r => r.updatePlatformAiInstructions("", policy));
+      await pools.admin.run(undefined, r => r.updateResponseTiming(policy));
       for (const [suffix, gap, delay] of [["active", 10, 4_000], ["reset", 21, 17_000]] as const) {
         const jid = `configured-${suffix}@s.whatsapp.net`;
         await db.sql`insert into conversations(business_id,connection_id,remote_jid,last_reply_at,last_exchange_at)
@@ -933,7 +931,7 @@ describe("PostgreSQL messaging workers", () => {
         expect(current.next_attempt_at).toEqual(current.reply_due_at);
       }
     } finally {
-      await pools.admin.run(undefined, r => r.updatePlatformAiInstructions("", { initialDelaySeconds: 600, activeDelaySeconds: 90, inactivityResetSeconds: 3600 }));
+      await pools.admin.run(undefined, r => r.updateResponseTiming({ initialDelaySeconds: 600, activeDelaySeconds: 90, inactivityResetSeconds: 3600 }));
       await db.sql`update outbox_events set published_at=now() where stable_key like 'ai:configured-%'`;
     }
   });

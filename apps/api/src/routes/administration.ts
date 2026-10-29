@@ -2,8 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { Algorithm, hash } from "@node-rs/argon2";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { PlatformAiInstructionsInputSchema } from "@agendia/contracts";
-import { AGENT_SYSTEM_PROMPT } from "@agendia/domain";
+import { ResponseTimingInputSchema } from "@agendia/contracts";
 import type { TenantUnitOfWork } from "@agendia/db";
 import type { Session, TenantRouteContext } from "./context.ts";
 
@@ -20,23 +19,16 @@ export function registerAdministrationRoutes(
     ) => Promise<T>;
   },
 ) {
-  app.get("/admin/ai-instructions", async (request, reply) => {
+  app.get("/admin/response-timing", async (request, reply) => {
     if (!(await requireAdmin(request, reply))) return;
-    return {
-      baseInstructions: AGENT_SYSTEM_PROMPT,
-      ...await pools.admin.run(undefined, (repo) => repo.platformAiInstructions()),
-    };
+    return { responseTiming: await pools.admin.run(undefined, repo => repo.globalReplyPacing()) };
   });
-  app.put("/admin/ai-instructions", async (request, reply) => {
+  app.put("/admin/response-timing", async (request, reply) => {
     if (!(await requireAdmin(request, reply, true))) return;
-    const body = PlatformAiInstructionsInputSchema.safeParse(request.body);
+    const body = ResponseTimingInputSchema.safeParse(request.body);
     if (!body.success)
-      return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid instructions");
-    return {
-      baseInstructions: AGENT_SYSTEM_PROMPT,
-      ...await pools.admin.run(undefined, (repo) =>
-        repo.updatePlatformAiInstructions(body.data.additionalInstructions, body.data.replyPacing)),
-    };
+      return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid response timing");
+    return { responseTiming: await pools.admin.run(undefined, repo => repo.updateResponseTiming(body.data.responseTiming)) };
   });
   app.get("/admin/businesses", async (request, reply) =>
     (await requireAdmin(request, reply))

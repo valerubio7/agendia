@@ -1,7 +1,7 @@
 import type {
   AppointmentRecord, AppointmentAvailabilityQuery, AvailabilitySlot,
   ManualAppointmentCreateRequest, ManualAppointmentChangeRequest,
-  ManualAppointmentNotesRequest, ManualAppointmentStateRequest, PlatformAiInstructions,
+  ManualAppointmentNotesRequest, ManualAppointmentStateRequest, ResponseTiming,
   AppointmentOperationContext, AppointmentOperationReceipt,
 } from "@agendia/contracts";
 export type {
@@ -12,7 +12,7 @@ export type {
 export type { AppointmentRecord } from "@agendia/contracts";
 export type Client = { id: string; firstName: string; lastName: string; phone: string };
 export type ClientInput = Pick<Client, "firstName" | "lastName" | "phone">;
-export type { PlatformAiInstructions } from "@agendia/contracts";
+export type { ResponseTiming } from "@agendia/contracts";
 
 export type Session = {
   identityId: string;
@@ -306,9 +306,9 @@ export class ApiClient {
     await this.call("/auth/logout", "POST");
     this.setCsrf("");
   }
-  platformAiInstructions = () => this.call<PlatformAiInstructions>("/admin/ai-instructions");
-  savePlatformAiInstructions = (additionalInstructions: string, replyPacing?: PlatformAiInstructions["replyPacing"]) =>
-    this.call<PlatformAiInstructions>("/admin/ai-instructions", "PUT", { additionalInstructions, replyPacing });
+  responseTiming = () => this.call<ResponseTiming>("/admin/response-timing");
+  saveResponseTiming = (responseTiming: ResponseTiming["responseTiming"]) =>
+    this.call<ResponseTiming>("/admin/response-timing", "PUT", { responseTiming });
   businesses = () => this.call<Business[]>("/admin/businesses");
   createBusiness = (body: {
     name: string;

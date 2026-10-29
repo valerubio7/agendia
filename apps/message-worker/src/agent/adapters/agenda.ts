@@ -154,10 +154,9 @@ export class PostgresWhatsAppAgenda {
           && await repo.agendaQuoteDelivered(dialogue.quote.outboundId, source.connection_id, phone)
           ? Object.freeze({ evidenceReference: fingerprint("inbound", { id: source.id, text: source.raw_text }),
             quoteFingerprint: fingerprint("quote", dialogue.quote) }) : null;
-        const settings = await repo.platformAiInstructions();
         const now = this.clock();
         const pendingPresentation = canonicalAgentDate(dialogue.quote?.startsAt, AGENT_CALENDAR_TIME_ZONE);
-        const messages = buildAgentMessages(source, settings.additionalInstructions, now, {
+        const messages = buildAgentMessages(source, now, {
           pending: structuredClone(dialogue), pendingPresentation, pendingQuotePresentationReference, naturalConfirmation, currentEvidence: source.raw_text,
           namesReference: namesReference(), nameSources,
           calendarTimeZone: AGENT_CALENDAR_TIME_ZONE,

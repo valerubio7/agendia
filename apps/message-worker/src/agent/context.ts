@@ -35,13 +35,13 @@ function dataMessages(value: unknown, section: string): ToolConversationMessage[
 /** Build under the source lock. Current group is appended exactly once, in sequence order.
  * Required data is losslessly packed; only optional oldest history and then summary
  * may be dropped. Oversized required configuration/input fails before any provider call. */
-export function buildAgentMessages(source: AgentSource, administratorSettings: string, now: string,
+export function buildAgentMessages(source: AgentSource, now: string,
   runtime: unknown = null): ToolConversationMessage[] {
   const group = [...source.currentGroup].sort((a, b) => Number(a.sequence) - Number(b.sequence));
   const groupIds = new Set(group.map(turn => turn.id));
   const groupStart = Math.min(Number(source.sequence), ...group.map(turn => Number(turn.sequence)));
   const summary = source.summaries.find(row => Number(row.covered_through) < groupStart && boundedSummary(row.structured_summary));
-  const settings = { agentSettings: source.agent, administratorSettings };
+  const settings = { agentSettings: source.agent };
   const settingsMessages = dataMessages(settings, "settings");
   const metadata = { dataOnly: true, serverTime: now,
     business: { displayName: source.profile.display_name ?? "", description: source.profile.description ?? "", address: source.profile.address ?? "" },
@@ -50,7 +50,7 @@ export function buildAgentMessages(source: AgentSource, administratorSettings: s
   // in labeled continuation data, without making any part a privileged system role.
   const separateSettings = JSON.stringify(metadata).length > TOOL_CONVERSATION_LIMITS.messageCharacters;
   const prefix = () => [{ role: "system" as const, content: AGENT_SYSTEM_PROMPT },
-    ...dataMessages(separateSettings ? { ...metadata, agentSettings: null, administratorSettings: null } : metadata, "context"),
+    ...dataMessages(separateSettings ? { ...metadata, agentSettings: null } : metadata, "context"),
     ...(separateSettings ? settingsMessages : [])];
   const history = source.turns.filter(turn => !groupIds.has(turn.id) && Number(turn.sequence) < groupStart
     && Number(turn.sequence) > Number(summary?.covered_through ?? 0)
