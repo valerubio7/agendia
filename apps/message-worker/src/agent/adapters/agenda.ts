@@ -12,6 +12,7 @@ import { AgentToolSession, canonicalAgentDate, AGENT_CALENDAR_TIME_ZONE, emitAge
   type AgentSessionOutcome, type AgentToolDiagnostics } from "../tools.ts";
 
 import { buildAgentMessages } from "../context.ts";
+import { presentAvailability } from "../availability-presentation.ts";
 
 type Pools = ReturnType<typeof createRuntimePools>;
 type Source = NonNullable<Awaited<ReturnType<PostgresRepositories["loadAiMessage"]>>>;
@@ -33,11 +34,20 @@ const bounded = <T>(items: T[]) => {
   while (selected.length && new TextEncoder().encode(JSON.stringify(selected)).byteLength > 12000) selected.pop();
   return { items: selected, hasMore: selected.length < items.length };
 };
-const availableSlots = (options: AppointmentAvailabilityOption[]) => bounded(options.map(option => ({
-  startsAt: option.start, resourceId: option.resourceId,
-  serviceId: option.terms.serviceId, durationMinutes: option.terms.durationMinutes, priceArs: option.terms.priceArs,
-  presentation: canonicalAgentDate(option.start, AGENT_CALENDAR_TIME_ZONE),
-})));
+const availableSlots = (options: AppointmentAvailabilityOption[]) => {
+  const selected = bounded(options.map(option => ({
+    startsAt: option.start, resourceId: option.resourceId,
+    serviceId: option.terms.serviceId, durationMinutes: option.terms.durationMinutes, priceArs: option.terms.priceArs,
+    presentation: canonicalAgentDate(option.start, AGENT_CALENDAR_TIME_ZONE),
+  })));
+  let result = presentAvailability(selected);
+  while (selected.items.length && new TextEncoder().encode(JSON.stringify(result)).byteLength > 12000) {
+    selected.items.pop();
+    selected.hasMore = true;
+    result = presentAvailability(selected);
+  }
+  return result;
+};
 /** Persistent preference comes from customer expressions/retained state, not query or assignment arguments. */
 const trustedPreference = (text: string, resources: readonly { id: string; name: string }[],
   previous?: string | null, unresolved = false, selectedResourceId?: string) => {

@@ -8,7 +8,7 @@ describe("canonical agent date presentation", () => {
   test("2035-04-02 is canonically Monday, not Wednesday", () => {
     expect(canonicalDate("2035-04-02T10:00:00-03:00", zone)).toEqual({
       timeZone: zone, localDate: "2035-04-02", localTime: "10:00", weekday: "lunes",
-      label: "lunes 2035-04-02 a las 10:00 (America/Argentina/Buenos_Aires)",
+      label: "lunes 2 de abril de 2035 a las 10:00",
     });
   });
   test("UTC midnight converts to the real local previous date and weekday", () => {

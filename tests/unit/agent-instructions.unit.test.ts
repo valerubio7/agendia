@@ -7,6 +7,9 @@ test("appointment duration stays internal unless the customer explicitly asks", 
   expect(responses).toContain("La duración del turno es información interna para organizar la agenda.");
   expect(responses).toContain("No menciones la duración al cliente salvo que la pida explícitamente; en ese caso, respondé con datos reales.");
   expect(prompt).not.toContain("respondé sobre duración o recurso cuando corresponda");
+  expect(responses).toContain("cada grupo continuo representa opciones de inicio cada 15 minutos, no el fin de una atención");
+  expect(responses).toContain("hasMore indica resultados incompletos");
+  expect(responses).toContain("No unas grupos ni infieras horarios intermedios fuera de ellos");
 });
 
 // Exercise the same public export consumed by the API and native runtime.
