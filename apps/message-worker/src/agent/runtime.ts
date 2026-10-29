@@ -51,7 +51,7 @@ export async function converseAgent(provider: ToolConversationProvider, session:
         if (!options.repairFinalJson) return content;
         try { session.renderResponse(content); return content; }
         catch (error) {
-          if (repairingFinal) throw error;
+          if (repairingFinal || !(error instanceof SyntaxError)) throw error;
           repairingFinal = true;
           messages.push(message, { role: "user", content: "Tu salida anterior no cumple el formato obligatorio. Volvé a emitir únicamente el objeto JSON válido con text y, si corresponde, presentedQuoteReference. No hagas llamadas a herramientas." });
           continue;

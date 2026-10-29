@@ -615,7 +615,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
       };
       const worker = createMessageWorker(pools, provider);
       await expect(worker.process(job(h, id))).rejects.toThrow("infrastructure failure");
-      expect(calls).toBe(1);
+      expect(calls).toBe(content.startsWith("{") ? 1 : 2);
       expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0, receipts: 0 });
       expect(await db.sql`select outbound_id from outbound_commands where source_message_id=${id}`).toHaveLength(0);
     }

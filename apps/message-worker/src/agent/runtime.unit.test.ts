@@ -134,6 +134,12 @@ describe("bounded model-led agent", () => {
       expect(script.requests).toHaveLength(2);
     }
   });
+  test("rejects valid JSON with forbidden fields without requesting a repair", async () => {
+    const session = new AgentToolSession(async () => { throw new Error("unexpected tool"); });
+    const script = scripted([final(JSON.stringify({ text: "Confirmado", kind: "reply" }))]);
+    await expect(converseAgent(script.provider, session, messages(), "test", { repairFinalJson: true })).rejects.toThrow();
+    expect(script.requests).toHaveLength(1);
+  });
   test("complete serialized batches, rejected calls and private state return only to provider", async () => {
     const executed: string[] = [];
     const session = new AgentToolSession(async command => { executed.push(command.name); return { status: "unavailable_data", code: "NOT_REGISTERED" }; });
