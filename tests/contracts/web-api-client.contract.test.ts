@@ -457,7 +457,7 @@ describe("Next web client against Fastify contracts", () => {
   test("uses cookie/CSRF and live admin, profile, agent and WhatsApp contracts", async () => {
     const admin = new ApiClient(transport, "/api");
     expect(
-      (await admin.login("admin@web.test", "correct horse battery staple"))
+      (await admin.login("admin@web.test", "correct horse battery staple", true))
         .role,
     ).toBe("platform_admin");
     const business = await admin.createBusiness({
@@ -512,7 +512,7 @@ describe("Next web client against Fastify contracts", () => {
     expect(
       await admin.errorMessage(new ApiError("UNAUTHENTICATED", "", 401)),
     ).toContain("suspendido");
-    await admin.login("admin@web.test", "correct horse battery staple");
+    await admin.login("admin@web.test", "correct horse battery staple", true);
     await admin.setBusinessStatus(business.id, "active");
     await admin.logout();
 
@@ -587,7 +587,7 @@ describe("Next web client against Fastify contracts", () => {
       });
       expect(responseCacheControl).toBe("no-store");
       await tenant.logout();
-      await admin.login("admin@web.test", "correct horse battery staple");
+      await admin.login("admin@web.test", "correct horse battery staple", true);
       await expect(admin.whatsappQr()).rejects.toMatchObject({
         code: "FORBIDDEN",
       });
@@ -879,7 +879,7 @@ describe("Next web client against Fastify contracts", () => {
 
   test("surfaces safe validation, wrong-role and expired-session states", async () => {
     const client = new ApiClient(transport, "/api");
-    await client.login("admin@web.test", "correct horse battery staple");
+    await client.login("admin@web.test", "correct horse battery staple", true);
     await expect(client.saveProfile({} as never)).rejects.toEqual(
       expect.objectContaining({ code: "FORBIDDEN" }),
     );

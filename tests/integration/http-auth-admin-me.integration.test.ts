@@ -33,8 +33,8 @@ const request = (
       ...(options.origin ? { origin: options.origin } : {}),
     },
   });
-const login = async (email: string, password: string) => {
-  const response = await request("POST", "/auth/login", {
+const login = async (email: string, password: string, adminEntrance = false) => {
+  const response = await request("POST", adminEntrance ? "/auth/admin/login" : "/auth/login", {
     origin: ORIGIN,
     body: { email, password },
   });
@@ -48,7 +48,7 @@ const login = async (email: string, password: string) => {
   };
 };
 const adminLogin = () =>
-  login("admin@example.test", "correct horse battery staple");
+  login("admin@example.test", "correct horse battery staple", true);
 const createBusiness = async (email: string) => {
   const admin = await adminLogin();
   const response = await request("POST", "/admin/businesses", {
@@ -119,6 +119,15 @@ const csrfBootstrapRegression = async () => {
 };
 
 describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
+  test("rejects administrators at the business login without issuing a session", async () => {
+    const response = await request("POST", "/auth/login", {
+      origin: ORIGIN,
+      body: { email: "admin@example.test", password: "correct horse battery staple" },
+    });
+    expect(response.statusCode).toBe(401);
+    expect(response.headers["set-cookie"]).toBeUndefined();
+    expect(response.json()).not.toHaveProperty("csrfToken");
+  });
   test("agent endpoint requires authentication and removes the old route without mutation", async () => {
     const before = [...await database.sql`select * from agent_configs`];
     expect((await request("GET", "/me/agent")).statusCode).toBe(401);
@@ -128,6 +137,7 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
     expect([...await database.sql`select * from agent_configs`]).toEqual(before);
   });
   test("sets a secure opaque cookie and enforces expiration, logout, CSRF and Origin", async () => {
+    const priorAuditCount = (await database.sql`select event_type from audit_events where business_id is null`).length;
     expect(
       (
         await request("POST", "/auth/login", {
@@ -166,7 +176,7 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
         await database.sql<
           { event_type: string }[]
         >`select event_type from audit_events where business_id is null order by occurred_at`
-      ).map((row) => row.event_type),
+      ).map((row) => row.event_type).slice(priorAuditCount),
     ).toEqual(["auth.login_failed", "auth.login"]);
     expect(auth.response.headers["set-cookie"]).toContain(
       "__Host-agendia_session=",

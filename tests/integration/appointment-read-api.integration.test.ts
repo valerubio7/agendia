@@ -35,7 +35,7 @@ beforeAll(async () => {
     const owner: Owner = { businessId: randomUUID(), actorId: randomUUID(), cookie: "", client: randomUUID(), service: randomUUID(), resource: randomUUID(), ids: [] };
     if (!platform) await database.sql`insert into businesses(id,name) values(${owner.businessId},'Read fixture')`;
     await database.sql`insert into auth_identities(id,normalized_email,password_phc,role,business_id) values(${owner.actorId},${email},${phc},${platform ? "platform_admin" : "business_user"},${platform ? null : owner.businessId})`;
-    const login = await app.inject({ method: "POST", url: "/auth/login", payload: { email, password: "correct horse battery staple" }, headers: { origin: "https://panel.agendia.test" } });
+    const login = await app.inject({ method: "POST", url: platform ? "/auth/admin/login" : "/auth/login", payload: { email, password: "correct horse battery staple" }, headers: { origin: "https://panel.agendia.test" } });
     expect(login.statusCode).toBe(200);
     const cookies = login.headers["set-cookie"]!;
     owner.cookie = (Array.isArray(cookies) ? cookies[0]! : cookies).split(";")[0]!;

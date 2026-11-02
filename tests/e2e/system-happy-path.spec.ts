@@ -34,7 +34,7 @@ test("real services complete the deterministic multi-tenant happy path", async (
     baileys: true,
     deepSeek: true,
   });
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
   for (const tenant of tenants) {
     await createBusinessInAdminUi(page, tenant);

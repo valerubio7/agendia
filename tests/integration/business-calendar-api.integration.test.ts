@@ -37,7 +37,7 @@ beforeAll(async () => {
     const businessId = randomUUID(), actorId = randomUUID();
     if (!platform) await database.sql`insert into businesses(id,name) values(${businessId},${email})`;
     await database.sql`insert into auth_identities(id,normalized_email,password_phc,role,business_id) values(${actorId},${email},${phc},${platform ? "platform_admin" : "business_user"},${platform ? null : businessId})`;
-    const res = await app.inject({ method: "POST", url: "/auth/login", payload: { email, password }, headers: { origin: ORIGIN } });
+    const res = await app.inject({ method: "POST", url: platform ? "/auth/admin/login" : "/auth/login", payload: { email, password }, headers: { origin: ORIGIN } });
     expect(res.statusCode).toBe(200);
     const cookies = res.headers["set-cookie"]!;
     return { businessId, actorId, cookie: (Array.isArray(cookies) ? cookies[0]! : cookies).split(";")[0]!, csrf: res.json().csrfToken };

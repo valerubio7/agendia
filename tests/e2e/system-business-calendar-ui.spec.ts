@@ -4,7 +4,7 @@ import { createBusinessInAdminUi, login, test } from "./support/fixtures.ts";
 test("Horario reads only the tenant calendar and retries safely", async ({ browser, page, system }, testInfo) => {
   const password = "calendar tenant password safe";
   const tenants = ["calendar-ui@example.test", "other-calendar-ui@example.test"];
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
   for (const [index, email] of tenants.entries()) {
     await createBusinessInAdminUi(page, { name: `Estudio Horario ${index}`, email, password });
@@ -112,7 +112,7 @@ test("Horario reads only the tenant calendar and retries safely", async ({ brows
 test("Horario edits raw tenant schedules without defaults or cancel writes", async ({ browser, page, system }, testInfo) => {
   const password = "calendar editor password safe";
   const emails = ["calendar-editor@example.test", "other-editor@example.test"];
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
   for (const [index, email] of emails.entries()) {
     await createBusinessInAdminUi(page, { name: `Editor Horario ${index}`, email, password });
@@ -235,7 +235,7 @@ test("Horario edits raw tenant schedules without defaults or cancel writes", asy
 
 test("Horario serializes pending saves, guards suspended hours and recovers confirmed saves by GET only", async ({ browser, page, system }, testInfo) => {
   const email = "calendar-safety@example.test", password = "calendar safety password safe";
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
   await createBusinessInAdminUi(page, { name: "Horario Seguro", email, password });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
@@ -442,7 +442,7 @@ test("Horario serializes pending saves, guards suspended hours and recovers conf
 
 test("Horario rejects exclusion of a real future confirmed booking independently of resource hours", async ({ browser, page, system }, testInfo) => {
   const email = "calendar-future-c2@example.test", password = "calendar future proof password";
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
   await createBusinessInAdminUi(page, { name: "Horario Futuro C2", email, password });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
@@ -564,7 +564,7 @@ test("Horario rejects exclusion of a real future confirmed booking independently
 test("Closures read independently in Argentina time without calendar writes", async ({ browser, page, system }, testInfo) => {
   const password = "closures read password safe";
   const emails = ["closures-read@example.test", "other-closures-read@example.test"];
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
   for (const [index, email] of emails.entries()) {
     await createBusinessInAdminUi(page, { name: `Cierres Lectura ${index}`, email, password });
@@ -700,7 +700,7 @@ test("Closures read independently in Argentina time without calendar writes", as
 for (const interruption of ["initial", "retry"] as const) {
   test(`Closures recover after failed logout interrupts ${interruption} GET`, async ({ browser, page, system }, testInfo) => {
     const email = `closures-logout-${interruption}@example.test`, password = "closure logout safe password";
-    await login(page, system.webUrl, system.admin.email, system.admin.password);
+    await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
     await expect(page).toHaveURL(/\/businesses$/);
     await createBusinessInAdminUi(page, { name: `Cierres Logout ${interruption}`, email, password });
     const context = await browser.newContext({ timezoneId: "UTC", viewport: { width: 1280, height: 900 } });
@@ -778,7 +778,7 @@ for (const interruption of ["initial", "retry"] as const) {
 
 test("Closures retain ordered records through refresh failure and interrupted logout", async ({ browser, page, system }, testInfo) => {
   const email = "closures-refresh@example.test", password = "closure refresh safe password";
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
   await createBusinessInAdminUi(page, { name: "Cierres Actualizar", email, password });
   const context = await browser.newContext({ timezoneId: "UTC", viewport: { width: 1280, height: 900 } });
@@ -891,7 +891,7 @@ test("Closures retain ordered records through refresh failure and interrupted lo
 
 test("Closure CREATE persists Argentina dates and milliseconds, retaining confirmed rows after GET failure", async ({ browser, page, system }, testInfo) => {
   const email = "closures-create@example.test", password = "closure create safe password";
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
   await createBusinessInAdminUi(page, { name: "Cierres Crear", email, password });
   const context = await browser.newContext({ timezoneId: "UTC", viewport: { width: 1280, height: 900 } });
@@ -1028,7 +1028,7 @@ test("Closure CREATE persists Argentina dates and milliseconds, retaining confir
 test("Cierres rejects a date containing a real future confirmed booking and preserves the draft", async ({ browser, page, system }, testInfo) => {
   const email = "closures-future-conflict@example.test";
   const password = "closures future proof password";
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
   await createBusinessInAdminUi(page, { name: "Cierres Futuro Conflicto", email, password });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
@@ -1194,7 +1194,7 @@ test("Cierres rejects a date containing a real future confirmed booking and pres
 
 test("Closures edit and delete retain identity and recover committed mutations", async ({ browser, page, system }, testInfo) => {
   const email = "closures-edit-delete@example.test", password = "closure edits safe password";
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
   await createBusinessInAdminUi(page, { name: "Cierres Editar Eliminar", email, password });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });

@@ -32,7 +32,7 @@ const fixture = async (platform = false): Promise<Owner> => {
   const email = `${o.actor}@example.test`;
   if (!platform) await database.sql`insert into businesses(id,name) values(${o.business},'Manual fixture')`;
   await database.sql`insert into auth_identities(id,normalized_email,password_phc,role,business_id) values(${o.actor},${email},${phc},${platform ? "platform_admin" : "business_user"},${platform ? null : o.business})`;
-  const login = await app.inject({ method: "POST", url: "/auth/login", payload: { email, password: "correct horse battery staple" }, headers: { origin } });
+  const login = await app.inject({ method: "POST", url: platform ? "/auth/admin/login" : "/auth/login", payload: { email, password: "correct horse battery staple" }, headers: { origin } });
   expect(login.statusCode).toBe(200);
   const cookies = login.headers["set-cookie"]!;
   o.cookie = (Array.isArray(cookies) ? cookies[0]! : cookies).split(";")[0]!;
