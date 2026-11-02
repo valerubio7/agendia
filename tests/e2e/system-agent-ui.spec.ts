@@ -102,7 +102,7 @@ async function expectOfficialHeaderBrand(page: Page, shell: Locator) {
 }
 
 test("agent save preserves newer activation draft and advances the next revision", async ({ page, system }) => {
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(page.locator('[data-ui="admin-screen"]')).toBeVisible();
   await createBusinessInAdminUi(page, {
     name: "Agente concurrente", email: "agent-draft@example.test", password: tenant.password,
@@ -183,7 +183,7 @@ test("agent save preserves newer activation draft and advances the next revision
   try {
     await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
     await expect(page).toHaveURL(/\/$/);
-    await login(page, system.webUrl, system.admin.email, system.admin.password);
+    await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
     await expect(page.locator('[data-ui="admin-screen"]')).toBeVisible();
   } finally { releaseLate(); }
   await lateDelivered;
@@ -200,7 +200,7 @@ test("the redesigned Agent screen preserves the real configuration workflow resp
   system,
 }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 900 });
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
 
   await createBusinessInAdminUi(page, tenant);

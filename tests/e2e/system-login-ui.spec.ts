@@ -4,6 +4,23 @@ import { test } from "./support/fixtures.ts";
 const passwordRecoveryName =
   /(?:olvid|recuper).*(?:contraseña|clave)|(?:contraseña|clave).*(?:olvid|recuper)/i;
 
+test("administrators can sign in only through the administration entrance", async ({ page, system }) => {
+  for (const path of ["/", "/login"]) {
+    await page.goto(`${system.webUrl}${path}`);
+    await page.getByLabel("Correo", { exact: true }).fill(system.admin.email);
+    await page.getByLabel("Contraseña", { exact: true }).fill(system.admin.password);
+    await page.getByRole("button", { name: "Ingresar", exact: true }).click();
+    await expect(page.getByRole("alert")).toBeVisible();
+    await expect(page).toHaveURL(`${system.webUrl}${path}`);
+    expect((await page.context().cookies()).filter((cookie) => cookie.name === "__Host-agendia_session")).toHaveLength(0);
+  }
+  await page.goto(`${system.webUrl}/admin/login`);
+  await page.getByLabel("Correo", { exact: true }).fill(system.admin.email);
+  await page.getByLabel("Contraseña", { exact: true }).fill(system.admin.password);
+  await page.getByRole("button", { name: "Ingresar", exact: true }).click();
+  await expect(page).toHaveURL(/\/businesses$/);
+});
+
 test("login preserves its approved semantic, responsive, and pending-state contract", async ({
   page,
   system,
@@ -196,6 +213,7 @@ test("login preserves its approved semantic, responsive, and pending-state contr
     ),
   ).toBe(true);
 
+  await page.goto(`${system.webUrl}/admin/login`);
   let loginRequestCount = 0;
   let observeLoginRequest!: () => void;
   const loginRequestObserved = new Promise<void>((resolve) => {
@@ -205,7 +223,7 @@ test("login preserves its approved semantic, responsive, and pending-state contr
   const loginRequestReleased = new Promise<void>((resolve) => {
     releaseLoginRequest = resolve;
   });
-  await page.route("**/auth/login", async (route) => {
+  await page.route("**/auth/admin/login", async (route) => {
     expect(route.request().method()).toBe("POST");
     expect(route.request().postDataJSON()).toEqual({ email: system.admin.email, password: system.admin.password });
     loginRequestCount++;
@@ -231,7 +249,7 @@ test("login preserves its approved semantic, responsive, and pending-state contr
   expect(loginRequestCount).toBe(0);
   await expect(form).toHaveAttribute("aria-busy", "false");
   await expect(formPanel.getByRole("alert")).toHaveCount(0);
-  await expect(page).toHaveURL(system.webUrl + "/");
+  await expect(page).toHaveURL(system.webUrl + "/admin/login");
 
   await password.fill(system.admin.password);
   await Promise.all([loginRequestObserved, password.press("Enter")]);

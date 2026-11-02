@@ -20,7 +20,7 @@ test("Servicios creates and edits persisted owned services with safe validation 
     { name: "Estudio Servicios", email: "services-ui@example.test" },
     { name: "Otro Estudio", email: "other-services-ui@example.test" },
   ];
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
   for (const tenant of tenants) {
     await createBusinessInAdminUi(page, { ...tenant, password });
@@ -202,7 +202,7 @@ test("Servicios creates and edits persisted owned services with safe validation 
 });
 
 test("Servicios confirms lifecycle actions, persists changes and recovers without repeating mutations", async ({ page, system }, testInfo) => {
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await createBusinessInAdminUi(page, {
     name: "Lifecycle Studio", email: "lifecycle@example.test", password: "lifecycle safe password",
   });

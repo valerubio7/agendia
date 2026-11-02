@@ -155,7 +155,7 @@ test("official local faces, root tokens and shared roles survive real login/prof
   await noClipping(page);
   await resetZoom();
 
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
   await page.goto(`${system.webUrl}/profile`);
   await expect(page.locator('.authenticated-terminal[data-state="denied"]')).toBeVisible();

@@ -4,7 +4,7 @@ import { createBusinessInAdminUi, login, test } from "./support/fixtures.ts";
 test("Clientes searches and edits owned identities with complete appointment history and safe recovery", async ({ browser, page, system }, testInfo) => {
   test.setTimeout(180_000);
   const password = "clients UI tenant password", email = "clients-ui@example.test";
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
   await createBusinessInAdminUi(page, { name: "Estudio Clientes", email, password });
   await createBusinessInAdminUi(page, { name: "Otro negocio clientes", email: "other-clients@example.test", password });
@@ -219,7 +219,7 @@ test("Clientes searches and edits owned identities with complete appointment his
 test("Clientes fences an uncertain standalone POST across reload until GET confirms the exact identity", async ({ browser, page, system }) => {
   test.setTimeout(180_000);
   const password = "uncertain clients tenant password";
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await page.waitForURL(/\/businesses$/);
   for (const [name, email] of [["Cliente incierto", "uncertain@example.test"], ["Cliente separado", "separate@example.test"]] as const) {
     await createBusinessInAdminUi(page, { name, email, password });
@@ -356,7 +356,7 @@ test("Clientes creates standalone owned identities with canonical detail and GET
   const password = "standalone clients tenant password";
   const email = "standalone-clients@example.test";
   const otherEmail = "standalone-other@example.test";
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await page.waitForURL(/\/businesses$/);
   for (const [name, userEmail] of [["Clientes independientes", email], ["Otros clientes independientes", otherEmail]] as const) {
     await createBusinessInAdminUi(page, { name, email: userEmail, password });

@@ -17,7 +17,7 @@ test("Recursos manages owned assignments while preserving weekly spans", async (
     { name: "Estudio Recursos", email: "resources-ui@example.test" },
     { name: "Otro Estudio Recursos", email: "other-resources-ui@example.test" },
   ];
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
   await expect(page.getByRole("link", { name: "Recursos", exact: true })).toHaveCount(0);
   for (const tenant of tenants) {

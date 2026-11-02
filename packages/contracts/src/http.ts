@@ -18,6 +18,7 @@ export type CatalogDeletionAck = z.infer<typeof CatalogDeletionAckSchema>;
 
 export const PRODUCT_HTTP_ROUTES = Object.freeze([
   "/auth/login",
+  "/auth/admin/login",
   "/auth/logout",
   "/auth/session",
   "/admin/businesses",

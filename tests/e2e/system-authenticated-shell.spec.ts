@@ -114,8 +114,7 @@ test("role-aware authenticated shells recover safely and expose only valid navig
   await adminShell.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
   await expect(page).toHaveURL(`${system.webUrl}/admin/login`);
   await expect(page.getByRole("heading", { name: "Acceso de administración", exact: true })).toBeVisible();
-  // Entrances do not restrict valid credentials by role.
-  await login(page, `${system.webUrl}/login`, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
 
   const protectedProfileRequests: string[] = [];
