@@ -51,7 +51,7 @@ flowchart LR
 - 26 tablas tienen `ENABLE` + `FORCE ROW LEVEL SECURITY`. Las 6 globales son `businesses`, `auth_identities`, `web_sessions`, `operational_controls` y los dos throttles de login.
 - Hay cuatro roles de capacidad: `agendia_runtime`, `agendia_admin_runtime`, `agendia_whatsapp_runtime` y `agendia_worker_runtime`. El login de conexión solo tiene membresía; cada transacción activa el rol y los settings `app.tenant_id`, `app.actor_role`, `app.actor_id` y `app.request_id`.
 - Las credenciales de WhatsApp se cifran con AES-256-GCM. `BAILEYS_KMS_KEY` y `WHATSAPP_LINK_CODE_KEY` deben ser base64 de exactamente 32 bytes y se validan al arrancar.
-- La sesión es un token opaco de 32 bytes; se guarda su SHA-256. TTL absoluto 8 h, inactividad 30 min. El login tiene throttle global y por cuenta.
+- La sesión es un token opaco de 32 bytes; se guarda su SHA-256. Sin «Mantener sesión iniciada», el negocio dura hasta 7 días (2 días de inactividad) y administración 8 h (30 min de inactividad); la cookie termina con el navegador. Con la casilla, el negocio dura hasta 6 meses calendario (30 días de inactividad) y administración 7 días (1 día de inactividad); la cookie persistente nunca supera el límite absoluto. Solo la interacción humana en el panel renueva la inactividad mediante `POST /auth/activity`, protegido por origen y CSRF; consultas, sondeos y bootstrap de CSRF no la renuevan. El login tiene throttle global y por cuenta.
 - El bootstrap permite un único `platform_admin` a través de la aplicación; la tabla no impone esa unicidad.
 
 ## Decisiones y por qué

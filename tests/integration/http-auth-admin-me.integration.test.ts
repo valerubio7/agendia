@@ -49,8 +49,8 @@ const login = async (email: string, password: string, adminEntrance = false) => 
 };
 const adminLogin = () =>
   login("admin@example.test", "correct horse battery staple", true);
-const createBusiness = async (email: string) => {
-  const admin = await adminLogin();
+const createBusiness = async (email: string, auth?: Awaited<ReturnType<typeof adminLogin>>) => {
+  const admin = auth ?? await adminLogin();
   const response = await request("POST", "/admin/businesses", {
     ...admin,
     origin: ORIGIN,
@@ -71,6 +71,7 @@ beforeAll(async () => {
     join(import.meta.dir, "../../packages/db/migrations"),
   );
   await database.sql`insert into auth_identities (normalized_email,password_phc,role) values (${"admin@example.test"},${await hash("correct horse battery staple", { algorithm: Algorithm.Argon2id })},'platform_admin')`;
+  await database.sql`insert into auth_identities (normalized_email,password_phc,role) values (${"override-admin@example.test"},${await hash("correct horse battery staple", { algorithm: Algorithm.Argon2id })},'platform_admin')`;
   pools = createRuntimePools(database.container.getConnectionUri());
   app = buildApi({ pools, expectedOrigin: ORIGIN, absoluteTtlMs: 60_000 });
 }, 120_000);
@@ -119,6 +120,143 @@ const csrfBootstrapRegression = async () => {
 };
 
 describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
+  test("session checks and rejected requests do not renew human inactivity", async () => {
+    const auth = await adminLogin();
+    const { digestOpaqueToken } = await import("@agendia/auth");
+    const tokenHash = digestOpaqueToken(auth.cookie.split("=")[1]!);
+    await database.sql`update web_sessions set last_seen_at=now()-interval '1 minute', idle_expires_at=now()+interval '5 minutes' where token_sha256=${tokenHash}`;
+    const snapshot = async () => (await database.sql`select last_seen_at,idle_expires_at from web_sessions where token_sha256=${tokenHash}`)[0];
+    const before = await snapshot();
+    expect((await request("GET", "/auth/session", auth)).statusCode).toBe(200);
+    expect(await snapshot()).toEqual(before);
+    expect((await app.inject({ method: "POST", url: "/auth/csrf", headers: { cookie: auth.cookie, origin: ORIGIN, "x-csrf-bootstrap": "1" } })).statusCode).toBe(200);
+    expect(await snapshot()).toEqual(before);
+    expect((await request("POST", "/auth/logout", { ...auth, origin: "https://evil.test" })).statusCode).toBe(403);
+    expect(await snapshot()).toEqual(before);
+  });
+  test("role and remember choice select session deadlines and cookie persistence", async () => {
+    await createBusiness("policy@example.test");
+    const policyApp = buildApi({ pools, expectedOrigin: ORIGIN });
+    try {
+      for (const [email, password, entrance, remember, absoluteMs, idleMs] of [
+        ["policy@example.test", "tenant initial password safe", false, false, 7 * 86400000, 2 * 86400000],
+        ["policy@example.test", "tenant initial password safe", true, true, 0, 30 * 86400000],
+        ["admin@example.test", "correct horse battery staple", true, false, 8 * 3600000, 30 * 60000],
+        ["admin@example.test", "correct horse battery staple", true, true, 7 * 86400000, 86400000],
+      ] as const) {
+        const response = await policyApp.inject({ method: "POST", url: entrance ? "/auth/admin/login" : "/auth/login", headers: { origin: ORIGIN }, payload: { email, password, remember } });
+        expect(response.statusCode).toBe(200);
+        const cookie = String(response.headers["set-cookie"]);
+        expect(cookie.includes("Expires=")).toBe(remember);
+        expect(cookie).toContain("Secure");
+        const token = cookie.split(";")[0]!.split("=")[1]!;
+        const { digestOpaqueToken } = await import("@agendia/auth");
+        const [row] = await database.sql<{ created_at: Date; absolute_expires_at: Date; idle_expires_at: Date }[]>`select created_at,absolute_expires_at,idle_expires_at from web_sessions where token_sha256=${digestOpaqueToken(token)}`;
+        const created = row!.created_at.getTime();
+        const expectedAbsolute = new Date(created);
+        if (absoluteMs) expectedAbsolute.setTime(created + absoluteMs);
+        else { const day = expectedAbsolute.getUTCDate(); expectedAbsolute.setUTCDate(1); expectedAbsolute.setUTCMonth(expectedAbsolute.getUTCMonth() + 7, 0); expectedAbsolute.setUTCDate(Math.min(day, expectedAbsolute.getUTCDate())); }
+        expect(Math.abs(row!.absolute_expires_at.getTime() - expectedAbsolute.getTime())).toBeLessThan(5000);
+        expect(Math.abs(row!.idle_expires_at.getTime() - created - idleMs)).toBeLessThan(5000);
+        if (remember) {
+          const expiry = new Date(cookie.match(/Expires=([^;]+)/)![1]!).getTime();
+          expect(expiry).toBeLessThanOrEqual(row!.absolute_expires_at.getTime());
+          expect(row!.absolute_expires_at.getTime() - expiry).toBeLessThan(1000);
+        }
+        await database.sql`update web_sessions set idle_expires_at=now()+interval '10 seconds' where token_sha256=${digestOpaqueToken(token)}`;
+        const activityTime = Date.now();
+        const activity = await policyApp.inject({ method: "POST", url: "/auth/activity", headers: { origin: ORIGIN, cookie: cookie.split(";")[0]!, "x-csrf-token": response.json().csrfToken } });
+        expect(activity.statusCode).toBe(204);
+        const [renewed] = await database.sql<{ idle_expires_at: Date }[]>`select idle_expires_at from web_sessions where token_sha256=${digestOpaqueToken(token)}`;
+        expect(Math.abs(renewed!.idle_expires_at.getTime() - Math.min(activityTime + idleMs, row!.absolute_expires_at.getTime()))).toBeLessThan(5000);
+      }
+    } finally { await policyApp.close(); }
+  });
+
+  for (const admin of [false, true]) for (const remember of [false, true]) {
+    test(`explicit idle timeout applies to ${admin ? "admin" : "business"}, remember=${remember}`, async () => {
+      const email = admin ? "override-admin@example.test" : `override-${remember}@example.test`;
+      if (!admin) await createBusiness(email, await login("override-admin@example.test", "correct horse battery staple", true));
+      const overrideApp = buildApi({ pools, expectedOrigin: ORIGIN, idleTtlMs: 120_000 });
+      try {
+        const response = await overrideApp.inject({ method: "POST", url: admin ? "/auth/admin/login" : "/auth/login", headers: { origin: ORIGIN }, payload: { email, password: admin ? "correct horse battery staple" : "tenant initial password safe", remember } });
+        expect(response.statusCode).toBe(200);
+        const cookie = String(response.headers["set-cookie"]).split(";")[0]!;
+        const { digestOpaqueToken } = await import("@agendia/auth");
+        const tokenHash = digestOpaqueToken(cookie.split("=")[1]!);
+        const [row] = await database.sql<{ created_at: Date; idle_expires_at: Date }[]>`select created_at,idle_expires_at from web_sessions where token_sha256=${tokenHash}`;
+        expect(Math.abs(row!.idle_expires_at.getTime() - row!.created_at.getTime() - 120_000)).toBeLessThan(5000);
+        await database.sql`update web_sessions set idle_expires_at=now()+interval '10 seconds' where token_sha256=${tokenHash}`;
+        const activityTime = Date.now();
+        const activity = await overrideApp.inject({ method: "POST", url: "/auth/activity", headers: { origin: ORIGIN, cookie, "x-csrf-token": response.json().csrfToken } });
+        expect(activity.statusCode).toBe(204);
+        const [renewed] = await database.sql<{ idle_expires_at: Date }[]>`select idle_expires_at from web_sessions where token_sha256=${tokenHash}`;
+        expect(Math.abs(renewed!.idle_expires_at.getTime() - activityTime - 120_000)).toBeLessThan(5000);
+      } finally { await overrideApp.close(); }
+    });
+  }
+
+  test("activity requires origin and CSRF and cannot revive expired or revoked sessions", async () => {
+    const auth = await adminLogin();
+    const { digestOpaqueToken } = await import("@agendia/auth");
+    const tokenHash = digestOpaqueToken(auth.cookie.split("=")[1]!);
+    const snapshot = async () => (await database.sql`select last_seen_at,idle_expires_at from web_sessions where token_sha256=${tokenHash}`)[0];
+    await database.sql`update web_sessions set idle_expires_at=now()+interval '10 seconds' where token_sha256=${tokenHash}`;
+    const before = await snapshot();
+    for (const protection of [{ origin: "https://evil.test", csrf: auth.csrf }, { origin: ORIGIN, csrf: "wrong" }]) {
+      expect((await request("POST", "/auth/activity", { cookie: auth.cookie, ...protection })).statusCode).toBe(403);
+      expect(await snapshot()).toEqual(before);
+    }
+    expect((await request("POST", "/auth/activity", { ...auth, origin: ORIGIN })).statusCode).toBe(204);
+    expect((await snapshot())!.idle_expires_at > before!.idle_expires_at).toBe(true);
+    await database.sql`update web_sessions set idle_expires_at=now()-interval '1 second' where token_sha256=${tokenHash}`;
+    const expired = await snapshot();
+    expect((await request("POST", "/auth/activity", { ...auth, origin: ORIGIN })).statusCode).toBe(401);
+    expect(await snapshot()).toEqual(expired);
+    await database.sql`update web_sessions set idle_expires_at=now()+interval '10 seconds', revoked_at=now() where token_sha256=${tokenHash}`;
+    const revoked = await snapshot();
+    expect((await request("POST", "/auth/activity", { ...auth, origin: ORIGIN })).statusCode).toBe(401);
+    expect(await snapshot()).toEqual(revoked);
+  });
+
+  test("activity racing with revocation or expiration cannot revive a session", async () => {
+    const { digestOpaqueToken } = await import("@agendia/auth");
+    for (const outcome of ["revoked", "expired"] as const) {
+      const auth = await adminLogin();
+      const tokenHash = digestOpaqueToken(auth.cookie.split("=")[1]!);
+      let activity!: ReturnType<typeof request>;
+      await database.sql.begin(async tx => {
+        await tx`select id from web_sessions where token_sha256=${tokenHash} for update`;
+        activity = request("POST", "/auth/activity", { ...auth, origin: ORIGIN });
+        let blocked = false;
+        for (let attempt = 0; attempt < 200 && !blocked; attempt++) {
+          await tx`select pg_stat_clear_snapshot()`;
+          const [row] = await tx<{ blocked: boolean }[]>`select exists(select 1 from pg_stat_activity where wait_event_type='Lock' and query like '%update web_sessions s set last_seen_at%') blocked`;
+          blocked = row!.blocked;
+          if (!blocked) await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        expect(blocked).toBe(true);
+        if (outcome === "revoked") await tx`update web_sessions set revoked_at=now() where token_sha256=${tokenHash}`;
+        else await tx`update web_sessions set idle_expires_at=now()-interval '1 second' where token_sha256=${tokenHash}`;
+      });
+      const [before] = await database.sql`select last_seen_at,idle_expires_at,revoked_at from web_sessions where token_sha256=${tokenHash}`;
+      expect((await activity).statusCode).toBe(401);
+      const [after] = await database.sql`select last_seen_at,idle_expires_at,revoked_at from web_sessions where token_sha256=${tokenHash}`;
+      expect(after).toEqual(before);
+    }
+  });
+
+  test("previously issued sessions retain their stored deadline and can renew activity", async () => {
+    const auth = await adminLogin();
+    const { digestOpaqueToken } = await import("@agendia/auth");
+    const tokenHash = digestOpaqueToken(auth.cookie.split("=")[1]!);
+    await database.sql`update web_sessions set idle_ttl_ms=null, idle_expires_at=now()+interval '10 seconds' where token_sha256=${tokenHash}`;
+    expect((await request("GET", "/auth/session", auth)).statusCode).toBe(200);
+    expect((await request("POST", "/auth/activity", { ...auth, origin: ORIGIN })).statusCode).toBe(204);
+    const [row] = await database.sql<{ absolute_expires_at: Date; idle_expires_at: Date }[]>`select absolute_expires_at,idle_expires_at from web_sessions where token_sha256=${tokenHash}`;
+    expect(row!.idle_expires_at.getTime()).toBe(row!.absolute_expires_at.getTime());
+  });
+
   test("rejects administrators at the business login without issuing a session", async () => {
     const response = await request("POST", "/auth/login", {
       origin: ORIGIN,
@@ -227,7 +365,7 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
     const { business, admin } = await createBusiness("admin-flow@example.test");
     expect(
       (await request("GET", "/admin/businesses", admin)).json() as unknown,
-    ).toEqual([expect.objectContaining({ id: business.id, status: "active" })]);
+    ).toEqual(expect.arrayContaining([expect.objectContaining({ id: business.id, status: "active" })]));
     expect(
       (
         await request("PUT", `/admin/businesses/${business.id}`, {

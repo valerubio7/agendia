@@ -20,10 +20,6 @@ export function createHttpAuth(
       (repo) =>
         repo.session(digestOpaqueToken(token)) as Promise<Session | null>,
     );
-    if (found)
-      await pools.api.run(undefined, (repo) =>
-        repo.touchSession(found.session_id, new Date(Date.now() + idleTtl)),
-      );
     return found;
   };
   const mutation = async (request: FastifyRequest, reply: FastifyReply) => {
@@ -48,7 +44,8 @@ export function createHttpAuth(
     }
     return auth;
   };
-  return { originOk, session, mutation };
+  const activity = (auth: Session) => pools.api.run(undefined, repo => repo.touchSession(auth.session_id, idleTtl));
+  return { originOk, session, mutation, activity };
 }
 
 export type HttpAuth = ReturnType<typeof createHttpAuth>;

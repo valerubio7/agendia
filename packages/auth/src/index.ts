@@ -64,7 +64,7 @@ export class AuthService {
   revokeIdentity(identityId: string, now = Date.now()) { for (const session of this.store.sessions) if (session.identityId === identityId) session.revokedAt = now; }
 }
 
-export function sessionCookie(value: string) { return { name: "__Host-agendia_session", value, secure: true, httpOnly: true, sameSite: "lax" as const, path: "/" }; }
+export function sessionCookie(value: string, expires?: Date) { return { name: "__Host-agendia_session", value, secure: true, httpOnly: true, sameSite: "lax" as const, path: "/", ...(expires ? { expires } : {}) }; }
 export function validateMutationRequest(input: { origin?: string; expectedOrigin: string; csrfHeader?: string; csrfSession?: string; sessionToken?: string }): boolean {
   return input.origin === input.expectedOrigin && Boolean(input.csrfHeader) &&
     (input.csrfHeader === input.csrfSession || Boolean(input.sessionToken && input.csrfHeader === deriveSessionCsrf(input.sessionToken)));

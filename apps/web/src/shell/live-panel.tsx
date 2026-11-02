@@ -19,6 +19,7 @@ import {
 } from "../api/api-client";
 import { renderWhatsAppQrDataUrl } from "../features/whatsapp/qr-code";
 import { LoginScreen } from "../features/auth/login-screen";
+import { startSessionActivity } from "./session-activity";
 import {
   AuthenticatedShell,
   TerminalAuthenticatedState,
@@ -424,6 +425,10 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
       monitorRef.current = null;
     };
   }, [mode]);
+  useEffect(() => {
+    if (mode !== "login" && viewState === "ready" && !logoutPending)
+      return startSessionActivity(window, api.activity);
+  }, [mode, viewState, logoutPending]);
   const startWhatsAppLink = async () => {
     if (monitorRef.current) return;
     const controller = new AbortController();
@@ -553,6 +558,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
         String(form.get("email")),
         String(form.get("password")),
         adminEntrance,
+        form.has("remember"),
       );
       if (session.role === "platform_admin") router.replace("/businesses");
       else router.replace("/profile");

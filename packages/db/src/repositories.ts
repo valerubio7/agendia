@@ -276,14 +276,15 @@ export class PostgresRepositories {
     csrfHash: string;
     absolute: Date;
     idle: Date;
+    idleTtl: number;
   }) {
     return identity.createSession(this.db, row);
   }
   async session(tokenHash: string) {
     return identity.session(this.db, tokenHash);
   }
-  touchSession(id: string, idle: Date) {
-    return identity.touchSession(this.db, id, idle);
+  touchSession(id: string, legacyIdleTtl: number) {
+    return identity.touchSession(this.db, id, legacyIdleTtl);
   }
   revokeSession(tokenHash: string) {
     return identity.revokeSession(this.db, tokenHash);

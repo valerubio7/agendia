@@ -52,7 +52,7 @@ afterAll(async () => { await app?.close(); await pools?.end(); await database?.s
 
 test("static GET returns all advisory choices, exact D2 JSON and no business effects", async () => {
   const o = await fixture(), before = await effects();
-  const [session] = await database.sql`select last_seen_at from web_sessions where identity_id=${o.actor}`;
+  const [session] = await database.sql`select last_seen_at, idle_expires_at from web_sessions where identity_id=${o.actor}`;
   const response = await get(o);
   expect(response.statusCode).toBe(200);
   const slots = response.json<Slot[]>();
@@ -74,8 +74,9 @@ test("static GET returns all advisory choices, exact D2 JSON and no business eff
   expect(boundary.statusCode).toBe(200);
   expect(boundary.json<Slot[]>()).toEqual(await pools.api.run(context(o), repo => repo.listAppointmentAvailability(o.business, { serviceId: o.service, date: "9999-12-31", resourceId: o.resources[0]! })));
   expect(await effects()).toEqual(before);
-  const [after] = await database.sql`select last_seen_at from web_sessions where identity_id=${o.actor}`;
-  expect(after!.last_seen_at.getTime()).toBeGreaterThan(session!.last_seen_at.getTime());
+  const [after] = await database.sql`select last_seen_at, idle_expires_at from web_sessions where identity_id=${o.actor}`;
+  expect(after!.last_seen_at.getTime()).toBe(session!.last_seen_at.getTime());
+  expect(after!.idle_expires_at.getTime()).toBe(session!.idle_expires_at.getTime());
 });
 
 test("Confirmed numeric capacity, cancellation, adjacency, pauses and closures cover whole intervals", async () => {
