@@ -15,6 +15,13 @@ const loginProps = {
 };
 
 describe("login entrance presentation", () => {
+  test("offers an unchecked, labelled remember-me checkbox for both entrances", () => {
+    for (const title of ["Iniciar sesión", "Acceso de administración"]) {
+      const html = renderToStaticMarkup(createElement(LoginScreen, { ...loginProps, title }));
+      expect(html).toMatch(/<label[^>]*>[^<]*<input type="checkbox" name="remember"\/>[^<]*<\/label>/);
+      expect(html).not.toMatch(/<input[^>]*type="checkbox"[^>]*checked/);
+    }
+  });
   test("keeps the customer and legacy login presentation unchanged by default", () => {
     const html = renderToStaticMarkup(createElement(LoginScreen, loginProps));
     expect(html).toContain('<h1 id="login-title">Iniciar sesión</h1>');

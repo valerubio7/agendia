@@ -47,6 +47,7 @@ export function LoginScreen({
                 required
               />
             </label>
+            <label className="login-remember"><input type="checkbox" name="remember" /> Mantener sesión iniciada</label>
             <button
               className="login-submit"
               type="submit"

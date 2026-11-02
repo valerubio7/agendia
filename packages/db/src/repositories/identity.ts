@@ -41,8 +41,9 @@ export function createSession(db: Db, row: {
   csrfHash: string;
   absolute: Date;
   idle: Date;
+  idleTtl: number;
 }) {
-  return db`insert into web_sessions(identity_id,token_sha256,csrf_sha256,absolute_expires_at,idle_expires_at) values(${row.identityId},${row.tokenHash},${row.csrfHash},${row.absolute},${row.idle})`;
+  return db`insert into web_sessions(identity_id,token_sha256,csrf_sha256,absolute_expires_at,idle_expires_at,idle_ttl_ms) values(${row.identityId},${row.tokenHash},${row.csrfHash},${row.absolute},${row.idle},${row.idleTtl})`;
 }
 export async function session(db: Db, tokenHash: string) {
   return (
@@ -59,8 +60,12 @@ export async function session(db: Db, tokenHash: string) {
     )[0] ?? null
   );
 }
-export function touchSession(db: Db, id: string, idle: Date) {
-  return db`update web_sessions set last_seen_at=now(),idle_expires_at=least(absolute_expires_at,${idle}) where id=${id}`;
+export async function touchSession(db: Db, id: string, legacyIdleTtl: number): Promise<boolean> {
+  const rows = await db`update web_sessions s set last_seen_at=clock_timestamp(), idle_expires_at=least(s.absolute_expires_at, clock_timestamp() + coalesce(s.idle_ttl_ms, ${legacyIdleTtl}) * interval '1 millisecond')
+    from auth_identities i left join businesses b on b.id=i.business_id
+    where s.id=${id} and i.id=s.identity_id and s.revoked_at is null and s.absolute_expires_at>clock_timestamp() and s.idle_expires_at>clock_timestamp()
+      and i.active and (i.role='platform_admin' or b.status='active') returning s.id`;
+  return rows.length > 0;
 }
 export function revokeSession(db: Db, tokenHash: string) {
   return db`update web_sessions set revoked_at=now() where token_sha256=${tokenHash} and revoked_at is null`;

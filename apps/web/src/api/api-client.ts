@@ -284,11 +284,11 @@ export class ApiClient {
     if (value) sessionStorage.setItem("agendia.csrf", value);
     else sessionStorage.removeItem("agendia.csrf");
   }
-  async login(email: string, password: string, adminEntrance = false) {
+  async login(email: string, password: string, adminEntrance = false, remember = false) {
     const { csrfToken } = await this.call<{ csrfToken: string }>(
       adminEntrance ? "/auth/admin/login" : "/auth/login",
       "POST",
-      { email, password },
+      { email, password, ...(remember ? { remember: true } : {}) },
     );
     this.setCsrf(csrfToken);
     return this.session();
@@ -302,6 +302,7 @@ export class ApiClient {
     }
     return session;
   };
+  activity = () => this.call<void>("/auth/activity", "POST");
   async logout() {
     await this.call("/auth/logout", "POST");
     this.setCsrf("");
