@@ -49,8 +49,8 @@ const login = async (email: string, password: string, adminEntrance = false) => 
 };
 const adminLogin = () =>
   login("admin@example.test", "correct horse battery staple", true);
-const createBusiness = async (email: string) => {
-  const admin = await adminLogin();
+const createBusiness = async (email: string, auth?: Awaited<ReturnType<typeof adminLogin>>) => {
+  const admin = auth ?? await adminLogin();
   const response = await request("POST", "/admin/businesses", {
     ...admin,
     origin: ORIGIN,
@@ -71,6 +71,7 @@ beforeAll(async () => {
     join(import.meta.dir, "../../packages/db/migrations"),
   );
   await database.sql`insert into auth_identities (normalized_email,password_phc,role) values (${"admin@example.test"},${await hash("correct horse battery staple", { algorithm: Algorithm.Argon2id })},'platform_admin')`;
+  await database.sql`insert into auth_identities (normalized_email,password_phc,role) values (${"override-admin@example.test"},${await hash("correct horse battery staple", { algorithm: Algorithm.Argon2id })},'platform_admin')`;
   pools = createRuntimePools(database.container.getConnectionUri());
   app = buildApi({ pools, expectedOrigin: ORIGIN, absoluteTtlMs: 60_000 });
 }, 120_000);
@@ -171,6 +172,29 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
       }
     } finally { await policyApp.close(); }
   });
+
+  for (const admin of [false, true]) for (const remember of [false, true]) {
+    test(`explicit idle timeout applies to ${admin ? "admin" : "business"}, remember=${remember}`, async () => {
+      const email = admin ? "override-admin@example.test" : `override-${remember}@example.test`;
+      if (!admin) await createBusiness(email, await login("override-admin@example.test", "correct horse battery staple", true));
+      const overrideApp = buildApi({ pools, expectedOrigin: ORIGIN, idleTtlMs: 120_000 });
+      try {
+        const response = await overrideApp.inject({ method: "POST", url: admin ? "/auth/admin/login" : "/auth/login", headers: { origin: ORIGIN }, payload: { email, password: admin ? "correct horse battery staple" : "tenant initial password safe", remember } });
+        expect(response.statusCode).toBe(200);
+        const cookie = String(response.headers["set-cookie"]).split(";")[0]!;
+        const { digestOpaqueToken } = await import("@agendia/auth");
+        const tokenHash = digestOpaqueToken(cookie.split("=")[1]!);
+        const [row] = await database.sql<{ created_at: Date; idle_expires_at: Date }[]>`select created_at,idle_expires_at from web_sessions where token_sha256=${tokenHash}`;
+        expect(Math.abs(row!.idle_expires_at.getTime() - row!.created_at.getTime() - 120_000)).toBeLessThan(5000);
+        await database.sql`update web_sessions set idle_expires_at=now()+interval '10 seconds' where token_sha256=${tokenHash}`;
+        const activityTime = Date.now();
+        const activity = await overrideApp.inject({ method: "POST", url: "/auth/activity", headers: { origin: ORIGIN, cookie, "x-csrf-token": response.json().csrfToken } });
+        expect(activity.statusCode).toBe(204);
+        const [renewed] = await database.sql<{ idle_expires_at: Date }[]>`select idle_expires_at from web_sessions where token_sha256=${tokenHash}`;
+        expect(Math.abs(renewed!.idle_expires_at.getTime() - activityTime - 120_000)).toBeLessThan(5000);
+      } finally { await overrideApp.close(); }
+    });
+  }
 
   test("activity requires origin and CSRF and cannot revive expired or revoked sessions", async () => {
     const auth = await adminLogin();

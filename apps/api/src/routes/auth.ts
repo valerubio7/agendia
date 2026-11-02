@@ -10,7 +10,7 @@ export function registerAuthRoutes(
   app: FastifyInstance,
   { pools, context, fail, originOk, session, mutation, activity, absoluteTtl, idleTtl, credentials }: Pick<TenantRouteContext, "pools" | "context" | "fail"> & HttpAuth & {
     absoluteTtl: number | undefined;
-    idleTtl: number;
+    idleTtl: number | undefined;
     credentials: z.ZodType<{ email: string; password: string; remember?: boolean | undefined }>;
   },
 ) {
@@ -67,7 +67,7 @@ export function registerAuthRoutes(
         now = Date.now();
       const admin = identity.role === "platform_admin";
       const remembered = body.remember === true;
-      const duration = admin ? (remembered ? 86400_000 : idleTtl) : (remembered ? 30 * 86400_000 : 2 * 86400_000);
+      const duration = idleTtl ?? (admin ? (remembered ? 86400_000 : 30 * 60_000) : (remembered ? 30 * 86400_000 : 2 * 86400_000));
       const absolute = new Date(now);
       if (absoluteTtl !== undefined) absolute.setTime(now + absoluteTtl);
       else if (admin || !remembered) absolute.setTime(now + (admin && !remembered ? 8 * 3600_000 : 7 * 86400_000));

@@ -136,7 +136,7 @@ export function buildApi(input: AuthService | ApiOptions) {
     ) as Promise<T>;
 
   registerAuthRoutes(app, {
-    pools, context, fail, originOk, session, mutation, activity, absoluteTtl, idleTtl, credentials,
+    pools, context, fail, originOk, session, mutation, activity, absoluteTtl, idleTtl: input.idleTtlMs, credentials,
   });
 
   const requireAdmin = async (
