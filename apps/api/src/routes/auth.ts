@@ -8,10 +8,10 @@ import type { TenantRouteContext } from "./context.ts";
 
 export function registerAuthRoutes(
   app: FastifyInstance,
-  { pools, context, fail, originOk, session, mutation, absoluteTtl, idleTtl, credentials }: Pick<TenantRouteContext, "pools" | "context" | "fail"> & HttpAuth & {
-    absoluteTtl: number;
+  { pools, context, fail, originOk, session, mutation, activity, absoluteTtl, idleTtl, credentials }: Pick<TenantRouteContext, "pools" | "context" | "fail"> & HttpAuth & {
+    absoluteTtl: number | undefined;
     idleTtl: number;
-    credentials: z.ZodType<{ email: string; password: string }>;
+    credentials: z.ZodType<{ email: string; password: string; remember?: boolean | undefined }>;
   },
 ) {
   const login = async (request: FastifyRequest, reply: FastifyReply, adminEntrance: boolean) => {
@@ -65,6 +65,18 @@ export function registerAuthRoutes(
       const token = randomBytes(32).toString("hex"),
         csrf = deriveSessionCsrf(token),
         now = Date.now();
+      const admin = identity.role === "platform_admin";
+      const remembered = body.remember === true;
+      const duration = admin ? (remembered ? 86400_000 : idleTtl) : (remembered ? 30 * 86400_000 : 2 * 86400_000);
+      const absolute = new Date(now);
+      if (absoluteTtl !== undefined) absolute.setTime(now + absoluteTtl);
+      else if (admin || !remembered) absolute.setTime(now + (admin && !remembered ? 8 * 3600_000 : 7 * 86400_000));
+      else {
+        const day = absolute.getUTCDate();
+        absolute.setUTCDate(1);
+        absolute.setUTCMonth(absolute.getUTCMonth() + 7, 0);
+        absolute.setUTCDate(Math.min(day, absolute.getUTCDate()));
+      }
       await pools.api.run(
         identity.business_id
           ? tenantContext({
@@ -79,8 +91,9 @@ export function registerAuthRoutes(
             identityId: identity.id,
             tokenHash: digestOpaqueToken(token),
             csrfHash: digestOpaqueToken(csrf),
-            absolute: new Date(now + absoluteTtl),
-            idle: new Date(now + Math.min(idleTtl, absoluteTtl)),
+            absolute,
+            idle: new Date(Math.min(now + duration, absolute.getTime())),
+            idleTtl: duration,
           });
           await repo.appendRuntimeAudit(identity.business_id, {
             code: "auth.login",
@@ -91,7 +104,7 @@ export function registerAuthRoutes(
           });
         },
       );
-      const c = sessionCookie(token);
+      const c = sessionCookie(token, remembered ? absolute : undefined);
       reply.setCookie(c.name, c.value, c);
       return { csrfToken: csrf };
     } catch {
@@ -121,6 +134,12 @@ export function registerAuthRoutes(
     return auth
       ? { role: auth.role, businessId: auth.business_id, identityId: auth.identity_id }
       : fail(reply, request, 401, "UNAUTHENTICATED", "Authentication required");
+  });
+  app.post("/auth/activity", async (request, reply) => {
+    const auth = await mutation(request, reply);
+    if (!auth) return;
+    if (!await activity(auth)) return fail(reply, request, 401, "UNAUTHENTICATED", "Authentication required");
+    return reply.code(204).send();
   });
   app.post("/auth/logout", async (request, reply) => {
     const auth = await mutation(request, reply);

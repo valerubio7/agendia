@@ -242,6 +242,15 @@ main.login-frame {
   outline-offset: 0.1rem;
 }
 
+.login-remember {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  cursor: pointer;
+}
+.login-remember input { width: 1.1rem; height: 1.1rem; accent-color: var(--pine-deep); }
+.login-remember input:focus-visible { outline: 2px solid rgb(168, 58, 26); outline-offset: 3px; }
+
 .login-submit {
   width: 100%;
   min-height: 3.25rem;

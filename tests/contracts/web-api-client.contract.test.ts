@@ -29,6 +29,24 @@ import {
   type TestPostgres,
 } from "../support/index.ts";
 
+test("remember choice and activity use the authenticated transport", async () => {
+  const calls: { path: string; init?: RequestInit }[] = [];
+  const client = new ApiClient(async (path, init) => {
+    calls.push({ path, ...(init ? { init } : {}) });
+    if (path.endsWith("/login")) return Response.json({ csrfToken: "csrf" });
+    if (path.endsWith("/session")) return Response.json({ identityId: "i", role: "platform_admin", businessId: null });
+    return new Response(null, { status: 204 });
+  });
+  await client.login("a@example.test", "password", true, true);
+  expect(calls[0]!.path).toBe("/api/auth/admin/login");
+  expect(JSON.parse(String(calls[0]!.init!.body))).toEqual({ email: "a@example.test", password: "password", remember: true });
+  await client.activity();
+  expect(calls.at(-1)!.path).toBe("/api/auth/activity");
+  expect(calls.at(-1)!.init!.method).toBe("POST");
+  expect(calls.at(-1)!.init!.credentials).toBe("include");
+  expect(new Headers(calls.at(-1)!.init!.headers).get("x-csrf-token")).toBe("csrf");
+});
+
 test("independent cookie-only tabs recover CSRF during session lifecycle without replaying failed writes", async () => {
   const clients: ApiClient[] = [];
   let bootstraps = 0, writes = 0;

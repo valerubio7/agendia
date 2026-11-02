@@ -17,8 +17,16 @@ test("administrators can sign in only through the administration entrance", asyn
   await page.goto(`${system.webUrl}/admin/login`);
   await page.getByLabel("Correo", { exact: true }).fill(system.admin.email);
   await page.getByLabel("Contraseña", { exact: true }).fill(system.admin.password);
+  await page.getByRole("checkbox", { name: "Mantener sesión iniciada" }).check();
   await page.getByRole("button", { name: "Ingresar", exact: true }).click();
   await expect(page).toHaveURL(/\/businesses$/);
+  const cookie = (await page.context().cookies()).find(item => item.name === "__Host-agendia_session");
+  expect(cookie?.secure).toBe(true);
+  expect(cookie?.expires).toBeGreaterThan(Date.now() / 1000);
+  await expect(page.locator('[data-ui="authenticated-shell"]')).toBeVisible();
+  const activity = page.waitForResponse(response => response.url().endsWith("/api/auth/activity") && response.request().method() === "POST");
+  await page.keyboard.press("Tab");
+  expect((await activity).status()).toBe(204);
 });
 
 test("login preserves its approved semantic, responsive, and pending-state contract", async ({
@@ -34,6 +42,7 @@ test("login preserves its approved semantic, responsive, and pending-state contr
     await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
     await expect(page.getByLabel("Correo", { exact: true })).toBeVisible();
     await expect(page.getByLabel("Contraseña", { exact: true })).toBeVisible();
+    await expect(page.getByRole("checkbox", { name: "Mantener sesión iniciada" })).not.toBeChecked();
     await expect(page.getByRole("button", { name: "Ingresar", exact: true })).toBeEnabled();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   }
@@ -139,7 +148,9 @@ test("login preserves its approved semantic, responsive, and pending-state contr
   const form = formPanel.locator("form");
   await expect(form).toHaveCount(1);
   await expect(form).toHaveAttribute("aria-busy", "false");
-  await expect(form.locator("input")).toHaveCount(2);
+  await expect(form.locator("input")).toHaveCount(3);
+  const remember = formPanel.getByRole("checkbox", { name: "Mantener sesión iniciada" });
+  await expect(remember).not.toBeChecked();
   const email = formPanel.getByLabel("Correo", { exact: true });
   const password = formPanel.getByLabel("Contraseña", { exact: true });
   await expect(email).toHaveAttribute("name", "email");
@@ -188,8 +199,10 @@ test("login preserves its approved semantic, responsive, and pending-state contr
     await page.keyboard.press("Tab");
     await expect(password).toBeFocused();
     await page.keyboard.press("Tab");
+    await expect(remember).toBeFocused();
+    await page.keyboard.press("Tab");
     await expect(submit).toBeFocused();
-    for (const control of [email, password, submit]) {
+    for (const control of [email, password, remember, submit]) {
       await control.focus();
       await page.keyboard.press("Tab");
       await page.keyboard.press("Shift+Tab");

@@ -39,12 +39,13 @@ export interface ApiOptions {
 const credentials = z.object({
   email: z.string().email(),
   password: z.string().min(16),
+  remember: z.boolean().optional(),
 });
 
 export function buildApi(input: AuthService | ApiOptions) {
   if (input instanceof AuthService) return legacyApi(input);
   const { pools, expectedOrigin, linkCodeKey } = input;
-  const absoluteTtl = input.absoluteTtlMs ?? 8 * 60 * 60_000;
+  const absoluteTtl = input.absoluteTtlMs;
   const idleTtl = input.idleTtlMs ?? 30 * 60_000;
   const app = Fastify({ logger: false });
   void app.register(cookie);
@@ -61,7 +62,7 @@ export function buildApi(input: AuthService | ApiOptions) {
       | "INTERNAL_ERROR",
     message: string,
   ) => reply.code(status).send(makeSafeError(code, message, request.id));
-  const { originOk, session, mutation } = createHttpAuth({ pools, expectedOrigin, idleTtl, fail });
+  const { originOk, session, mutation, activity } = createHttpAuth({ pools, expectedOrigin, idleTtl, fail });
   const context = (auth: Session, request: FastifyRequest) =>
     tenantContext({
       businessId: auth.business_id!,
@@ -135,7 +136,7 @@ export function buildApi(input: AuthService | ApiOptions) {
     ) as Promise<T>;
 
   registerAuthRoutes(app, {
-    pools, context, fail, originOk, session, mutation, absoluteTtl, idleTtl, credentials,
+    pools, context, fail, originOk, session, mutation, activity, absoluteTtl, idleTtl, credentials,
   });
 
   const requireAdmin = async (

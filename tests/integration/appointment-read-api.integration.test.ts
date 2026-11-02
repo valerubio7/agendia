@@ -63,7 +63,7 @@ test("business reads return all history, current client and frozen terms without
   const otherClient = randomUUID();
   await database.sql`insert into clients(id,business_id,first_name,last_name,phone) values(${otherClient},${a.businessId},'Renamed','Name','+5491111111111')`;
   const before = await effects();
-  const [sessionBefore] = await database.sql`select last_seen_at from web_sessions where identity_id=${a.actorId}`;
+  const [sessionBefore] = await database.sql`select last_seen_at, idle_expires_at from web_sessions where identity_id=${a.actorId}`;
   const expected = await pools.api.run(context(a), repo => repo.listAppointments(a.businessId));
   const response = await get(undefined, a);
   expect(response.statusCode).toBe(200);
@@ -85,8 +85,9 @@ test("business reads return all history, current client and frozen terms without
   const bodyRead = await app.inject({ method: "GET", url: "/me/appointments", headers: { cookie: a.cookie }, payload: { businessId: b.businessId, role: "platform_admin", clock: to, force: true } });
   expect(bodyRead.statusCode).toBe(200); expect(bodyRead.json<AppointmentRecord[]>()).toEqual(expected);
   expect(await effects()).toEqual(before);
-  const [sessionAfter] = await database.sql`select last_seen_at from web_sessions where identity_id=${a.actorId}`;
-  expect(sessionAfter!.last_seen_at.getTime()).toBeGreaterThan(sessionBefore!.last_seen_at.getTime());
+  const [sessionAfter] = await database.sql`select last_seen_at, idle_expires_at from web_sessions where identity_id=${a.actorId}`;
+  expect(sessionAfter!.last_seen_at.getTime()).toBe(sessionBefore!.last_seen_at.getTime());
+  expect(sessionAfter!.idle_expires_at.getTime()).toBe(sessionBefore!.idle_expires_at.getTime());
 });
 
 test("explicit Argentina midnight bounds use inclusive/exclusive epochs, not a UTC calendar shortcut", async () => {
