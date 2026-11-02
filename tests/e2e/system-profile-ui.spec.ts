@@ -46,7 +46,7 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
   system,
 }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 900 });
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
 
   await page.locator('[aria-controls="admin-create"]').click();

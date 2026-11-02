@@ -25,8 +25,9 @@ async function login(
   system: { apiUrl: string; webUrl: string },
   email: string,
   password: string,
+  adminEntrance = false,
 ): Promise<Auth> {
-  const response = await fetch(`${system.apiUrl}/auth/login`, {
+  const response = await fetch(`${system.apiUrl}${adminEntrance ? "/auth/admin/login" : "/auth/login"}`, {
     method: "POST",
     headers: { origin: ORIGIN(system), "content-type": "application/json" },
     body: JSON.stringify({ email, password }),
@@ -114,7 +115,7 @@ test("contains hostile access and provider failures while preserving isolated re
     });
     expect(response.status).toBe(403);
   }
-  const admin = await login(system, system.admin.email, system.admin.password);
+  const admin = await login(system, system.admin.email, system.admin.password, true);
   const ids: string[] = [];
   for (const tenant of tenants) {
     const response = await api(system, admin, "/admin/businesses", "POST", {
@@ -511,7 +512,7 @@ test("contains hostile access and provider failures while preserving isolated re
   const activityAt = activeBusiness?.lastTechnicalActivityAt;
   expect(activityAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   await page.context().clearCookies();
-  await loginInUi(page, system.webUrl, system.admin.email, system.admin.password);
+  await loginInUi(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/businesses$/);
   const businessRow = page.locator('[data-ui="admin-inventory"]').getByRole("listitem")
     .filter({ has: page.getByText(activeBusiness!.name, { exact: true }) });

@@ -136,7 +136,7 @@ async function expectRegistryBrand(shell: Locator) {
 
 for (const failedRead of ["businesses", "response-timing"]) {
   test(`confirmed admin writes survive failed ${failedRead} refresh with GET-only recovery`, async ({ page, system }) => {
-    await login(page, system.webUrl, system.admin.email, system.admin.password);
+    await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
     await expect(page.locator('[data-ui="admin-screen"]')).toBeVisible();
     const create = await openCreate(page);
     const directory = page.locator(".admin-directory");
@@ -233,7 +233,7 @@ for (const failedRead of ["businesses", "response-timing"]) {
 }
 
 test("late admin mutation and refresh responses cannot overwrite a newer session action", async ({ page, system }) => {
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   const directory = page.locator(".admin-directory");
   const notice = page.locator(".admin-feedback").getByRole("status");
   for (const phase of ["mutation", "refresh"] as const) {
@@ -266,7 +266,7 @@ test("late admin mutation and refresh responses cannot overwrite a newer session
     try {
       await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
       await expect(page).toHaveURL(/\/admin\/login$/);
-      await login(page, system.webUrl, system.admin.email, system.admin.password);
+      await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
       await expect(page.locator('[data-ui="admin-screen"]')).toBeVisible({ timeout: 30_000 });
       const management = await openManagement(businessRow(page, directory, name));
       await management.getByLabel(`Nombre de ${name}`, { exact: true }).fill(`${name} nuevo`);
@@ -284,7 +284,7 @@ test("late admin mutation and refresh responses cannot overwrite a newer session
 });
 
 test("platform admin saves and reloads global reply waits without guidance controls", async ({ page, system }) => {
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await openAiConfiguration(page);
   const panel = page.getByRole("tabpanel", { name: "Configuración de IA", exact: true });
   await expect(panel.locator("textarea")).toHaveCount(0);
@@ -321,7 +321,7 @@ test("platform admin saves and reloads global reply waits without guidance contr
 
 test("the redesigned administration screen preserves the real business workflow responsively", async ({ page, system }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 900 });
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
   const shell = page.locator('[data-ui="authenticated-shell"][data-variant="admin"]');
   await expect(shell).toHaveCount(1);

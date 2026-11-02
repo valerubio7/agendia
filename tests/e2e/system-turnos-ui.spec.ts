@@ -9,7 +9,7 @@ async function closeTurno(page: Page) {
 
 async function provision(admin: Page, business: Page, system: { webUrl: string; admin: { email: string; password: string } }, suffix: string) {
   const email = `${suffix}@example.test`, password = "turnos isolated password";
-  await login(admin, system.webUrl, system.admin.email, system.admin.password);
+  await login(admin, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(admin).toHaveURL(/\/businesses$/);
   await createBusinessInAdminUi(admin, { name: `Turnos ${suffix}`, email, password });
   await login(business, system.webUrl, email, password);
@@ -44,7 +44,7 @@ async function provision(admin: Page, business: Page, system: { webUrl: string; 
 test("Turnos navigation and real manual booking lifecycle", async ({ browser, page, system }, testInfo) => {
   test.setTimeout(180_000);
   const password = "turnos tenant password", email = "turnos@example.test";
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
   await createBusinessInAdminUi(page, { name: "Estudio Turnos", email, password });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });

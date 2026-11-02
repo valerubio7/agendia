@@ -284,9 +284,9 @@ export class ApiClient {
     if (value) sessionStorage.setItem("agendia.csrf", value);
     else sessionStorage.removeItem("agendia.csrf");
   }
-  async login(email: string, password: string) {
+  async login(email: string, password: string, adminEntrance = false) {
     const { csrfToken } = await this.call<{ csrfToken: string }>(
-      "/auth/login",
+      adminEntrance ? "/auth/admin/login" : "/auth/login",
       "POST",
       { email, password },
     );

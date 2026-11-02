@@ -148,7 +148,7 @@ export async function runWhatsAppLinkMonitor({
   }
 }
 
-export function LivePanel({ mode, loginTitle = "Iniciar sesión" }: { mode: Mode; loginTitle?: string }) {
+export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance = false }: { mode: Mode; loginTitle?: string; adminEntrance?: boolean }) {
   const router = useRouter();
   const [data, setData] = useState<unknown>(null),
     [notice, setNotice] = useState(""),
@@ -552,6 +552,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión" }: { mode: Mode
       const session = await api.login(
         String(form.get("email")),
         String(form.get("password")),
+        adminEntrance,
       );
       if (session.role === "platform_admin") router.replace("/businesses");
       else router.replace("/profile");

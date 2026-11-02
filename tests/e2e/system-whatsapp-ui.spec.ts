@@ -87,7 +87,7 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
   system,
 }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 900 });
-  await login(page, system.webUrl, system.admin.email, system.admin.password);
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
 
   await createBusinessInAdminUi(page, tenant);

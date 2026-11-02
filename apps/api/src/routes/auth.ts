@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { z } from "zod";
 import { randomBytes } from "node:crypto";
 import { digestOpaqueToken, deriveSessionCsrf, verifyLoginPassword, sessionCookie } from "@agendia/auth";
@@ -14,7 +14,7 @@ export function registerAuthRoutes(
     credentials: z.ZodType<{ email: string; password: string }>;
   },
 ) {
-  app.post("/auth/login", async (request, reply) => {
+  const login = async (request: FastifyRequest, reply: FastifyReply, adminEntrance: boolean) => {
     if (!originOk(request))
       return fail(reply, request, 403, "FORBIDDEN", "Origin rejected");
     try {
@@ -33,6 +33,7 @@ export function registerAuthRoutes(
       if (
         !identity?.active ||
         identity.business_status === "suspended" ||
+        (!adminEntrance && identity.role === "platform_admin") ||
         !validPassword
       ) {
         await pools.api.run(
@@ -102,7 +103,9 @@ export function registerAuthRoutes(
         "Invalid credentials",
       );
     }
-  });
+  };
+  app.post("/auth/login", (request, reply) => login(request, reply, false));
+  app.post("/auth/admin/login", (request, reply) => login(request, reply, true));
   app.post("/auth/csrf", async (request, reply) => {
     reply.header("cache-control", "no-store");
     if (!originOk(request) || request.headers["x-csrf-bootstrap"] !== "1")
