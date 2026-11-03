@@ -783,18 +783,6 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
             decision === "approve" ? "Solicitud aprobada" : "Solicitud rechazada",
             state => ({ ...state, registrations: state.registrations?.filter(row => row.id !== id) ?? null }),
           )}
-          renameAction={(id, name) =>
-            runAdminMutation(
-              () => api.renameBusiness(id, name),
-              "Negocio actualizado", reconcileBusiness,
-            )
-          }
-          replacePasswordAction={(id, password) =>
-            runAdminMutation(
-              () => api.replacePassword(id, password),
-              "Negocio actualizado",
-            )
-          }
           setStatusAction={(id, status) =>
             runAdminMutation(
               () => api.setBusinessStatus(id, status),

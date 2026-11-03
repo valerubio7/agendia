@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
+import { useRef, useState } from "react";
 import type { Business, Registration, ResponseTiming } from "../../api/api-client";
 // The domain barrel also exports server-only administration code.
 import { MAX_REPLY_DELAY_SECONDS, MAX_INACTIVITY_RESET_SECONDS, ReplyPacingSchema } from "../../../../../packages/domain/src/messaging/reply-pacing.ts";
@@ -16,15 +16,13 @@ type AdminBusinessesScreenProps = {
   retryRefreshAction: () => void;
   registrations: Registration[] | null;
   decideAction: (id: string, decision: "approve" | "reject") => Promise<boolean>;
-  renameAction: (id: string, name: string) => Promise<boolean>;
-  replacePasswordAction: (id: string, password: string) => Promise<boolean>;
   setStatusAction: (id: string, status: "active" | "suspended") => Promise<boolean>;
 };
 
 type PendingAction =
   | { kind: "instructions" }
   | { kind: "registration"; registrationId: string }
-  | { kind: "rename" | "password" | "status"; businessId: string };
+  | { kind: "status"; businessId: string };
 
 const timestampFormatter = new Intl.DateTimeFormat("es-AR", {
   dateStyle: "medium",
@@ -63,7 +61,7 @@ const whatsappStatusLabels: Record<Business["whatsappStatus"], string> = {
 export function AdminBusinessesScreen({
   businesses, responseTiming, saveResponseTimingAction, notice, error,
   refreshWarning, refreshPending, retryRefreshAction, registrations, decideAction,
-  renameAction, replacePasswordAction, setStatusAction,
+  setStatusAction,
 }: AdminBusinessesScreenProps) {
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [failedAction, setFailedAction] = useState<PendingAction | null>(null);
@@ -80,12 +78,6 @@ export function AdminBusinessesScreen({
     business.name.toLocaleLowerCase("es-AR").includes(query.trim().toLocaleLowerCase("es-AR"));
   const visibleBusinesses = businesses.filter(matchesFilter);
 
-  const clearSubmitted = (form: HTMLFormElement, submitted: FormData) => {
-    submitted.forEach((value, name) => {
-      const input = form.elements.namedItem(name);
-      if (input instanceof HTMLInputElement && input.value === value) input.value = input.defaultValue;
-    });
-  };
   const runAction = async (action: PendingAction, work: () => Promise<boolean>) => {
     if (pendingRef.current) return false;
     pendingRef.current = true;
@@ -99,26 +91,6 @@ export function AdminBusinessesScreen({
       pendingRef.current = false;
       setPendingAction(null);
     }
-  };
-  const submitRename = (business: Business) => async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const succeeded = await runAction(
-      { kind: "rename", businessId: business.id },
-      () => renameAction(business.id, String(form.get("name"))),
-    );
-    if (succeeded) clearSubmitted(formElement, form);
-  };
-  const submitPassword = (business: Business) => async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const succeeded = await runAction(
-      { kind: "password", businessId: business.id },
-      () => replacePasswordAction(business.id, String(form.get("password"))),
-    );
-    if (succeeded) clearSubmitted(formElement, form);
   };
   const changeStatus = async (business: Business) => {
     const nextStatus = business.status === "active" ? "suspended" : "active";
@@ -206,24 +178,6 @@ export function AdminBusinessesScreen({
                   <span className="admin-manage-label">Gestionar <svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5" /></svg></span>
                 </summary>
                 <div className="admin-management__panel">
-                  <div className="admin-management__forms">
-                    <form onSubmit={submitRename(business)} aria-busy={rowPending && pendingAction.kind === "rename"}>
-                      <h3>Nombre</h3>
-                      <label>Nombre de {business.name}
-                        <input name="name" type="text" defaultValue={business.name} required maxLength={160} pattern={".*\\S.*"}
-                          title="Ingresá un nombre de hasta 160 caracteres que incluya al menos un carácter no vacío." disabled={anyPending} />
-                      </label>
-                      <button type="submit" disabled={anyPending}>{rowPending && pendingAction.kind === "rename" ? "Renombrando…" : "Renombrar"}</button>
-                    </form>
-                    <form onSubmit={submitPassword(business)} aria-busy={rowPending && pendingAction.kind === "password"}>
-                      <h3>Credenciales</h3>
-                      <label>Nueva contraseña de {business.name}
-                        <input name="password" type="password" autoComplete="new-password" required minLength={16} disabled={anyPending} aria-describedby={`admin-password-help-${business.id}`} />
-                        <small id={`admin-password-help-${business.id}`}>Mínimo 16 caracteres.</small>
-                      </label>
-                      <button type="submit" disabled={anyPending}>{rowPending && pendingAction.kind === "password" ? "Actualizando…" : "Cambiar contraseña"}</button>
-                    </form>
-                  </div>
                   <div className="admin-access-action">
                     <div><h3>Estado operativo</h3><p>Este negocio está <strong>{business.status === "active" ? "activo" : "suspendido"}</strong>.</p></div>
                     <button className={business.status === "active" ? "admin-danger" : ""} type="button" disabled={anyPending} onClick={() => void changeStatus(business)}>
@@ -235,7 +189,7 @@ export function AdminBusinessesScreen({
                     <div><dt>Última actividad técnica · UTC</dt><dd>{formatActivityTimestamp(business.lastTechnicalActivityAt)}</dd></div>
                   </dl>
                   {rowFailure && error && <div className="admin-context-error" role="alert">
-                    <strong>{rowFailure.kind === "rename" ? `No se pudo renombrar ${business.name}.` : rowFailure.kind === "password" ? `No se pudo cambiar la contraseña de ${business.name}.` : `No se pudo actualizar el estado de ${business.name}.`}</strong>
+                    <strong>No se pudo actualizar el estado de {business.name}.</strong>
                     <span>{error}</span>
                   </div>}
                 </div>

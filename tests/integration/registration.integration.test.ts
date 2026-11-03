@@ -98,6 +98,23 @@ test("real runtime roles cannot read pending hashes or directly mutate registrat
   } finally { await api.end(); await adminDb.end(); }
 });
 
+for (const operation of ["name", "password"] as const) {
+  test(`administrator cannot change business ${operation}`, async () => {
+    const email = `protected-${operation}@example.test`;
+    expect((await register(email)).statusCode).toBe(202);
+    const id = ((await list()).json() as { id: string; email: string }[]).find(row => row.email === email)!.id;
+    expect((await decide(id, "approve")).statusCode).toBe(200);
+    const attempted = await app.inject({ method: "PUT", url: `/admin/businesses/${id}${operation === "password" ? "/user" : ""}`,
+      headers: { origin, cookie: admin.cookie, "x-csrf-token": admin.csrf },
+      payload: operation === "name" ? { name: "Changed business" } : { password: "replacement password secure" } });
+    expect(attempted.statusCode).toBe(404);
+    const businesses = (await app.inject({ method: "GET", url: "/admin/businesses", headers: { cookie: admin.cookie } })).json() as { id: string; name: string }[];
+    expect(businesses.find(row => row.id === id)?.name).toBe("My business");
+    expect((await login(email)).statusCode).toBe(200);
+    expect((await app.inject({ method: "POST", url: "/auth/login", headers: { origin }, payload: { email, password: "replacement password secure" } })).statusCode).toBe(401);
+  });
+}
+
 test("business user cannot administer requests; suspension and reactivation still work", async () => {
   expect((await register("suspend@example.test")).statusCode).toBe(202);
   const id = ((await list()).json() as { id: string; email: string }[]).find(row => row.email === "suspend@example.test")!.id;

@@ -308,14 +308,8 @@ export class PostgresRepositories {
   }) {
     return business.createBusinessUser(this.db, this, row);
   }
-  renameBusiness(id: string, name: string) {
-    return business.renameBusiness(this.db, id, name);
-  }
   async setBusinessStatus(id: string, status: string) {
     return business.setBusinessStatus(this.db, id, status);
-  }
-  async replaceBusinessPassword(id: string, passwordPhc: string) {
-    return business.replaceBusinessPassword(this.db, id, passwordPhc);
   }
   listBusinesses() {
     return business.listBusinesses(this.db);

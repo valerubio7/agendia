@@ -19,8 +19,7 @@ for (const status of [401, 403]) {
     await expect(requests.getByText("No hay solicitudes pendientes.")).toHaveCount(0);
     const row = page.locator(".admin-directory").getByRole("listitem").filter({ hasText: "Negocio seguro" });
     await row.locator("summary").click();
-    await row.getByLabel("Nombre de Negocio seguro").fill("Negocio actualizado");
-    await row.getByRole("button", { name: "Renombrar" }).click();
+    await row.getByRole("button", { name: "Suspender" }).click();
     await expect(page.locator(".admin-feedback").getByRole("status")).toHaveText("Negocio actualizado");
     await page.getByRole("tab", { name: "Configuración de IA" }).click();
     const timing = page.getByRole("spinbutton", { name: /^Espera activa \(segundos\)/ });

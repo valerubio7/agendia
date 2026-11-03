@@ -318,20 +318,12 @@ export class ApiClient {
   saveResponseTiming = (responseTiming: ResponseTiming["responseTiming"]) =>
     this.call<ResponseTiming>("/admin/response-timing", "PUT", { responseTiming });
   businesses = () => this.call<Business[]>("/admin/businesses");
-  renameBusiness = (id: string, name: string) =>
-    this.call<Business>(`/admin/businesses/${encodeURIComponent(id)}`, "PUT", {
-      name,
-    });
   setBusinessStatus = (id: string, status: "active" | "suspended") =>
     this.call<Business>(
       `/admin/businesses/${encodeURIComponent(id)}/status`,
       "PUT",
       { status },
     );
-  replacePassword = (id: string, password: string) =>
-    this.call(`/admin/businesses/${encodeURIComponent(id)}/user`, "PUT", {
-      password,
-    });
   clients = (q = "", signal?: AbortSignal) =>
     this.call<Client[]>("/me/clients", "GET", undefined, undefined, signal,
       q.trim() ? new URLSearchParams({ q: q.trim() }) : undefined);

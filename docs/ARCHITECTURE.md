@@ -66,7 +66,7 @@ flowchart LR
 ## Límites conocidos
 
 - No hay automatización de backup/restore en el repositorio.
-- El negocio se registra sin verificación de correo y queda pendiente sin poder iniciar sesión hasta que administración apruebe. Rechazar libera el correo; administración ya no crea negocios manualmente, pero conserva la suspensión y el cambio de contraseña. La eliminación completa está postergada.
+- El negocio se registra sin verificación de correo y queda pendiente sin poder iniciar sesión hasta que administración apruebe. Rechazar libera el correo; administración no crea negocios manualmente ni cambia su nombre o contraseña, pero conserva la suspensión y reactivación. La eliminación completa está postergada.
 - La vinculación y revinculación de WhatsApp se hacen desde el panel; el manager reconecta solo cuando la sesión sigue siendo válida.
 - No hay API pública para terceros; los contratos son internos entre API y web.
 

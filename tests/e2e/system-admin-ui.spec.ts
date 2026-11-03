@@ -3,33 +3,12 @@ import { login, test } from "./support/fixtures.ts";
 
 const tenant = {
   name: "Estudio Administración Horizonte",
-  renamedName: "Estudio Administración Horizonte Sur",
-  failedRenameName: "Estudio Administración Horizonte Costero",
   email: "system-admin-ui@example.test",
   initialPassword: "tenant admin ui password safe",
-  replacementPassword: "tenant replacement password safe",
 };
 
 async function expectNoHorizontalOverflow(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-}
-
-async function expectInput(input: Locator, options: {
-  name?: string;
-  type: "text" | "email" | "password";
-  required?: boolean;
-  minLength?: string;
-  maxLength?: string;
-  pattern?: string | RegExp;
-}) {
-  await expect(input).toBeVisible();
-  expect(await input.evaluate(element => ({ tagName: element.tagName, type: (element as HTMLInputElement).type })))
-    .toEqual({ tagName: "INPUT", type: options.type });
-  if (options.name) await expect(input).toHaveAttribute("name", options.name);
-  if (options.required) await expect(input).toHaveAttribute("required", "");
-  if (options.minLength) await expect(input).toHaveAttribute("minlength", options.minLength);
-  if (options.maxLength) await expect(input).toHaveAttribute("maxlength", options.maxLength);
-  if (options.pattern) await expect(input).toHaveAttribute("pattern", options.pattern);
 }
 
 function businessRow(page: Page, directory: Locator, name: string) {
@@ -157,10 +136,9 @@ test("initial registration read failure leaves admin controls available and retr
   await expect(requests.getByText("No se pudieron cargar las solicitudes pendientes.")).toBeVisible();
   await expect(requests.getByText("No hay solicitudes pendientes.")).toHaveCount(0);
   const management = await openManagement(businessRow(page, page.locator(".admin-directory"), "Negocio existente"));
-  await management.getByLabel("Nombre de Negocio existente").fill("Negocio actualizado");
-  await management.getByRole("button", { name: "Renombrar" }).click();
+  await management.getByRole("button", { name: "Suspender" }).click();
   await expect(page.locator(".admin-feedback").getByRole("status")).toHaveText("Negocio actualizado");
-  await expect(businessRow(page, page.locator(".admin-directory"), "Negocio actualizado")).toBeVisible();
+  await expect(businessRow(page, page.locator(".admin-directory"), "Negocio existente").getByText("Suspendido", { exact: true })).toBeVisible();
   await openAiConfiguration(page);
   const timing = page.getByRole("spinbutton", { name: /^Espera activa \(segundos\)/ });
   await expect(timing).toHaveValue("90");
@@ -186,7 +164,7 @@ for (const failedRead of ["businesses", "response-timing"]) {
     const approve = await registerPending(page, "Negocio confirmado", "confirmed-admin@example.test", "confirmed initial password");
     const directory = page.locator(".admin-directory");
     const feedback = page.locator(".admin-feedback");
-    let currentName = "Negocio confirmado";
+    const currentName = "Negocio confirmado";
     let mutationCount = 0;
     let failRefresh = false;
     let readCount = 0;
@@ -210,11 +188,10 @@ for (const failedRead of ["businesses", "response-timing"]) {
         } else await route.continue();
       }
     });
-    for (const action of ["create", "password", "password", "status", "rename", "instructions"] as const) {
+    for (const action of ["create", "status", "instructions"] as const) {
       failRefresh = true;
       held = new Promise<void>(resolve => { release = resolve; });
       mutationObserved = new Promise<void>(resolve => { observed = resolve; });
-      let secret: Locator | undefined;
       if (action === "create") {
         await approve.click();
       } else if (action === "instructions") {
@@ -223,30 +200,16 @@ for (const failedRead of ["businesses", "response-timing"]) {
         await page.getByRole("button", { name: "Guardar configuración", exact: true }).click();
       } else {
         const management = await openManagement(businessRow(page, directory, currentName));
-        if (action === "password") {
-          secret = management.getByLabel(`Nueva contraseña de ${currentName}`);
-          await secret.fill("confirmed replacement password");
-          await management.getByRole("button", { name: "Cambiar contraseña", exact: true }).click();
-        } else if (action === "status") {
-          await management.getByRole("button", { name: "Suspender", exact: true }).click();
-        } else {
-          await management.getByLabel(`Nombre de ${currentName}`, { exact: true }).fill("Negocio renombrado confirmado");
-          await management.getByRole("button", { name: "Renombrar", exact: true }).click();
-        }
+        await management.getByRole("button", { name: "Suspender", exact: true }).click();
       }
       await mutationObserved;
-      // Simulate a newer autofill/input value even while the pending UI disables manual editing.
-      const newerSecret = action === "password" && mutationCount === 2;
-      if (newerSecret) await secret!.evaluate(node => { (node as HTMLInputElement).value = "newer unsent password"; });
       release();
       await expect(feedback.getByRole("status")).toHaveText(action === "create" ? "Solicitud aprobada" : action === "instructions" ? "Tiempos guardados" : "Negocio actualizado");
       const warning = feedback.getByRole("alert");
       await expect(warning).toHaveText("No se pudo actualizar la información. Reintentá solo la consulta.");
-      if (action === "rename") currentName = "Negocio renombrado confirmado";
       if (action === "instructions") await page.getByRole("tab", { name: "Negocios", exact: true }).click();
       if (action !== "create" || failedRead !== "businesses") await expect(businessRow(page, directory, currentName)).toHaveCount(1);
       if (action === "status") await expect(businessRow(page, directory, currentName).getByText("Suspendido", { exact: true })).toBeVisible();
-      if (secret) await expect(secret).toHaveValue(newerSecret ? "newer unsent password" : "");
       const writes = mutationCount;
       const reads = readCount;
       failRefresh = false;
@@ -256,19 +219,16 @@ for (const failedRead of ["businesses", "response-timing"]) {
       expect(mutationCount).toBe(writes);
       await expect(businessRow(page, directory, currentName)).toHaveCount(1);
     }
-    expect(mutationCount).toBe(6);
+    expect(mutationCount).toBe(3);
     await page.reload();
     await expect(businessRow(page, directory, currentName).getByText("Suspendido", { exact: true })).toBeVisible();
     await openAiConfiguration(page);
     await expect(page.getByRole("spinbutton", { name: /^Espera activa \(segundos\)/ })).toHaveValue("23");
     await page.getByRole("tab", { name: "Negocios", exact: true }).click();
-    await page.route("**/admin/businesses/*/user", route => route.fulfill({ status: 500, json: { code: "INTERNAL_ERROR" } }));
+    await page.route("**/admin/businesses/*/status", route => route.fulfill({ status: 500, json: { code: "INTERNAL_ERROR" } }));
     const management = await openManagement(businessRow(page, directory, currentName));
-    const password = management.getByLabel(`Nueva contraseña de ${currentName}`);
-    await password.fill("failed replacement password");
-    await management.getByRole("button", { name: "Cambiar contraseña", exact: true }).click();
-    await expect(management.getByRole("alert")).toContainText("No se pudo cambiar la contraseña");
-    await expect(password).toHaveValue("failed replacement password");
+    await management.getByRole("button", { name: "Reactivar", exact: true }).click();
+    await expect(management.getByRole("alert")).toContainText("No se pudo actualizar el estado");
     await expect(feedback.getByRole("status")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Reintentar consulta", exact: true })).toHaveCount(0);
   });
@@ -309,16 +269,14 @@ test("late admin mutation and refresh responses cannot overwrite a newer session
       await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
       await expect(page.locator('[data-ui="admin-screen"]')).toBeVisible({ timeout: 30_000 });
       const management = await openManagement(businessRow(page, directory, name));
-      await management.getByLabel(`Nombre de ${name}`, { exact: true }).fill(`${name} nuevo`);
-      await management.getByRole("button", { name: "Renombrar", exact: true }).click();
+      await management.getByRole("button", { name: "Suspender", exact: true }).click();
       await expect(notice).toHaveText("Negocio actualizado");
     } finally { release(); }
     await delivery;
     // Drain browser frames after delivery before checking the newer session.
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     await expect(notice).toHaveText("Negocio actualizado");
-    await expect(businessRow(page, directory, `${name} nuevo`)).toHaveCount(1);
-    await expect(businessRow(page, directory, name)).toHaveCount(0);
+    await expect(businessRow(page, directory, name).getByText("Suspendido", { exact: true })).toBeVisible();
     await page.unroute(routePattern, lateRoute);
   }
 });
@@ -463,58 +421,10 @@ test("the redesigned administration screen preserves the real business workflow 
   await expect(management.locator(".admin-technical-details dd").first()).not.toHaveText(/Fecha no disponible|^$/);
   await expect(management.getByText("Sin actividad", { exact: true })).toBeVisible();
   await expect(management.locator(".admin-technical-details dd").first()).toHaveCSS("font-variant-numeric", "tabular-nums");
-  const renameInput = management.getByLabel(`Nombre de ${tenant.name}`, { exact: true });
-  await expectInput(renameInput, { type: "text", maxLength: "160", pattern: ".*\\S.*" });
-  await renameInput.fill(tenant.renamedName);
-  const [renameRequest] = await Promise.all([
-    page.waitForRequest(request => request.method() === "PUT" && /\/admin\/businesses\/[^/]+$/.test(new URL(request.url()).pathname)),
-    management.getByRole("button", { name: "Renombrar", exact: true }).click(),
-  ]);
-  await expect(notice).toHaveText("Negocio actualizado");
-  let managedRow = businessRow(page, directory, tenant.renamedName);
-  await expect(managedRow).toHaveCount(1);
-  await expect(managedRow.getByText(tenant.renamedName, { exact: true })).toBeVisible();
-  await expect(directory.getByText(tenant.name, { exact: true })).toHaveCount(0);
-  await page.reload();
-  await expect(screen).toBeVisible();
-  await expect(notice).toHaveCount(0);
-  managedRow = businessRow(page, directory, tenant.renamedName);
-  management = await openManagement(managedRow);
-  const failedRenameInput = management.getByLabel(`Nombre de ${tenant.renamedName}`, { exact: true });
-  await expectInput(failedRenameInput, { type: "text", maxLength: "160", pattern: ".*\\S.*" });
-  let renameFailurePending = true;
-  const failedRenameRoute = async (route: Route) => {
-    if (route.request().method() !== "PUT" || !renameFailurePending) return route.continue();
-    renameFailurePending = false;
-    await route.fulfill({ status: 500, json: { code: "INTERNAL_ERROR", message: "Internal error" } });
-  };
-  await page.route(renameRequest.url(), failedRenameRoute);
-  try {
-    await failedRenameInput.fill(tenant.failedRenameName);
-    await management.getByRole("button", { name: "Renombrar", exact: true }).click();
-    const rowAlert = management.getByRole("alert");
-    await expect(rowAlert).toHaveCount(1);
-    await expect(rowAlert).toContainText(tenant.renamedName);
-    await expect(rowAlert).toContainText("No se pudo completar la operación.");
-    await expect(screen.getByRole("alert")).toHaveCount(1);
-    await expect(screen.locator(".admin-feedback").getByRole("alert")).toHaveCount(0);
-    await expect(failedRenameInput).toHaveValue(tenant.failedRenameName);
-    await expect(managedRow.locator(".admin-business-name")).toHaveText(tenant.renamedName);
-    await expectPair(rowAlert, "rgb(243, 217, 211)", "rgb(168, 58, 26)");
-    await expect(rowAlert.locator("strong")).toHaveCSS("color", "rgb(168, 58, 26)");
-    await page.screenshot({ path: testInfo.outputPath("admin-mocked-error.png"), fullPage: true });
-  } finally { await page.unroute(renameRequest.url(), failedRenameRoute); }
-  await failedRenameInput.fill(tenant.renamedName);
-  const replacementPassword = management.getByLabel(`Nueva contraseña de ${tenant.renamedName}`);
-  await expectInput(replacementPassword, { type: "password", minLength: "16" });
-  await replacementPassword.fill(tenant.replacementPassword);
-  await management.getByRole("button", { name: "Cambiar contraseña", exact: true }).click();
-  await expect(notice).toHaveText("Negocio actualizado");
-  await page.reload();
-  await expect(screen).toBeVisible();
-  await expect(notice).toHaveCount(0);
-  managedRow = businessRow(page, directory, tenant.renamedName);
-  management = await openManagement(managedRow);
+  await expect(management.getByRole("button", { name: "Renombrar" })).toHaveCount(0);
+  await expect(management.getByRole("button", { name: "Cambiar contraseña" })).toHaveCount(0);
+  await expect(management.locator('input[name="name"], input[name="password"]')).toHaveCount(0);
+  const managedRow = businessRow(page, directory, tenant.name);
   await management.getByRole("button", { name: "Suspender", exact: true }).click();
   await expect(notice).toHaveText("Negocio actualizado");
   await expect(managedRow.getByText("Suspendido", { exact: true })).toBeVisible();
@@ -529,12 +439,10 @@ test("the redesigned administration screen preserves the real business workflow 
   await expectNoHorizontalOverflow(page);
   await page.setViewportSize({ width: 360, height: 800 });
   await expectRegistryBrand(shell);
-  const mobileRow = businessRow(page, directory, tenant.renamedName);
+  const mobileRow = businessRow(page, directory, tenant.name);
   const mobileManagement = await openManagement(mobileRow);
   const mobileReactivate = mobileManagement.getByRole("button", { name: "Reactivar", exact: true });
-  for (const locator of [heading, requests, inventory, directory, mobileRow, mobileManagement,
-    mobileManagement.getByRole("button", { name: "Renombrar", exact: true }),
-    mobileManagement.getByRole("button", { name: "Cambiar contraseña", exact: true }), mobileReactivate]) await expectReachable(locator);
+  for (const locator of [heading, requests, inventory, directory, mobileRow, mobileManagement, mobileReactivate]) await expectReachable(locator);
   await expect(directory).toHaveCount(1);
   await expect(mobileRow).toHaveCount(1);
   await expect(mobileRow.locator(".admin-directory-state")).toHaveCount(3);
@@ -546,5 +454,5 @@ test("the redesigned administration screen preserves the real business workflow 
   await expect(notice).toHaveText("Negocio actualizado");
   await expect(mobileRow.locator(".admin-status--business-active")).toHaveText("Activo");
   await page.reload();
-  await expect(businessRow(page, directory, tenant.renamedName).locator(".admin-status--business-active")).toHaveText("Activo");
+  await expect(businessRow(page, directory, tenant.name).locator(".admin-status--business-active")).toHaveText("Activo");
 });

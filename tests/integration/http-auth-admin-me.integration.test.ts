@@ -385,20 +385,11 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
     );
   });
 
-  test("supports admin CRUD, user password replacement, status and safe role/ID rejection", async () => {
+  test("supports admin status and safe role/ID rejection", async () => {
     const { business, admin } = await createBusiness("admin-flow@example.test");
     expect(
       (await request("GET", "/admin/businesses", admin)).json() as unknown,
     ).toEqual(expect.arrayContaining([expect.objectContaining({ id: business.id, status: "active" })]));
-    expect(
-      (
-        await request("PUT", `/admin/businesses/${business.id}`, {
-          ...admin,
-          origin: ORIGIN,
-          body: { name: "Renamed" },
-        })
-      ).json().name,
-    ).toBe("Renamed");
     expect(
       (
         await request("POST", "/auth/login", {
@@ -442,41 +433,11 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
         )
       ).statusCode,
     ).toBe(404);
-    expect(
-      (
-        await request("PUT", `/admin/businesses/${business.id}/user`, {
-          ...admin,
-          origin: ORIGIN,
-          body: { password: "replacement password secure" },
-        })
-      ).statusCode,
-    ).toBe(200);
-    expect((await request("GET", "/auth/session", tenant)).statusCode).toBe(
-      401,
-    );
-    expect(
-      await database.sql`select id from audit_events where business_id=${business.id} and event_type='business_user.password_replaced'`,
-    ).toHaveLength(1);
-    expect(
-      (
-        await request("POST", "/auth/login", {
-          origin: ORIGIN,
-          body: {
-            email: "admin-flow@example.test",
-            password: "tenant initial password safe",
-          },
-        })
-      ).statusCode,
-    ).toBe(401);
-    const replacement = await login(
-      "admin-flow@example.test",
-      "replacement password secure",
-    );
-    expect(replacement.response.statusCode).toBe(200);
+    expect((await request("GET", "/auth/session", tenant)).statusCode).toBe(200);
     expect(
       (
         await request("POST", "/auth/logout", {
-          ...replacement,
+          ...tenant,
           origin: ORIGIN,
         })
       ).statusCode,
@@ -484,9 +445,9 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
     expect(
       await database.sql`select id from audit_events where business_id=${business.id} and event_type='auth.logout' and outcome='success'`,
     ).toHaveLength(1);
-    const activeReplacement = await login(
+    const activeTenant = await login(
       "admin-flow@example.test",
-      "replacement password secure",
+      "tenant initial password safe",
     );
     expect(
       (
@@ -498,7 +459,7 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
       ).json().status,
     ).toBe("suspended");
     expect(
-      (await request("GET", "/auth/session", activeReplacement)).statusCode,
+      (await request("GET", "/auth/session", activeTenant)).statusCode,
     ).toBe(401);
   });
 

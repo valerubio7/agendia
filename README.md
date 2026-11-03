@@ -5,7 +5,7 @@ Panel web para administrar un agente de IA que atiende y agenda turnos por Whats
 ## Qué incluye
 
 - **Panel del negocio**: perfil, servicios, recursos, calendario y cierres, clientes, turnos y configuración del agente.
-- **Panel de administración**: negocios, credenciales, tiempos de respuesta y estado de WhatsApp.
+- **Panel de administración**: solicitudes, estado de negocios, tiempos de respuesta y estado de WhatsApp.
 - **Agente de WhatsApp**: recibe mensajes, consulta la agenda y opera turnos con confirmaciones idempotentes.
 - **Multi-tenant**: aislamiento por `business_id` con Row-Level Security en PostgreSQL.
 

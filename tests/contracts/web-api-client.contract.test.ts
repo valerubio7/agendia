@@ -536,8 +536,6 @@ describe("Next web client against Fastify contracts", () => {
     expect(adminScreen).toContain("Última actividad técnica");
     expect(adminScreen).toContain("formatActivityTimestamp(");
     expect(adminScreen).toContain("business.lastTechnicalActivityAt");
-    await admin.renameBusiness(business.id, "Web tenant renamed");
-    await admin.replacePassword(business.id, "replacement tenant password");
     await admin.setBusinessStatus(business.id, "suspended");
     await expect(admin.businesses()).resolves.toEqual(
       expect.arrayContaining([
@@ -546,7 +544,7 @@ describe("Next web client against Fastify contracts", () => {
     );
     await admin.logout();
     await expect(
-      admin.login("tenant@web.test", "replacement tenant password"),
+      admin.login("tenant@web.test", "tenant initial password safe"),
     ).rejects.toMatchObject({ code: "UNAUTHENTICATED" });
     expect(
       await admin.errorMessage(new ApiError("UNAUTHENTICATED", "", 401)),
@@ -557,14 +555,14 @@ describe("Next web client against Fastify contracts", () => {
 
     const tenant = new ApiClient(transport, "/api");
     expect(
-      (await tenant.login("tenant@web.test", "replacement tenant password"))
+      (await tenant.login("tenant@web.test", "tenant initial password safe"))
         .role,
     ).toBe("business_user");
     const [identity] = await database.sql`select id from auth_identities where normalized_email = ${"tenant@web.test"}`;
     expect(identity).toBeDefined();
     if (!identity) throw new Error("Expected the authenticated tenant identity row");
     expect(await tenant.session()).toEqual({ role: "business_user", businessId: business.id, identityId: identity.id, sessionId: expect.any(String) });
-    const repeatedSession = await tenant.login("tenant@web.test", "replacement tenant password");
+    const repeatedSession = await tenant.login("tenant@web.test", "tenant initial password safe");
     expect(repeatedSession.identityId).toBe(identity.id);
     const profile = {
       displayName: "Tenant",
@@ -637,7 +635,7 @@ describe("Next web client against Fastify contracts", () => {
         code: "NOT_FOUND",
       });
       await other.logout();
-      await tenant.login("tenant@web.test", "replacement tenant password");
+      await tenant.login("tenant@web.test", "tenant initial password safe");
       await database.sql`update whatsapp_link_codes set expires_at=now()-interval '1 second' where business_id=${business.id}`;
       await expect(tenant.whatsappQr()).rejects.toMatchObject({
         code: "NOT_FOUND",

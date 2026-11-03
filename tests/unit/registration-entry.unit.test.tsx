@@ -30,13 +30,27 @@ test("completed registration shows approval feedback without a busy submission",
   expect(html).not.toContain("Enviando…");
   expect(html).toContain('disabled=""');
 });
+test("admin business management offers status but no name or password editing", () => {
+  const html = renderToStaticMarkup(createElement(AdminBusinessesScreen, {
+    businesses: [{ id: "a", name: "Negocio", status: "active", agentStatus: "inactive", whatsappStatus: "disconnected", createdAt: "2026-01-01T00:00:00Z", lastTechnicalActivityAt: null }],
+    registrations: [], responseTiming: { responseTiming: { initialDelaySeconds: 0, activeDelaySeconds: 0, inactivityResetSeconds: 60 } },
+    notice: "", error: "", refreshWarning: false, refreshPending: false,
+    retryRefreshAction: () => {}, decideAction: async () => true, saveResponseTimingAction: async () => true,
+    setStatusAction: async () => true,
+  }));
+  expect(html).toContain("Suspender");
+  expect(html).not.toContain("Renombrar");
+  expect(html).not.toContain("Cambiar contraseña");
+  expect(html).not.toContain('name="password"');
+  expect(html).not.toContain('name="name"');
+});
 test("admin shows pending registrations and accessible decision actions", () => {
   const html = renderToStaticMarkup(createElement(AdminBusinessesScreen, {
     businesses: [], registrations: [{ id: "a", name: "Negocio", email: "a@example.test", createdAt: "2026-01-01T00:00:00Z" }],
     responseTiming: { responseTiming: { initialDelaySeconds: 0, activeDelaySeconds: 0, inactivityResetSeconds: 60 } },
     notice: "", error: "", refreshWarning: true, refreshPending: false,
     retryRefreshAction: () => {}, decideAction: async () => true, saveResponseTimingAction: async () => true,
-    renameAction: async () => true, replacePasswordAction: async () => true, setStatusAction: async () => true,
+    setStatusAction: async () => true,
   }));
   expect(html).toContain("a@example.test");
   expect(html).toContain('aria-label="Aprobar Negocio"');

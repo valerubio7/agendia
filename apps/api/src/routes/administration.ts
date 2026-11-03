@@ -1,5 +1,4 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { Algorithm, hash } from "@node-rs/argon2";
 import { z } from "zod";
 import { ResponseTimingInputSchema } from "@agendia/contracts";
 import type { TenantUnitOfWork } from "@agendia/db";
@@ -59,63 +58,6 @@ export function registerAdministrationRoutes(
       }
     });
   }
-  app.put("/admin/businesses/:id", async (request, reply) => {
-    const auth = await requireAdmin(request, reply, true);
-    if (!auth) return;
-    try {
-      const { id } = request.params as { id: string };
-      const { name } = z
-        .object({ name: z.string().trim().min(1).max(160) })
-        .parse(request.body);
-      const changed = await adminWrite<unknown[]>(
-        auth,
-        request,
-        id,
-        "business.updated",
-        (repo) => repo.renameBusiness(id, name),
-      );
-      return changed.length
-        ? pools.admin.run(undefined, (repo) => repo.business(id))
-        : fail(reply, request, 404, "NOT_FOUND", "Resource not found");
-    } catch {
-      return fail(
-        reply,
-        request,
-        400,
-        "VALIDATION_FAILED",
-        "Invalid business data",
-      );
-    }
-  });
-  app.put("/admin/businesses/:id/user", async (request, reply) => {
-    const auth = await requireAdmin(request, reply, true);
-    if (!auth) return;
-    try {
-      const { id } = request.params as { id: string };
-      const { password } = z
-        .object({ password: z.string().min(16) })
-        .parse(request.body);
-      const phc = await hash(password, { algorithm: Algorithm.Argon2id });
-      const ok = await adminWrite<boolean>(
-        auth,
-        request,
-        id,
-        "business_user.password_replaced",
-        (repo) => repo.replaceBusinessPassword(id, phc),
-      );
-      return ok
-        ? { replaced: true }
-        : fail(reply, request, 404, "NOT_FOUND", "Resource not found");
-    } catch {
-      return fail(
-        reply,
-        request,
-        400,
-        "VALIDATION_FAILED",
-        "Invalid user data",
-      );
-    }
-  });
   app.put("/admin/businesses/:id/status", async (request, reply) => {
     const auth = await requireAdmin(request, reply, true);
     if (!auth) return;
