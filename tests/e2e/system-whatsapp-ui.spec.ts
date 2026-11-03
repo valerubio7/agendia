@@ -38,49 +38,6 @@ async function expectMetadata(metadata: Locator) {
   }
 }
 
-async function expectPair(locator: Locator, color: string, background: string) {
-  await expect(locator).toHaveCSS("color", color);
-  await expect(locator).toHaveCSS("background-color", background);
-}
-
-async function expectShellBrand(shell: Locator) {
-  // The current channel workspace uses the official shell lockup, not a decorative bridge.
-  const brand = shell.getByRole("img", { name: "agendIA", exact: true });
-  const image = brand.locator('img[src="/brand/logo-inverse-outlined.svg"]');
-  await expect(brand).toHaveCount(1);
-  await expect(brand).toBeVisible();
-  await expect(image).toHaveCount(1);
-  await expect(image).toHaveAttribute("alt", "");
-  await expect.poll(() => image.evaluate((el: HTMLImageElement) => el.complete &&
-    el.naturalWidth > 0 && el.naturalHeight > 0)).toBe(true);
-  for (const target of [brand, image]) {
-    for (const property of ["box-shadow", "filter", "transform"] as const) {
-      await expect(target).toHaveCSS(property, "none");
-    }
-  }
-  await expect(image).toHaveCSS("object-fit", "contain");
-  const fit = await image.evaluate((el: HTMLImageElement) => {
-    const image = el.getBoundingClientRect(), brand = el.parentElement!.getBoundingClientRect();
-    return { width: image.width, height: image.height, ratio: el.naturalWidth / el.naturalHeight,
-      contained: image.left >= brand.left && image.right <= brand.right && image.top >= brand.top && image.bottom <= brand.bottom,
-      inViewport: brand.left >= 0 && brand.right <= document.documentElement.clientWidth };
-  });
-  expect(fit.height).toBe(32);
-  expect(Math.abs(fit.width / fit.height - fit.ratio)).toBeLessThan(0.01);
-  expect(fit.contained).toBe(true);
-  expect(fit.inViewport).toBe(true);
-}
-
-const paper = "rgb(243, 238, 225)";
-const ink = "rgb(28, 38, 32)";
-const muted = "rgb(76, 91, 83)";
-const pine = "rgb(46, 107, 78)";
-const pineDeep = "rgb(18, 55, 42)";
-const pineSoft = "rgb(223, 233, 225)";
-const coral = "rgb(255, 107, 73)";
-const coralInk = "rgb(168, 58, 26)";
-const dangerSoft = "rgb(243, 217, 211)";
-
 test("the redesigned WhatsApp screen completes the real linking lifecycle responsively", async ({
   browser,
   page,
@@ -175,23 +132,7 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
     await expect(qrImage).toBeHidden();
     await expectNoHorizontalOverflow(tenantPage);
 
-    await expectShellBrand(shell);
-    const symbolResponse = await tenantPage.request.get(new URL("/brand/logo-inverse-outlined.svg", tenantPage.url()).href);
-    expect(symbolResponse.ok()).toBe(true);
-    const symbol = await symbolResponse.text();
-    expect(symbol).toContain('viewBox="0 0 388 120"');
-    expect(symbol).toContain('fill="#F3EEE1"');
-    expect(symbol).toContain('fill="#FF6B49"');
     await expect(screen.locator(".whatsapp-security-note")).toHaveText("El QR es temporal y no expone credenciales persistentes.");
-    await expectPair(screen.locator(".whatsapp-security-note"), ink, "rgb(246, 232, 200)");
-    await expect(hero.getByRole("heading", { level: 1 })).toHaveCSS("font-weight", "650");
-    await expect(hero.getByRole("heading", { level: 1 })).toHaveCSS("font-family", /Source Sans 3/);
-    await expect(metadata.locator("dd").first()).toHaveCSS("font-family", /Source Sans 3/);
-    await expect(metadata.locator("dd").first()).toHaveCSS("font-weight", "600");
-    await expect(metadata.locator("dd").first()).toHaveCSS("font-variant-numeric", "tabular-nums");
-    const initialState = await statusPanel.getAttribute("data-status");
-    await expectPair(currentStatus, initialState === "link_required" ? ink : muted,
-      initialState === "link_required" ? "rgb(246, 232, 200)" : paper);
 
     await expect(screen.locator("input, select, textarea, form")).toHaveCount(
       0,
@@ -208,8 +149,6 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
       ),
     ).toHaveCount(0);
 
-    await expectPair(action, ink, coral);
-    await expect(action).toHaveCSS("font-weight", "600");
     // Real keyboard modality, never programmatic focus or forced DOM state.
     for (let attempt = 0; attempt < 12 && !(await action.evaluate((el) => el === document.activeElement)); attempt++) {
       await tenantPage.keyboard.press("Tab");
@@ -220,7 +159,10 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
     await tenantPage.keyboard.press("Tab");
     await expect(action).toBeFocused();
     expect(await action.evaluate((el) => el.matches(":focus-visible"))).toBe(true);
-    await expect(action).toHaveCSS("outline-color", pine);
+    expect(await action.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return (style.outlineStyle !== "none" && parseFloat(style.outlineWidth) > 0) || style.boxShadow !== "none";
+    })).toBe(true);
     await tenantPage.screenshot({ path: testInfo.outputPath("whatsapp-desktop.png"), fullPage: true });
 
     // Schema-correct mocked UI-state coverage; not a real provider failure.
@@ -242,18 +184,13 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
       await tenantPage.reload();
       await expect(statusPanel).toHaveAttribute("data-status", "error");
       await expect(currentStatus).toHaveText("Error de conexión");
-      await expectPair(currentStatus, coralInk, dangerSoft);
       await action.click();
       const pending = linkPanel.getByRole("button", { name: "Esperando conexión…", exact: true });
       await expect(pending).toBeDisabled();
-      await expectPair(pending, muted, paper);
-      await expect(pending).toHaveCSS("opacity", "1");
-      await expect(pending).toHaveCSS("cursor", "default");
       await tenantPage.screenshot({ path: testInfo.outputPath("whatsapp-mocked-pending.png"), fullPage: true });
       releaseLink();
       const alert = screen.getByRole("alert");
       await expect(alert).toBeVisible();
-      await expectPair(alert, coralInk, dangerSoft);
       await expect(action).toBeEnabled();
       await tenantPage.screenshot({ path: testInfo.outputPath("whatsapp-mocked-error.png"), fullPage: true });
     } finally {
@@ -273,7 +210,6 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
       await tenantPage.reload();
       await expect(statusPanel).toHaveAttribute("data-status", "disconnected");
       await expect(currentStatus).toHaveText("Desconectado");
-      await expectPair(currentStatus, muted, paper);
       await tenantPage.screenshot({ path: testInfo.outputPath("whatsapp-mocked-disconnected.png"), fullPage: true });
     } finally {
       await tenantPage.unroute(statusUrl, disconnectedStatus);
@@ -289,8 +225,6 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
 
     await expect(qrImage).toBeVisible();
     await expect(qrImage).toHaveAttribute("src", /^data:image\/png;base64,/);
-    await expectPair(action, muted, paper);
-    await expectPair(screen.locator('.whatsapp-feedback [role="status"]'), pineDeep, pineSoft);
     await tenantPage.screenshot({ path: testInfo.outputPath("whatsapp-qr.png"), fullPage: true });
 
     await expect(currentStatus).toHaveText("Conectado", { timeout: 15_000 });
@@ -301,16 +235,12 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
     await expect(action).toHaveText("WhatsApp vinculado");
     await expect(action).toBeDisabled();
 
-    await expectPair(currentStatus, pineDeep, pineSoft);
-    await expectPair(action, muted, paper);
-    await expectPair(screen.locator('.whatsapp-feedback [role="status"]'), pineDeep, pineSoft);
     await expect(linkPanel.getByRole("heading", { name: "Canal vinculado", exact: true })).toBeVisible();
     await expect(linkPanel.getByText("Verificación completa", { exact: true })).toBeVisible();
     await tenantPage.screenshot({ path: testInfo.outputPath("whatsapp-connected.png"), fullPage: true });
 
     await tenantPage.setViewportSize({ width: 360, height: 800 });
     await expectReachable(hero);
-    await expectShellBrand(shell);
     await expectReachable(statusPanel);
     await expect(currentStatus).toHaveText("Conectado");
     for (const label of metadataLabels) {

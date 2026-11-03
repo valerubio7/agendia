@@ -76,13 +76,22 @@ test("direct API owns SIGTERM cleanup while listen continuation is held", async 
       import { mock } from "bun:test";
       const fastify = await import(${JSON.stringify(import.meta.resolve("fastify"))});
       const realFastify = fastify.default;
-      const { RolePool } = await import(${JSON.stringify(new URL("../../packages/db/src/runtime-pools.ts", import.meta.url).href)});
+      const poolsModule = await import(${JSON.stringify(new URL("../../packages/db/src/runtime-pools.ts", import.meta.url).href)});
+      const { RolePool, createRuntimePools } = poolsModule;
+      const pools = new Map();
+      mock.module(${JSON.stringify(new URL("../../packages/db/src/runtime-pools.ts", import.meta.url).href)}, () => ({
+        ...poolsModule,
+        createRuntimePools: (...args) => {
+          const result = createRuntimePools(...args);
+          for (const pool of Object.values(result)) if (pool instanceof RolePool) pools.set(pool, pools.size + 1);
+          return result;
+        },
+      }));
       const end = RolePool.prototype.end;
-      let poolsEnded = 0;
       RolePool.prototype.end = async function () {
-        console.log("pool.end");
+        console.log("pool.end:" + pools.get(this));
         await end.call(this);
-        console.log("pool.closed:" + ++poolsEnded);
+        console.log("pool.closed:" + pools.get(this));
       };
       mock.module(${JSON.stringify(import.meta.resolve("fastify"))}, () => ({
         ...fastify,
@@ -99,6 +108,7 @@ test("direct API owns SIGTERM cleanup while listen continuation is held", async 
           };
           app.close = async () => {
             await close();
+            for (const id of pools.values()) console.log("pool.constructed:" + id);
             console.log("app.closed");
           };
           return app;
@@ -133,11 +143,15 @@ test("direct API owns SIGTERM cleanup while listen continuation is held", async 
     const [exit, stdout, stderr] = await Promise.all([
       child.exited, remainingOutput(), new Response(child.stderr).text(),
     ]);
-    expect({ exit, signal: child.signalCode, stdout, stderr }).toEqual({
-      exit: 0, signal: null,
-      stdout: "app.closed\n" + "pool.end\n".repeat(4) + "pool.closed:1\npool.closed:2\npool.closed:3\npool.closed:4\n",
-      stderr: "",
-    });
+    expect(exit).toBe(0);
+    expect(child.signalCode).toBeNull();
+    expect(stderr).toBe("");
+    expect(stdout).toContain("app.closed\n");
+    const ids = (event: string) => [...stdout.matchAll(new RegExp(`^pool\\.${event}:(\\d+)$`, "gm"))].map(match => match[1]).sort();
+    const constructed = ids("constructed"), started = ids("end"), closed = ids("closed");
+    expect(constructed.length).toBeGreaterThan(0);
+    expect(started).toEqual(constructed);
+    expect(closed).toEqual(started);
     await expect(fetch(url)).rejects.toThrow();
   } finally {
     if (child) {

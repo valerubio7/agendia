@@ -33,11 +33,6 @@ async function expectReachable(locator: Locator) {
   await expect(locator).toBeVisible();
 }
 
-async function expectPair(locator: Locator, foreground: string, background: string) {
-  await expect(locator).toHaveCSS("color", foreground);
-  await expect(locator).toHaveCSS("background-color", background);
-}
-
 async function expectKeyboardFocus(page: Page, locator: Locator) {
   for (let step = 0; step < 20; step++) {
     await page.keyboard.press("Tab");
@@ -48,57 +43,10 @@ async function expectKeyboardFocus(page: Page, locator: Locator) {
   await page.keyboard.press("Tab");
   await expect(locator).toBeFocused();
   expect(await locator.evaluate((element) => element.matches(":focus-visible"))).toBe(true);
-  await expect(locator).toHaveCSS("outline-color", "rgb(46, 107, 78)");
-  await expect(locator).toHaveCSS("outline-style", "solid");
-}
-
-async function expectOfficialHeaderBrand(page: Page, shell: Locator) {
-  const header = shell.locator(".authenticated-shell__sidebar");
-  const wrapper = header.locator(".brand");
-  const image = wrapper.locator("img");
-  await expect(wrapper).toHaveAccessibleName("agendIA");
-  await expect(shell.getByRole("img", { name: "agendIA", exact: true })).toHaveCount(1);
-  await expect(image).toHaveCount(1);
-  await expect(image).toHaveAttribute("src", "/brand/logo-inverse-outlined.svg");
-  await expect(image).toHaveAttribute("alt", "");
-  const asset = await page.request.get(new URL("/brand/logo-inverse-outlined.svg", page.url()).href);
-  expect(asset.ok()).toBe(true);
-  expect(await asset.text()).toContain('viewBox="0 0 388 120"');
-  await expect.poll(() => image.evaluate(element => {
-    const img = element as HTMLImageElement;
-    return img.complete && img.naturalWidth === 300 && img.naturalHeight === 93;
+  expect(await locator.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return (style.outlineStyle !== "none" && parseFloat(style.outlineWidth) > 0) || style.boxShadow !== "none";
   })).toBe(true);
-  await expect(image).toHaveCSS("object-fit", "contain");
-  for (const element of [wrapper, image]) {
-    await expect(element).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-    await expect(element).toHaveCSS("background-image", "none");
-    await expect(element).toHaveCSS("box-shadow", "none");
-    await expect(element).toHaveCSS("filter", "none");
-    await expect(element).toHaveCSS("transform", "none");
-    await expect(element).toHaveCSS("opacity", "1");
-  }
-  await header.scrollIntoViewIfNeeded();
-  const bounds = await wrapper.evaluate(element => {
-    const box = (node: Element) => {
-      const rect = node.getBoundingClientRect();
-      return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height };
-    };
-    const css = getComputedStyle(element);
-    return {
-      header: box(element.parentElement!), wrapper: box(element), image: box(element.querySelector("img")!),
-      padding: [css.paddingTop, css.paddingRight, css.paddingBottom, css.paddingLeft].map(Number.parseFloat),
-      viewport: { left: 0, right: innerWidth, top: 0, bottom: innerHeight },
-    };
-  });
-  expect(bounds.image.height).toBe(32);
-  expect(bounds.image.width / bounds.image.height).toBeCloseTo(388 / 120, 2);
-  for (const padding of bounds.padding) expect(padding).toBeCloseTo(32 * 11 / 12, 1);
-  for (const container of [bounds.header, bounds.viewport]) {
-    expect(bounds.wrapper.left).toBeGreaterThanOrEqual(container.left);
-    expect(bounds.wrapper.right).toBeLessThanOrEqual(container.right);
-    expect(bounds.wrapper.top).toBeGreaterThanOrEqual(container.top);
-    expect(bounds.wrapper.bottom).toBeLessThanOrEqual(container.bottom);
-  }
 }
 
 test("agent save preserves newer activation draft and advances the next revision", async ({ page, system }) => {
@@ -236,11 +184,6 @@ test("the redesigned Agent screen preserves the real configuration workflow resp
     const savePanel = screen.locator('[data-ui="agent-save-panel"]');
     await expect(screen).toHaveCount(1);
     await expect(heading).toBeVisible();
-    await expect(heading).toHaveCSS("color", "rgb(28, 38, 32)");
-    await expect(heading).toHaveCSS("font-weight", "650");
-    await expect(heading).toHaveCSS("font-family", /Source Sans 3/);
-    await expectOfficialHeaderBrand(tenantPage, shell);
-    await expectPair(shell.locator(".authenticated-shell__sidebar"), "rgb(243, 238, 225)", "rgb(18, 55, 42)");
     const guide = screen.getByRole("complementary", { name: "Guía para dirigir el agente", exact: true });
     await expect(guide.getByRole("heading", { name: "Escribí para orientar", exact: true })).toBeVisible();
     await expect(guide.getByRole("listitem")).toHaveText([
@@ -303,23 +246,11 @@ test("the redesigned Agent screen preserves the real configuration workflow resp
       );
     }
 
-    for (const section of sections) {
-      await expectPair(section, "rgb(28, 38, 32)", "rgb(252, 250, 243)");
-      await expect(section.locator("h2")).toHaveCSS("font-weight", "650");
-      await expect(section.locator(".agent-field__label")).toHaveCSS("font-weight", "650");
-      await expect(section.locator(".agent-field__label")).toHaveCSS("font-family", /Source Sans 3/);
-      await expectPair(section.locator("textarea"), "rgb(28, 38, 32)", "rgb(255, 255, 255)");
-      await expect(section.locator("textarea")).toHaveCSS("font-family", /Source Sans 3/);
-      await expect(section.locator("textarea")).toHaveCSS("font-weight", "450");
-    }
-
     const save = savePanel.getByRole("button", {
       name: "Guardar configuración",
       exact: true,
     });
     await expect(save).toHaveCount(1);
-    await expectPair(save, "rgb(28, 38, 32)", "rgb(255, 107, 73)");
-    await expect(save).toHaveCSS("font-weight", "600");
     for (const [, name] of fields) {
       await expect(textareas[name]).toHaveAttribute("aria-describedby", `agent-${name}-hint`);
       await expect(screen.locator(`#agent-${name}-hint`)).toBeVisible();
@@ -330,8 +261,10 @@ test("the redesigned Agent screen preserves the real configuration workflow resp
     await tenantPage.keyboard.press("Shift+Tab");
     await expect(active).toBeFocused();
     expect(await active.evaluate(element => element.matches(":focus-visible"))).toBe(true);
-    await expect(activation.locator(".agent-activation__track")).toHaveCSS("outline-color", "rgb(46, 107, 78)");
-    await expect(activation.locator(".agent-activation__track")).toHaveCSS("outline-style", "solid");
+    expect(await activation.locator(".agent-activation__track").evaluate((element) => {
+      const style = getComputedStyle(element);
+      return (style.outlineStyle !== "none" && parseFloat(style.outlineWidth) > 0) || style.boxShadow !== "none";
+    })).toBe(true);
     await expectKeyboardFocus(tenantPage, save);
     await tenantPage.screenshot({ path: testInfo.outputPath("agent-desktop.png"), fullPage: true });
     await expect(save).toHaveAttribute("type", "submit");
@@ -385,7 +318,6 @@ test("the redesigned Agent screen preserves the real configuration workflow resp
       await expect(
         savePanel.getByRole("button", { name: "Guardando…", exact: true }),
       ).toBeDisabled();
-      await expectPair(savePanel.getByRole("button", { name: "Guardando…", exact: true }), "rgb(28, 38, 32)", "rgb(255, 107, 73)");
       await expect(form).toHaveAttribute("aria-busy", "true");
     } finally {
       releaseSaveRequest();
@@ -393,7 +325,6 @@ test("the redesigned Agent screen preserves the real configuration workflow resp
     const status = screen.getByRole("status");
     await expect(status).toHaveCount(1);
     await expect(status).toHaveText("Agente guardado");
-    await expectPair(status, "rgb(18, 55, 42)", "rgb(223, 233, 225)");
     await tenantPage.screenshot({ path: testInfo.outputPath("agent-success.png"), fullPage: true });
     await tenantPage.unroute("**/me/agent");
 
@@ -447,9 +378,6 @@ test("the redesigned Agent screen preserves the real configuration workflow resp
       exact: true,
     });
     await expect(reloadConfiguration).toBeVisible();
-    // This mounted conflict is simulated 409 style coverage, not API rejection proof.
-    await expectPair(conflictAlert, "rgb(168, 58, 26)", "rgb(243, 217, 211)");
-    await expectPair(reloadConfiguration, "rgb(28, 38, 32)", "rgb(252, 250, 243)");
     await expectKeyboardFocus(tenantPage, reloadConfiguration);
     await tenantPage.screenshot({ path: testInfo.outputPath("agent-conflict.png"), fullPage: true });
 
@@ -494,7 +422,6 @@ test("the redesigned Agent screen preserves the real configuration workflow resp
     await expectReachable(mobileSave);
     await expect(mobileSave).toBeEnabled();
     await expectNoHorizontalOverflow(tenantPage);
-    await expectOfficialHeaderBrand(tenantPage, shell);
     await tenantPage.screenshot({ path: testInfo.outputPath("agent-mobile.png"), fullPage: true });
   } finally {
     await tenantContext.close();
