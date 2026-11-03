@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page } from "@playwright/test";
-import { login, test } from "./support/fixtures.ts";
+import { createBusinessInAdminUi, login, test } from "./support/fixtures.ts";
 
 const tokens = {
   "--paper": "#f3eee1", "--surface": "#fcfaf3",
@@ -187,18 +187,7 @@ test("official local faces, root tokens and shared roles survive real login/prof
   const name = "Asesoramiento y planificación para pequeños negocios de Buenos Aires";
   const email = "brand-typography@example.test";
   const password = "brand typography password safe";
-  await page.locator('[aria-controls="admin-create"]').click();
-  const create = page.locator('[data-ui="admin-create"] form');
-  await expect(create).toBeVisible();
-  await create.getByLabel(/^Nombre/).fill(name);
-  await create.getByLabel("Correo del usuario", { exact: true }).fill(email);
-  await create.getByLabel(/^Contraseña inicial/).fill(password);
-  await create.getByRole("button", { name: "Crear negocio", exact: true }).click();
-  const business = page.locator(".admin-directory").getByRole("listitem").filter({
-    has: page.getByText(name, { exact: true }),
-  });
-  await expect(business).toBeVisible();
-  await expect(page.locator(".admin-feedback").getByRole("status")).toHaveText("Negocio creado");
+  const business = await createBusinessInAdminUi(page, { name, email, password });
   await business.locator("summary").click();
   const timestamp = business.locator(".admin-technical-details dd").first();
   await expect(timestamp).toBeVisible();

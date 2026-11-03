@@ -51,17 +51,18 @@ const adminLogin = () =>
   login("admin@example.test", "correct horse battery staple", true);
 const createBusiness = async (email: string, auth?: Awaited<ReturnType<typeof adminLogin>>) => {
   const admin = auth ?? await adminLogin();
-  const response = await request("POST", "/admin/businesses", {
-    ...admin,
+  const response = await request("POST", "/auth/register", {
     origin: ORIGIN,
-    body: {
-      name: `Business ${email}`,
-      userEmail: email,
-      initialPassword: "tenant initial password safe",
-    },
+    body: { name: `Business ${email}`, email, password: "tenant initial password safe" },
   });
-  expect(response.statusCode).toBe(201);
-  return { business: response.json() as { id: string }, admin };
+  expect(response.statusCode).toBe(202);
+  const pending = await request("GET", "/admin/registrations", admin);
+  expect(pending.statusCode).toBe(200);
+  const business = (pending.json() as { id: string; email: string }[]).find(row => row.email === email);
+  expect(business).toBeDefined();
+  const approved = await request("POST", `/admin/registrations/${business!.id}/approve`, { ...admin, origin: ORIGIN });
+  expect(approved.statusCode).toBe(200);
+  return { business: business!, admin };
 };
 
 beforeAll(async () => {

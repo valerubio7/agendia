@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { z } from "zod";
+import { z } from "zod";
+import { Algorithm, hash } from "@node-rs/argon2";
 import { randomBytes } from "node:crypto";
 import { digestOpaqueToken, deriveSessionCsrf, verifyLoginPassword, sessionCookie } from "@agendia/auth";
 import { tenantContext } from "@agendia/db";
@@ -14,6 +15,28 @@ export function registerAuthRoutes(
     credentials: z.ZodType<{ email: string; password: string; remember?: boolean | undefined }>;
   },
 ) {
+  app.post("/auth/register", async (request, reply) => {
+    if (!originOk(request)) return fail(reply, request, 403, "FORBIDDEN", "Origin rejected");
+    const parsed = z.object({ name: z.string().trim().min(1).max(160), email: z.string().trim().email().max(254), password: z.string().min(16).max(1024) }).safeParse(request.body);
+    if (!parsed.success || parsed.data.name.includes("\0")) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid registration data");
+    const admitted = await pools.api.run(undefined, repo => repo.admitRegistration()).catch(() => false);
+    if (!admitted) {
+      reply.header("retry-after", "60");
+      return fail(reply, request, 429, "FORBIDDEN", "Too many registration attempts");
+    }
+    try {
+      const email = parsed.data.email.toLowerCase();
+      const phc = await hash(parsed.data.password, { algorithm: Algorithm.Argon2id });
+      const created = await pools.api.run(undefined, async repo => {
+        const ok = await repo.submitRegistration(parsed.data.name, email, phc);
+        if (ok) await repo.appendRuntimeAudit(null, { code: "auth.registration_submitted", outcome: "success", source: "api", requestId: request.id });
+        return ok;
+      });
+      return created ? reply.code(202).send({ pending: true }) : fail(reply, request, 409, "CONFLICT", "Registration unavailable");
+    } catch {
+      return fail(reply, request, 500, "INTERNAL_ERROR", "Registration failed");
+    }
+  });
   const login = async (request: FastifyRequest, reply: FastifyReply, adminEntrance: boolean) => {
     if (!originOk(request))
       return fail(reply, request, 403, "FORBIDDEN", "Origin rejected");

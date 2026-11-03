@@ -1,15 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import type { Business, ResponseTiming } from "../../api/api-client";
+import { useRef, useState, type FormEvent } from "react";
+import type { Business, Registration, ResponseTiming } from "../../api/api-client";
 // The domain barrel also exports server-only administration code.
 import { MAX_REPLY_DELAY_SECONDS, MAX_INACTIVITY_RESET_SECONDS, ReplyPacingSchema } from "../../../../../packages/domain/src/messaging/reply-pacing.ts";
-
-type CreateBusinessInput = {
-  name: string;
-  userEmail: string;
-  initialPassword: string;
-};
 
 type AdminBusinessesScreenProps = {
   businesses: Business[];
@@ -20,14 +14,16 @@ type AdminBusinessesScreenProps = {
   refreshWarning: boolean;
   refreshPending: boolean;
   retryRefreshAction: () => void;
-  createAction: (input: CreateBusinessInput) => Promise<boolean>;
+  registrations: Registration[];
+  decideAction: (id: string, decision: "approve" | "reject") => Promise<boolean>;
   renameAction: (id: string, name: string) => Promise<boolean>;
   replacePasswordAction: (id: string, password: string) => Promise<boolean>;
   setStatusAction: (id: string, status: "active" | "suspended") => Promise<boolean>;
 };
 
 type PendingAction =
-  | { kind: "create" | "instructions" }
+  | { kind: "instructions" }
+  | { kind: "registration"; registrationId: string }
   | { kind: "rename" | "password" | "status"; businessId: string };
 
 const timestampFormatter = new Intl.DateTimeFormat("es-AR", {
@@ -66,7 +62,7 @@ const whatsappStatusLabels: Record<Business["whatsappStatus"], string> = {
 
 export function AdminBusinessesScreen({
   businesses, responseTiming, saveResponseTimingAction, notice, error,
-  refreshWarning, refreshPending, retryRefreshAction, createAction,
+  refreshWarning, refreshPending, retryRefreshAction, registrations, decideAction,
   renameAction, replacePasswordAction, setStatusAction,
 }: AdminBusinessesScreenProps) {
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
@@ -74,10 +70,7 @@ export function AdminBusinessesScreen({
   const [instructionsValidationError, setInstructionsValidationError] = useState("");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | Business["status"]>("all");
-  const [createOpen, setCreateOpen] = useState(false);
   const [workspace, setWorkspace] = useState<"businesses" | "ai">("businesses");
-  const createButtonRef = useRef<HTMLButtonElement>(null);
-  const createNameRef = useRef<HTMLInputElement>(null);
   const pendingRef = useRef(false);
   const anyPending = pendingAction !== null || refreshPending;
   const activeCount = businesses.filter(business => business.status === "active").length;
@@ -87,14 +80,6 @@ export function AdminBusinessesScreen({
     business.name.toLocaleLowerCase("es-AR").includes(query.trim().toLocaleLowerCase("es-AR"));
   const visibleBusinesses = businesses.filter(matchesFilter);
 
-  useEffect(() => {
-    if (createOpen) createNameRef.current?.focus();
-  }, [createOpen]);
-
-  const closeCreate = () => {
-    setCreateOpen(false);
-    createButtonRef.current?.focus();
-  };
   const clearSubmitted = (form: HTMLFormElement, submitted: FormData) => {
     submitted.forEach((value, name) => {
       const input = form.elements.namedItem(name);
@@ -114,17 +99,6 @@ export function AdminBusinessesScreen({
       pendingRef.current = false;
       setPendingAction(null);
     }
-  };
-  const submitCreate = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const succeeded = await runAction({ kind: "create" }, () => createAction({
-      name: String(form.get("name")),
-      userEmail: String(form.get("userEmail")),
-      initialPassword: String(form.get("initialPassword")),
-    }));
-    if (succeeded) clearSubmitted(formElement, form);
   };
   const submitRename = (business: Business) => async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -189,46 +163,15 @@ export function AdminBusinessesScreen({
       <div className="admin-section-heading admin-directory-title">
         <div><h2>Negocios <span className="admin-count">{businesses.length}</span></h2>
           <p>{businesses.length === 1 ? "1 negocio registrado" : `${businesses.length} negocios registrados`}</p></div>
-        <button ref={createButtonRef} type="button" aria-expanded={createOpen} aria-controls="admin-create"
-          disabled={anyPending} onClick={() => createOpen ? closeCreate() : setCreateOpen(true)}>
-          Nuevo negocio
-        </button>
       </div>
-      <section id="admin-create" className="admin-create" data-ui="admin-create" hidden={!createOpen} aria-labelledby="admin-create-title">
-        <div className="admin-section-heading">
-          <h2 id="admin-create-title">Incorporar un negocio</h2>
-          <button className="admin-secondary" type="button" disabled={anyPending} onClick={closeCreate}>Cerrar alta</button>
-        </div>
-        <form onSubmit={submitCreate} aria-busy={pendingAction?.kind === "create"}>
-          <div className="admin-create__groups">
-            <fieldset>
-              <legend>Datos del negocio</legend>
-              <label>Nombre
-                <input ref={createNameRef} name="name" type="text" required maxLength={160} pattern={".*\\S.*"}
-                  aria-describedby="admin-create-name-help"
-                  title="Ingresá un nombre de hasta 160 caracteres que incluya al menos un carácter no vacío." disabled={anyPending} />
-                <small id="admin-create-name-help">Hasta 160 caracteres. Es el nombre que aparece en el directorio.</small>
-              </label>
-            </fieldset>
-            <fieldset>
-              <legend>Acceso del usuario</legend>
-              <label>Correo del usuario
-                <input name="userEmail" type="email" autoComplete="off" required disabled={anyPending} />
-              </label>
-              <label>Contraseña inicial
-                <input name="initialPassword" type="password" autoComplete="new-password" required minLength={16} disabled={anyPending} aria-describedby="admin-create-password-help" />
-                <small id="admin-create-password-help">Mínimo 16 caracteres.</small>
-              </label>
-            </fieldset>
-          </div>
-          <div className="admin-form-footer">
-            <small>Todos los campos son obligatorios.</small>
-            <button type="submit" disabled={anyPending}>{pendingAction?.kind === "create" ? "Creando…" : "Crear negocio"}</button>
-          </div>
-        </form>
-        {failedAction?.kind === "create" && error && <div className="admin-context-error" role="alert">
-          <strong>No se pudo crear el negocio.</strong><span>{error}</span>
-        </div>}
+      <section aria-labelledby="registration-title">
+        <h2 id="registration-title">Solicitudes pendientes</h2>
+        {registrations.length === 0 ? <p>No hay solicitudes pendientes.</p> : <ul>{registrations.map(row => <li key={row.id}>
+          <p><strong>{row.name}</strong> · {row.email} · {formatCreatedTimestamp(row.createdAt)} UTC</p>
+          <button type="button" disabled={anyPending} aria-label={`Aprobar ${row.name}`} onClick={() => void runAction({ kind: "registration", registrationId: row.id }, () => decideAction(row.id, "approve"))}>Aprobar</button>{" "}
+          <button type="button" disabled={anyPending} aria-label={`Rechazar ${row.name}`} onClick={() => void runAction({ kind: "registration", registrationId: row.id }, () => decideAction(row.id, "reject"))}>Rechazar</button>
+          {failedAction?.kind === "registration" && failedAction.registrationId === row.id && error && <p role="alert">{error}</p>}
+        </li>)}</ul>}
       </section>
 
       <section className="admin-inventory" data-ui="admin-inventory" aria-labelledby="admin-inventory-title">
@@ -302,10 +245,8 @@ export function AdminBusinessesScreen({
         </ul>
         {visibleBusinesses.length === 0 && <div className="admin-empty">
           <h3>{businesses.length === 0 ? "Tu primer negocio empieza acá" : "No hay negocios con estos filtros"}</h3>
-          <p>{businesses.length === 0 ? "Incorporá un negocio y creá su usuario de acceso." : "Probá con otro nombre o volvé a ver el directorio completo."}</p>
-          {businesses.length > 0
-            ? <button className="admin-secondary" type="button" disabled={anyPending} onClick={() => { setQuery(""); setStatusFilter("all"); }}>Limpiar filtros</button>
-            : <button type="button" disabled={anyPending} onClick={() => setCreateOpen(true)}>Nuevo negocio</button>}
+          <p>{businesses.length === 0 ? "Los negocios aparecen al aprobar solicitudes." : "Probá con otro nombre o volvé a ver el directorio completo."}</p>
+          {businesses.length > 0 && <button className="admin-secondary" type="button" disabled={anyPending} onClick={() => { setQuery(""); setStatusFilter("all"); }}>Limpiar filtros</button>}
         </div>}
       </section>
 

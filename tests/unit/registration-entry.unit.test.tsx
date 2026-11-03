@@ -1,0 +1,38 @@
+import { expect, test } from "bun:test";
+import { createRequire } from "node:module";
+import { RegisterScreen } from "../../apps/web/src/features/auth/register-screen";
+import { AdminBusinessesScreen } from "../../apps/web/src/features/administration/admin-businesses-screen";
+const require = createRequire(new URL("../../apps/web/package.json", import.meta.url));
+const { createElement } = require("react");
+const { renderToStaticMarkup } = require("react-dom/server");
+test("registration exposes labelled required fields and pending feedback", () => {
+  const html = renderToStaticMarkup(createElement(RegisterScreen, { pending: true, feedback: null, submitAction: () => {} }));
+  for (const name of ["name", "email", "password"]) expect(html).toContain(`name="${name}"`);
+  expect(html).toContain('aria-busy="true"');
+  expect(html).toContain("Enviando…");
+  expect(html).toContain('disabled=""');
+});
+test("completed registration shows approval feedback without a busy submission", () => {
+  const html = renderToStaticMarkup(createElement(RegisterScreen, { pending: false, success: true,
+    feedback: createElement("p", { role: "status" }, "Solicitud enviada. Esperá la aprobación antes de iniciar sesión."), submitAction: () => {} }));
+  expect(html).toContain('role="status"');
+  expect(html).toContain("Esperá la aprobación");
+  expect(html).toContain('aria-busy="false"');
+  expect(html).not.toContain("Enviando…");
+  expect(html).toContain('disabled=""');
+});
+test("admin shows pending registrations and accessible decision actions", () => {
+  const html = renderToStaticMarkup(createElement(AdminBusinessesScreen, {
+    businesses: [], registrations: [{ id: "a", name: "Negocio", email: "a@example.test", createdAt: "2026-01-01T00:00:00Z" }],
+    responseTiming: { responseTiming: { initialDelaySeconds: 0, activeDelaySeconds: 0, inactivityResetSeconds: 60 } },
+    notice: "", error: "", refreshWarning: true, refreshPending: false,
+    retryRefreshAction: () => {}, decideAction: async () => true, saveResponseTimingAction: async () => true,
+    renameAction: async () => true, replacePasswordAction: async () => true, setStatusAction: async () => true,
+  }));
+  expect(html).toContain("a@example.test");
+  expect(html).toContain('aria-label="Aprobar Negocio"');
+  expect(html).toContain('aria-label="Rechazar Negocio"');
+  expect(html).toContain('role="alert"');
+  expect(html).toContain("Reintentar consulta");
+  expect(html).not.toContain("Nuevo negocio");
+});

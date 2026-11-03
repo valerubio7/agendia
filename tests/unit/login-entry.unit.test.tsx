@@ -22,6 +22,10 @@ describe("login entrance presentation", () => {
       expect(html).not.toMatch(/<input[^>]*type="checkbox"[^>]*checked/);
     }
   });
+  test("links registration only from the business entrance", () => {
+    expect(renderToStaticMarkup(createElement(LoginScreen, loginProps))).toContain('href="/register"');
+    expect(renderToStaticMarkup(createElement(LoginScreen, { ...loginProps, adminEntrance: true }))).not.toContain('href="/register"');
+  });
   test("keeps the customer and legacy login presentation unchanged by default", () => {
     const html = renderToStaticMarkup(createElement(LoginScreen, loginProps));
     expect(html).toContain('<h1 id="login-title">Iniciar sesión</h1>');
@@ -36,12 +40,10 @@ describe("login entrance presentation", () => {
     const customer = renderToStaticMarkup(createElement(LoginScreen, loginProps));
     const admin = renderToStaticMarkup(createElement(LoginScreen, {
       ...loginProps,
-      title: "Acceso de administración",
+      title: "Acceso de administración", adminEntrance: true,
     }));
-    expect(admin).toBe(customer.replace(
-      '<h1 id="login-title">Iniciar sesión</h1>',
-      '<h1 id="login-title">Acceso de administración</h1>',
-    ));
+    expect(admin).toContain('<h1 id="login-title">Acceso de administración</h1>');
+    expect(customer).toContain('href="/register"');
   });
 
   test("preserves pending and error feedback on the shared form", () => {

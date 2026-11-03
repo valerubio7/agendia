@@ -3,6 +3,7 @@ import { Brand } from "../../components/brand";
 
 type LoginScreenProps = {
   title?: string;
+  adminEntrance?: boolean;
   feedback: ReactNode;
   loginPending: boolean;
   submitAction: FormEventHandler<HTMLFormElement>;
@@ -10,6 +11,7 @@ type LoginScreenProps = {
 
 export function LoginScreen({
   title = "Iniciar sesión",
+  adminEntrance = false,
   feedback,
   loginPending,
   submitAction,
@@ -56,6 +58,7 @@ export function LoginScreen({
               {loginPending ? "Ingresando…" : "Ingresar"}
             </button>
           </form>
+          {!adminEntrance && <p><a href="/register">Solicitar acceso</a></p>}
         </div>
       </section>
       <aside

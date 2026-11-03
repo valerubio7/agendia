@@ -118,13 +118,16 @@ test("contains hostile access and provider failures while preserving isolated re
   const admin = await login(system, system.admin.email, system.admin.password, true);
   const ids: string[] = [];
   for (const tenant of tenants) {
-    const response = await api(system, admin, "/admin/businesses", "POST", {
-      name: tenant.name,
-      userEmail: tenant.email,
-      initialPassword: tenant.password,
+    const response = await fetch(`${system.apiUrl}/auth/register`, {
+      method: "POST", headers: { origin: ORIGIN(system), "content-type": "application/json" },
+      body: JSON.stringify({ name: tenant.name, email: tenant.email, password: tenant.password }),
     });
-    expect(response.status).toBe(201);
-    ids.push(String((await json(response)).id));
+    expect(response.status).toBe(202);
+    const registrations = await (await api(system, admin, "/admin/registrations")).json() as Array<{ id: string; email: string }>;
+    const registration = registrations.find(row => row.email === tenant.email);
+    expect(registration).toBeDefined();
+    expect((await api(system, admin, `/admin/registrations/${registration!.id}/approve`, "POST")).status).toBe(200);
+    ids.push(registration!.id);
   }
   const tenantAuth = await Promise.all(
     tenants.map((tenant) => login(system, tenant.email, tenant.password)),

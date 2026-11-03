@@ -1,6 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { Algorithm, hash } from "@node-rs/argon2";
-import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { ResponseTimingInputSchema } from "@agendia/contracts";
 import type { TenantUnitOfWork } from "@agendia/db";
@@ -35,42 +34,31 @@ export function registerAdministrationRoutes(
       ? pools.admin.run(undefined, (repo) => repo.listBusinesses())
       : undefined,
   );
-  app.post("/admin/businesses", async (request, reply) => {
-    const auth = await requireAdmin(request, reply, true);
-    if (!auth) return;
-    try {
-      const body = z
-        .object({
-          name: z.string().trim().min(1).max(160),
-          userEmail: z.string().email(),
-          initialPassword: z.string().min(16),
-        })
-        .parse(request.body);
-      const id = randomUUID();
-      const phc = await hash(body.initialPassword, {
-        algorithm: Algorithm.Argon2id,
-      });
-      await adminWrite(auth, request, id, "business.created", (repo) =>
-        repo.createBusinessUser({
-          id,
-          name: body.name,
-          email: body.userEmail.trim().toLowerCase(),
-          passwordPhc: phc,
-        }),
-      );
-      return reply
-        .code(201)
-        .send(await pools.admin.run(undefined, (repo) => repo.business(id)));
-    } catch {
-      return fail(
-        reply,
-        request,
-        400,
-        "VALIDATION_FAILED",
-        "Invalid business data",
-      );
-    }
+  app.get("/admin/registrations", async (request, reply) => {
+    if (!await requireAdmin(request, reply)) return;
+    reply.header("cache-control", "no-store");
+    return pools.admin.run(undefined, repo => repo.listRegistrations());
   });
+  for (const decision of ["approve", "reject"] as const) {
+    app.post(`/admin/registrations/:id/${decision}`, async (request, reply) => {
+      const auth = await requireAdmin(request, reply, true);
+      if (!auth) return;
+      const id = z.string().uuid().safeParse((request.params as { id: string }).id);
+      if (!id.success) return fail(reply, request, 404, "NOT_FOUND", "Resource not found");
+      try {
+        const decided = await pools.admin.run(undefined, async repo => {
+          const ok = await repo.decideRegistration(id.data, decision === "approve");
+          if (ok) await repo.appendRuntimeAudit(null, { code: `auth.registration_${decision === "approve" ? "approved" : "rejected"}`, outcome: "success", source: "api", actorId: auth.identity_id, requestId: request.id });
+          return ok;
+        });
+        return decided ? { decided: true } : fail(reply, request, 404, "NOT_FOUND", "Resource not found");
+      } catch (error) {
+        if (error && typeof error === "object" && "code" in error && error.code === "23505")
+          return fail(reply, request, 409, "CONFLICT", "Registration unavailable");
+        return fail(reply, request, 500, "INTERNAL_ERROR", "Registration decision failed");
+      }
+    });
+  }
   app.put("/admin/businesses/:id", async (request, reply) => {
     const auth = await requireAdmin(request, reply, true);
     if (!auth) return;

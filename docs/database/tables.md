@@ -1,6 +1,6 @@
 # Diccionario de tablas
 
-Referencia de las 32 tablas de `0000_base.sql`, agrupadas por área. El detalle de columnas, `CHECK`, índices y políticas vive en la migración; acá está el propósito de cada tabla y cómo se conecta.
+Referencia de las tablas de `0000_base.sql` y de registro en `0004_registration.sql`, agrupadas por área. El detalle de columnas, `CHECK`, índices y políticas vive en las migraciones; acá está el propósito de cada tabla y cómo se conecta.
 
 Convenciones: las PK `id` son `uuid`; los `created_at`/`updated_at`/`occurred_at` son `timestamptz`. Salvo que se indique lo contrario, las columnas son obligatorias.
 
@@ -11,6 +11,9 @@ Raíz del tenant. `status` es `active` o `suspended`; suspender no borra datos. 
 
 ### `tenant_records`
 Tabla mínima para demostrar el aislamiento por RLS. No es una tabla de agenda ni de negocio real.
+
+### `pending_registrations`
+Solicitudes aún no decididas, con nombre, correo normalizado y hash Argon2id. Aprobar crea el negocio y su identidad; rechazar elimina la solicitud y libera el correo. El administrador no puede leer el hash.
 
 ### `auth_identities`
 Usuarios web. `role` es `platform_admin` (sin negocio) o `business_user` (con `business_id` obligatorio). Un índice parcial permite un solo `business_user` por negocio. `password_phc` es Argon2id.
@@ -48,6 +51,9 @@ Fila única. Presupuesto global de 120 intentos por minuto. `admit_login` lo act
 
 ### `login_throttle_accounts`
 Presupuesto por cuenta (hash del correo normalizado): 20 intentos cada 15 minutos. Se limpia por vencimiento.
+
+### `registration_throttle`
+Fila única con presupuesto de 30 solicitudes de registro por minuto, independiente de los límites de login.
 
 ## WhatsApp
 

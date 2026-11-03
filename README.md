@@ -50,7 +50,7 @@ bun apps/api/src/index.ts
 AGENDIA_API_ORIGIN=http://127.0.0.1:3001 bun run --cwd apps/web dev
 ```
 
-El panel queda en `http://127.0.0.1:3000` y el acceso de administración en `/admin/login`. Los workers de WhatsApp y de IA se levantan aparte; el detalle de variables y comandos está en [Desarrollo](docs/DEVELOPMENT.md).
+El panel queda en `http://127.0.0.1:3000` y el acceso de administración en `/admin/login`. Un negocio solicita acceso en `/register` y espera la aprobación antes de iniciar sesión; no se verifica el correo. Administración puede aprobar o rechazar solicitudes y suspender negocios, pero ya no crearlos manualmente. Rechazar libera el correo para otra solicitud; la eliminación completa queda postergada. Los workers de WhatsApp y de IA se levantan aparte; el detalle de variables y comandos está en [Desarrollo](docs/DEVELOPMENT.md).
 
 ## Tests
 
