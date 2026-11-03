@@ -30,7 +30,7 @@ bun apps/api/src/index.ts
 AGENDIA_API_ORIGIN=http://127.0.0.1:3001 bun run --cwd apps/web dev
 ```
 
-El panel del negocio queda en `/login` y el de administración en `/admin/login`. Para crear un negocio, registrate en `/register` y aprobá la solicitud desde administración antes de iniciar sesión. No hay verificación de correo ni creación manual por administración; rechazar libera el correo para registrarse de nuevo. La suspensión sigue disponible y la eliminación completa está postergada.
+El panel del negocio queda en `/login` y el de administración en `/admin/login`. Para crear un negocio, registrate en `/register` y repetí la contraseña para confirmarla. Al enviar la solicitud volvés al ingreso y debés esperar que administración la apruebe antes de iniciar sesión. No hay verificación de correo ni creación manual por administración; rechazar libera el correo para registrarse de nuevo. La suspensión sigue disponible y la eliminación completa está postergada.
 
 `AGENDIA_API_ORIGIN` va explícito porque Next lee el entorno desde `apps/web` y `--cwd` no carga el `.env` de la raíz. Sin esa variable, el rewrite `/api/*` queda deshabilitado y el panel no llega a la API.
 

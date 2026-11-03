@@ -61,28 +61,25 @@ export function LoginScreen({
           {!adminEntrance && <p><a href="/register">Solicitar acceso</a></p>}
         </div>
       </section>
-      <aside
-        className="login-story"
-        data-ui="login-story"
-        aria-labelledby="login-story-title"
-      >
-        <Brand className="login-story__brand" inverse />
-        <div className="login-story__content">
-          <p className="login-story__eyebrow">
-            Tu agente inteligente para WhatsApp
-          </p>
-          <h2 id="login-story-title">
-            <span data-ui="login-story-heading-primary">Atendé mejor.</span>{" "}
-            <span data-ui="login-story-heading-accent">
-              Sin estar pendiente.
-            </span>
-          </h2>
-          <p className="login-story__copy">
-            Menos tiempo pendiente del teléfono. Más tiempo para dedicarle a
-            tu negocio.
-          </p>
-        </div>
-      </aside>
+      <AuthStory />
     </main>
+  );
+}
+
+export function AuthStory() {
+  return (
+    <aside className="login-story" data-ui="login-story" aria-labelledby="login-story-title">
+      <Brand className="login-story__brand" inverse />
+      <div className="login-story__content">
+        <p className="login-story__eyebrow">Tu agente inteligente para WhatsApp</p>
+        <h2 id="login-story-title">
+          <span data-ui="login-story-heading-primary">Atendé mejor.</span>{" "}
+          <span data-ui="login-story-heading-accent">Sin estar pendiente.</span>
+        </h2>
+        <p className="login-story__copy">
+          Menos tiempo pendiente del teléfono. Más tiempo para dedicarle a tu negocio.
+        </p>
+      </div>
+    </aside>
   );
 }

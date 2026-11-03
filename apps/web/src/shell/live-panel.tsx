@@ -153,7 +153,7 @@ export async function runWhatsAppLinkMonitor({
   }
 }
 
-export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance = false }: { mode: Mode; loginTitle?: string; adminEntrance?: boolean }) {
+export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance = false, registrationPending = false }: { mode: Mode; loginTitle?: string; adminEntrance?: boolean; registrationPending?: boolean }) {
   const router = useRouter();
   const [data, setData] = useState<unknown>(null),
     [notice, setNotice] = useState(""),
@@ -727,6 +727,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
     <>
       {error && <p role="alert">{error}</p>}
       {notice && <p role="status">{notice}</p>}
+      {mode === "login" && registrationPending && <p role="status">Solicitud enviada. Esperá la aprobación antes de iniciar sesión.</p>}
     </>
   );
 

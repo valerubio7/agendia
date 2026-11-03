@@ -12,6 +12,15 @@ test("registration exposes labelled required fields and pending feedback", () =>
   expect(html).toContain("Enviando…");
   expect(html).toContain('disabled=""');
 });
+test("registration requires a password confirmation", () => {
+  const html = renderToStaticMarkup(createElement(RegisterScreen, { pending: false, feedback: null, submitAction: () => {} }));
+  expect(html).toContain('name="passwordConfirmation"');
+  expect(html).toContain("Repetir contraseña");
+});
+test("registration shares the login visual layout", () => {
+  const html = renderToStaticMarkup(createElement(RegisterScreen, { pending: false, feedback: null, submitAction: () => {} }));
+  expect(html).toContain('data-ui="login-story"');
+});
 test("completed registration shows approval feedback without a busy submission", () => {
   const html = renderToStaticMarkup(createElement(RegisterScreen, { pending: false, success: true,
     feedback: createElement("p", { role: "status" }, "Solicitud enviada. Esperá la aprobación antes de iniciar sesión."), submitAction: () => {} }));
