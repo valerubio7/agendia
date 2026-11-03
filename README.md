@@ -5,7 +5,7 @@ Panel web para administrar un agente de IA que atiende y agenda turnos por Whats
 ## Qué incluye
 
 - **Panel del negocio**: perfil, servicios, recursos, calendario y cierres, clientes, turnos y configuración del agente.
-- **Panel de administración**: negocios, credenciales, tiempos de respuesta y estado de WhatsApp.
+- **Panel de administración**: solicitudes, estado de negocios, tiempos de respuesta y estado de WhatsApp.
 - **Agente de WhatsApp**: recibe mensajes, consulta la agenda y opera turnos con confirmaciones idempotentes.
 - **Multi-tenant**: aislamiento por `business_id` con Row-Level Security en PostgreSQL.
 
@@ -50,7 +50,7 @@ bun apps/api/src/index.ts
 AGENDIA_API_ORIGIN=http://127.0.0.1:3001 bun run --cwd apps/web dev
 ```
 
-El panel queda en `http://127.0.0.1:3000` y el acceso de administración en `/admin/login`. Los workers de WhatsApp y de IA se levantan aparte; el detalle de variables y comandos está en [Desarrollo](docs/DEVELOPMENT.md).
+El panel queda en `http://127.0.0.1:3000` y el acceso de administración en `/admin/login`. Un negocio solicita acceso en `/register` y espera la aprobación antes de iniciar sesión; no se verifica el correo. Administración puede aprobar o rechazar solicitudes y suspender negocios, pero ya no crearlos manualmente. Rechazar libera el correo para otra solicitud; la eliminación completa queda postergada. Los workers de WhatsApp y de IA se levantan aparte; el detalle de variables y comandos está en [Desarrollo](docs/DEVELOPMENT.md).
 
 ## Tests
 

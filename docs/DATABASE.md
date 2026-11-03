@@ -8,7 +8,7 @@ Esta guía describe el repositorio; no inspecciona una base en ejecución ni con
 
 - Vista general y aislamiento: este documento.
 - Cada tabla, su propósito y sus relaciones: [database/tables.md](database/tables.md).
-- DDL exacto, restricciones y políticas: [`0000_base.sql`](../packages/db/migrations/0000_base.sql).
+- DDL exacto, restricciones y políticas: [`packages/db/migrations/`](../packages/db/migrations/), incluida [`0004_registration.sql`](../packages/db/migrations/0004_registration.sql) para registro.
 
 ## Modelo en pocas palabras
 
@@ -16,7 +16,7 @@ Un **negocio** es la unidad de aislamiento. Su `business_id` acompaña a casi to
 
 | Área | Qué guarda | Tablas |
 | --- | --- | --- |
-| Identidad y acceso | Negocios, usuarios web y sesiones. | `businesses`, `tenant_records`, `auth_identities`, `web_sessions` |
+| Identidad y acceso | Negocios, solicitudes pendientes, usuarios web y sesiones. | `businesses`, `tenant_records`, `pending_registrations`, `auth_identities`, `web_sessions` |
 | Configuración | Perfil público y comportamiento del agente. | `business_profiles`, `agent_configs` |
 | Eventos y control | Auditoría, diagnóstico, outbox/inbox y límites de login. | `audit_events`, `technical_events`, `outbox_events`, `inbox_events`, `operational_controls`, `login_throttle_global`, `login_throttle_accounts` |
 | WhatsApp | Conexión, credenciales cifradas y vinculación. | `whatsapp_connections`, `whatsapp_auth_records`, `whatsapp_link_codes`, `whatsapp_sender_bindings`, `whatsapp_received_senders` |
@@ -69,7 +69,7 @@ erDiagram
 
 ## Aislamiento y roles
 
-- 26 de las 32 tablas tienen `ENABLE` + `FORCE ROW LEVEL SECURITY`. Las 6 globales son `businesses`, `auth_identities`, `web_sessions`, `operational_controls` y los dos throttles de login.
+- 26 tablas tienen `ENABLE` + `FORCE ROW LEVEL SECURITY`. Las globales incluyen `businesses`, `auth_identities`, `web_sessions`, `operational_controls`, los throttles de login y las dos tablas de registro. El rol de administración solo puede leer los datos no sensibles de las solicitudes pendientes; las decisiones pasan por una función acotada.
 - Hay cuatro roles de capacidad, todos `NOLOGIN` y `NOBYPASSRLS`: `agendia_runtime` (panel del negocio), `agendia_admin_runtime` (administración), `agendia_whatsapp_runtime` (Baileys) y `agendia_worker_runtime` (agente y resúmenes).
 - Los logins de conexión (`agendia_api`, `agendia_admin`, `agendia_worker`, `agendia_manager`) solo tienen membresía. Cada transacción ejecuta `SET LOCAL ROLE` y publica `app.tenant_id`, `app.actor_role`, `app.actor_id` y `app.request_id`; las políticas comparan esos valores.
 - Las funciones `SECURITY DEFINER` (`route_whatsapp_session`, `claim_ai_outbox`, `claim_owned_outbound`, `append_runtime_audit`, etc.) son el acceso acotado para reclamar trabajo, enrutar sesiones y auditar. Su ejecución está revocada de `PUBLIC`.
@@ -83,6 +83,8 @@ erDiagram
 | `0000_base.sql` | Instalación base: 32 tablas, cuatro roles, RLS, funciones, vista `admin_business_status`, extensión `btree_gist` y esquema `pgboss`. |
 | `0001_remove_admin_ai_guidance.sql` | Elimina `operational_controls.additional_instructions`. Es irreversible. |
 | `0002_agent_silent_completion.sql` | Permite `whatsapp_agenda_receipts.outbound_id` NULL y agrega el `CHECK` de operación `silent`. |
+| `0003_session_idle_ttl.sql` | Agrega la política de inactividad de sesión. |
+| `0004_registration.sql` | Agrega solicitudes pendientes, throttle de registro y funciones de envío y decisión. La aprobación crea negocio e identidad; el rechazo libera el correo. |
 
 El migrador registra cada archivo en `agendia_production_migrations` con su checksum y rechaza historial editado o desconocido. En desarrollo se ejecuta con `bun run db:migrate:dev`; en producción lo hace el target `db-setup` de `Dockerfile.api`. La cola `pgboss` la administra la biblioteca, no estas migraciones.
 

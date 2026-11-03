@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page, type Route } from "@playwright/test";
-import { login, test } from "./support/fixtures.ts";
+import { createBusinessInAdminUi, login, test } from "./support/fixtures.ts";
 
 const tenant = {
   name: "Estudio Perfil Claro",
@@ -49,17 +49,7 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
   await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await expect(page).toHaveURL(/\/businesses$/);
 
-  await page.locator('[aria-controls="admin-create"]').click();
-  const create = page.locator('[data-ui="admin-create"] form');
-  await expect(create).toBeVisible();
-  await create.getByLabel(/^Nombre/).fill(tenant.name);
-  await create.getByLabel("Correo del usuario", { exact: true }).fill(tenant.email);
-  await create.getByLabel(/^Contraseña inicial/).fill(tenant.password);
-  await create.getByRole("button", { name: "Crear negocio", exact: true }).click();
-  await expect(page.locator(".admin-directory").getByRole("listitem").filter({
-    has: page.getByText(tenant.name, { exact: true }),
-  })).toBeVisible();
-  await expect(page.locator(".admin-feedback").getByRole("status")).toHaveText("Negocio creado");
+  await createBusinessInAdminUi(page, tenant);
 
   const tenantContext = await browser.newContext({
     viewport: { width: 1280, height: 900 },

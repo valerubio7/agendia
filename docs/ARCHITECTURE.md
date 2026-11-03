@@ -20,7 +20,7 @@ agendIA es un SaaS multi-negocio: cada negocio tiene un agente de IA que atiende
 ## Flujo HTTP
 
 1. El navegador entra al panel en `:3000`. Next reescribe `/api/:path*` a `AGENDIA_API_ORIGIN`; el cliente web siempre usa rutas relativas `/api`.
-2. El ingreso común usa `/auth/login`; el acceso de administración usa `/auth/admin/login`. La API rechaza administradores en el ingreso común. Valida el origen contra `APP_ORIGIN` y la cookie `__Host-agendia_session`. Las mutaciones además exigen `x-csrf-token`.
+2. El ingreso común usa `/auth/login`; el acceso de administración usa `/auth/admin/login`. La API rechaza administradores en el ingreso común. Valida el origen contra `APP_ORIGIN` y la cookie `__Host-agendia_session`. Las mutaciones además exigen `x-csrf-token`. El registro público requiere origen, pero no sesión. `/auth/session` incluye `sessionId`, un identificador no utilizable como credencial que permite detectar el reemplazo de una sesión.
 3. `requireTenant` exige `business_user` con `business_id`; `requireAdmin` exige `platform_admin`. Un rol equivocado recibe 403 o 404, no un recurso ajeno.
 4. Cada escritura corre en `TenantUnitOfWork`: `SET LOCAL ROLE`, `set_config('app.tenant_id', …)` y la operación de dominio. El evento de auditoría y el de outbox se insertan en la misma transacción.
 
@@ -48,7 +48,7 @@ flowchart LR
 ## Aislamiento y seguridad
 
 - Toda tabla de negocio lleva `business_id`; las relaciones usan claves foráneas compuestas `(business_id, id)` para que un cruce entre negocios sea imposible a nivel SQL.
-- 26 tablas tienen `ENABLE` + `FORCE ROW LEVEL SECURITY`. Las 6 globales son `businesses`, `auth_identities`, `web_sessions`, `operational_controls` y los dos throttles de login.
+- 26 tablas tienen `ENABLE` + `FORCE ROW LEVEL SECURITY`. Las globales incluyen `businesses`, `auth_identities`, `web_sessions`, `operational_controls`, los throttles de login y las tablas de registro.
 - Hay cuatro roles de capacidad: `agendia_runtime`, `agendia_admin_runtime`, `agendia_whatsapp_runtime` y `agendia_worker_runtime`. El login de conexión solo tiene membresía; cada transacción activa el rol y los settings `app.tenant_id`, `app.actor_role`, `app.actor_id` y `app.request_id`.
 - Las credenciales de WhatsApp se cifran con AES-256-GCM. `BAILEYS_KMS_KEY` y `WHATSAPP_LINK_CODE_KEY` deben ser base64 de exactamente 32 bytes y se validan al arrancar.
 - La sesión es un token opaco de 32 bytes; se guarda su SHA-256. Sin «Mantener sesión iniciada», el negocio dura hasta 7 días (2 días de inactividad) y administración 8 h (30 min de inactividad); la cookie termina con el navegador. Con la casilla, el negocio dura hasta 6 meses calendario (30 días de inactividad) y administración 7 días (1 día de inactividad); la cookie persistente nunca supera el límite absoluto. Solo la interacción humana en el panel renueva la inactividad mediante `POST /auth/activity`, protegido por origen y CSRF; consultas, sondeos y bootstrap de CSRF no la renuevan. El login tiene throttle global y por cuenta.
@@ -66,7 +66,7 @@ flowchart LR
 ## Límites conocidos
 
 - No hay automatización de backup/restore en el repositorio.
-- El alta de negocios y el cambio de contraseña son tareas del administrador; no hay autoservicio.
+- El negocio se registra sin verificación de correo y queda pendiente sin poder iniciar sesión hasta que administración apruebe. Rechazar libera el correo; administración no crea negocios manualmente ni cambia su nombre o contraseña, pero conserva la suspensión y reactivación. La eliminación completa está postergada.
 - La vinculación y revinculación de WhatsApp se hacen desde el panel; el manager reconecta solo cuando la sesión sigue siendo válida.
 - No hay API pública para terceros; los contratos son internos entre API y web.
 

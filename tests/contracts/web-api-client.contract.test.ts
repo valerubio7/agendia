@@ -29,6 +29,35 @@ import {
   type TestPostgres,
 } from "../support/index.ts";
 
+test("registration requests preserve contract, errors, CSRF and cancellation", async () => {
+  const calls: { path: string; init?: RequestInit }[] = [];
+  const signal = new AbortController().signal;
+  let failure = 0;
+  const client = new ApiClient(async (path, init) => {
+    calls.push({ path, ...(init ? { init } : {}) });
+    if (path === "/api/auth/admin/login") return Response.json({ csrfToken: "csrf" });
+    if (path === "/api/auth/session") return Response.json({ role: "platform_admin", identityId: "a", businessId: null });
+    if (failure) return Response.json({ code: "CONFLICT" }, { status: failure });
+    if (path === "/api/auth/register") return Response.json({ pending: true }, { status: 202 });
+    if (init?.method === "GET") return Response.json([{ id: "id/a", name: "N", email: "e@example.test", createdAt: "2026-01-01T00:00:00Z" }]);
+    return Response.json({ decided: true });
+  });
+  expect(await client.register({ name: "N", email: "e@example.test", password: "long enough password" })).toEqual({ pending: true });
+  expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ name: "N", email: "e@example.test", password: "long enough password" });
+  for (const status of [409, 429]) { failure = status; await expect(client.register({ name: "N", email: "e@example.test", password: "long enough password" })).rejects.toMatchObject({ status }); }
+  failure = 0;
+  await client.login("a@example.test", "long enough password", true);
+  expect(await client.registrations(signal)).toHaveLength(1);
+  for (const decision of ["approve", "reject"] as const) {
+    expect(await client.decideRegistration("id/a", decision, signal)).toEqual({ decided: true });
+    const call = calls.at(-1)!;
+    expect(call.path).toBe(`/api/admin/registrations/id%2Fa/${decision}`);
+    expect(call.init?.method).toBe("POST");
+    expect(call.init?.signal).toBe(signal);
+    expect(new Headers(call.init?.headers).get("x-csrf-token")).toBe("csrf");
+  }
+});
+
 test("remember choice and activity use the authenticated transport", async () => {
   const calls: { path: string; init?: RequestInit }[] = [];
   const client = new ApiClient(async (path, init) => {
@@ -478,24 +507,16 @@ describe("Next web client against Fastify contracts", () => {
       (await admin.login("admin@web.test", "correct horse battery staple", true))
         .role,
     ).toBe("platform_admin");
-    const business = await admin.createBusiness({
-      name: "Web tenant",
-      userEmail: "tenant@web.test",
-      initialPassword: "tenant initial password safe",
-    });
-    await admin.createBusiness({
-      name: "Other tenant",
-      userEmail: "other@web.test",
-      initialPassword: "other tenant password safe",
-    });
-    const createRequest = requests.find(
-      ({ path }) => path === "/admin/businesses",
-    );
-    expect(
-      new Headers(createRequest?.init?.headers).get("x-csrf-token"),
-    ).toHaveLength(64);
-    expect(createRequest?.init?.credentials).toBe("include");
-    expect((await admin.businesses())[0]?.name).toBe("Web tenant");
+    const publicClient = new ApiClient(transport, "/api");
+    await publicClient.register({ name: "Web tenant", email: "tenant@web.test", password: "tenant initial password safe" });
+    await publicClient.register({ name: "Other tenant", email: "other@web.test", password: "other tenant password safe" });
+    const registrations = await admin.registrations();
+    for (const row of registrations) await admin.decideRegistration(row.id, "approve");
+    const decision = requests.find(({ path }) => path.endsWith("/approve"));
+    expect(new Headers(decision?.init?.headers).get("x-csrf-token")).toHaveLength(64);
+    expect(decision?.init?.credentials).toBe("include");
+    const business = (await admin.businesses()).find(row => row.name === "Web tenant")!;
+    expect(business).toBeDefined();
     const activityAt = "2026-08-28T10:00:00.000Z";
     await database.sql`insert into technical_events(business_id,component,code,severity,occurred_at) values(${business.id},'whatsapp-manager','whatsapp.delivery_unknown','error',${activityAt})`;
     expect(
@@ -515,8 +536,6 @@ describe("Next web client against Fastify contracts", () => {
     expect(adminScreen).toContain("Última actividad técnica");
     expect(adminScreen).toContain("formatActivityTimestamp(");
     expect(adminScreen).toContain("business.lastTechnicalActivityAt");
-    await admin.renameBusiness(business.id, "Web tenant renamed");
-    await admin.replacePassword(business.id, "replacement tenant password");
     await admin.setBusinessStatus(business.id, "suspended");
     await expect(admin.businesses()).resolves.toEqual(
       expect.arrayContaining([
@@ -525,7 +544,7 @@ describe("Next web client against Fastify contracts", () => {
     );
     await admin.logout();
     await expect(
-      admin.login("tenant@web.test", "replacement tenant password"),
+      admin.login("tenant@web.test", "tenant initial password safe"),
     ).rejects.toMatchObject({ code: "UNAUTHENTICATED" });
     expect(
       await admin.errorMessage(new ApiError("UNAUTHENTICATED", "", 401)),
@@ -536,14 +555,14 @@ describe("Next web client against Fastify contracts", () => {
 
     const tenant = new ApiClient(transport, "/api");
     expect(
-      (await tenant.login("tenant@web.test", "replacement tenant password"))
+      (await tenant.login("tenant@web.test", "tenant initial password safe"))
         .role,
     ).toBe("business_user");
     const [identity] = await database.sql`select id from auth_identities where normalized_email = ${"tenant@web.test"}`;
     expect(identity).toBeDefined();
     if (!identity) throw new Error("Expected the authenticated tenant identity row");
-    expect(await tenant.session()).toEqual({ role: "business_user", businessId: business.id, identityId: identity.id });
-    const repeatedSession = await tenant.login("tenant@web.test", "replacement tenant password");
+    expect(await tenant.session()).toEqual({ role: "business_user", businessId: business.id, identityId: identity.id, sessionId: expect.any(String) });
+    const repeatedSession = await tenant.login("tenant@web.test", "tenant initial password safe");
     expect(repeatedSession.identityId).toBe(identity.id);
     const profile = {
       displayName: "Tenant",
@@ -616,7 +635,7 @@ describe("Next web client against Fastify contracts", () => {
         code: "NOT_FOUND",
       });
       await other.logout();
-      await tenant.login("tenant@web.test", "replacement tenant password");
+      await tenant.login("tenant@web.test", "tenant initial password safe");
       await database.sql`update whatsapp_link_codes set expires_at=now()-interval '1 second' where business_id=${business.id}`;
       await expect(tenant.whatsappQr()).rejects.toMatchObject({
         code: "NOT_FOUND",

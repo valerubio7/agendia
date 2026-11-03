@@ -7,6 +7,7 @@ import {
   formValues,
   type Agent,
   type Business,
+  type Registration,
   type BusinessCalendar,
   type BusinessClosureRequest,
   type WeeklySchedule,
@@ -54,7 +55,10 @@ const agentFields = [
   "businessInstructions",
   "active",
 ] as const;
-type AdminData = { businesses: Business[]; responseTiming: ResponseTiming };
+type AdminData = { businesses: Business[]; registrations: Registration[] | null; responseTiming: ResponseTiming };
+const sameSession = (a: Session, b: Session) =>
+  typeof a.sessionId === "string" && a.sessionId.length > 0 && a.sessionId === b.sessionId &&
+  a.identityId === b.identityId && a.role === b.role && a.businessId === b.businessId;
 const WHATSAPP_QR_LIFECYCLE_MS = 5 * 60_000;
 
 export type WhatsAppLinkMonitorEvent =
@@ -149,7 +153,7 @@ export async function runWhatsAppLinkMonitor({
   }
 }
 
-export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance = false }: { mode: Mode; loginTitle?: string; adminEntrance?: boolean }) {
+export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance = false, registrationPending = false }: { mode: Mode; loginTitle?: string; adminEntrance?: boolean; registrationPending?: boolean }) {
   const router = useRouter();
   const [data, setData] = useState<unknown>(null),
     [notice, setNotice] = useState(""),
@@ -172,6 +176,9 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
   const agentSaveAttemptRef = useRef(0);
   const loadAttemptRef = useRef(0);
   const adminRequestRef = useRef<number | null>(null);
+  const adminControllerRef = useRef<AbortController | null>(null);
+  const adminLoadRef = useRef<AbortController | null>(null);
+  const adminOwnerRef = useRef<Session | null>(null);
   const adminAttemptRef = useRef(0);
   const [adminPending, setAdminPending] = useState(false);
   const [adminWarning, setAdminWarning] = useState(false);
@@ -295,6 +302,12 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
   const load = async () => {
     if (mode === "login") return;
     const attempt = ++loadAttemptRef.current;
+    adminOwnerRef.current = null;
+    adminLoadRef.current?.abort();
+    const adminLoad = mode === "admin" ? new AbortController() : null;
+    adminLoadRef.current = adminLoad;
+    adminControllerRef.current?.abort();
+    adminControllerRef.current = null;
     adminRequestRef.current = null;
     setAdminPending(false);
     setAdminWarning(false);
@@ -308,7 +321,8 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
     calendarLoadRef.current?.abort();
     const calendarController = mode === "business-calendar" ? new AbortController() : null;
     calendarLoadRef.current = calendarController;
-    const isCurrent = () => loadAttemptRef.current === attempt && !calendarController?.signal.aborted;
+    const isCurrent = () => loadAttemptRef.current === attempt && !logoutPendingRef.current &&
+      !calendarController?.signal.aborted && !adminLoad?.signal.aborted;
 
     setData(null);
     setNotice("");
@@ -347,7 +361,15 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
     try {
       loaded =
         mode === "admin"
-          ? { businesses: await api.businesses(), responseTiming: await api.responseTiming() }
+          ? await Promise.all([api.businesses(), api.registrations(adminLoad!.signal).catch(async cause => {
+              if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403 || cause.code === "UNAUTHENTICATED" || cause.code === "FORBIDDEN")) {
+                if (!isCurrent()) throw cause;
+                const currentSession = await api.session();
+                if (!isCurrent() || !sameSession(session, currentSession)) throw cause;
+              }
+              return null;
+            }), api.responseTiming()])
+              .then(([businesses, registrations, responseTiming]) => ({ businesses, registrations, responseTiming }))
           : mode === "clients" || mode === "turnos"
             ? session
           : mode === "business-calendar"
@@ -370,6 +392,8 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
     if (!isCurrent()) return;
 
     setData(loaded);
+    if (mode === "admin") adminOwnerRef.current = session;
+    if (mode === "admin" && (loaded as AdminData).registrations === null) setAdminWarning(true);
     setViewState("ready");
     if (
       mode === "whatsapp" &&
@@ -410,6 +434,11 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
     } else void load();
     return () => {
       loadAttemptRef.current += 1;
+      adminOwnerRef.current = null;
+      adminLoadRef.current?.abort();
+      adminLoadRef.current = null;
+      adminControllerRef.current?.abort();
+      adminControllerRef.current = null;
       adminRequestRef.current = null;
       closureOwnerRef.current = null;
       closureRequestRef.current?.abort();
@@ -500,7 +529,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
   };
   // Without work this only retries GETs; a confirmed write is never replayed.
   const runAdminMutation = async <T,>(
-    work?: () => Promise<T>,
+    work?: (signal: AbortSignal) => Promise<T>,
     success = "",
     reconcile?: (state: AdminData, saved: T) => AdminData,
   ): Promise<boolean> => {
@@ -508,7 +537,9 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
     const request = ++adminAttemptRef.current;
     const generation = loadAttemptRef.current;
     adminRequestRef.current = request;
-    const current = () => adminAttemptRef.current === request &&
+    const controller = new AbortController();
+    adminControllerRef.current = controller;
+    const current = () => adminAttemptRef.current === request && !controller.signal.aborted &&
       loadAttemptRef.current === generation && !logoutPendingRef.current;
     setAdminPending(true);
     setError("");
@@ -516,7 +547,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
     try {
       if (work) {
         try {
-          const saved = await work();
+          const saved = await work(controller.signal);
           if (!current()) return false;
           if (reconcile) setData((state: unknown) => current() ? reconcile(state as AdminData, saved) : state);
           setNotice(success);
@@ -525,20 +556,39 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
           return false;
         }
       }
-      const [businesses, responseTiming] = await Promise.allSettled([
-        api.businesses(), api.responseTiming(),
+      const [businesses, responseTiming, registrations] = await Promise.allSettled([
+        api.businesses(), api.responseTiming(), api.registrations(controller.signal),
       ]);
       if (!current()) return false;
+      if (registrations.status === "rejected" && registrations.reason instanceof ApiError &&
+          (registrations.reason.status === 401 || registrations.reason.status === 403 ||
+           registrations.reason.code === "UNAUTHENTICATED" || registrations.reason.code === "FORBIDDEN")) {
+        try {
+          const owner = adminOwnerRef.current;
+          const session = await api.session();
+          if (!current()) return false;
+          if (!owner || adminOwnerRef.current !== owner || !sameSession(owner, session)) throw registrations.reason;
+        } catch (cause) {
+          if (!current()) return false;
+          adminOwnerRef.current = null;
+          setData(null);
+          setError(api.errorMessage(cause));
+          setViewState("load-error");
+          return false;
+        }
+      }
       setData((state: unknown) => !current() ? state : {
         ...(state as AdminData),
         ...(businesses.status === "fulfilled" ? { businesses: businesses.value } : {}),
         ...(responseTiming.status === "fulfilled" ? { responseTiming: responseTiming.value } : {}),
+        ...(registrations.status === "fulfilled" ? { registrations: registrations.value } : {}),
       });
-      setAdminWarning(businesses.status === "rejected" || responseTiming.status === "rejected");
+      setAdminWarning(businesses.status === "rejected" || responseTiming.status === "rejected" || registrations.status === "rejected");
       return true; // Failed refreshes cannot undo the confirmed write.
     } finally {
       if (current()) {
         adminRequestRef.current = null;
+        adminControllerRef.current = null;
         setAdminPending(false);
       }
     }
@@ -637,7 +687,12 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
   const logout = async () => {
     if (logoutPendingRef.current) return;
     logoutPendingRef.current = true;
+    adminOwnerRef.current = null;
+    adminLoadRef.current?.abort();
+    adminLoadRef.current = null;
     adminAttemptRef.current += 1;
+    adminControllerRef.current?.abort();
+    adminControllerRef.current = null;
     adminRequestRef.current = null;
     setAdminPending(false);
     agentSaveAttemptRef.current += 1;
@@ -672,6 +727,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
     <>
       {error && <p role="alert">{error}</p>}
       {notice && <p role="status">{notice}</p>}
+      {mode === "login" && registrationPending && <p role="status">Solicitud enviada. Esperá la aprobación antes de iniciar sesión.</p>}
     </>
   );
 
@@ -679,6 +735,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
     return (
       <LoginScreen
         title={loginTitle}
+        adminEntrance={adminEntrance}
         feedback={feedback}
         loginPending={loginPending}
         submitAction={submitLogin}
@@ -695,7 +752,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
     );
 
   if (mode === "admin") {
-    const { businesses, responseTiming } = data as AdminData;
+    const { businesses, registrations, responseTiming } = data as AdminData;
     const reconcileBusiness = (state: AdminData, saved: Business): AdminData => ({
       ...state, businesses: state.businesses.some(row => row.id === saved.id)
         ? state.businesses.map(row => row.id === saved.id ? saved : row)
@@ -720,21 +777,12 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
           refreshWarning={adminWarning}
           refreshPending={adminPending}
           retryRefreshAction={() => void runAdminMutation()}
-          createAction={(input) =>
-            runAdminMutation(() => api.createBusiness(input), "Negocio creado", reconcileBusiness)
-          }
-          renameAction={(id, name) =>
-            runAdminMutation(
-              () => api.renameBusiness(id, name),
-              "Negocio actualizado", reconcileBusiness,
-            )
-          }
-          replacePasswordAction={(id, password) =>
-            runAdminMutation(
-              () => api.replacePassword(id, password),
-              "Negocio actualizado",
-            )
-          }
+          registrations={registrations}
+          decideAction={(id, decision) => runAdminMutation(
+            signal => api.decideRegistration(id, decision, signal),
+            decision === "approve" ? "Solicitud aprobada" : "Solicitud rechazada",
+            state => ({ ...state, registrations: state.registrations?.filter(row => row.id !== id) ?? null }),
+          )}
           setStatusAction={(id, status) =>
             runAdminMutation(
               () => api.setBusinessStatus(id, status),

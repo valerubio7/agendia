@@ -23,7 +23,6 @@ export const PRODUCT_HTTP_ROUTES = Object.freeze([
   "/auth/session",
   "/admin/businesses",
   "/admin/response-timing",
-  "/admin/businesses/:id/user",
   "/admin/businesses/:id/status",
   "/me/appointments",
   "/me/appointments/:appointmentId",

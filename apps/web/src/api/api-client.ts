@@ -16,6 +16,7 @@ export type { ResponseTiming } from "@agendia/contracts";
 
 export type Session = {
   identityId: string;
+  sessionId?: string;
   role: "platform_admin" | "business_user";
   businessId: string | null;
 };
@@ -28,6 +29,7 @@ export type Business = {
   createdAt: string;
   lastTechnicalActivityAt: string | null;
 };
+export type Registration = { id: string; name: string; email: string; createdAt: string };
 export type Profile = {
   displayName: string;
   description: string;
@@ -302,6 +304,11 @@ export class ApiClient {
     }
     return session;
   };
+  register = (body: { name: string; email: string; password: string }) =>
+    this.call<{ pending: true }>("/auth/register", "POST", { name: body.name, email: body.email, password: body.password });
+  registrations = (signal?: AbortSignal) => this.call<Registration[]>("/admin/registrations", "GET", undefined, "no-store", signal);
+  decideRegistration = (id: string, decision: "approve" | "reject", signal?: AbortSignal) =>
+    this.call<{ decided: true }>(`/admin/registrations/${encodeURIComponent(id)}/${decision}`, "POST", undefined, undefined, signal);
   activity = () => this.call<void>("/auth/activity", "POST");
   async logout() {
     await this.call("/auth/logout", "POST");
@@ -311,25 +318,12 @@ export class ApiClient {
   saveResponseTiming = (responseTiming: ResponseTiming["responseTiming"]) =>
     this.call<ResponseTiming>("/admin/response-timing", "PUT", { responseTiming });
   businesses = () => this.call<Business[]>("/admin/businesses");
-  createBusiness = (body: {
-    name: string;
-    userEmail: string;
-    initialPassword: string;
-  }) => this.call<Business>("/admin/businesses", "POST", body);
-  renameBusiness = (id: string, name: string) =>
-    this.call<Business>(`/admin/businesses/${encodeURIComponent(id)}`, "PUT", {
-      name,
-    });
   setBusinessStatus = (id: string, status: "active" | "suspended") =>
     this.call<Business>(
       `/admin/businesses/${encodeURIComponent(id)}/status`,
       "PUT",
       { status },
     );
-  replacePassword = (id: string, password: string) =>
-    this.call(`/admin/businesses/${encodeURIComponent(id)}/user`, "PUT", {
-      password,
-    });
   clients = (q = "", signal?: AbortSignal) =>
     this.call<Client[]>("/me/clients", "GET", undefined, undefined, signal,
       q.trim() ? new URLSearchParams({ q: q.trim() }) : undefined);

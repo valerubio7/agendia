@@ -51,17 +51,18 @@ const adminLogin = () =>
   login("admin@example.test", "correct horse battery staple", true);
 const createBusiness = async (email: string, auth?: Awaited<ReturnType<typeof adminLogin>>) => {
   const admin = auth ?? await adminLogin();
-  const response = await request("POST", "/admin/businesses", {
-    ...admin,
+  const response = await request("POST", "/auth/register", {
     origin: ORIGIN,
-    body: {
-      name: `Business ${email}`,
-      userEmail: email,
-      initialPassword: "tenant initial password safe",
-    },
+    body: { name: `Business ${email}`, email, password: "tenant initial password safe" },
   });
-  expect(response.statusCode).toBe(201);
-  return { business: response.json() as { id: string }, admin };
+  expect(response.statusCode).toBe(202);
+  const pending = await request("GET", "/admin/registrations", admin);
+  expect(pending.statusCode).toBe(200);
+  const business = (pending.json() as { id: string; email: string }[]).find(row => row.email === email);
+  expect(business).toBeDefined();
+  const approved = await request("POST", `/admin/registrations/${business!.id}/approve`, { ...admin, origin: ORIGIN });
+  expect(approved.statusCode).toBe(200);
+  return { business: business!, admin };
 };
 
 beforeAll(async () => {
@@ -120,6 +121,29 @@ const csrfBootstrapRegression = async () => {
 };
 
 describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
+  test("session identity remains stable and distinguishes separate logins", async () => {
+    const email = "session-binding@example.test";
+    const password = "correct horse battery staple";
+    await database.sql`insert into auth_identities (normalized_email,password_phc,role) values (${email},${await hash(password, { algorithm: Algorithm.Argon2id })},'platform_admin')`;
+    const first = await login(email, password, true);
+    const second = await login(email, password, true);
+    const read = async (auth: typeof first) => (await request("GET", "/auth/session", auth)).json();
+    const firstSession = await read(first);
+    const repeated = await read(first);
+    const secondSession = await read(second);
+    expect(firstSession.role).toBe("platform_admin");
+    expect(firstSession.businessId).toBeNull();
+    expect(typeof firstSession.sessionId).toBe("string");
+    expect(repeated.sessionId).toBe(firstSession.sessionId);
+    expect(secondSession.sessionId).not.toBe(firstSession.sessionId);
+    expect(firstSession.sessionId).not.toBe(first.cookie.split("=")[1]);
+    expect(firstSession.sessionId).not.toBe(first.csrf);
+    const fakeCookie = `${first.cookie.split("=")[0]}=${firstSession.sessionId}`;
+    expect((await request("GET", "/auth/session", { cookie: fakeCookie })).statusCode).toBe(401);
+    expect((await request("POST", "/auth/logout", { cookie: first.cookie, csrf: firstSession.sessionId, origin: ORIGIN })).statusCode).toBe(403);
+    expect((await request("GET", "/auth/session", first)).statusCode).toBe(200);
+  });
+
   test("session checks and rejected requests do not renew human inactivity", async () => {
     const auth = await adminLogin();
     const { digestOpaqueToken } = await import("@agendia/auth");
@@ -361,20 +385,11 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
     );
   });
 
-  test("supports admin CRUD, user password replacement, status and safe role/ID rejection", async () => {
+  test("supports admin status and safe role/ID rejection", async () => {
     const { business, admin } = await createBusiness("admin-flow@example.test");
     expect(
       (await request("GET", "/admin/businesses", admin)).json() as unknown,
     ).toEqual(expect.arrayContaining([expect.objectContaining({ id: business.id, status: "active" })]));
-    expect(
-      (
-        await request("PUT", `/admin/businesses/${business.id}`, {
-          ...admin,
-          origin: ORIGIN,
-          body: { name: "Renamed" },
-        })
-      ).json().name,
-    ).toBe("Renamed");
     expect(
       (
         await request("POST", "/auth/login", {
@@ -418,41 +433,11 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
         )
       ).statusCode,
     ).toBe(404);
-    expect(
-      (
-        await request("PUT", `/admin/businesses/${business.id}/user`, {
-          ...admin,
-          origin: ORIGIN,
-          body: { password: "replacement password secure" },
-        })
-      ).statusCode,
-    ).toBe(200);
-    expect((await request("GET", "/auth/session", tenant)).statusCode).toBe(
-      401,
-    );
-    expect(
-      await database.sql`select id from audit_events where business_id=${business.id} and event_type='business_user.password_replaced'`,
-    ).toHaveLength(1);
-    expect(
-      (
-        await request("POST", "/auth/login", {
-          origin: ORIGIN,
-          body: {
-            email: "admin-flow@example.test",
-            password: "tenant initial password safe",
-          },
-        })
-      ).statusCode,
-    ).toBe(401);
-    const replacement = await login(
-      "admin-flow@example.test",
-      "replacement password secure",
-    );
-    expect(replacement.response.statusCode).toBe(200);
+    expect((await request("GET", "/auth/session", tenant)).statusCode).toBe(200);
     expect(
       (
         await request("POST", "/auth/logout", {
-          ...replacement,
+          ...tenant,
           origin: ORIGIN,
         })
       ).statusCode,
@@ -460,9 +445,9 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
     expect(
       await database.sql`select id from audit_events where business_id=${business.id} and event_type='auth.logout' and outcome='success'`,
     ).toHaveLength(1);
-    const activeReplacement = await login(
+    const activeTenant = await login(
       "admin-flow@example.test",
-      "replacement password secure",
+      "tenant initial password safe",
     );
     expect(
       (
@@ -474,7 +459,7 @@ describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
       ).json().status,
     ).toBe("suspended");
     expect(
-      (await request("GET", "/auth/session", activeReplacement)).statusCode,
+      (await request("GET", "/auth/session", activeTenant)).statusCode,
     ).toBe(401);
   });
 

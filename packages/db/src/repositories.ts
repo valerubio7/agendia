@@ -3,6 +3,7 @@ import type { TransactionSql } from "postgres";
 import { asDbJson, type Db } from "./repositories/shared.ts";
 import * as identity from "./repositories/identity.ts";
 import * as business from "./repositories/business.ts";
+import * as registration from "./repositories/registration.ts";
 import * as clients from "./repositories/clients.ts";
 import * as catalog from "./repositories/catalog.ts";
 import * as businessCalendar from "./repositories/business-calendar.ts";
@@ -264,6 +265,10 @@ export class PostgresRepositories {
   async findIdentity(email: string) {
     return identity.findIdentity(this.db, email);
   }
+  admitRegistration() { return registration.admitRegistration(this.db); }
+  submitRegistration(name: string, email: string, phc: string) { return registration.submitRegistration(this.db, name, email, phc); }
+  listRegistrations() { return registration.listRegistrations(this.db); }
+  decideRegistration(id: string, approve: boolean) { return registration.decideRegistration(this.db, id, approve); }
   async admitLogin(accountHash: string): Promise<boolean> {
     return identity.admitLogin(this.db, accountHash);
   }
@@ -303,14 +308,8 @@ export class PostgresRepositories {
   }) {
     return business.createBusinessUser(this.db, this, row);
   }
-  renameBusiness(id: string, name: string) {
-    return business.renameBusiness(this.db, id, name);
-  }
   async setBusinessStatus(id: string, status: string) {
     return business.setBusinessStatus(this.db, id, status);
-  }
-  async replaceBusinessPassword(id: string, passwordPhc: string) {
-    return business.replaceBusinessPassword(this.db, id, passwordPhc);
   }
   listBusinesses() {
     return business.listBusinesses(this.db);

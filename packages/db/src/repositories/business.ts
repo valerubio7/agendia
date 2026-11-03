@@ -17,9 +17,6 @@ export async function createBusinessUser(db: Db, repo: PostgresRepositories, row
     businessId: row.id,
   });
 }
-export function renameBusiness(db: Db, id: string, name: string) {
-  return db`update businesses set name=${name} where id=${id} returning id`;
-}
 export async function setBusinessStatus(db: Db, id: string, status: string) {
   const changed = await db`update businesses set status=${status} where id=${id} returning id`;
   if (!changed.length) return false;
@@ -27,14 +24,6 @@ export async function setBusinessStatus(db: Db, id: string, status: string) {
   if (status === "suspended")
     await db`update web_sessions set revoked_at=now() where identity_id in(select id from auth_identities where business_id=${id}) and revoked_at is null`;
   return true;
-}
-export async function replaceBusinessPassword(db: Db, id: string, passwordPhc: string) {
-  const rows = await db<
-    { id: string }[]
-  >`update auth_identities set password_phc=${passwordPhc} where business_id=${id} and role='business_user' returning id`;
-  if (rows[0])
-    await db`update web_sessions set revoked_at=now() where identity_id=${rows[0].id} and revoked_at is null`;
-  return Boolean(rows[0]);
 }
 export function listBusinesses(db: Db) {
   return db`select id,name,status,created_at "createdAt",last_technical_activity_at "lastTechnicalActivityAt",agent_status "agentStatus",whatsapp_status "whatsappStatus" from admin_business_status order by created_at`;

@@ -22,10 +22,14 @@ describe("login entrance presentation", () => {
       expect(html).not.toMatch(/<input[^>]*type="checkbox"[^>]*checked/);
     }
   });
+  test("links registration only from the business entrance", () => {
+    expect(renderToStaticMarkup(createElement(LoginScreen, loginProps))).toContain('href="/register"');
+    expect(renderToStaticMarkup(createElement(LoginScreen, { ...loginProps, adminEntrance: true }))).not.toContain('href="/register"');
+  });
   test("identifies the admin entrance", () => {
     const admin = renderToStaticMarkup(createElement(LoginScreen, {
       ...loginProps,
-      title: "Acceso de administración",
+      title: "Acceso de administración", adminEntrance: true,
     }));
     expect(admin).toContain("Acceso de administración");
   });

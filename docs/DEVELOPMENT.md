@@ -30,7 +30,7 @@ bun apps/api/src/index.ts
 AGENDIA_API_ORIGIN=http://127.0.0.1:3001 bun run --cwd apps/web dev
 ```
 
-El panel del negocio queda en `/login` y el de administración en `/admin/login`.
+El panel del negocio queda en `/login` y el de administración en `/admin/login`. Para crear un negocio, registrate en `/register` y repetí la contraseña para confirmarla. Al enviar la solicitud volvés al ingreso y debés esperar que administración la apruebe antes de iniciar sesión. No hay verificación de correo ni creación manual por administración; rechazar libera el correo para registrarse de nuevo. Administración no puede cambiar el nombre ni la contraseña del negocio; la suspensión y reactivación siguen disponibles y la eliminación completa está postergada.
 
 `AGENDIA_API_ORIGIN` va explícito porque Next lee el entorno desde `apps/web` y `--cwd` no carga el `.env` de la raíz. Sin esa variable, el rewrite `/api/*` queda deshabilitado y el panel no llega a la API.
 
@@ -76,7 +76,7 @@ Los tests de integración y E2E levantan PostgreSQL con Testcontainers. E2E comp
 
 ## Migraciones
 
-- Agregá un archivo nuevo en `packages/db/migrations/` con el siguiente número (`0003_...sql`).
+- `0004_registration.sql` agrega las solicitudes pendientes y el límite de registro; aplicala antes de probar el flujo. Agregá futuras migraciones en `packages/db/migrations/` con el siguiente número.
 - No edites una migración ya aplicada: el migrador compara checksums y rechaza el historial cambiado.
 - Para reiniciar la base local: `docker compose down -v && docker compose up -d postgres && bun run db:migrate:dev`. `-v` borra el volumen local; no lo uses contra una base con datos que quieras conservar.
 - El esquema `pgboss` lo administra la biblioteca de colas; no lo modifiques a mano.
