@@ -16,6 +16,7 @@ export type { ResponseTiming } from "@agendia/contracts";
 
 export type Session = {
   identityId: string;
+  sessionId?: string;
   role: "platform_admin" | "business_user";
   businessId: string | null;
 };

@@ -121,6 +121,29 @@ const csrfBootstrapRegression = async () => {
 };
 
 describe("PostgreSQL-backed Fastify auth, admin and me API", () => {
+  test("session identity remains stable and distinguishes separate logins", async () => {
+    const email = "session-binding@example.test";
+    const password = "correct horse battery staple";
+    await database.sql`insert into auth_identities (normalized_email,password_phc,role) values (${email},${await hash(password, { algorithm: Algorithm.Argon2id })},'platform_admin')`;
+    const first = await login(email, password, true);
+    const second = await login(email, password, true);
+    const read = async (auth: typeof first) => (await request("GET", "/auth/session", auth)).json();
+    const firstSession = await read(first);
+    const repeated = await read(first);
+    const secondSession = await read(second);
+    expect(firstSession.role).toBe("platform_admin");
+    expect(firstSession.businessId).toBeNull();
+    expect(typeof firstSession.sessionId).toBe("string");
+    expect(repeated.sessionId).toBe(firstSession.sessionId);
+    expect(secondSession.sessionId).not.toBe(firstSession.sessionId);
+    expect(firstSession.sessionId).not.toBe(first.cookie.split("=")[1]);
+    expect(firstSession.sessionId).not.toBe(first.csrf);
+    const fakeCookie = `${first.cookie.split("=")[0]}=${firstSession.sessionId}`;
+    expect((await request("GET", "/auth/session", { cookie: fakeCookie })).statusCode).toBe(401);
+    expect((await request("POST", "/auth/logout", { cookie: first.cookie, csrf: firstSession.sessionId, origin: ORIGIN })).statusCode).toBe(403);
+    expect((await request("GET", "/auth/session", first)).statusCode).toBe(200);
+  });
+
   test("session checks and rejected requests do not renew human inactivity", async () => {
     const auth = await adminLogin();
     const { digestOpaqueToken } = await import("@agendia/auth");

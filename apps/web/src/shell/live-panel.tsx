@@ -56,6 +56,9 @@ const agentFields = [
   "active",
 ] as const;
 type AdminData = { businesses: Business[]; registrations: Registration[] | null; responseTiming: ResponseTiming };
+const sameSession = (a: Session, b: Session) =>
+  typeof a.sessionId === "string" && a.sessionId.length > 0 && a.sessionId === b.sessionId &&
+  a.identityId === b.identityId && a.role === b.role && a.businessId === b.businessId;
 const WHATSAPP_QR_LIFECYCLE_MS = 5 * 60_000;
 
 export type WhatsAppLinkMonitorEvent =
@@ -175,6 +178,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
   const adminRequestRef = useRef<number | null>(null);
   const adminControllerRef = useRef<AbortController | null>(null);
   const adminLoadRef = useRef<AbortController | null>(null);
+  const adminOwnerRef = useRef<Session | null>(null);
   const adminAttemptRef = useRef(0);
   const [adminPending, setAdminPending] = useState(false);
   const [adminWarning, setAdminWarning] = useState(false);
@@ -298,6 +302,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
   const load = async () => {
     if (mode === "login") return;
     const attempt = ++loadAttemptRef.current;
+    adminOwnerRef.current = null;
     adminLoadRef.current?.abort();
     const adminLoad = mode === "admin" ? new AbortController() : null;
     adminLoadRef.current = adminLoad;
@@ -356,8 +361,12 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
     try {
       loaded =
         mode === "admin"
-          ? await Promise.all([api.businesses(), api.registrations(adminLoad!.signal).catch(cause => {
-              if (cause instanceof ApiError && (cause.code === "UNAUTHENTICATED" || cause.code === "FORBIDDEN")) throw cause;
+          ? await Promise.all([api.businesses(), api.registrations(adminLoad!.signal).catch(async cause => {
+              if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403 || cause.code === "UNAUTHENTICATED" || cause.code === "FORBIDDEN")) {
+                if (!isCurrent()) throw cause;
+                const currentSession = await api.session();
+                if (!isCurrent() || !sameSession(session, currentSession)) throw cause;
+              }
               return null;
             }), api.responseTiming()])
               .then(([businesses, registrations, responseTiming]) => ({ businesses, registrations, responseTiming }))
@@ -383,6 +392,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
     if (!isCurrent()) return;
 
     setData(loaded);
+    if (mode === "admin") adminOwnerRef.current = session;
     if (mode === "admin" && (loaded as AdminData).registrations === null) setAdminWarning(true);
     setViewState("ready");
     if (
@@ -424,6 +434,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
     } else void load();
     return () => {
       loadAttemptRef.current += 1;
+      adminOwnerRef.current = null;
       adminLoadRef.current?.abort();
       adminLoadRef.current = null;
       adminControllerRef.current?.abort();
@@ -549,6 +560,23 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
         api.businesses(), api.responseTiming(), api.registrations(controller.signal),
       ]);
       if (!current()) return false;
+      if (registrations.status === "rejected" && registrations.reason instanceof ApiError &&
+          (registrations.reason.status === 401 || registrations.reason.status === 403 ||
+           registrations.reason.code === "UNAUTHENTICATED" || registrations.reason.code === "FORBIDDEN")) {
+        try {
+          const owner = adminOwnerRef.current;
+          const session = await api.session();
+          if (!current()) return false;
+          if (!owner || adminOwnerRef.current !== owner || !sameSession(owner, session)) throw registrations.reason;
+        } catch (cause) {
+          if (!current()) return false;
+          adminOwnerRef.current = null;
+          setData(null);
+          setError(api.errorMessage(cause));
+          setViewState("load-error");
+          return false;
+        }
+      }
       setData((state: unknown) => !current() ? state : {
         ...(state as AdminData),
         ...(businesses.status === "fulfilled" ? { businesses: businesses.value } : {}),
@@ -659,6 +687,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
   const logout = async () => {
     if (logoutPendingRef.current) return;
     logoutPendingRef.current = true;
+    adminOwnerRef.current = null;
     adminLoadRef.current?.abort();
     adminLoadRef.current = null;
     adminAttemptRef.current += 1;

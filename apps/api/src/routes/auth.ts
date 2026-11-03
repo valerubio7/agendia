@@ -155,7 +155,7 @@ export function registerAuthRoutes(
     reply.header("cache-control", "no-store");
     const auth = await session(request);
     return auth
-      ? { role: auth.role, businessId: auth.business_id, identityId: auth.identity_id }
+      ? { role: auth.role, businessId: auth.business_id, identityId: auth.identity_id, sessionId: auth.session_id }
       : fail(reply, request, 401, "UNAUTHENTICATED", "Authentication required");
   });
   app.post("/auth/activity", async (request, reply) => {

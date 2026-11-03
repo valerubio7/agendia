@@ -563,7 +563,7 @@ describe("Next web client against Fastify contracts", () => {
     const [identity] = await database.sql`select id from auth_identities where normalized_email = ${"tenant@web.test"}`;
     expect(identity).toBeDefined();
     if (!identity) throw new Error("Expected the authenticated tenant identity row");
-    expect(await tenant.session()).toEqual({ role: "business_user", businessId: business.id, identityId: identity.id });
+    expect(await tenant.session()).toEqual({ role: "business_user", businessId: business.id, identityId: identity.id, sessionId: expect.any(String) });
     const repeatedSession = await tenant.login("tenant@web.test", "replacement tenant password");
     expect(repeatedSession.identityId).toBe(identity.id);
     const profile = {
