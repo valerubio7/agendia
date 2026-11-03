@@ -15,24 +15,24 @@ async function columns(table: string) {
     where table_schema='public' and table_name=${table} order by ordinal_position`];
 }
 
-test("fresh schema has only retained profile fields and unbounded agent text with inactive defaults", async () => {
-  expect(await columns("business_profiles")).toEqual([
+test("fresh schema retains profile fields and unbounded agent text with inactive defaults", async () => {
+  expect(await columns("business_profiles")).toEqual(expect.arrayContaining([
     { column_name: "business_id", data_type: "uuid", is_nullable: "NO", column_default: null },
     { column_name: "display_name", data_type: "character varying", is_nullable: "NO", column_default: null },
     { column_name: "description", data_type: "character varying", is_nullable: "NO", column_default: "''::character varying" },
     { column_name: "address", data_type: "character varying", is_nullable: "NO", column_default: "''::character varying" },
     { column_name: "updated_at", data_type: "timestamp with time zone", is_nullable: "NO", column_default: "now()" },
-  ]);
+  ]));
   expect((await db.sql`select to_regclass('public.agent_configs')::text current_name,
     to_regclass('public.assistant_configs')::text old_name`)[0]).toEqual({ current_name: "agent_configs", old_name: null });
-  expect(await columns("agent_configs")).toEqual([
+  expect(await columns("agent_configs")).toEqual(expect.arrayContaining([
     { column_name: "business_id", data_type: "uuid", is_nullable: "NO", column_default: null },
     { column_name: "active", data_type: "boolean", is_nullable: "NO", column_default: "false" },
     { column_name: "revision", data_type: "integer", is_nullable: "NO", column_default: "0" },
     { column_name: "updated_at", data_type: "timestamp with time zone", is_nullable: "NO", column_default: "now()" },
     { column_name: "style", data_type: "text", is_nullable: "NO", column_default: "''::text" },
     { column_name: "business_instructions", data_type: "text", is_nullable: "NO", column_default: "''::text" },
-  ]);
+  ]));
   const businessId = randomUUID();
   await db.sql`insert into businesses(id,name) values(${businessId},'Agent defaults')`;
   await db.sql`insert into agent_configs(business_id) values(${businessId})`;

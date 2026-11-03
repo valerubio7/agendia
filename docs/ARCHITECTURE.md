@@ -20,7 +20,7 @@ agendIA es un SaaS multi-negocio: cada negocio tiene un agente de IA que atiende
 ## Flujo HTTP
 
 1. El navegador entra al panel en `:3000`. Next reescribe `/api/:path*` a `AGENDIA_API_ORIGIN`; el cliente web siempre usa rutas relativas `/api`.
-2. La API valida el origen contra `APP_ORIGIN`; las rutas autenticadas comprueban la cookie `__Host-agendia_session` y sus mutaciones exigen `x-csrf-token`. El registro público requiere origen, pero no sesión. `/auth/session` incluye `sessionId`, un identificador no utilizable como credencial que permite detectar el reemplazo de una sesión.
+2. El ingreso común usa `/auth/login`; el acceso de administración usa `/auth/admin/login`. La API rechaza administradores en el ingreso común. Valida el origen contra `APP_ORIGIN` y la cookie `__Host-agendia_session`. Las mutaciones además exigen `x-csrf-token`. El registro público requiere origen, pero no sesión. `/auth/session` incluye `sessionId`, un identificador no utilizable como credencial que permite detectar el reemplazo de una sesión.
 3. `requireTenant` exige `business_user` con `business_id`; `requireAdmin` exige `platform_admin`. Un rol equivocado recibe 403 o 404, no un recurso ajeno.
 4. Cada escritura corre en `TenantUnitOfWork`: `SET LOCAL ROLE`, `set_config('app.tenant_id', …)` y la operación de dominio. El evento de auditoría y el de outbox se insertan en la misma transacción.
 

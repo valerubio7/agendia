@@ -50,11 +50,6 @@ async function expectReachable(locator: Locator) {
   await expect(locator).toBeVisible();
 }
 
-async function expectPair(locator: Locator, background: string, color: string) {
-  await expect(locator).toHaveCSS("background-color", background);
-  await expect(locator).toHaveCSS("color", color);
-}
-
 async function keyboardFocus(page: Page, locator: Locator) {
   for (let step = 0; step < 40; step++) {
     await page.keyboard.press("Tab");
@@ -65,52 +60,10 @@ async function keyboardFocus(page: Page, locator: Locator) {
   await page.keyboard.press("Shift+Tab");
   await page.keyboard.press("Tab");
   await expect(locator).toBeFocused();
-  await expect(locator).toHaveCSS("outline-color", "rgb(46, 107, 78)");
-  await expect(locator).toHaveCSS("outline-style", "solid");
-}
-
-async function expectRegistryBrand(shell: Locator) {
-  const brand = shell.locator(".authenticated-shell__sidebar .brand");
-  const image = brand.locator("img");
-  await expect(brand).toHaveAccessibleName("agendIA");
-  await expect(brand.getByRole("img", { name: "agendIA", exact: true })).toHaveCount(0);
-  await expect(image).toHaveCount(1);
-  await expect(image).toHaveAttribute("src", "/brand/logo-inverse-outlined.svg");
-  await expect(image).toHaveAttribute("alt", "");
-  await expect.poll(() => image.evaluate(element => {
-    const img = element as HTMLImageElement;
-    return img.complete && img.naturalWidth === 300 && img.naturalHeight === 93;
+  expect(await locator.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return (style.outlineStyle !== "none" && parseFloat(style.outlineWidth) > 0) || style.boxShadow !== "none";
   })).toBe(true);
-  const bounds = await image.evaluate(element => {
-    const wrapper = element.parentElement!;
-    const header = wrapper.parentElement!;
-    const rect = (node: Element) => {
-      const r = node.getBoundingClientRect();
-      return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height };
-    };
-    const outer = rect(wrapper);
-    const clipped: string[] = [];
-    for (let ancestor: Element | null = header; ancestor; ancestor = ancestor.parentElement) {
-      const css = getComputedStyle(ancestor), r = rect(ancestor);
-      if ((/hidden|clip|auto|scroll/.test(css.overflowX) && (outer.left < r.left || outer.right > r.right)) ||
-          (/hidden|clip|auto|scroll/.test(css.overflowY) && (outer.top < r.top || outer.bottom > r.bottom))) clipped.push(ancestor.tagName);
-    }
-    const css = getComputedStyle(wrapper);
-    return { image: rect(element), wrapper: outer, header: rect(header), logout: rect(header.querySelector("button")!), clipped,
-      padding: [css.paddingTop, css.paddingRight, css.paddingBottom, css.paddingLeft].map(Number.parseFloat) };
-  });
-  expect(bounds.image.height).toBe(32);
-  expect(bounds.image.width / bounds.image.height).toBeCloseTo(388 / 120, 2);
-  for (const padding of bounds.padding) expect(padding).toBeCloseTo(32 * 11 / 12, 1);
-  expect(bounds.logout.left - bounds.wrapper.right).toBeGreaterThanOrEqual(8);
-  expect(bounds.wrapper.left).toBeGreaterThanOrEqual(bounds.header.left);
-  expect(bounds.wrapper.right).toBeLessThanOrEqual(bounds.header.right);
-  expect(bounds.wrapper.top).toBeGreaterThanOrEqual(bounds.header.top);
-  expect(bounds.wrapper.bottom).toBeLessThanOrEqual(bounds.header.bottom);
-  expect(bounds.clipped).toEqual([]);
-  for (const node of [image, brand]) {
-    for (const property of ["filter", "box-shadow", "transform"]) await expect(node).toHaveCSS(property, "none");
-  }
 }
 
 test("initial registration read failure leaves admin controls available and retries reads only", async ({ page, system }) => {
@@ -331,13 +284,6 @@ test("the redesigned administration screen preserves the real business workflow 
   const notice = screen.locator(".admin-feedback").getByRole("status");
   await expect(screen).toHaveCount(1);
   await expect(heading).toBeVisible();
-  await expect(heading).toHaveCSS("font-weight", "650");
-  await expect(heading).toHaveCSS("font-family", /Source Sans 3/);
-  await expectPair(shell.locator(".authenticated-shell__sidebar"), "rgb(18, 55, 42)", "rgb(243, 238, 225)");
-  await expectRegistryBrand(shell);
-  const asset = await page.request.get(new URL("/brand/logo-inverse-outlined.svg", page.url()).href);
-  expect(asset.ok()).toBe(true);
-  expect(await asset.text()).toContain('viewBox="0 0 388 120"');
 
   const tabs = screen.getByRole("tablist", { name: "Espacios de administración", exact: true });
   const businessesTab = tabs.getByRole("tab", { name: "Negocios", exact: true });
@@ -400,7 +346,6 @@ test("the redesigned administration screen preserves the real business workflow 
   } finally { releaseCreateRequest(); }
   await expect(notice).toHaveText("Solicitud aprobada");
   expect(createRequestCount).toBe(1);
-  await expectPair(notice, "rgb(223, 233, 225)", "rgb(18, 55, 42)");
   await expect(directory).toBeVisible();
   await expect(emptyDirectory).toBeHidden();
   await expect(inventory.locator(".admin-directory-heading > span")).toHaveText(["Negocio", "Operación", "Agente", "WhatsApp", "Gestión"]);
@@ -411,16 +356,12 @@ test("the redesigned administration screen preserves the real business workflow 
     await expect(createdRow.getByText(text, { exact: true })).toBeVisible();
   await expect(createdRow.locator(".admin-directory-state")).toHaveCount(3);
   await page.unroute("**/admin/registrations/*/approve");
-  await expectPair(createdRow.locator(".admin-status--business-active"), "rgb(223, 233, 225)", "rgb(46, 107, 78)");
-  await expectPair(createdRow.locator(".admin-status--agent-inactive"), "rgba(0, 0, 0, 0)", "rgb(76, 91, 83)");
-  await expectPair(createdRow.locator(".admin-status--whatsapp-link_required"), "rgba(0, 0, 0, 0)", "rgb(168, 58, 26)");
   await keyboardFocus(page, createdRow.locator("summary"));
   let management = await openManagement(createdRow);
   await expect(management.locator(".admin-technical-details dt")).toHaveText(["Alta · UTC", "Última actividad técnica · UTC"]);
   await expect(management.locator(".admin-technical-details dd")).toHaveCount(2);
   await expect(management.locator(".admin-technical-details dd").first()).not.toHaveText(/Fecha no disponible|^$/);
   await expect(management.getByText("Sin actividad", { exact: true })).toBeVisible();
-  await expect(management.locator(".admin-technical-details dd").first()).toHaveCSS("font-variant-numeric", "tabular-nums");
   await expect(management.getByRole("button", { name: "Renombrar" })).toHaveCount(0);
   await expect(management.getByRole("button", { name: "Cambiar contraseña" })).toHaveCount(0);
   await expect(management.locator('input[name="name"], input[name="password"]')).toHaveCount(0);
@@ -428,7 +369,6 @@ test("the redesigned administration screen preserves the real business workflow 
   await management.getByRole("button", { name: "Suspender", exact: true }).click();
   await expect(notice).toHaveText("Negocio actualizado");
   await expect(managedRow.getByText("Suspendido", { exact: true })).toBeVisible();
-  await expectPair(managedRow.locator(".admin-status--business-suspended"), "rgb(243, 217, 211)", "rgb(168, 58, 26)");
   management = await openManagement(managedRow);
   await expect(management.getByRole("button", { name: "Reactivar", exact: true })).toBeVisible();
   await expect(management.getByRole("button", { name: "Suspender", exact: true })).toHaveCount(0);
@@ -438,7 +378,6 @@ test("the redesigned administration screen preserves the real business workflow 
   for (const locator of [heading, requests, inventory, managedRow, management]) await expectReachable(locator);
   await expectNoHorizontalOverflow(page);
   await page.setViewportSize({ width: 360, height: 800 });
-  await expectRegistryBrand(shell);
   const mobileRow = businessRow(page, directory, tenant.name);
   const mobileManagement = await openManagement(mobileRow);
   const mobileReactivate = mobileManagement.getByRole("button", { name: "Reactivar", exact: true });

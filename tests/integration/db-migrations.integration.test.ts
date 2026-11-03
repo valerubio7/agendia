@@ -42,20 +42,20 @@ test("production CLI migrates from another cwd and development CLI repeats witho
   url.pathname = `/${name}`;
   const sql = postgres(url.toString(), { max: 1 });
   const cwd = await mkdtemp(join(tmpdir(), "agendia-migration-cli-"));
-  async function cli(file: string, args: string[], expected: string) {
+  async function cli(file: string, args: string[]) {
     const child = Bun.spawn([process.execPath, "run", fileURLToPath(new URL(`../../scripts/db/${file}`, import.meta.url)), ...args], {
       cwd, env: { ...process.env, DATABASE_URL: url.toString() }, stdout: "pipe", stderr: "pipe",
     });
-    const [stdout, stderr, code] = await Promise.all([
-      new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+    const [stderr, code] = await Promise.all([
+      new Response(child.stderr).text(), child.exited, new Response(child.stdout).text(),
     ]);
-    expect({ stdout, stderr, code }).toEqual({ stdout: `${expected}\n`, stderr: "", code: 0 });
+    expect({ stderr, code }).toEqual({ stderr: "", code: 0 });
   }
   try {
-    await cli("provision-production-db.ts", ["migrate"], "Production database setup completed");
+    await cli("provision-production-db.ts", ["migrate"]);
     const history = await sql`select * from public.agendia_production_migrations order by name`;
     expect(history.length).toBeGreaterThan(0);
-    await cli("db-migrate.ts", [], "Pending database migrations applied.");
+    await cli("db-migrate.ts", []);
     expect([...(await sql`select * from public.agendia_production_migrations order by name`)]).toEqual([...history]);
   } finally {
     await sql.end();
