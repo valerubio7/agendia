@@ -134,6 +134,51 @@ async function expectRegistryBrand(shell: Locator) {
   }
 }
 
+test("initial registration read failure leaves admin controls available and retries reads only", async ({ page, system }) => {
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
+  const approve = await registerPending(page, "Negocio existente", "existing-retry@example.test", "existing initial password");
+  await approve.click();
+  await expect(page.locator(".admin-feedback").getByRole("status")).toHaveText("Solicitud aprobada");
+  await registerPending(page, "Solicitud recuperada", "pending-retry@example.test", "pending initial password");
+  let registrationReads = 0;
+  let writes = 0;
+  let registrationsUnavailable = true;
+  await page.route("**/admin/**", async route => {
+    const request = route.request();
+    if (request.method() !== "GET") writes++;
+    if (request.method() === "GET" && new URL(request.url()).pathname.endsWith("/admin/registrations")) {
+      registrationReads++;
+      if (registrationsUnavailable) return route.fulfill({ status: 500, json: { code: "INTERNAL_ERROR" } });
+    }
+    await route.continue();
+  });
+  await page.reload();
+  const requests = page.getByRole("region", { name: "Solicitudes pendientes" });
+  await expect(requests.getByText("No se pudieron cargar las solicitudes pendientes.")).toBeVisible();
+  await expect(requests.getByText("No hay solicitudes pendientes.")).toHaveCount(0);
+  const management = await openManagement(businessRow(page, page.locator(".admin-directory"), "Negocio existente"));
+  await management.getByLabel("Nombre de Negocio existente").fill("Negocio actualizado");
+  await management.getByRole("button", { name: "Renombrar" }).click();
+  await expect(page.locator(".admin-feedback").getByRole("status")).toHaveText("Negocio actualizado");
+  await expect(businessRow(page, page.locator(".admin-directory"), "Negocio actualizado")).toBeVisible();
+  await openAiConfiguration(page);
+  const timing = page.getByRole("spinbutton", { name: /^Espera activa \(segundos\)/ });
+  await expect(timing).toHaveValue("90");
+  await timing.fill("23");
+  await page.getByRole("button", { name: "Guardar configuración" }).click();
+  await expect(page.locator(".admin-feedback").getByRole("status")).toHaveText("Tiempos guardados");
+  await expect(timing).toHaveValue("23");
+  await expect(page.locator(".admin-feedback").getByRole("alert")).toBeVisible();
+  expect(writes).toBe(2);
+  registrationsUnavailable = false;
+  await page.getByRole("button", { name: "Reintentar consulta" }).click();
+  await expect(page.locator(".admin-feedback").getByRole("alert")).toHaveCount(0);
+  await page.getByRole("tab", { name: "Negocios", exact: true }).click();
+  await expect(requests.getByRole("button", { name: "Aprobar Solicitud recuperada" })).toBeVisible();
+  expect(registrationReads).toBe(4);
+  expect(writes).toBe(2);
+});
+
 for (const failedRead of ["businesses", "response-timing"]) {
   test(`confirmed admin writes survive failed ${failedRead} refresh with GET-only recovery`, async ({ page, system }) => {
     await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);

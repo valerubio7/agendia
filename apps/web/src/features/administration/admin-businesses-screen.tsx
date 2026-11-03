@@ -14,7 +14,7 @@ type AdminBusinessesScreenProps = {
   refreshWarning: boolean;
   refreshPending: boolean;
   retryRefreshAction: () => void;
-  registrations: Registration[];
+  registrations: Registration[] | null;
   decideAction: (id: string, decision: "approve" | "reject") => Promise<boolean>;
   renameAction: (id: string, name: string) => Promise<boolean>;
   replacePasswordAction: (id: string, password: string) => Promise<boolean>;
@@ -166,7 +166,7 @@ export function AdminBusinessesScreen({
       </div>
       <section aria-labelledby="registration-title">
         <h2 id="registration-title">Solicitudes pendientes</h2>
-        {registrations.length === 0 ? <p>No hay solicitudes pendientes.</p> : <ul>{registrations.map(row => <li key={row.id}>
+        {registrations === null ? <p>No se pudieron cargar las solicitudes pendientes.</p> : registrations.length === 0 ? <p>No hay solicitudes pendientes.</p> : <ul>{registrations.map(row => <li key={row.id}>
           <p><strong>{row.name}</strong> · {row.email} · {formatCreatedTimestamp(row.createdAt)} UTC</p>
           <button type="button" disabled={anyPending} aria-label={`Aprobar ${row.name}`} onClick={() => void runAction({ kind: "registration", registrationId: row.id }, () => decideAction(row.id, "approve"))}>Aprobar</button>{" "}
           <button type="button" disabled={anyPending} aria-label={`Rechazar ${row.name}`} onClick={() => void runAction({ kind: "registration", registrationId: row.id }, () => decideAction(row.id, "reject"))}>Rechazar</button>

@@ -55,7 +55,7 @@ const agentFields = [
   "businessInstructions",
   "active",
 ] as const;
-type AdminData = { businesses: Business[]; registrations: Registration[]; responseTiming: ResponseTiming };
+type AdminData = { businesses: Business[]; registrations: Registration[] | null; responseTiming: ResponseTiming };
 const WHATSAPP_QR_LIFECYCLE_MS = 5 * 60_000;
 
 export type WhatsAppLinkMonitorEvent =
@@ -356,7 +356,10 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
     try {
       loaded =
         mode === "admin"
-          ? await Promise.all([api.businesses(), api.registrations(adminLoad!.signal), api.responseTiming()])
+          ? await Promise.all([api.businesses(), api.registrations(adminLoad!.signal).catch(cause => {
+              if (cause instanceof ApiError && (cause.code === "UNAUTHENTICATED" || cause.code === "FORBIDDEN")) throw cause;
+              return null;
+            }), api.responseTiming()])
               .then(([businesses, registrations, responseTiming]) => ({ businesses, registrations, responseTiming }))
           : mode === "clients" || mode === "turnos"
             ? session
@@ -380,6 +383,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
     if (!isCurrent()) return;
 
     setData(loaded);
+    if (mode === "admin" && (loaded as AdminData).registrations === null) setAdminWarning(true);
     setViewState("ready");
     if (
       mode === "whatsapp" &&
@@ -747,7 +751,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
           decideAction={(id, decision) => runAdminMutation(
             signal => api.decideRegistration(id, decision, signal),
             decision === "approve" ? "Solicitud aprobada" : "Solicitud rechazada",
-            state => ({ ...state, registrations: state.registrations.filter(row => row.id !== id) }),
+            state => ({ ...state, registrations: state.registrations?.filter(row => row.id !== id) ?? null }),
           )}
           renameAction={(id, name) =>
             runAdminMutation(
