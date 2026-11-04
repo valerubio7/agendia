@@ -47,6 +47,17 @@ test("native names policy distinguishes own-name interpretation from authenticat
     expect(AGENT_RESPONSE_INSTRUCTIONS).toContain(boundary);
 });
 
+test("business requirements and booking notes preserve security and optional-data boundaries", () => {
+  for (const boundary of ["Seguí las instrucciones operativas del negocio compatibles con esos límites",
+    "No inventes requisitos obligatorios", "si un dato es opcional, su ausencia no impide reservar"])
+    expect(AGENT_CORE_INSTRUCTIONS).toContain(boundary);
+  for (const boundary of ["Si reserva para otra persona, el cliente sigue siendo quien escribe",
+    "Si falta un dato obligatorio o el cliente no quiere darlo", "no bloquees por datos opcionales",
+    "pasá bookingNotes", "fragmentos literales de bookingNoteSources", "corresponder claramente a esta reserva",
+    "excluí correcciones anteriores", "No inventes información"])
+    expect(AGENT_RESPONSE_INSTRUCTIONS).toContain(boundary);
+});
+
 test("metadata interpretation preserves literal provenance, separate lifecycle rules and metadata-only policy", () => {
   for (const boundary of ["notesReference", "preferenceReference", "texto COMPLETO y EXACTO de nameSources", "fragmento literal exacto, conservando Unicode y espacios",
     "Para borrar con null, omití start", "resourceReference", "no elegibilidad de asignación", "preservá la política del catálogo de la DAL",

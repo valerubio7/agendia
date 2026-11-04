@@ -37,6 +37,9 @@ const nameField = z.object({ value: z.string().min(1).max(100).refine(value => v
   messageId: id, start: z.number().int().nonnegative() }).strict();
 const memberBinding = { evidenceReference: z.string().regex(/^[a-f0-9]{64}$/u),
   messageId: id, evidence: z.string().min(1).max(12000) };
+const bookingNotes = z.array(z.object({ messageId: id, value: z.string().min(1).max(2000).refine(value => !value.includes("\0")),
+  start: z.number().int().nonnegative() }).strict()).min(1).max(20)
+  .refine(items => items.reduce((total, item) => total + item.value.length, items.length - 1) <= 2000).optional();
 const schemas = {
   read_business: z.object({}).strict(),
   read_catalog: z.object({}).strict(),
@@ -52,15 +55,19 @@ const schemas = {
   owned_appointment: z.object({ appointmentId: id }).strict(),
   prepare_booking: z.object(selection).strict(),
   collect_booking_names: z.object({ namesReference: z.string().regex(/^[a-f0-9]{64}$/u),
-    firstName: nameField.optional(), lastName: nameField.optional(),
+    firstName: nameField.optional(), lastName: nameField.optional(), bookingNotes, deferForBusinessRequirements: z.boolean().optional(),
   }).strict().refine(args => args.firstName !== undefined || args.lastName !== undefined),
   prepare_change: z.object({ appointmentId: id, serviceId: id.optional(), resourceId: id.optional(), startsAt: InstantSchema.optional() })
     .strict().refine(args => args.serviceId !== undefined || args.resourceId !== undefined || args.startsAt !== undefined),
-  confirm_quote: z.object({}).strict(),
+  confirm_quote: z.object({ bookingNotes }).strict(),
   confirm_quote_naturally: z.object({
     evidence: z.string().min(1).max(12000),
     evidenceReference: z.string().regex(/^[a-f0-9]{64}$/u),
-    quoteFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
+    quoteFingerprint: z.string().regex(/^[a-f0-9]{64}$/u), bookingNotes, deferForBusinessRequirements: z.boolean().optional(),
+  }).strict(),
+  finish_accepted_booking: z.object({
+    evidence: z.string().min(1).max(12000), evidenceReference: z.string().regex(/^[a-f0-9]{64}$/u),
+    quoteFingerprint: z.string().regex(/^[a-f0-9]{64}$/u), bookingNotes,
   }).strict(),
   clear_pending: z.object({}).strict(),
   cancel: z.object({ appointmentId: id, binding: z.object({
@@ -87,10 +94,11 @@ const descriptions: Record<ToolName, string> = {
   owned_appointments: "Read current sender-owned appointments with target/snapshot-bound cancellationReference, notesReference and preferenceReference.",
   owned_appointment: "Inspect one current sender-owned appointment with cancellationReference, notesReference and preferenceReference. IDs never establish ownership.",
   prepare_booking: "Prepare a real slot quote, not a booking, including before offering a concrete alternative even when names are missing. Replaces previous pending selection. Confirmation requires later explicit customer consent after quote delivery.",
-  collect_booking_names: "Patch only the customer's own new-booking names in an active draft. Copy its fresh namesReference and literal field values from authenticated nameSources, each with messageId and zero-based UTF-16 start offset. Omitted fields are retained; corrections replace only supplied fields. Never use DNI, insurance, profile, third-person names, history or summaries. Binding authenticates provenance, NOT semantic name ownership. Names alone never authorize booking; completing missing names can stage a booking only after prior clear acceptance of the same delivered quote. Use the returned fresh reference for another patch.",
+  collect_booking_names: "Patch only the customer's own new-booking names in an active draft. Copy its fresh namesReference and literal field values from authenticated nameSources, each with messageId and zero-based UTF-16 start offset. Omitted fields are retained; corrections replace only supplied fields. Never use DNI, insurance, profile, third-person names, history or summaries as the customer's names. Binding authenticates provenance, NOT semantic name ownership. Names alone never authorize booking; completing missing names can stage a booking only after prior clear acceptance of the same delivered quote. If business requirements still remain after names, set deferForBusinessRequirements true so retained acceptance does not save yet. If this may save the booking, provide bookingNotes from bookingNoteSources as literal messageId/value/start spans for current relevant customer details; omit obsolete or ambiguous details. Use the returned fresh reference for another patch.",
   prepare_change: "Prepare a sender-owned change quote, not a saved change. Requires later explicit confirmation after delivery.",
-  confirm_quote: "Legacy literal confirmation or pending names using the actual received message. Effects are staged until session commit.",
-  confirm_quote_naturally: "Interpret clear explicit acceptance of the exact delivered pending quote. Copy the COMPLETE current message as evidence and its runtime naturalConfirmation bindings. Never invoke for ambiguity, hypotheticals, negation or changed conditions: clarify or prepare a fresh quote instead. Backend verifies evidence authenticity and quote context, NOT consent semantics; interpretation can be wrong. Effects remain staged until session commit.",
+  confirm_quote: "Legacy literal confirmation or pending names using the actual received message. For a new booking, provide bookingNotes from bookingNoteSources as literal messageId/value/start spans for current relevant customer details; omit obsolete or ambiguous details. Effects are staged until session commit.",
+  confirm_quote_naturally: "Interpret clear explicit acceptance of the exact delivered pending quote. Copy the COMPLETE current message as evidence and its runtime naturalConfirmation bindings. For a new booking, provide bookingNotes from bookingNoteSources as literal messageId/value/start spans for current relevant customer details; omit obsolete or ambiguous details. If business requirements remain, set deferForBusinessRequirements true to retain acceptance without booking. Never invoke for ambiguity, hypotheticals, negation or changed conditions: clarify or prepare a fresh quote instead. Backend verifies evidence authenticity and quote context, NOT consent semantics; interpretation can be wrong. Effects remain staged until session commit.",
+  finish_accepted_booking: "Complete a previously accepted delivered booking only after all mandatory business requirements and notices are satisfied. Copy the COMPLETE current message and the current retainedBookingConfirmation bindings. Supply relevant bookingNotes from literal bookingNoteSources spans. Never invoke if the customer withdrew consent, changed conditions, or intent is ambiguous. Binding proves context, NOT semantic consent or business-requirement compliance; interpretation can be wrong. Effects remain staged until session commit.",
   clear_pending: "Discard the pending draft/quote when the customer changes their mind. Never cancels or changes a saved appointment.",
   cancel: "Cancel a freshly inspected owned appointment for a clear current request or contextual affirmative answer. Copy its cancellationReference into binding.evidenceReference and COMPLETE currentEvidence into binding.evidence. Clarify genuinely ambiguous intent/target; never invoke for negation, hypotheticals or history. Binding verifies current context and target snapshot, NOT consent semantics. Omit binding only for legacy literal cancellation. Effects are staged until session commit.",
   notes: "Native: binding uses notesReference as evidenceReference, authenticated nameSources messageId/full evidence, and literal UTF-16 start. Null clear omits start. No rewriting. Without binding: legacy guards.",
@@ -186,14 +194,16 @@ export class AgentToolSession {
   private failure: unknown;
   constructor(private handler: (command: AgentToolCommand) => Promise<AgentToolResult>,
     readonly context: Readonly<{ message: string; recent: readonly string[]; pending: unknown;
-      naturalConfirmation?: Readonly<NaturalConfirmationBinding> | null; messages?: readonly ToolConversationMessage[];
+      naturalConfirmation?: Readonly<NaturalConfirmationBinding> | null; retainedBookingConfirmation?: Readonly<NaturalConfirmationBinding> | null;
+      messages?: readonly ToolConversationMessage[];
       namesReference?: string | null; nameSources?: readonly { messageId: string; text: string }[];
+      bookingNoteSources?: readonly { messageId: string; text: string }[];
       pendingPresentation?: Readonly<AgentDatePresentation> | null; pendingQuotePresentationReference?: string | null }> = { message: "", recent: [], pending: null },
     private diagnose?: AgentToolDiagnostics,
     private rejectPreparation?: () => void) {}
   execute(name: string, args: unknown): Promise<AgentToolResult> {
     this.observedCalls++;
-    if (["prepare_booking", "prepare_change", "collect_booking_names", "confirm_quote", "confirm_quote_naturally",
+    if (["prepare_booking", "prepare_change", "collect_booking_names", "confirm_quote", "confirm_quote_naturally", "finish_accepted_booking",
       "clear_pending", "cancel", "notes", "preference"].includes(name)) this.attemptedAgendaChange = true;
     const toolName = Object.hasOwn(schemas, name) ? name as ToolName : "unknown";
     const completed = (output: AgentToolResult): AgentToolResult => {

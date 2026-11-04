@@ -423,6 +423,9 @@ export class PostgresRepositories {
   async agendaSender(messageId: string): Promise<string | null> {
     return whatsappAgenda.agendaSender(this.db, messageId);
   }
+  async latestAgendaActionSequence(businessId: string, connectionId: string, conversationId: string, phone: string): Promise<string> {
+    return whatsappAgenda.latestAgendaActionSequence(this.db, businessId, connectionId, conversationId, phone);
+  }
   async lockAgendaDialogue(businessId: string, connectionId: string, phone: string): Promise<AgendaDialogue> {
     return whatsappAgenda.lockAgendaDialogue(this.db, businessId, connectionId, phone);
   }

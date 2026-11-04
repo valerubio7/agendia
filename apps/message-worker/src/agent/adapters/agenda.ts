@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { tenantContext, AppointmentError, type createRuntimePools, type PostgresRepositories,
   type StoredAppointment, type AppointmentAvailabilityOption, type CatalogResource } from "@agendia/db";
 import {
@@ -64,6 +65,12 @@ const snapshot = (appointment: StoredAppointment): string => JSON.stringify({
   startsAt: appointment.startsAt, terms: appointment.terms, state: appointment.state,
   preference: appointment.customerResourcePreference,
 });
+const acceptedBookingMatches = (dialogue: AgendaDialogue): boolean => {
+  if (dialogue.quote?.kind !== "book" || !dialogue.acceptedBookingQuote || dialogue.bookingUnresolvedPreference
+    || (dialogue.bookingPreference ?? null) !== dialogue.quote.preference) return false;
+  try { return isDeepStrictEqual(JSON.parse(dialogue.acceptedBookingQuote), dialogue.quote); }
+  catch { return false; }
+};
 const actionContext = (now: string) => ({ actor: "customer" as const, channel: "ai" as const, now });
 const missingNames = (dialogue: AgendaDialogue): string[] => {
   const fields = dialogue.bookingNameFields ?? dialogue.bookingNames;
@@ -97,6 +104,7 @@ export class PostgresWhatsAppAgenda {
         let dialogue = phone ? await repo.lockAgendaDialogue(job.businessId, source.connection_id, phone) : emptyAgendaDialogue();
         await repo.acquireBusinessCalendarLock({ businessId: job.businessId });
         const actions: { operation: string; appointmentId: string }[] = [];
+        let pendingCleared = false;
         const initialDialogue = JSON.stringify(dialogue);
         let presentationRevision = 0;
         const rejectPreparation = () => {
@@ -154,6 +162,26 @@ export class PostgresWhatsAppAgenda {
           if (phone && await repo.agendaSender(member.id) === phone)
             nameSources.push({ messageId: member.id, text: member.raw_text });
         }
+        const bookingNoteSources: { messageId: string; text: string }[] = [];
+        if (phone && dialogue.quote?.kind === "book") {
+          const boundary = BigInt(await repo.latestAgendaActionSequence(job.businessId, source.connection_id, source.conversation_id, phone));
+          const groupStart = source.currentGroup.reduce((first, member) => BigInt(member.sequence) < first ? BigInt(member.sequence) : first, BigInt(source.sequence));
+          const summaryBoundary = source.summaries.reduce((latest, summary) => {
+            const sequence = BigInt(summary.covered_through);
+            return sequence < groupStart && sequence > latest ? sequence : latest;
+          }, 0n);
+          const recent = source.turns.filter(turn => BigInt(turn.sequence) > boundary
+            && (BigInt(turn.sequence) >= groupStart || BigInt(turn.sequence) > summaryBoundary)).slice(-20);
+          let remaining = 8000;
+          for (const member of recent.reverse()) {
+            if (!remaining) break;
+            if (member.direction !== "inbound" || await repo.agendaSender(member.id) !== phone) continue;
+            let end = Math.min(member.raw_text.length, 2000, remaining);
+            if (end < member.raw_text.length && /[\uD800-\uDBFF]/u.test(member.raw_text[end - 1]!)) end--;
+            const text = member.raw_text.slice(0, end);
+            if (text) { bookingNoteSources.unshift({ messageId: member.id, text }); remaining -= text.length; }
+          }
+        }
         const knownClient = phone ? await repo.findClientByCanonicalPhone(phone) : null;
         let namesRevision = 0;
         const namesReference = () => phone && !knownClient && !dialogue.change && !dialogue.reschedule
@@ -168,11 +196,14 @@ export class PostgresWhatsAppAgenda {
           && await repo.agendaQuoteDelivered(dialogue.quote.outboundId, source.connection_id, phone)
           ? Object.freeze({ evidenceReference: fingerprint("inbound", { id: source.id, text: source.raw_text }),
             quoteFingerprint: fingerprint("quote", dialogue.quote) }) : null;
+        const retainedBookingConfirmation = naturalConfirmation && initialQuote?.kind === "book"
+          && acceptedBookingMatches(dialogue) ? naturalConfirmation : null;
         const now = this.clock();
         const pendingPresentation = canonicalAgentDate(dialogue.quote?.startsAt, AGENT_CALENDAR_TIME_ZONE);
         const messages = buildAgentMessages(source, now, {
-          pending: structuredClone(dialogue), pendingPresentation, pendingQuotePresentationReference, naturalConfirmation, currentEvidence: source.raw_text,
-          namesReference: namesReference(), nameSources,
+          pending: structuredClone(dialogue), pendingPresentation, pendingQuotePresentationReference, naturalConfirmation,
+          retainedBookingConfirmation, currentEvidence: source.raw_text,
+          namesReference: namesReference(), nameSources, bookingNoteSources,
           calendarTimeZone: AGENT_CALENDAR_TIME_ZONE,
           serverPresentation: canonicalAgentDate(now, AGENT_CALENDAR_TIME_ZONE),
         });
@@ -182,6 +213,20 @@ export class PostgresWhatsAppAgenda {
           if (actions.length && !reading) return { status: "rejected", code: "ACTION_ALREADY_STAGED" };
           if (!phone && !["read_business", "read_catalog", "read_calendar", "read_resources", "availability"].includes(command.name))
             return { status: "rejected", code: "UNVERIFIED_SENDER" };
+          const noteSpans = command.name === "confirm_quote" || command.name === "confirm_quote_naturally"
+            || command.name === "finish_accepted_booking" || command.name === "collect_booking_names"
+            ? command.arguments.bookingNotes : undefined;
+          let bookingNotes: string | undefined;
+          if (noteSpans) {
+            if (dialogue.quote?.kind !== "book") return { status: "rejected", code: "INVALID_BOOKING_NOTES" };
+            for (const span of noteSpans) {
+              const member = bookingNoteSources.find(row => row.messageId === span.messageId);
+              if (!member || await repo.agendaSender(span.messageId) !== phone
+                || member.text.slice(span.start, span.start + span.value.length) !== span.value)
+                return { status: "rejected", code: "INVALID_BOOKING_NOTES" };
+            }
+            bookingNotes = noteSpans.map(span => span.value).join("\n");
+          }
           const quoteWithNewNames = command.name === "confirm_quote_naturally" && namesOnlyQuoteSnapshot !== null
             && JSON.stringify(dialogue.quote) === namesOnlyQuoteSnapshot;
           if (command.name === "confirm_quote_naturally") {
@@ -191,6 +236,14 @@ export class PostgresWhatsAppAgenda {
               || args.quoteFingerprint !== naturalConfirmation.quoteFingerprint || !dialogue.quote
               || (!quoteWithNewNames && (JSON.stringify(dialogue.quote) !== initialQuoteSnapshot
                 || fingerprint("quote", dialogue.quote) !== args.quoteFingerprint)))
+              return { status: "rejected", code: "INVALID_CONFIRMATION_BINDING" };
+          }
+          if (command.name === "finish_accepted_booking") {
+            if (!retainedBookingConfirmation) return { status: "clarification", code: "RETAINED_CONFIRMATION_UNAVAILABLE" };
+            const args = command.arguments;
+            if (args.evidence !== source.raw_text || args.evidenceReference !== retainedBookingConfirmation.evidenceReference
+              || args.quoteFingerprint !== retainedBookingConfirmation.quoteFingerprint || !dialogue.quote
+              || JSON.stringify(dialogue.quote) !== initialQuoteSnapshot || !acceptedBookingMatches(dialogue))
               return { status: "rejected", code: "INVALID_CONFIRMATION_BINDING" };
           }
           if (command.name === "cancel" && command.arguments.binding) {
@@ -227,7 +280,7 @@ export class PostgresWhatsAppAgenda {
                   return { result: { status: "clarification", code: "CUSTOMER_INPUT_REQUIRED",
                     reason: "MISSING_NAMES", missingFields: missingNames(draft) } as const, reply: namesReply(draft) };
                 }
-                const accepted = draft.quote?.kind === "book" && draft.acceptedBookingQuote === JSON.stringify(draft.quote)
+                const accepted = draft.quote?.kind === "book" && acceptedBookingMatches(draft)
                   && (!previousFields.firstName || previousFields.firstName === fields.firstName)
                   && (!previousFields.lastName || previousFields.lastName === fields.lastName);
                 if (!accepted) delete draft.acceptedBookingQuote;
@@ -239,10 +292,15 @@ export class PostgresWhatsAppAgenda {
                   draft.awaitingNames = !draft.bookingNames;
                   if (!draft.awaitingNames) delete draft.awaiting;
                 }
-                reply = accepted && draft.bookingNames
-                  ? await this.respond(inner, job, source, phone!, draft, null, undefined, undefined, true)
-                  : draft.awaitingNames ? namesReply(draft)
-                  : draft.quote ? proposalReply(draft) : unchanged("MISSING_FIELDS", draft, draft.awaiting ?? ["time"]);
+                if (accepted && draft.bookingNames && args.deferForBusinessRequirements) {
+                  draft.acceptedBookingQuote = JSON.stringify(draft.quote);
+                  reply = unchanged("BUSINESS_REQUIREMENTS_PENDING", draft);
+                } else {
+                  reply = accepted && draft.bookingNames
+                    ? await this.respond(inner, job, source, phone!, draft, null, undefined, undefined, true, bookingNotes)
+                    : draft.awaitingNames ? namesReply(draft)
+                    : draft.quote ? proposalReply(draft) : unchanged("MISSING_FIELDS", draft, draft.awaiting ?? ["time"]);
+                }
               } else if ((command.name === "notes" || command.name === "preference") && command.arguments.binding) {
                 const args = command.arguments, binding = args.binding!;
                 const member = nameSources.find(row => row.messageId === binding.messageId);
@@ -286,7 +344,9 @@ export class PostgresWhatsAppAgenda {
                   command.name === "confirm_quote_naturally" ? { sourceMessageId: source.id,
                     quoteSnapshot: quoteWithNewNames ? JSON.stringify(draft.quote) : initialQuoteSnapshot! } : undefined,
                   command.name === "cancel" && command.arguments.binding
-                    ? ap => cancellationReference(ap) === command.arguments.binding!.evidenceReference : undefined);
+                    ? ap => cancellationReference(ap) === command.arguments.binding!.evidenceReference : undefined,
+                  command.name === "finish_accepted_booking", bookingNotes,
+                  command.name === "confirm_quote_naturally" && command.arguments.deferForBusinessRequirements === true);
               }
               const result: AgentToolResult = command.name === "clear_pending" ? { status: "data", data: { pending: null } }
                 : reply.data ? { status: "data", data: { ...reply.data, reason: reply.reason,
@@ -297,7 +357,8 @@ export class PostgresWhatsAppAgenda {
                 : reply.proposal && reply.dialogue.quote
                   ? { status: "prepared_quote", quote: structuredClone(reply.dialogue.quote), reason: reply.reason,
                     presentation: canonicalAgentDate(reply.dialogue.quote.startsAt, AGENT_CALENDAR_TIME_ZONE) }
-                  : { status: command.name === "confirm_quote" || command.name === "confirm_quote_naturally" || command.name === "collect_booking_names" || command.name.startsWith("prepare_") ? "clarification" : "rejected",
+                  : { status: command.name === "confirm_quote" || command.name === "confirm_quote_naturally" || command.name === "finish_accepted_booking"
+                    || command.name === "collect_booking_names" || command.name.startsWith("prepare_") ? "clarification" : "rejected",
                     code: "CUSTOMER_INPUT_REQUIRED", reason: reply.reason,
                     missingFields: reply.missingFields ?? (reply.dialogue.awaitingNames ? missingNames(reply.dialogue) : []),
                     ...(reply.preparation !== "rejected" && reply.dialogue.quote ? { proposal: structuredClone(reply.dialogue.quote) } : {}),
@@ -309,6 +370,7 @@ export class PostgresWhatsAppAgenda {
               dialogue = result.reply.dialogue;
               rejectPreparation();
             } else if (result.reply) {
+              if (command.name === "clear_pending") pendingCleared = true;
               const beforeQuote = JSON.stringify(dialogue.quote);
               const beforeNameFields = dialogue.bookingNameFields ?? dialogue.bookingNames ?? {};
               if (beforeQuote !== JSON.stringify(result.reply.dialogue.quote)) presentationRevision++;
@@ -340,8 +402,9 @@ export class PostgresWhatsAppAgenda {
             return { status: "rejected", code: "AGENDA_REJECTED", reason: errorCode };
           }
         }, { message: source.raw_text, recent: source.turns.slice(-12).map(turn => turn.raw_text.slice(0, 2000)),
-          pending: structuredClone(dialogue), pendingPresentation, pendingQuotePresentationReference, naturalConfirmation, messages,
-          namesReference: namesReference(), nameSources: structuredClone(nameSources) }, this.diagnose, rejectPreparation);
+          pending: structuredClone(dialogue), pendingPresentation, pendingQuotePresentationReference, naturalConfirmation,
+          retainedBookingConfirmation, messages, namesReference: namesReference(), nameSources: structuredClone(nameSources),
+          bookingNoteSources: structuredClone(bookingNoteSources) }, this.diagnose, rejectPreparation);
         completedSession = session;
         let text: string;
         try {
@@ -371,7 +434,8 @@ export class PostgresWhatsAppAgenda {
           dialogue.quote.sourceMessageId = source.id;
         }
         if (phone) await repo.saveAgendaDialogue(job.businessId, source.connection_id, phone, dialogue);
-        await repo.recordAgendaReceipt(job.businessId, job.messageId, output.outbound_id, actions[0]?.operation ?? "agent");
+        await repo.recordAgendaReceipt(job.businessId, job.messageId, output.outbound_id,
+          actions[0]?.operation ?? (pendingCleared ? "clear_pending" : "agent"));
         await repo.appendAudit(job.businessId, {
           eventType: actions.length ? "whatsapp.agenda.saved" : "whatsapp.agenda.reply", outcome: "success",
           eventHash: createHash("sha256").update(job.messageId).digest("hex"),
@@ -586,7 +650,8 @@ export class PostgresWhatsAppAgenda {
   private async respond(repo: PostgresRepositories, job: PostgresAiJob, source: Source, phone: string,
     dialogue: AgendaDialogue, mutation: GuardedMutation | null,
     naturalConfirmation?: { sourceMessageId: string; quoteSnapshot: string },
-    validateCancellation?: (ap: StoredAppointment) => boolean, retainedBookingAcceptance = false): Promise<Reply> {
+    validateCancellation?: (ap: StoredAppointment) => boolean, retainedBookingAcceptance = false,
+    bookingNotes?: string, deferForBusinessRequirements = false): Promise<Reply> {
     const now = this.clock();
     const selection = customerTemporalSelection(source.raw_text, now);
     if (selection.date) dialogue.requestedDate = selection.date;
@@ -656,8 +721,13 @@ export class PostgresWhatsAppAgenda {
           if (boundInterpretation) dialogue.acceptedBookingQuote = JSON.stringify(quote);
           return namesReply({ ...dialogue, awaitingNames: true });
         }
+        if (boundInterpretation && deferForBusinessRequirements) {
+          dialogue.acceptedBookingQuote = JSON.stringify(quote);
+          return unchanged("BUSINESS_REQUIREMENTS_PENDING", dialogue);
+        }
         saved = await repo.createAppointment(job.businessId, {
           serviceId: quote.terms.serviceId, resourceId: quote.terms.resourceId, startRaw: quote.startsAt,
+          ...(bookingNotes === undefined ? {} : { notes: bookingNotes }),
           ...(client ? { clientId: client.id } : { newClient: { ...quote.names!, phone } }),
         }, { now, origin: "ai", ...(preference ? { customerResourceExpression: preference } : {}) });
       }
