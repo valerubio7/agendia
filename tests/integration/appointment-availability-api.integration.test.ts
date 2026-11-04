@@ -79,6 +79,38 @@ test("static GET returns all advisory choices, exact D2 JSON and no business eff
   expect(after!.idle_expires_at.getTime()).toBe(session!.idle_expires_at.getTime());
 });
 
+test("five-minute durations book exact intervals without changing the start grid or saved terms", async () => {
+  const o = await fixture(), resourceId = o.resources[0]!;
+  await database.sql`update services set duration_minutes=20 where id=${o.service}`;
+  const before = await get(o, { resourceId });
+  expect(before.statusCode).toBe(200);
+  const slots = before.json<Slot[]>();
+  expect(slots).toHaveLength(96);
+  expect(slots.every(slot => slot.endMs - slot.startMs === 20 * 60000)).toBe(true);
+  const saved = await book(o, `${date}T10:00:00-03:00`, resourceId);
+  expect(saved.endMs - saved.startMs).toBe(20 * 60000);
+  const after = (await get(o, { resourceId })).json<Slot[]>();
+  expect(after.some(slot => slot.startMs === saved.startMs + 15 * 60000)).toBe(false);
+  expect(after.some(slot => slot.startMs === saved.startMs + 30 * 60000)).toBe(true);
+  const original = [...await database.sql`select * from appointments where id=${saved.id}`];
+  await pools.api.run(context(o), repo => repo.updateService(o.business, o.service, { name: "Changed", durationMinutes: 45, priceArs: 99 }));
+  expect([...await database.sql`select * from appointments where id=${saved.id}`]).toEqual(original);
+  const reschedule = await get(o, { resourceId, appointmentId: saved.id });
+  expect(reschedule.statusCode).toBe(200);
+  expect(reschedule.json<Slot[]>().length).toBeGreaterThan(0);
+  expect(reschedule.json<Slot[]>().every(slot => slot.terms.durationMinutes === 20)).toBe(true);
+  const day = new Date(`${date}T12:00:00Z`).getUTCDay();
+  const fits = { [day]: [{ startMinute: 600, endMinute: 620 }] };
+  const tooShort = { [day]: [{ startMinute: 600, endMinute: 615 }] };
+  const work = <T>(fn: Parameters<typeof pools.api.run<T>>[1]) => pools.api.run(context(o), fn);
+  await expect(work(repo => repo.updateResource(o.business, resourceId, { name: resourceId, weeklySchedule: tooShort, serviceIds: [o.service] }))).rejects.toMatchObject({ code: "FUTURE_APPOINTMENT_CONFLICT" });
+  expect(await work(repo => repo.updateResource(o.business, resourceId, { name: resourceId, weeklySchedule: fits, serviceIds: [o.service] }))).not.toBeNull();
+  await expect(work(repo => repo.createBusinessClosure(o.business, { kind: "interval", start: `${date}T10:15:00-03:00`, end: `${date}T10:30:00-03:00` }))).rejects.toMatchObject({ code: "FUTURE_APPOINTMENT_CONFLICT" });
+  expect(await work(repo => repo.createBusinessClosure(o.business, { kind: "interval", start: `${date}T10:20:00-03:00`, end: `${date}T10:30:00-03:00` }))).toHaveProperty("id");
+  expect(await work(repo => repo.saveBusinessCalendar(o.business, full))).toHaveProperty("weeklySchedule");
+  expect([...await database.sql`select * from appointments where id=${saved.id}`]).toEqual(original);
+});
+
 test("Confirmed numeric capacity, cancellation, adjacency, pauses and closures cover whole intervals", async () => {
   const o = await fixture(), resourceId = o.resources[0]!, saved = await book(o, `${date}T10:00:00-03:00`);
   await database.sql`update appointments set start_raw='2001-01-01T00:00:00Z' where id=${saved.id}`;

@@ -34,6 +34,43 @@ async function fixture(files: Record<string, string>) {
 }
 const base = "create table businesses(id integer primary key, counter integer not null); insert into businesses values(1,0)";
 
+test("duration upgrade preserves legacy rows and widens both constraints", async () => {
+  const files: Record<string, string> = {};
+  for (const name of ["0000_base.sql", "0001_remove_admin_ai_guidance.sql", "0002_agent_silent_completion.sql", "0003_session_idle_ttl.sql", "0004_registration.sql"])
+    files[name] = await Bun.file(new URL(`../../packages/db/migrations/${name}`, import.meta.url)).text();
+  const f = await fixture(files);
+  try {
+    await f.run();
+    const id = crypto.randomUUID();
+    await f.sql`insert into businesses(id,name) values(${id},'Legacy')`;
+    const [client] = await f.sql`insert into clients(business_id,first_name,last_name,phone) values(${id},'A','B','+123456789') returning id`;
+    const [resource] = await f.sql`insert into resources(business_id,name,weekly_schedule) values(${id},'Room','{}') returning id`;
+    for (const duration of [15, 45]) {
+      const [service] = await f.sql`insert into services(business_id,name,duration_minutes,price_ars) values(${id},${`Legacy ${duration}`},${duration},0) returning id`;
+      await f.sql`insert into appointments(business_id,client_id,service_id,resource_id,service_label,resource_label,price_ars,duration_minutes,start_raw,start_ms,end_ms,state,origin)
+        values(${id},${client!.id},${service!.id},${resource!.id},'Legacy','Room',0,${duration},'1970-01-01T00:00:00Z',0,${duration * 60000},'done','manual')`;
+    }
+    const services = [...await f.sql`select * from services order by id`];
+    const appointments = [...await f.sql`select * from appointments order by id`];
+    const history = [...await f.sql`select * from public.agendia_production_migrations order by name`];
+    files["0005_service_duration_five_minutes.sql"] = await Bun.file(new URL("../../packages/db/migrations/0005_service_duration_five_minutes.sql", import.meta.url)).text();
+    await f.run();
+    expect([...await f.sql`select * from services order by id`]).toEqual(services);
+    expect([...await f.sql`select * from appointments order by id`]).toEqual(appointments);
+    expect([...await f.sql`select * from public.agendia_production_migrations where name <> '0005_service_duration_five_minutes.sql' order by name`]).toEqual(history);
+    for (const duration of [5, 10, 15, 20, 45]) {
+      await f.sql`update services set duration_minutes=${duration} where id=${services[0]!.id}`;
+      await f.sql`update appointments set duration_minutes=${duration},end_ms=${duration * 60000} where id=${appointments[0]!.id}`;
+    }
+    for (const duration of [0, -5, 1, 16]) {
+      await expect(f.sql`update services set duration_minutes=${duration} where id=${services[0]!.id}`.execute()).rejects.toMatchObject({ code: '23514' });
+      await expect(f.sql`update appointments set duration_minutes=${duration},end_ms=${duration * 60000} where id=${appointments[0]!.id}`.execute()).rejects.toMatchObject({ code: '23514' });
+    }
+    await expect(f.sql`update appointments set duration_minutes=20,end_ms=1 where id=${appointments[0]!.id}`.execute()).rejects.toMatchObject({ code: '23514' });
+    await f.run();
+  } finally { await f.sql.end(); }
+});
+
 // Exercise both real CLI entrypoints and module-relative SQL discovery in isolation.
 test("production CLI migrates from another cwd and development CLI repeats without mutation", async () => {
   const name = `cli_${crypto.randomUUID().replaceAll("-", "")}`;
