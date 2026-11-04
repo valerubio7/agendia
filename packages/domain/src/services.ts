@@ -3,7 +3,7 @@ import { z } from "zod";
 export const ServiceInputSchema = z.object({
   name: z.string().trim().min(1).refine(text => !text.includes("\u0000")),
   description: z.string().refine(text => !text.includes("\u0000")).optional(),
-  durationMinutes: z.number().int().positive().multipleOf(15),
+  durationMinutes: z.number().int().positive().multipleOf(5),
   priceArs: z.number().finite().nonnegative(),
 });
 

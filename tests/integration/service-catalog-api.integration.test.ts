@@ -100,6 +100,20 @@ test("rejects invalid input, IDs/status and foreign edits with no catalog audit 
   expect(await effects()).toEqual(before);
 });
 
+test("creates and edits five-minute durations while preserving previous quarter-hour values", async () => {
+  const created = await request("POST", undefined, a, { ...input, name: "Five-minute service", durationMinutes: 5 });
+  expect(created.statusCode).toBe(201);
+  expect(created.json().durationMinutes).toBe(5);
+  const id = created.json().id;
+  for (const durationMinutes of [20, 45]) {
+    const updated = await request("PUT", `/me/services/${id}`, a, { ...input, name: "Five-minute service", durationMinutes });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json().durationMinutes).toBe(durationMinutes);
+  }
+  const services = (await request("GET", undefined, a)).json();
+  expect(services.find((service: { id: string }) => service.id === id).durationMinutes).toBe(45);
+});
+
 for (const method of ["POST", "PUT"] as const) {
   for (const field of ["name", "description"] as const) {
     test(`${method} rejects NUL service ${field} with 400 and no storage/effects`, async () => {

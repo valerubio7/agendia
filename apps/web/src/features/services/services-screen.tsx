@@ -96,9 +96,9 @@ export function ServicesScreen({ services, onSave, onRefresh, onLifecycle }: {
     const priceText = String(fields.get("priceArs") ?? "").trim();
     const durationMinutes = Number(durationText);
     const priceArs = Number(priceText);
-    if (!name || !durationText || !Number.isInteger(durationMinutes) || durationMinutes < 15 ||
-      durationMinutes % 15 !== 0 || !priceText || !Number.isFinite(priceArs) || priceArs < 0) {
-      setError("Revisá el nombre, la duración en múltiplos de 15 y el precio no negativo.");
+    if (!name || !durationText || !Number.isInteger(durationMinutes) || durationMinutes < 5 ||
+      durationMinutes % 5 !== 0 || !priceText || !Number.isFinite(priceArs) || priceArs < 0) {
+      setError("Revisá el nombre, la duración en múltiplos de 5 y el precio no negativo.");
       return;
     }
     const controller = new AbortController();
@@ -160,9 +160,9 @@ export function ServicesScreen({ services, onSave, onRefresh, onLifecycle }: {
             <div className="services-form-terms">
               <div className="services-field">
                 <label htmlFor="service-duration">Duración (minutos)</label>
-                <input id="service-duration" name="durationMinutes" type="number" min="15" step="15" required
+                <input id="service-duration" name="durationMinutes" type="number" min="5" step="5" required
                   defaultValue={editing?.durationMinutes ?? 15} aria-describedby="service-duration-help" />
-                <small id="service-duration-help">Usá múltiplos de 15 minutos.</small>
+                <small id="service-duration-help">Usá múltiplos de 5 minutos.</small>
               </div>
               <div className="services-field">
                 <label htmlFor="service-price">Precio (ARS)</label>

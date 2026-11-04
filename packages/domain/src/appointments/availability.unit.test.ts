@@ -57,6 +57,16 @@ describe("weekly schedule representation and containment", () => {
 });
 
 describe("pure structural availability", () => {
+  test("accepts five-minute durations without changing the quarter-hour start grid", () => {
+    for (const durationMinutes of [5, 10, 20, 25, 15, 45]) {
+      expect(isStructurallyAvailable(request({ durationMinutes }))).toBe(true);
+      expect(isStructurallyAvailable(request({ durationMinutes, start: "2026-06-01T09:05:00-03:00" }))).toBe(false);
+    }
+    const busy = [{ start: "2026-06-01T09:20:00-03:00", end: "2026-06-01T09:30:00-03:00" }];
+    expect(isStructurallyAvailable(request({ durationMinutes: 20, busyIntervals: busy }))).toBe(true);
+    expect(isStructurallyAvailable(request({ durationMinutes: 25, busyIntervals: busy }))).toBe(false);
+  });
+
   test("accepts exact fits and rejects pause-crossing, overruns and off-days", () => {
     expect(isStructurallyAvailable(request({ durationMinutes: 180 }))).toBe(true);
     expect(isStructurallyAvailable(request({ durationMinutes: 195 }))).toBe(false);

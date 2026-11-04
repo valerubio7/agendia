@@ -132,7 +132,7 @@ test("Servicios creates and edits persisted owned services with safe validation 
     await expect(edit.getByLabel("Precio (ARS)")).toHaveValue("0");
     await expect(edit.getByLabel("Descripción (opcional)")).toHaveValue("Una primera conversación para planificar tu atención.");
     await edit.getByLabel("Nombre", { exact: true }).fill(" acompañamiento personalizado para pequeños negocios ");
-    await edit.getByLabel("Duración (minutos)").fill("45");
+    await edit.getByLabel("Duración (minutos)").fill("20");
     await edit.getByLabel("Precio (ARS)").fill("2750.125");
     await edit.getByLabel("Descripción (opcional)").fill("Seguimiento acordado.");
     const conflict = businessPage.waitForResponse(response => response.request().method() === "PUT" && /\/api\/me\/services\/[^/]+$/.test(response.url()));
@@ -160,7 +160,7 @@ test("Servicios creates and edits persisted owned services with safe validation 
     await expect(screen.locator(".services-form").getByRole("alert")).toHaveCount(0);
     await businessPage.reload();
     const updated = list.getByRole("listitem").filter({ hasText: "Consulta de seguimiento" });
-    await expect(updated.getByText("45 min", { exact: true })).toBeVisible();
+    await expect(updated.getByText("20 min", { exact: true })).toBeVisible();
     await expect(updated.getByText(/^ARS\s+2\.750,125$/)).toBeVisible();
     await expect(updated.getByText("Seguimiento acordado.", { exact: true })).toBeVisible();
     await inactive.getByRole("button", { name: /Editar/ }).click();

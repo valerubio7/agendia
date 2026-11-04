@@ -57,8 +57,8 @@ describe("service input", () => {
     });
   }
 
-  test("accepts positive quarter-hour durations without an arbitrary maximum", () => {
-    for (const durationMinutes of [15, 30, 45, 90, 150_000]) {
+  test("accepts positive five-minute durations without an arbitrary maximum", () => {
+    for (const durationMinutes of [5, 10, 20, 25, 15, 30, 45, 90, 150_000]) {
       expect(ServiceInputSchema.parse({ ...valid, durationMinutes }).durationMinutes).toBe(durationMinutes);
     }
   });

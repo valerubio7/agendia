@@ -16,7 +16,7 @@ export function appointmentInterval(row: SavedAppointmentInterval): EpochInterva
   const startMs = Number(row.startMs), endMs = Number(row.endMs);
   if (parseInstantMs(row.startRaw) !== startMs || !Number.isSafeInteger(endMs) || endMs <= startMs
     || endMs > 253402387139999 || !Number.isSafeInteger(row.durationMinutes) || row.durationMinutes <= 0
-    || row.durationMinutes % 15 !== 0 || endMs !== startMs + row.durationMinutes * 60000)
+    || row.durationMinutes % 5 !== 0 || endMs !== startMs + row.durationMinutes * 60000)
     throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
   return { startMs, endMs };
 }

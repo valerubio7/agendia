@@ -230,7 +230,7 @@ export function isEpochIntervalOpenForClosures(interval: EpochInterval, closures
 export function isStructurallyAvailable(input: AvailabilityInput): boolean {
   const start = parseInstant(input.start);
   const duration = input.durationMinutes;
-  if (start === undefined || !Number.isSafeInteger(duration) || duration <= 0 || duration % 15 !== 0) return false;
+  if (start === undefined || !Number.isSafeInteger(duration) || duration <= 0 || duration % 5 !== 0) return false;
   const end = start + duration * MINUTE_MS;
   if (!Number.isSafeInteger(end) || end > MAX_DATE_MS || end <= start) return false;
   const localStart = start + offsetAt(start);

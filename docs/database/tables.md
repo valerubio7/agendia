@@ -93,7 +93,7 @@ Comprobante de una operación de agenda disparada desde WhatsApp. `outbound_id` 
 ## Catálogo
 
 ### `services`
-Servicio ofrecido. `duration_minutes` debe ser múltiplo de 15; `price_ars` no puede ser negativo. `deleted_at` es borrado lógico; el nombre normalizado es único por negocio entre los no borrados.
+Servicio ofrecido. `duration_minutes` debe ser un múltiplo positivo de 5; `price_ars` no puede ser negativo. `deleted_at` es borrado lógico; el nombre normalizado es único por negocio entre los no borrados.
 
 ### `clients`
 Cliente del negocio. `phone` en formato E.164 (`+` y hasta 15 dígitos); único por negocio. El agente puede crear clientes.
@@ -113,7 +113,7 @@ Horario semanal del negocio en `weekly_schedule` (JSON validado por `valid_busin
 Cierres por fecha (`kind = 'date'`) o por intervalo (`kind = 'interval'`). Los intervalos guardan `start_raw`/`end_raw` y milisegundos para evitar ambigüedad de zona horaria.
 
 ### `appointments`
-Turno. Congela `service_label`, `resource_label`, `price_ars` y `duration_minutes` para que un cambio de catálogo no altere el historial. `state` es `confirmed`, `done`, `cancelled` o `no_show`; `origin` es `manual` o `ai`. Una exclusión GiST impide dos turnos `confirmed` superpuestos para el mismo recurso. `customer_resource_preference_id` registra una preferencia opcional.
+Turno. Congela `service_label`, `resource_label`, `price_ars` y `duration_minutes` (múltiplo positivo de 5) para que un cambio de catálogo no altere el historial. Los inicios de turnos siguen una grilla de 15 minutos. `state` es `confirmed`, `done`, `cancelled` o `no_show`; `origin` es `manual` o `ai`. Una exclusión GiST impide dos turnos `confirmed` superpuestos para el mismo recurso. `customer_resource_preference_id` registra una preferencia opcional.
 
 ### `appointment_operation_receipts`
 Idempotencia de operaciones de turno. PK `(business_id, actor_id, operation_key)`; `kind` es `create`, `change`, `notes` o `state`; `state` es `completed`, `failed` o `cancelled`. El resultado se guarda en `result`.
