@@ -1221,6 +1221,86 @@ async function pendingNames(h: Awaited<ReturnType<typeof fixture>>) {
   });
 }
 describe("native booking names: provenance enforcement, not semantic name ownership", () => {
+  for (const namesFirst of [false, true]) test(`combined acceptance and new names, names first=${namesFirst}`, async () => {
+    const h = await fixture(true, false);
+    const offer = await h.run("12:00", async tools => {
+      const quote = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T12:15:00-03:00" });
+      return JSON.stringify({ text: "¿Te sirve a las 12:15?", presentedQuoteReference: quote.presentationReference });
+    });
+    if (offer.status !== "committed") throw new Error("Missing offer");
+    await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${offer.outboundId}`;
+    const result = await h.run("sí, dale, soy María Pérez", async tools => {
+      const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!, consent = naturalArguments(tools);
+      const names = (reference: string | null) => tools.execute("collect_booking_names", { namesReference: reference,
+        firstName: nameField(current.messageId, "María", 14), lastName: nameField(current.messageId, "Pérez", 20) });
+      if (namesFirst) {
+        expect((await names(runtime.namesReference)).status).toBe("prepared_quote");
+        expect((await tools.execute("confirm_quote_naturally", consent)).status).toBe("staged_action");
+      } else {
+        const confirmation = await tools.execute("confirm_quote_naturally", consent);
+        expect(confirmation.status).toBe("clarification");
+        expect((await names(confirmation.namesReference ?? null)).status).toBe("staged_action");
+      }
+      return final(tools, "Quedó reservado.");
+    });
+    if (result.status !== "committed") throw new Error("Missing booking");
+    expect(result.actions).toHaveLength(1);
+    expect(await h.appointments()).toHaveLength(1);
+    expect((await h.appointments())[0]!.client).toMatchObject({ firstName: "María", lastName: "Pérez", phone });
+  });
+  for (const intervention of ["correct names", "prepare again"] as const) test(`new-name consent binding rejects ${intervention}`, async () => {
+    const h = await fixture(true, false);
+    const offer = await h.run("ese horario", async tools => {
+      const quote = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start });
+      return JSON.stringify({ text: "¿Te sirve?", presentedQuoteReference: quote.presentationReference });
+    });
+    if (offer.status !== "committed") throw new Error("Missing offer");
+    await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${offer.outboundId}`;
+    const outcome = await h.run("sí, soy María Pérez, no Gómez", async tools => {
+      const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!, consent = naturalArguments(tools);
+      const collected = await tools.execute("collect_booking_names", { namesReference: runtime.namesReference,
+        firstName: nameField(current.messageId, "María", current.text.indexOf("María")),
+        lastName: nameField(current.messageId, "Pérez", current.text.indexOf("Pérez")) });
+      expect(collected.status).toBe("prepared_quote");
+      if (intervention === "correct names") {
+        expect((await tools.execute("collect_booking_names", { namesReference: collected.namesReference,
+          lastName: nameField(current.messageId, "Gómez", current.text.indexOf("Gómez")) })).status).toBe("prepared_quote");
+      } else {
+        expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start })).status).toBe("data");
+      }
+      expect(await tools.execute("confirm_quote_naturally", consent)).toMatchObject({ status: "rejected", code: "INVALID_CONFIRMATION_BINDING" });
+      return final(tools, "Necesito confirmar los datos.");
+    });
+    if (outcome.status !== "committed") throw new Error("Missing response");
+    expect(outcome.actions).toHaveLength(0);
+    expect(await h.appointments()).toHaveLength(0);
+    const [counts] = await db.sql`select (select count(*)::int from clients where business_id=${h.business}) clients,
+      (select count(*)::int from outbox_events where business_id=${h.business} and topic='appointment.changed') effects`;
+    expect(counts).toEqual({ clients: 0, effects: 0 });
+  });
+  for (const changed of ["terms", "undelivered"] as const) test(`new names cannot confirm ${changed} offer`, async () => {
+    const h = await fixture(true, false);
+    const offer = await h.run("ese horario", async tools => {
+      const quote = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start });
+      return JSON.stringify({ text: "¿Te sirve?", presentedQuoteReference: quote.presentationReference });
+    });
+    if (offer.status !== "committed") throw new Error("Missing offer");
+    if (changed === "terms") {
+      await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${offer.outboundId}`;
+      await db.sql`update services set price_ars=2000 where id=${h.service}`;
+    }
+    await h.run("sí, dale, soy María Pérez", async tools => {
+      const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
+      const consent = tools.context.naturalConfirmation;
+      expect((await tools.execute("collect_booking_names", { namesReference: runtime.namesReference,
+        firstName: nameField(current.messageId, "María", 14), lastName: nameField(current.messageId, "Pérez", 20) })).status).toBe("prepared_quote");
+      if (consent) expect(await tools.execute("confirm_quote_naturally", { ...consent, evidence: tools.context.message }))
+        .toMatchObject({ status: "prepared_quote", reason: "TERMS_CHANGED" });
+      else expect(changed).toBe("undelivered");
+      return final(tools);
+    });
+    expect(await h.appointments()).toHaveLength(0);
+  });
   test("delivered 12:15 offer accepted before names creates once without another confirmation", async () => {
     const h = await fixture(true, false);
     const offered = await h.run("12:00", async tools => {

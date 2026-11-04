@@ -159,7 +159,10 @@ export class PostgresWhatsAppAgenda {
         const namesReference = () => phone && !knownClient && !dialogue.change && !dialogue.reschedule
           && (dialogue.quote?.kind === "book" || dialogue.awaiting?.length)
           ? fingerprint("booking_names", { inbound: source.id, text: source.raw_text, nameSources, draft: dialogue, namesRevision }) : null;
-        const initialQuoteSnapshot = dialogue.quote ? JSON.stringify(dialogue.quote) : null;
+        const initialQuote = dialogue.quote ? structuredClone(dialogue.quote) : null;
+        const initialQuoteSnapshot = initialQuote ? JSON.stringify(initialQuote) : null;
+        const initialNameFields = { ...(dialogue.bookingNameFields ?? dialogue.bookingNames ?? {}) };
+        let namesOnlyQuoteSnapshot: string | null = null;
         const naturalConfirmation = phone && dialogue.quote && (!dialogue.awaitingNames || dialogue.quote.kind === "book")
           && dialogue.quote.sourceMessageId !== source.id
           && await repo.agendaQuoteDelivered(dialogue.quote.outboundId, source.connection_id, phone)
@@ -175,16 +178,19 @@ export class PostgresWhatsAppAgenda {
         });
         const session = new AgentToolSession(async command => {
           const reading = ["read_business", "read_catalog", "read_calendar", "read_resources", "availability", "owned_appointments", "owned_appointment"].includes(command.name);
+          if (!reading && command.name !== "collect_booking_names" && command.name !== "confirm_quote_naturally") namesOnlyQuoteSnapshot = null;
           if (actions.length && !reading) return { status: "rejected", code: "ACTION_ALREADY_STAGED" };
           if (!phone && !["read_business", "read_catalog", "read_calendar", "read_resources", "availability"].includes(command.name))
             return { status: "rejected", code: "UNVERIFIED_SENDER" };
+          const quoteWithNewNames = command.name === "confirm_quote_naturally" && namesOnlyQuoteSnapshot !== null
+            && JSON.stringify(dialogue.quote) === namesOnlyQuoteSnapshot;
           if (command.name === "confirm_quote_naturally") {
             if (!naturalConfirmation) return { status: "clarification", code: "NATURAL_CONFIRMATION_UNAVAILABLE" };
             const args = command.arguments;
             if (args.evidence !== source.raw_text || args.evidenceReference !== naturalConfirmation.evidenceReference
               || args.quoteFingerprint !== naturalConfirmation.quoteFingerprint || !dialogue.quote
-              || JSON.stringify(dialogue.quote) !== initialQuoteSnapshot
-              || fingerprint("quote", dialogue.quote) !== args.quoteFingerprint)
+              || (!quoteWithNewNames && (JSON.stringify(dialogue.quote) !== initialQuoteSnapshot
+                || fingerprint("quote", dialogue.quote) !== args.quoteFingerprint)))
               return { status: "rejected", code: "INVALID_CONFIRMATION_BINDING" };
           }
           if (command.name === "cancel" && command.arguments.binding) {
@@ -269,11 +275,16 @@ export class PostgresWhatsAppAgenda {
               } else {
                 const mutation = command.name === "cancel" || command.name === "notes" || command.name === "preference"
                   ? command : null;
+                if (quoteWithNewNames && draft.quote && initialQuote) {
+                  draft.quote.sourceMessageId = initialQuote.sourceMessageId;
+                  draft.quote.outboundId = initialQuote.outboundId;
+                }
                 // Only this separate, runtime-bound protocol enables model-interpreted
                 // consent. Delivery, ownership, terms, capacity and persistence still
                 // follow the same guarded branch; other linguistic guards stay intact.
                 reply = await this.respond(inner, job, source, phone!, draft, mutation,
-                  command.name === "confirm_quote_naturally" ? { sourceMessageId: source.id, quoteSnapshot: initialQuoteSnapshot! } : undefined,
+                  command.name === "confirm_quote_naturally" ? { sourceMessageId: source.id,
+                    quoteSnapshot: quoteWithNewNames ? JSON.stringify(draft.quote) : initialQuoteSnapshot! } : undefined,
                   command.name === "cancel" && command.arguments.binding
                     ? ap => cancellationReference(ap) === command.arguments.binding!.evidenceReference : undefined);
               }
@@ -298,11 +309,25 @@ export class PostgresWhatsAppAgenda {
               dialogue = result.reply.dialogue;
               rejectPreparation();
             } else if (result.reply) {
-              if (JSON.stringify(dialogue.quote) !== JSON.stringify(result.reply.dialogue.quote)) presentationRevision++;
+              const beforeQuote = JSON.stringify(dialogue.quote);
+              const beforeNameFields = dialogue.bookingNameFields ?? dialogue.bookingNames ?? {};
+              if (beforeQuote !== JSON.stringify(result.reply.dialogue.quote)) presentationRevision++;
               dialogue = result.reply.dialogue;
               namesRevision++;
               if (result.reply.saved) actions.push({ operation: command.name, appointmentId: result.reply.saved.id });
-            }
+              if (command.name === "collect_booking_names" && initialQuote?.kind === "book" && dialogue.quote?.kind === "book"
+                && (beforeQuote === initialQuoteSnapshot || beforeQuote === namesOnlyQuoteSnapshot)) {
+                const fields = dialogue.bookingNameFields ?? {};
+                const originalTerms = { ...dialogue.quote, names: initialQuote.names,
+                  sourceMessageId: initialQuote.sourceMessageId, outboundId: initialQuote.outboundId };
+                namesOnlyQuoteSnapshot = JSON.stringify(originalTerms) === initialQuoteSnapshot
+                  && (!initialNameFields.firstName || fields.firstName === initialNameFields.firstName)
+                  && (!initialNameFields.lastName || fields.lastName === initialNameFields.lastName)
+                  && (!beforeNameFields.firstName || fields.firstName === beforeNameFields.firstName)
+                  && (!beforeNameFields.lastName || fields.lastName === beforeNameFields.lastName)
+                  ? JSON.stringify(dialogue.quote) : null;
+              } else if (!reading) namesOnlyQuoteSnapshot = null;
+            } else if (!reading && command.name !== "collect_booking_names") namesOnlyQuoteSnapshot = null;
             return { ...result.result, namesReference: namesReference(),
               ...(dialogue.quote ? { presentationReference: presentationReference() } : {}) };
           } catch (error) {

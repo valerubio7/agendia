@@ -41,7 +41,8 @@ test("native names policy distinguishes own-name interpretation from authenticat
   for (const boundary of ["collect_booking_names", "namesReference", "campos literales autenticados de nameSources",
     "miembros anteriores autenticados del grupo actual", "historial ni resúmenes", "Conservá los campos omitidos", "ninguna frase mágica",
     "nombres de terceros", "cliente registrado", "no demuestra la titularidad semántica del nombre", "entrega nueva",
-    "Los nombres por sí solos no son consentimiento.", "Consultar o elegir un horario no es aceptación",
+    "Los nombres por sí solos no son consentimiento.", "Si la misma respuesta acepta y da nombres, confirmá primero y luego recogé los nombres con la namesReference fresca del resultado",
+    "Consultar o elegir un horario no es aceptación",
     "aceptación distinta y posterior", "El DNI, la cobertura médica y los nombres visibles de perfil"])
     expect(AGENT_RESPONSE_INSTRUCTIONS).toContain(boundary);
 });
