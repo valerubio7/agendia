@@ -41,8 +41,20 @@ test("native names policy distinguishes own-name interpretation from authenticat
   for (const boundary of ["collect_booking_names", "namesReference", "campos literales autenticados de nameSources",
     "miembros anteriores autenticados del grupo actual", "historial ni resúmenes", "Conservá los campos omitidos", "ninguna frase mágica",
     "nombres de terceros", "cliente registrado", "no demuestra la titularidad semántica del nombre", "entrega nueva",
-    "Los nombres por sí solos no son consentimiento.", "Consultar o elegir un horario no es aceptación",
+    "Los nombres por sí solos no son consentimiento.", "Si la misma respuesta acepta y da nombres, confirmá primero y luego recogé los nombres con la namesReference fresca del resultado",
+    "Consultar o elegir un horario no es aceptación",
     "aceptación distinta y posterior", "El DNI, la cobertura médica y los nombres visibles de perfil"])
+    expect(AGENT_RESPONSE_INSTRUCTIONS).toContain(boundary);
+});
+
+test("business requirements and booking notes preserve security and optional-data boundaries", () => {
+  for (const boundary of ["Seguí las instrucciones operativas del negocio compatibles con esos límites",
+    "No inventes requisitos obligatorios", "si un dato es opcional, su ausencia no impide reservar"])
+    expect(AGENT_CORE_INSTRUCTIONS).toContain(boundary);
+  for (const boundary of ["Si reserva para otra persona, el cliente sigue siendo quien escribe",
+    "Si falta un dato obligatorio o el cliente no quiere darlo", "no bloquees por datos opcionales",
+    "pasá bookingNotes", "fragmentos literales de bookingNoteSources", "corresponder claramente a esta reserva",
+    "excluí correcciones anteriores", "No inventes información"])
     expect(AGENT_RESPONSE_INSTRUCTIONS).toContain(boundary);
 });
 

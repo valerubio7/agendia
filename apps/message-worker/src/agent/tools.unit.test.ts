@@ -63,6 +63,21 @@ describe("agent tool boundary", () => {
     expect(parseAgentTool("confirm_quote_naturally", { ...valid, quoteFingerprint: "old" })).toBeNull();
     expect(parseAgentTool("confirm_quote_naturally", { ...valid, evidence: "x".repeat(12001) })).toBeNull();
   });
+  test("booking notes require bounded literal source spans on booking tools", () => {
+    const notes = [{ messageId: id, value: "Paciente: Thiago", start: 0 }];
+    const confirmation = { evidence: "sí", evidenceReference: "a".repeat(64), quoteFingerprint: "b".repeat(64) };
+    const names = { namesReference: "c".repeat(64), firstName: { messageId: id, value: "Tomi", start: 0 } };
+    for (const [name, args] of [["confirm_quote", {}], ["confirm_quote_naturally", confirmation],
+      ["finish_accepted_booking", confirmation], ["collect_booking_names", names]] as const) {
+      expect(parseAgentTool(name, args)?.name).toBe(name);
+      expect(parseAgentTool(name, { ...args, bookingNotes: notes })?.name).toBe(name);
+      for (const invalid of [[], [{ ...notes[0], messageId: "bad" }], [{ ...notes[0], start: -1 }],
+        [{ ...notes[0], value: "" }], [{ ...notes[0], value: "a\0b" }],
+        [{ ...notes[0], value: "x".repeat(2001) }], Array(21).fill(notes[0]),
+        [{ ...notes[0], value: "x".repeat(1000) }, { ...notes[0], value: "x".repeat(1000) }]])
+        expect(parseAgentTool(name, { ...args, bookingNotes: invalid })).toBeNull();
+    }
+  });
   test("native cancellation extends the strict legacy contract with a complete binding, never consent flags", () => {
     const binding = { evidence: "quería cancelar mi turno", evidenceReference: "a".repeat(64) };
     expect(parseAgentTool("cancel", { appointmentId: id, binding })?.name).toBe("cancel");
@@ -81,7 +96,7 @@ describe("agent tool boundary", () => {
       ...[{}, { ...field, start: -1 }, { ...field, start: 0.5 }, { ...field, value: " " },
         { ...field, value: "x".repeat(101) }, { ...field, proof: true }].map(firstName => ({ ...args, firstName }))])
       expect(parseAgentTool("collect_booking_names", invalid)).toBeNull();
-    expect(agentToolDefinitions).toHaveLength(16);
+    expect(agentToolDefinitions).toHaveLength(17);
   });
   test("native metadata bindings require complete member evidence and operation-specific selection fields", () => {
     const binding = { evidenceReference: "a".repeat(64), messageId: id, evidence: "Anotá: café ☕" };

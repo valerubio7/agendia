@@ -26,6 +26,16 @@ export async function agendaSender(db: Db, messageId: string): Promise<string | 
       where s.message_id=${messageId} and m.direction='inbound'`;
   return row?.phone ?? null;
 }
+export async function latestAgendaActionSequence(db: Db, businessId: string, connectionId: string,
+  conversationId: string, phone: string): Promise<string> {
+  const [row] = await db<{ sequence: string | null }[]>`select max(m.sequence)::text as sequence
+      from whatsapp_agenda_receipts r
+      join messages m on (m.business_id,m.id)=(r.business_id,r.message_id)
+      join whatsapp_received_senders s on (s.business_id,s.message_id)=(m.business_id,m.id)
+      where m.business_id=${businessId} and m.connection_id=${connectionId} and m.conversation_id=${conversationId}
+        and s.phone=${phone} and r.operation in ('confirm_quote','confirm_quote_naturally','finish_accepted_booking','collect_booking_names','cancel','notes','preference','clear_pending')`;
+  return row?.sequence ?? "0";
+}
 export async function lockAgendaDialogue(db: Db, businessId: string, connectionId: string, phone: string): Promise<AgendaDialogue> {
   await db`select pg_advisory_xact_lock(hashtextextended(${`agenda:${businessId}:${connectionId}:${phone}`},0))`;
   const [row] = await db<{ dialogue: AgendaDialogue }[]>`select dialogue from whatsapp_agenda_dialogues

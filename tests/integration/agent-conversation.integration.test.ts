@@ -57,6 +57,80 @@ async function fixture() {
   return { business, service, resource, receive, worker, outputs, appointments };
 }
 describe("production inbound native conversation with transactional tools", () => {
+  test("scripted business requirements preserve patient notes and warn before booking", async () => {
+    const h = await fixture();
+    const instructions = "Para confirmar el turno, solicita el DNI, edad, fecha de nacimiento número de teléfono del paciente, si va a pagar por cooperativa particular u obra social, da el aviso que si es por cooperativa itene que traer la orden y si no la tiene se cobra particular";
+    await db.sql`update agent_configs set business_instructions=${instructions} where business_id=${h.business}`;
+    await db.sql`delete from clients where business_id=${h.business}`;
+    const markSent = async () => {
+      const output = (await h.outputs()).at(-1)!;
+      await db.sql`update outbound_commands set state='sent',send_started_at=now(),acknowledged_at=now() where outbound_id=${output.outbound_id}`;
+      return output;
+    };
+    const patient = await h.receive("Quiero un turno para mi hermano Thiago Ojeda");
+    const askName = h.worker(async request => {
+      expect(JSON.stringify(request.messages)).toContain(instructions);
+      return finish('{"text":"¿Cuál es tu nombre y apellido?"}');
+    });
+    await askName.processor.process(patient);
+    expect((await h.outputs()).at(-1)!.text).toContain("tu nombre y apellido");
+    expect(await h.appointments()).toHaveLength(0);
+    await markSent();
+    let round = 0;
+    const prepare = h.worker(async request => {
+      if (!round++) return batch("prepare", "prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T10:00:00-03:00" });
+      const quote = JSON.parse(request.messages.at(-1)!.content!);
+      expect(quote.status).toBe("prepared_quote");
+      return finish(JSON.stringify({ text: "¿Te sirve el turno?", presentedQuoteReference: quote.presentationReference }));
+    });
+    await prepare.processor.process(await h.receive("mi nombre es Tomi Ojeda"));
+    expect(await h.appointments()).toHaveLength(0);
+    await markSent();
+    round = 0;
+    const accept = h.worker(async request => {
+      if (!round++) {
+        const runtime = JSON.parse(request.messages[1]!.content!).runtime;
+        return batch("accept", "confirm_quote_naturally", { ...runtime.naturalConfirmation,
+          evidence: runtime.currentEvidence, deferForBusinessRequirements: true });
+      }
+      expect(JSON.parse(request.messages.at(-1)!.content!).reason).toBe("BUSINESS_REQUIREMENTS_PENDING");
+      return finish('{"text":"Necesito DNI, edad, fecha de nacimiento, teléfono y modalidad de pago del paciente."}');
+    });
+    await accept.processor.process(await h.receive("sí"));
+    expect((await h.outputs()).at(-1)!.text).toContain("modalidad de pago");
+    expect(await h.appointments()).toHaveLength(0);
+    await markSent();
+    const detailsText = "DNI 12345678, 12 años, nació 01/01/2020, teléfono 1199999999, cooperativa";
+    const details = await h.receive(detailsText);
+    const warn = h.worker(async () => finish('{"text":"Para cooperativa debe traer la orden; sin ella se cobra como particular."}'));
+    await warn.processor.process(details);
+    expect((await h.outputs()).at(-1)!.text).toContain("sin ella se cobra como particular");
+    expect(await h.appointments()).toHaveLength(0);
+    await markSent();
+    round = 0;
+    const complete = h.worker(async request => {
+      if (!round++) {
+        const runtime = JSON.parse(request.messages[1]!.content!).runtime;
+        const patientSource = runtime.bookingNoteSources.find((source: { messageId: string }) => source.messageId === patient.messageId);
+        const detailsSource = runtime.bookingNoteSources.find((source: { messageId: string }) => source.messageId === details.messageId);
+        expect(patientSource).toBeTruthy();
+        expect(detailsSource).toBeTruthy();
+        return batch("finish", "finish_accepted_booking", { ...runtime.retainedBookingConfirmation, evidence: runtime.currentEvidence,
+          bookingNotes: [{ messageId: patientSource.messageId, value: "Thiago Ojeda", start: patientSource.text.indexOf("Thiago Ojeda") },
+            { messageId: detailsSource.messageId, value: detailsText, start: 0 }] });
+      }
+      expect(JSON.parse(request.messages.at(-1)!.content!).status).toBe("staged_action");
+      return finish('{"text":"El turno quedó confirmado."}');
+    });
+    await complete.processor.process(await h.receive("gracias"));
+    expect((await h.outputs()).at(-1)!.text).toBe("El turno quedó confirmado.");
+    const [appointment] = await h.appointments();
+    expect(appointment!.notes).toContain("Thiago Ojeda");
+    expect(appointment!.notes).toContain(detailsText);
+    expect(await h.appointments()).toHaveLength(1);
+    const [client] = await db.sql`select first_name,last_name,phone from clients where id=${appointment!.client_id}`;
+    expect(client).toMatchObject({ first_name: "Tomi", last_name: "Ojeda", phone: "+5491123456789" });
+  });
   test("informal grouped input reaches model with grounded facts, then complete factual/availability batch", async () => {
     const h = await fixture();
     const older = await h.receive("ola kiero arreglarme");
