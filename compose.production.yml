@@ -1,9 +1,23 @@
 # Requires a separately provisioned PostgreSQL resource reachable on dokploy-network.
-# Confirm its private hostname/network membership and prepare schema/roles before app startup.
-# URLs must use existing least-privilege logins, never the Dokploy master/migrator login.
+# Confirm its private hostname/network membership and provision login roles before app startup.
+# Application URLs use least-privilege logins; only the migration service uses the migrator login.
 # KMS and link-code keys must be 32-byte base64 values (validated by the applications).
 services:
+  agendia-db-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+      target: db-setup
+    environment:
+      DATABASE_URL: ${MIGRATOR_DATABASE_URL:?MIGRATOR_DATABASE_URL is required}
+    networks:
+      dokploy: {}
+    restart: "no"
+
   agendia-api-runtime:
+    depends_on:
+      agendia-db-migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
     build:
       context: .
@@ -31,6 +45,9 @@ services:
       dokploy: {}
 
   agendia-message-worker:
+    depends_on:
+      agendia-db-migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
     build:
       context: .
@@ -43,6 +60,9 @@ services:
       dokploy: {}
 
   agendia-whatsapp-manager:
+    depends_on:
+      agendia-db-migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
     build:
       context: .

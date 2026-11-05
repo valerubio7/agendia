@@ -58,6 +58,7 @@ La lista completa y los valores de ejemplo están en [`.env.example`](../.env.ex
 | `BAILEYS_KMS_VERSION`, `BAILEYS_KMS_KEY` | `whatsapp-manager`. | Cifrado de credenciales; la clave debe ser base64 de 32 bytes. |
 | `WHATSAPP_LINK_CODE_KEY` | API y `whatsapp-manager`. | Cifrado del código de vinculación; también 32 bytes en base64. |
 | `API_DATABASE_URL`, `ADMIN_DATABASE_URL`, `WORKER_DATABASE_URL`, `MANAGER_DATABASE_URL` | Contenedores en producción. | URLs de los roles de capacidad. |
+| `MIGRATOR_DATABASE_URL` | Servicio `agendia-db-migrate` en producción. | URL del login migrador, usada solo durante el despliegue. |
 
 Opcionales: `API_HOST`, `API_PORT`, `WHATSAPP_MANAGER_ID`, `WHATSAPP_COMMAND_POLL_MS`, `DEEPSEEK_MODEL`.
 
