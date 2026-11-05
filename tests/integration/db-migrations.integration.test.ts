@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
-import { migrateDevelopmentDatabase } from "../../scripts/db/db-migrate.ts";
+import { migrateDatabase, migrateDevelopmentDatabase } from "../../scripts/db/db-migrate.ts";
+import { capabilities, logins, provisionLogins } from "../../scripts/db/provision-production-db.ts";
 import { startTestPostgres, type TestPostgres } from "../support/postgres.ts";
 
 let db: TestPostgres;
@@ -33,6 +34,33 @@ async function fixture(files: Record<string, string>) {
   return { sql, run, snapshot };
 }
 const base = "create table businesses(id integer primary key, counter integer not null); insert into businesses values(1,0)";
+
+test("fresh production database migrates capabilities before provisioning logins", async () => {
+  const fresh = await startTestPostgres();
+  const credentials = {
+    API_DB_PASSWORD: "test-api-password", ADMIN_DB_PASSWORD: "test-admin-password",
+    WORKER_DB_PASSWORD: "test-worker-password", MANAGER_DB_PASSWORD: "test-manager-password",
+  };
+  try {
+    const roles = () => fresh.sql`select rolname from pg_roles where rolname = any(${[...capabilities]}) order by rolname`;
+    expect(await roles()).toHaveLength(0);
+    await expect(provisionLogins(fresh.sql, credentials)).rejects.toThrow();
+    expect(await fresh.sql`select rolname from pg_roles where rolname = any(${logins.map(login => login.name)})`).toHaveLength(0);
+    await migrateDatabase(fresh.sql);
+    expect((await roles()).map(role => role.rolname)).toEqual([...capabilities].sort());
+    await provisionLogins(fresh.sql, credentials);
+    for (const login of logins) {
+      const memberships = await fresh.sql`select r.rolname from pg_auth_members m join pg_roles r on r.oid=m.roleid join pg_roles l on l.oid=m.member where l.rolname=${login.name} order by r.rolname`;
+      expect(memberships.map(role => role.rolname)).toEqual([...login.roles].sort());
+      const url = new URL(fresh.container.getConnectionUri());
+      url.username = login.name;
+      url.password = credentials[login.password];
+      const connection = postgres(url.toString(), { max: 1 });
+      try { expect((await connection`select current_user as name`)[0]!.name).toBe(login.name); }
+      finally { await connection.end(); }
+    }
+  } finally { await fresh.stop(); }
+}, 120_000);
 
 test("duration upgrade preserves legacy rows and widens both constraints", async () => {
   const files: Record<string, string> = {};
@@ -80,8 +108,8 @@ test("production CLI migrates from another cwd and development CLI repeats witho
   const sql = postgres(url.toString(), { max: 1 });
   const cwd = await mkdtemp(join(tmpdir(), "agendia-migration-cli-"));
   async function cli(file: string, args: string[]) {
-    const child = Bun.spawn([process.execPath, "run", fileURLToPath(new URL(`../../scripts/db/${file}`, import.meta.url)), ...args], {
-      cwd, env: { ...process.env, DATABASE_URL: url.toString() }, stdout: "pipe", stderr: "pipe",
+    const child = Bun.spawn([process.execPath, "--no-env-file", "run", fileURLToPath(new URL(`../../scripts/db/${file}`, import.meta.url)), ...args], {
+      cwd, env: { DATABASE_URL: url.toString() }, stdout: "pipe", stderr: "pipe",
     });
     const [stderr, code] = await Promise.all([
       new Response(child.stderr).text(), child.exited, new Response(child.stdout).text(),

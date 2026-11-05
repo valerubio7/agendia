@@ -1,11 +1,12 @@
 # Operaciones
 
-agendIA corre como cuatro contenedores sobre Dokploy y una base PostgreSQL externa. Este documento describe el despliegue, los secretos y la recuperación; no reemplaza una verificación sobre el servidor.
+agendIA corre como cuatro servicios sobre Dokploy y una base PostgreSQL externa. Un servicio adicional ejecuta las migraciones al desplegar. Este documento describe el despliegue, los secretos y la recuperación; no reemplaza una verificación sobre el servidor.
 
 ## Topología
 
 | Servicio | Imagen / target | Red | Variables |
 | --- | --- | --- | --- |
+| `agendia-db-migrate` | `Dockerfile.api` → `db-setup` | `dokploy` | `MIGRATOR_DATABASE_URL` (mapeada a `DATABASE_URL`) |
 | `agendia-api-runtime` | `Dockerfile.api` → `api` | `app` + `dokploy` (alias `agendia-api`) | `DATABASE_URL` (rol api), `ADMIN_DATABASE_URL`, `APP_ORIGIN`, `WHATSAPP_LINK_CODE_KEY` |
 | `agendia-web` | `Dockerfile.web` | `app` + `dokploy` | Build arg `AGENDIA_API_ORIGIN=http://agendia-api:3001` |
 | `agendia-message-worker` | `Dockerfile.workers` → `message-worker` | `dokploy` | `WORKER_DATABASE_URL`, `DEEPSEEK_API_KEY` |
@@ -16,7 +17,14 @@ agendIA corre como cuatro contenedores sobre Dokploy y una base PostgreSQL exter
 ## Puesta en marcha
 
 1. **Preparar PostgreSQL** con un login migrador que pueda crear roles, extensiones y esquema.
-2. **Crear los logins de capacidad** con `scripts/db/provision-production-db.ts`:
+2. **Solo para una base nueva**, configurar en el entorno las variables requeridas por `compose.production.yml`, incluida `MIGRATOR_DATABASE_URL`, y ejecutar una vez el servicio de migraciones desde la raíz del repositorio. Esto crea los roles de capacidad necesarios antes de provisionar los logins:
+
+   ```bash
+   docker compose -f compose.production.yml run --rm agendia-db-migrate
+   ```
+
+   No hace falta repetir este paso en cada despliegue: Compose ejecuta las migraciones automáticamente al desplegar.
+3. **Crear los logins de capacidad** con `scripts/db/provision-production-db.ts`:
 
    ```bash
    DATABASE_URL=postgres://migrador:... \
@@ -27,21 +35,21 @@ agendIA corre como cuatro contenedores sobre Dokploy y una base PostgreSQL exter
 
    Crea `agendia_api`, `agendia_admin`, `agendia_worker` y `agendia_manager`; el manager hereda también el rol de worker para pg-boss.
 
-3. **Aplicar migraciones** con el target `db-setup` de `Dockerfile.api`, o con `bun scripts/db/provision-production-db.ts migrate` usando el login migrador. El target no está declarado en `compose.production.yml`: se ejecuta como tarea previa al despliegue.
-4. **Configurar las variables** en Dokploy y desplegar `compose.production.yml` desde la raíz del repositorio.
-5. **Crear el administrador** con `scripts/db/bootstrap-admin.ts`, usando una URL que pueda insertar en `auth_identities` (admin o migrador, no el login api):
+4. **Configurar las variables** en Dokploy, incluida `MIGRATOR_DATABASE_URL` con el login migrador, y desplegar `compose.production.yml` desde la raíz del repositorio. Compose ejecuta `agendia-db-migrate`; la API y los workers esperan a que termine correctamente. Si falla, revisá sus logs antes de volver a desplegar.
+5. **Comprobar el despliegue**: verificá que el servicio de migraciones haya terminado correctamente y que la API y los workers hayan arrancado.
+6. **Crear el administrador** con `scripts/db/bootstrap-admin.ts`, usando una URL que pueda insertar en `auth_identities` (admin o migrador, no el login api):
 
    ```bash
    DATABASE_URL=postgres://agendia_admin:... AGENDIA_ADMIN_EMAIL=... AGENDIA_ADMIN_PASSWORD=... \
    bun scripts/db/bootstrap-admin.ts
    ```
 
-6. **Vincular WhatsApp** desde el panel del negocio. El manager restaura las conexiones existentes al arrancar.
+7. **Vincular WhatsApp** desde el panel del negocio. El manager restaura las conexiones existentes al arrancar.
 
 ## Secretos
 
 - `BAILEYS_KMS_KEY` y `WHATSAPP_LINK_CODE_KEY` deben ser base64 de exactamente 32 bytes. Se validan al arrancar; una clave inválida impide el arranque.
-- `API_DATABASE_URL`, `ADMIN_DATABASE_URL`, `WORKER_DATABASE_URL` y `MANAGER_DATABASE_URL` son variables de Dokploy; el compose las mapea a los nombres que leen los procesos.
+- `API_DATABASE_URL`, `ADMIN_DATABASE_URL`, `WORKER_DATABASE_URL`, `MANAGER_DATABASE_URL` y `MIGRATOR_DATABASE_URL` son variables de Dokploy; el compose las mapea a los nombres que leen los procesos. La URL migradora se entrega solo al servicio de migraciones; protegé el acceso a las variables y al archivo de entorno de Dokploy.
 - Cambiar `BAILEYS_KMS_KEY` sin re-cifrar `whatsapp_auth_records` y `whatsapp_link_codes` deja las credenciales ilegibles. No hay rotación automatizada.
 - No copies URLs, claves ni códigos de vinculación a logs, tickets o capturas.
 
@@ -56,6 +64,8 @@ git push origin vX.Y.Z
 ```
 
 Dokploy construye las imágenes desde el repositorio; el workflow no publica imágenes en un registry. El despliegue productivo es una decisión humana posterior al release.
+
+Las migraciones deben ser compatibles con la versión anterior mientras esta siga activa: la dependencia de Compose no detiene procesos que ya están ejecutándose. Para cambios incompatibles, planificá una ventana de mantenimiento y un backup verificado. Volver a una versión anterior de la aplicación no revierte el esquema.
 
 ## Backups
 
@@ -86,4 +96,4 @@ Restaurá en una base nueva, aplicá las migraciones y probá el restore antes d
 - Sin backup/restore automatizado (issue #121).
 - Sin endpoint de salud ni healthcheck en los contenedores.
 - Sin rotación automática de claves de cifrado.
-- La provisión de PostgreSQL y la ejecución de migraciones son pasos manuales de Dokploy.
+- La provisión de PostgreSQL y de los logins de capacidad sigue siendo manual. Las migraciones se ejecutan al desplegar.
