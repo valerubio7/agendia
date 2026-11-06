@@ -613,7 +613,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
       if (session.role === "platform_admin") router.replace("/businesses");
       else router.replace("/profile");
     } catch (cause) {
-      setError(await api.errorMessage(cause));
+      setError(api.loginErrorMessage(cause));
       loginPendingRef.current = false;
       setLoginPending(false);
     }

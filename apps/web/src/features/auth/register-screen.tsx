@@ -2,7 +2,7 @@
 
 import { useRef, useState, type FormEvent, type FormEventHandler, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { api, ApiError } from "../../api/api-client";
+import { api } from "../../api/api-client";
 import { Brand } from "../../components/brand";
 import { AuthStory } from "./login-screen";
 
@@ -44,7 +44,7 @@ export function Register() {
       await api.register({ name: String(values.get("name")), email: String(values.get("email")), password });
       form.reset(); setSuccess(true); router.replace("/login?registro=pendiente");
     } catch (error) {
-      setMessage(error instanceof ApiError && error.status === 409 ? "Este correo ya está registrado." : error instanceof ApiError && error.status === 429 ? "Demasiados intentos. Intentá nuevamente más tarde." : api.errorMessage(error));
+      setMessage(api.registrationErrorMessage(error));
     } finally { inFlight.current = false; setPending(false); }
   };
   return <RegisterScreen pending={pending} success={success} feedback={message && <p role={success ? "status" : "alert"}>{message}</p>} submitAction={submit} />;

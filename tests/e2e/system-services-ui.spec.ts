@@ -135,10 +135,17 @@ test("Servicios creates and edits persisted owned services with safe validation 
     await edit.getByLabel("Duración (minutos)").fill("20");
     await edit.getByLabel("Precio (ARS)").fill("2750.125");
     await edit.getByLabel("Descripción (opcional)").fill("Seguimiento acordado.");
+    const unrelatedConflict = async (route: import("@playwright/test").Route) => {
+      await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ code: "CONFLICT", message: "Unrelated conflict" }) });
+    };
+    await businessPage.route("**/api/me/services/*", unrelatedConflict);
+    await edit.getByRole("button", { name: "Guardar cambios", exact: true }).click();
+    await expect(edit.getByRole("alert")).toHaveText("Los datos cambiaron. Recargá y volvé a intentar.");
+    await businessPage.unroute("**/api/me/services/*", unrelatedConflict);
     const conflict = businessPage.waitForResponse(response => response.request().method() === "PUT" && /\/api\/me\/services\/[^/]+$/.test(response.url()));
     await edit.getByRole("button", { name: "Guardar cambios", exact: true }).click();
     expect((await conflict).status()).toBe(409);
-    await expect(edit.getByRole("alert")).toHaveText("Los datos cambiaron. Recargá y volvé a intentar.");
+    await expect(edit.getByRole("alert")).toHaveText("Ya hay un servicio con ese nombre. Elegí otro nombre.");
     await expect(edit.getByLabel("Precio (ARS)")).toHaveValue("2750.125");
     await expect(edit.getByLabel("Descripción (opcional)")).toHaveValue("Seguimiento acordado.");
     await businessPage.screenshot({ path: testInfo.outputPath("services-conflict.png"), fullPage: true });
@@ -156,7 +163,7 @@ test("Servicios creates and edits persisted owned services with safe validation 
     await expect(inactive.getByText("Suspendido", { exact: true })).toBeVisible();
     await businessPage.screenshot({ path: testInfo.outputPath("services-edit-refresh-warning.png"), fullPage: true });
     await checkRefreshRecovery();
-    expect(requests.PUT).toBe(2);
+    expect(requests.PUT).toBe(3);
     await expect(screen.locator(".services-form").getByRole("alert")).toHaveCount(0);
     await businessPage.reload();
     const updated = list.getByRole("listitem").filter({ hasText: "Consulta de seguimiento" });
@@ -195,6 +202,21 @@ test("Servicios creates and edits persisted owned services with safe validation 
     await businessPage.unroute("**/api/me/services");
     await businessPage.getByRole("button", { name: "Volver a intentar", exact: true }).click();
     await expect(businessPage.getByRole("listitem")).toHaveCount(2);
+
+    await create.getByLabel("Nombre", { exact: true }).fill("Consulta de seguimiento");
+    await create.getByLabel("Descripción (opcional)").fill("Conservar esta descripción");
+    const duplicate = businessPage.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/me/services"));
+    await create.getByRole("button", { name: "Crear servicio", exact: true }).click();
+    expect((await duplicate).status()).toBe(409);
+    await expect(create.getByRole("alert")).toHaveText("Ya hay un servicio con ese nombre. Elegí otro nombre.");
+    await expect(create.getByLabel("Nombre", { exact: true })).toHaveValue("Consulta de seguimiento");
+    await expect(create.getByLabel("Descripción (opcional)")).toHaveValue("Conservar esta descripción");
+    await expect(list.getByRole("listitem")).toHaveCount(2);
+    await create.getByLabel("Nombre", { exact: true }).fill("Consulta nueva");
+    await create.getByRole("button", { name: "Crear servicio", exact: true }).click();
+    await expect(create.getByRole("status")).toHaveText("Servicio creado");
+    await expect(list.getByRole("listitem")).toHaveCount(3);
+    await expect(list.getByRole("heading", { name: "Consulta nueva", exact: true })).toBeVisible();
   } finally {
     await context.close();
     await otherContext.close();

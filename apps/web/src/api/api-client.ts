@@ -202,6 +202,16 @@ const safeMessages: Record<string, string> = {
   NOT_FOUND: "El recurso no está disponible.",
 };
 
+const catalogConflictMessages = new Map<string, string>([
+  ["Service name already exists", "Ya hay un servicio con ese nombre. Elegí otro nombre."],
+  ["Client phone already exists", "Ya hay un cliente con ese teléfono. Usá otro teléfono."],
+  ["Resource name already exists", "Ya hay un recurso con ese nombre. Elegí otro nombre."],
+  ["Resource hours must fit business hours", "Los horarios de los recursos deben estar dentro del horario del negocio. Revisá ambos horarios."],
+  ["Resource change conflicts with future appointments", "El cambio del recurso presenta un conflicto con turnos futuros. Revisá los turnos antes de continuar."],
+  ["Service change conflicts with future appointments", "El cambio del servicio presenta un conflicto con turnos futuros. Revisá los turnos antes de continuar."],
+  ["Calendar change conflicts with future appointments", "El cambio del calendario presenta un conflicto con turnos futuros. Revisá los turnos antes de continuar."],
+]);
+
 export function formValues(form: FormData, allow: readonly string[]) {
   return Object.fromEntries(
     allow.map((key) => [
@@ -450,7 +460,8 @@ export class ApiClient {
     } catch (error) {
       if (!(error instanceof ApiError) || error.status !== 409 || error.code !== "CONFLICT")
         throw error;
-      if (error.message === "Activate the assistant before linking WhatsApp")
+      if (error.message === "Activate the assistant before linking WhatsApp" ||
+          error.message === "Activate the agent before linking WhatsApp")
         throw new ApiError("WHATSAPP_ASSISTANT_INACTIVE", "Assistant activation required", 409);
       if (error.message !== "WhatsApp connection already linked")
         throw error;
@@ -480,7 +491,32 @@ export class ApiClient {
     }
     throw new ApiError("NOT_FOUND", "Link code not available", 404);
   }
+  loginErrorMessage(error: unknown) {
+    if (error instanceof ApiError) {
+      if (error.status === 401 && error.code === "UNAUTHENTICATED" && error.message === "Invalid credentials")
+        return "No se pudo iniciar sesión. Revisá tus datos o intentá nuevamente más tarde.";
+      if (error.code === "UNAUTHENTICATED" || error.code === "FORBIDDEN")
+        return "No se pudo iniciar sesión. Intentá nuevamente más tarde.";
+    }
+    return this.errorMessage(error);
+  }
+  registrationErrorMessage(error: unknown) {
+    if (error instanceof ApiError) {
+      if (error.status === 409 && error.code === "CONFLICT" && error.message === "Registration unavailable")
+        return "No se pudo enviar la solicitud. Revisá los datos o intentá nuevamente más tarde.";
+      if (error.status === 429) return "No se pudo enviar la solicitud. Intentá nuevamente más tarde.";
+    }
+    return this.errorMessage(error);
+  }
   errorMessage(error: unknown) {
+    if (error instanceof ApiError) {
+      if (error.status === 409 && error.code === "CONFLICT") {
+        const message = catalogConflictMessages.get(error.message);
+        if (message) return message;
+      }
+      if (error.status === 400 && error.code === "VALIDATION_FAILED" && error.message === "Services must belong to this business")
+        return "Algunos servicios seleccionados ya no están disponibles. Actualizá la lista y volvé a elegirlos.";
+    }
     const code = error instanceof ApiError ? error.code : "INTERNAL_ERROR";
     return safeMessages[code] ?? "No se pudo completar la operación.";
   }
