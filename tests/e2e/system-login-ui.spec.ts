@@ -29,6 +29,25 @@ test("administrators can sign in only through the administration entrance", asyn
   expect((await activity).status()).toBe(204);
 });
 
+for (const [status, code, message, expected] of [
+  [401, "UNAUTHENTICATED", "Invalid credentials", "No se pudo iniciar sesión. Revisá tus datos o intentá nuevamente más tarde."],
+  [429, "FORBIDDEN", "Too many login attempts", "No se pudo iniciar sesión. Intentá nuevamente más tarde."],
+] as const) {
+  for (const path of ["/login", "/admin/login"]) {
+    test(`${path} shows neutral feedback for ${status}`, async ({ page, system }) => {
+      await page.route(`**/api/auth/${path === "/admin/login" ? "admin/login" : "login"}`, route =>
+        route.fulfill({ status, json: { code, message } }));
+      await page.goto(`${system.webUrl}${path}`);
+      await page.getByLabel("Correo", { exact: true }).fill("user@example.test");
+      await page.getByLabel("Contraseña", { exact: true }).fill("invalid password here");
+      await page.getByRole("button", { name: "Ingresar", exact: true }).click();
+      await expect(page.locator("main").getByRole("alert")).toHaveText(expected);
+      await expect(page).toHaveURL(`${system.webUrl}${path}`);
+      await expect(page.getByRole("button", { name: "Ingresar", exact: true })).toBeEnabled();
+    });
+  }
+}
+
 test("login preserves its approved semantic, responsive, and pending-state contract", async ({
   page,
   system,

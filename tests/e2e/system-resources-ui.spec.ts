@@ -173,7 +173,7 @@ test("Recursos manages owned assignments while preserving weekly spans", async (
     const conflict = business.waitForResponse(response => response.request().method() === "PUT" && response.status() === 409);
     await form.getByRole("button", { name: "Guardar cambios", exact: true }).click();
     await conflict;
-    await expect(form.getByRole("alert")).toBeVisible();
+    await expect(form.getByRole("alert")).toHaveText("Ya hay un recurso con ese nombre. Elegí otro nombre.");
     await expect(form.getByLabel("Nombre", { exact: true })).toHaveValue("Sala de consulta");
     await expect(form.getByLabel("Descripción (opcional)")).toHaveValue("Descripción inicial");
     await business.screenshot({ path: testInfo.outputPath("resources-real-conflict.png"), fullPage: true });
@@ -260,7 +260,7 @@ test("Recursos manages owned assignments while preserving weekly spans", async (
       && response.request().method() === "PUT" && response.status() === 409);
     await form.getByRole("button", { name: "Guardar cambios", exact: true }).click();
     await envelopeConflict;
-    await expect(form.getByRole("alert")).toBeVisible();
+    await expect(form.getByRole("alert")).toHaveText("Los horarios de los recursos deben estar dentro del horario del negocio. Revisá ambos horarios.");
     await expect(editor.getByLabel("Inicio Martes 1", { exact: true })).toHaveValue("08:00");
     expect(await readHours()).toEqual({ ...initialHours, name: "Recurso con franjas renombrado" });
     await business.screenshot({ path: testInfo.outputPath("resources-real-envelope-conflict-360.png"), fullPage: true });
@@ -356,7 +356,7 @@ test("Recursos manages owned assignments while preserving weekly spans", async (
       && response.request().method() === "PUT" && response.status() === 409);
     await form.getByRole("button", { name: "Guardar cambios", exact: true }).click();
     await bookingConflict;
-    await expect(form.getByRole("alert")).toBeVisible();
+    await expect(form.getByRole("alert")).toHaveText("El cambio del recurso presenta un conflicto con turnos futuros. Revisá los turnos antes de continuar.");
     await expect(editor.getByRole("button", { name: /Quitar franja/ })).toHaveCount(0);
     expect(await readHours()).toEqual(bookedRecord);
     await business.screenshot({ path: testInfo.outputPath("resources-real-booking-conflict-360.png"), fullPage: true });
@@ -440,7 +440,7 @@ test("Recursos manages owned assignments while preserving weekly spans", async (
       && response.request().method() === "DELETE" && response.status() === 409);
     await confirmation.getByRole("button", { name: "Confirmar retiro", exact: true }).click();
     await retireConflict;
-    await expect(screen.locator('.resources-catalog > [role="alert"]')).toHaveText("Los datos cambiaron. Recargá y volvé a intentar.");
+    await expect(screen.locator('.resources-catalog > [role="alert"]')).toHaveText("El cambio del recurso presenta un conflicto con turnos futuros. Revisá los turnos antes de continuar.");
     await expect(hoursRow).toBeVisible();
     expect(await readHours()).toEqual(bookedRecord);
     expect(await readBooking()).toEqual(originalBooking);

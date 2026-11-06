@@ -107,7 +107,7 @@ test("Clientes searches and edits owned identities with complete appointment his
     const conflict = business.waitForResponse(response => response.request().method() === "PUT" && response.url().endsWith(`/clients/${client.id}`));
     await save.click();
     expect((await conflict).status()).toBe(409); // Real unique-phone conflict, not mocked persistence.
-    await expect(form.getByRole("alert")).toHaveText("Los datos cambiaron. Recargá y volvé a intentar.");
+    await expect(form.getByRole("alert")).toHaveText("Ya hay un cliente con ese teléfono. Usá otro teléfono.");
     await expect(form.getByLabel("Teléfono", { exact: true })).toHaveValue(second.phone);
     await expect(save).toBeEnabled();
     await expect(save).toBeFocused();
@@ -458,7 +458,7 @@ test("Clientes creates standalone owned identities with canonical detail and GET
       new URL(response.url()).pathname === "/api/me/clients");
     await submit.click();
     expect((await duplicate).status()).toBe(409); // Existing phone in this tenant only.
-    await expect(form.getByRole("alert")).toHaveText("Los datos cambiaron. Recargá y volvé a intentar.");
+    await expect(form.getByRole("alert")).toHaveText("Ya hay un cliente con ese teléfono. Usá otro teléfono.");
     await expect(firstName).toHaveValue(" Alicia ");
     await expect(lastName).toHaveValue(" Gómez ");
     await expect(phone).toHaveValue("11 2345-6788");

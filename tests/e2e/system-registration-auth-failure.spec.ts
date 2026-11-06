@@ -1,6 +1,32 @@
 import { expect } from "@playwright/test";
 import { login, test } from "./support/fixtures.ts";
 
+test("registration shows neutral feedback for an ambiguous conflict", async ({ page, system }) => {
+  await page.route("**/api/auth/register", route => route.fulfill({ status: 409, json: { code: "CONFLICT", message: "Registration unavailable" } }));
+  await page.goto(`${system.webUrl}/register`);
+  await page.getByLabel("Nombre del negocio").fill("Negocio seguro");
+  await page.getByLabel("Correo", { exact: true }).fill("user@example.test");
+  await page.getByLabel("Contraseña", { exact: true }).fill("secure initial password");
+  await page.getByLabel("Repetir contraseña").fill("secure initial password");
+  await page.getByRole("button", { name: "Solicitar acceso" }).click();
+  await expect(page.locator("main").getByRole("alert")).toHaveText("No se pudo enviar la solicitud. Revisá los datos o intentá nuevamente más tarde.");
+  await expect(page).toHaveURL(`${system.webUrl}/register`);
+  await expect(page.getByRole("button", { name: "Solicitar acceso" })).toBeEnabled();
+});
+
+test("registration shows neutral feedback when admission is unavailable", async ({ page, system }) => {
+  await page.route("**/api/auth/register", route => route.fulfill({ status: 429, json: { code: "FORBIDDEN", message: "Too many registration attempts" } }));
+  await page.goto(`${system.webUrl}/register`);
+  await page.getByLabel("Nombre del negocio").fill("Negocio seguro");
+  await page.getByLabel("Correo", { exact: true }).fill("user@example.test");
+  await page.getByLabel("Contraseña", { exact: true }).fill("secure initial password");
+  await page.getByLabel("Repetir contraseña").fill("secure initial password");
+  await page.getByRole("button", { name: "Solicitar acceso" }).click();
+  await expect(page.locator("main").getByRole("alert")).toHaveText("No se pudo enviar la solicitud. Intentá nuevamente más tarde.");
+  await expect(page).toHaveURL(`${system.webUrl}/register`);
+  await expect(page.getByRole("button", { name: "Solicitar acceso" })).toBeEnabled();
+});
+
 for (const status of [401, 403]) {
   test(`registration ${status} preserves healthy admin controls`, async ({ page, system }) => {
     await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);

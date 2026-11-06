@@ -89,6 +89,7 @@ describe("WhatsApp QR request feedback", () => {
 
   test.each([
     ["Activate the assistant before linking WhatsApp", "Activá el asistente antes de vincular WhatsApp."],
+    ["Activate the agent before linking WhatsApp", "Activá el asistente antes de vincular WhatsApp."],
     ["Unknown conflict with private backend details", "Los datos cambiaron. Recargá y volvé a intentar."],
   ])("rejects %s promptly without polling or leaking backend text", async (message, feedback) => {
     const calls: string[] = [];

@@ -363,7 +363,7 @@ test("Horario serializes pending saves, guards suspended hours and recovers conf
     const conflict = await conflictResponse;
     expect(conflict.status()).toBe(409);
     expect(await conflict.json()).toMatchObject({ code: "CONFLICT" });
-    await expect(screen.getByRole("alert")).toHaveText("Los datos cambiaron. Recargá y volvé a intentar.");
+    await expect(screen.getByRole("alert")).toHaveText("Los horarios de los recursos deben estar dentro del horario del negocio. Revisá ambos horarios.");
     await expect(form).toBeVisible();
     await expect(form).toHaveAttribute("aria-busy", "false");
     await expect(start).toHaveValue("11:01");
@@ -537,7 +537,7 @@ test("Horario rejects exclusion of a real future confirmed booking independently
     const conflict = await pendingResponse;
     expect(conflict.status()).toBe(409);
     expect(await conflict.json()).toMatchObject({ code: "CONFLICT" });
-    await expect(screen.getByRole("alert")).toHaveText("Los datos cambiaron. Recargá y volvé a intentar.");
+    await expect(screen.getByRole("alert")).toHaveText("El cambio del calendario presenta un conflicto con turnos futuros. Revisá los turnos antes de continuar.");
     await expect(form).toBeVisible();
     await expect(form).toHaveAttribute("aria-busy", "false");
     await expect(start).toHaveValue("11:01");
@@ -1144,7 +1144,7 @@ test("Cierres rejects a date containing a real future confirmed booking and pres
     const conflict = await posted;
     expect(conflict.status()).toBe(409);
     expect(await conflict.json()).toMatchObject({ code: "CONFLICT" });
-    await expect(form.getByRole("alert")).toHaveText("Los datos cambiaron. Recargá y volvé a intentar.");
+    await expect(form.getByRole("alert")).toHaveText("El cambio del calendario presenta un conflicto con turnos futuros. Revisá los turnos antes de continuar.");
     await expect(form).toBeVisible();
     await expect(form).toHaveAttribute("aria-busy", "false");
     await expect(type).toHaveValue("date");
@@ -1388,7 +1388,7 @@ test("Closures edit and delete retain identity and recover committed mutations",
     const conflictResponse = business.waitForResponse(response => response.url() === `${endpoint}/${original.id}` && response.request().method() === "PUT");
     await save.click();
     expect((await conflictResponse).status()).toBe(409);
-    await expect(form.getByRole("alert")).toHaveText("Los datos cambiaron. Recargá y volvé a intentar.");
+    await expect(form.getByRole("alert")).toHaveText("El cambio del calendario presenta un conflicto con turnos futuros. Revisá los turnos antes de continuar.");
     await expect(form.getByLabel("Fecha", { exact: true })).toHaveValue(bookingDate);
     await expect(save).toBeEnabled();
     await expect(save).toBeFocused();
