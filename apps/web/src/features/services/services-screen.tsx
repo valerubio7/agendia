@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { api, type Service, type ServiceInput } from "../../api/api-client";
+import { api, type Service, type ServiceCategory, type ServiceInput } from "../../api/api-client";
 
 const priceFormatter = new Intl.NumberFormat("es-AR", {
   style: "currency",
@@ -11,12 +11,20 @@ const priceFormatter = new Intl.NumberFormat("es-AR", {
 
 type LifecycleAction = Service["status"] | "retire";
 
-export function ServicesScreen({ services, onSave, onRefresh, onLifecycle }: {
+export function ServicesScreen({ services, categories, onCategory, onSave, onRefresh, onLifecycle }: {
   services: readonly Service[];
-  onSave: (id: string | null, body: ServiceInput, signal: AbortSignal) => Promise<boolean>;
-  onRefresh: (signal: AbortSignal) => Promise<void>;
-  onLifecycle: (id: string, action: LifecycleAction, signal: AbortSignal) => Promise<boolean>;
+  categories: readonly ServiceCategory[];
+  onCategory: (operation: { kind: "create"; name: string } | { kind: "delete"; id: string }, signal: AbortSignal) => Promise<boolean | null>;
+  onSave: (id: string | null, body: ServiceInput, signal: AbortSignal) => Promise<boolean | null>;
+  onRefresh: (signal: AbortSignal) => Promise<boolean>;
+  onLifecycle: (id: string, action: LifecycleAction, signal: AbortSignal) => Promise<boolean | null>;
 }) {
+  const [categoryConfirmation, setCategoryConfirmation] = useState<ServiceCategory | null>(null);
+  const [categoryError, setCategoryError] = useState("");
+  const [categoryNotice, setCategoryNotice] = useState("");
+  const categoryCancel = useRef<HTMLButtonElement>(null);
+  const categoryOpener = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => { if (categoryConfirmation) categoryCancel.current?.focus(); }, [categoryConfirmation]);
   const [confirmation, setConfirmation] = useState<{ service: Service; action: "suspended" | "retire" } | null>(null);
   const [lifecycleError, setLifecycleError] = useState("");
   const cancelButton = useRef<HTMLButtonElement>(null);
@@ -35,6 +43,30 @@ export function ServicesScreen({ services, onSave, onRefresh, onLifecycle }: {
   const request = useRef<AbortController | null>(null);
   const nameInput = useRef<HTMLInputElement>(null);
   useEffect(() => () => { request.current?.abort(); }, []);
+  const categoryAction = async (operation: { kind: "create"; name: string } | { kind: "delete"; id: string }, form?: HTMLFormElement) => {
+    if (request.current) return;
+    const controller = new AbortController();
+    request.current = controller;
+    setPending(true);
+    setCategoryError("");
+    setCategoryNotice("");
+    try {
+      const refreshed = await onCategory(operation, controller.signal);
+      if (refreshed === null || controller.signal.aborted || request.current !== controller) return;
+      setRefreshWarning(!refreshed);
+      setNotice("");
+      setCategoryNotice(operation.kind === "create" ? "Categoría creada" : "Categoría eliminada");
+      if (operation.kind === "delete") {
+        setCategoryConfirmation(null);
+        focusReturn.current = {};
+        setRevision(value => value + 1);
+      } else form?.reset();
+    } catch (cause) {
+      if (!controller.signal.aborted && request.current === controller) setCategoryError(api.errorMessage(cause));
+    } finally {
+      if (!controller.signal.aborted && request.current === controller) { request.current = null; setPending(false); }
+    }
+  };
   const lifecycle = async (service: Service, action: LifecycleAction) => {
     if (request.current || !services.some(owned => owned.id === service.id)) return;
     const controller = new AbortController();
@@ -43,9 +75,10 @@ export function ServicesScreen({ services, onSave, onRefresh, onLifecycle }: {
     setLifecycleError("");
     setError("");
     setNotice("");
+    setCategoryNotice("");
     try {
       const refreshed = await onLifecycle(service.id, action, controller.signal);
-      if (controller.signal.aborted || request.current !== controller) return;
+      if (refreshed === null || controller.signal.aborted || request.current !== controller) return;
       setRefreshWarning(!refreshed);
       setNotice(action === "retire" ? "Servicio retirado" : action === "active" ? "Servicio reactivado" : "Servicio suspendido");
       focusReturn.current = action === "retire" ? {} : { key: `${service.id}:${action === "active" ? "suspended" : "active"}` };
@@ -106,9 +139,10 @@ export function ServicesScreen({ services, onSave, onRefresh, onLifecycle }: {
     setPending(true);
     setError("");
     setNotice("");
+    setCategoryNotice("");
     try {
-      const refreshed = await onSave(editing?.id ?? null, { name, description, durationMinutes, priceArs }, controller.signal);
-      if (controller.signal.aborted || request.current !== controller) return;
+      const refreshed = await onSave(editing?.id ?? null, { name, description, durationMinutes, priceArs, categoryId: String(fields.get("categoryId") ?? "") || null }, controller.signal);
+      if (refreshed === null || controller.signal.aborted || request.current !== controller) return;
       setRefreshWarning(!refreshed);
       setNotice(editing ? "Servicio actualizado" : "Servicio creado");
       setEditing(null);
@@ -128,8 +162,8 @@ export function ServicesScreen({ services, onSave, onRefresh, onLifecycle }: {
     request.current = controller;
     setRefreshPending(true);
     try {
-      await onRefresh(controller.signal);
-      if (!controller.signal.aborted && request.current === controller) setRefreshWarning(false);
+      const refreshed = await onRefresh(controller.signal);
+      if (refreshed && !controller.signal.aborted && request.current === controller) setRefreshWarning(false);
     } catch {
       // Keep the committed-save warning and offer another GET-only attempt.
     } finally {
@@ -148,7 +182,7 @@ export function ServicesScreen({ services, onSave, onRefresh, onLifecycle }: {
         <form className="services-form" key={`${editing?.id ?? "create"}-${revision}`}
           aria-labelledby="service-form-title" aria-busy={pending} onSubmit={submit}>
           <h2 id="service-form-title">{editing ? "Editar servicio" : "Crear servicio"}</h2>
-          <fieldset disabled={pending || refreshPending || !!confirmation}>
+          <fieldset disabled={pending || refreshPending || !!confirmation || !!categoryConfirmation}>
             <div className="services-field">
               <label htmlFor="service-name">Nombre</label>
               <input ref={nameInput} id="service-name" name="name" required defaultValue={editing?.name ?? ""} />
@@ -156,6 +190,13 @@ export function ServicesScreen({ services, onSave, onRefresh, onLifecycle }: {
             <div className="services-field">
               <label htmlFor="service-description">Descripción (opcional)</label>
               <textarea id="service-description" name="description" defaultValue={editing?.description ?? ""} />
+            </div>
+            <div className="services-field">
+              <label htmlFor="service-category">Categoría</label>
+              <select id="service-category" name="categoryId" defaultValue={editing?.categoryId ?? ""}>
+                <option value="">Sin categoría</option>
+                {categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}
+              </select>
             </div>
             <div className="services-form-terms">
               <div className="services-field">
@@ -179,6 +220,30 @@ export function ServicesScreen({ services, onSave, onRefresh, onLifecycle }: {
           {notice && <p role="status">{notice}</p>}
         </form>
         <div className="services-catalog">
+          <form className="services-form" aria-label="Crear categoría" onSubmit={event => {
+            event.preventDefault();
+            const form = event.currentTarget;
+            const name = String(new FormData(form).get("categoryName") ?? "").trim();
+            if (name) void categoryAction({ kind: "create", name }, form);
+          }}>
+            <h2>Categorías</h2>
+            <fieldset disabled={pending || refreshPending || !!confirmation || !!categoryConfirmation}>
+              <div className="services-field"><label htmlFor="category-name">Nombre de categoría</label>
+                <input id="category-name" name="categoryName" required /></div>
+              <button type="submit">Crear categoría</button>
+            </fieldset>
+            {categoryNotice && <p role="status">{categoryNotice}</p>}
+            {!categoryConfirmation && categoryError && <p role="alert">{categoryError}</p>}
+          </form>
+          {categoryConfirmation && <section className="services-confirmation" aria-label="Confirmar eliminación de categoría" aria-busy={pending}>
+            <h2>Eliminar {categoryConfirmation.name}</h2>
+            <p>Los servicios se conservan y quedan sin categoría.</p>
+            <button ref={categoryCancel} type="button" disabled={pending} onClick={() => {
+              setCategoryConfirmation(null); setCategoryError(""); focusReturn.current = categoryOpener.current ? { opener: categoryOpener.current } : {}; setRevision(value => value + 1);
+            }}>Cancelar</button>
+            <button type="button" disabled={pending} onClick={() => void categoryAction({ kind: "delete", id: categoryConfirmation.id })}>Confirmar eliminación</button>
+            {categoryError && <p role="alert">{categoryError}</p>}
+          </section>}
           {confirmation && <section className="services-confirmation" aria-label="Confirmar acción" aria-busy={pending}>
             <h2>{confirmation.action === "retire" ? "Retirar" : "Suspender"} {confirmation.service.name}</h2>
             <p>{confirmation.action === "retire"
@@ -194,22 +259,29 @@ export function ServicesScreen({ services, onSave, onRefresh, onLifecycle }: {
           </section>}
           {!confirmation && lifecycleError && <p role="alert">{lifecycleError}</p>}
           {refreshWarning && <section className="services-refresh-warning" aria-label="Actualización del catálogo" aria-busy={refreshPending}>
-            <p role="alert">{notice === "Servicio retirado"
+            <p role="alert">{categoryNotice ? "La categoría se actualizó, pero no pudimos actualizar el catálogo. Reintentá la actualización." : notice === "Servicio retirado"
               ? "El servicio se retiró, pero no pudimos actualizar el catálogo. Reintentá la actualización."
               : "El servicio se guardó, pero no pudimos actualizar el catálogo. Reintentá la actualización."}</p>
             <button type="button" disabled={pending || refreshPending} onClick={() => void refresh()}>
               {refreshPending ? "Actualizando catálogo…" : "Actualizar catálogo"}
             </button>
           </section>}
-          {services.length === 0 ? (
+          {services.length === 0 && categories.length === 0 ? (
             <section className="services-empty" aria-labelledby="services-empty-title">
               <h2 id="services-empty-title">Todavía no hay servicios</h2>
               <p>Los servicios de tu negocio aparecerán acá con su duración, precio y estado.</p>
             </section>
           ) : (
-            <ul className="services-list" aria-label="Catálogo de servicios">
-              {services.map((service) => (
-                <li className="services-item" key={service.id}>
+            <div className="services-list" role="list" aria-label="Catálogo de servicios">
+              {[...categories, { id: "", name: "Sin categoría" }].map(category => {
+                const members = services.filter(service => category.id ? service.categoryId === category.id : !categories.some(row => row.id === service.categoryId));
+                if (!members.length && !category.id) return null;
+                return <section key={category.id} aria-label={category.name}>
+                  <h2>{category.name}</h2>
+                  {category.id && <button type="button" disabled={pending || refreshPending || !!confirmation || !!categoryConfirmation}
+                    aria-label={`Eliminar categoría ${category.name}`} onClick={event => { categoryOpener.current = event.currentTarget; setCategoryError(""); setCategoryConfirmation(category); }}>Eliminar categoría</button>}
+                  {members.map((service) => (
+                <div className="services-item" role="listitem" key={service.id}>
                   <div className="services-summary">
                     <h2>{service.name}</h2>
                     <span className="services-status" data-status={service.status}>
@@ -222,7 +294,7 @@ export function ServicesScreen({ services, onSave, onRefresh, onLifecycle }: {
                     <div><dt>Precio</dt><dd>{priceFormatter.format(service.priceArs)}</dd></div>
                   </dl>
                   <div className="services-item-actions">
-                    <button className="services-edit" type="button" disabled={pending || refreshPending || !!confirmation} aria-label={`Editar ${service.name}`}
+                    <button className="services-edit" type="button" disabled={pending || refreshPending || !!confirmation || !!categoryConfirmation} aria-label={`Editar ${service.name}`}
                       onClick={() => selectService(service)}>Editar</button>
                     {([service.status === "active" ? "suspended" : "active", "retire"] as const).map(action => {
                       const label = action === "retire" ? "Retirar" : action === "active" ? "Reactivar" : "Suspender";
@@ -230,7 +302,7 @@ export function ServicesScreen({ services, onSave, onRefresh, onLifecycle }: {
                         const key = `${service.id}:${action}`;
                         if (button) lifecycleButtons.current.set(key, button);
                         else lifecycleButtons.current.delete(key);
-                      }} disabled={pending || refreshPending || !!confirmation}
+                      }} disabled={pending || refreshPending || !!confirmation || !!categoryConfirmation}
                         aria-label={`${label} ${service.name}`} onClick={event => {
                           actionButton.current = event.currentTarget;
                           setLifecycleError("");
@@ -239,9 +311,10 @@ export function ServicesScreen({ services, onSave, onRefresh, onLifecycle }: {
                         }}>{label}</button>;
                     })}
                   </div>
-                </li>
-              ))}
-            </ul>
+                </div>
+              ))}</section>;
+              })}
+            </div>
           )}
         </div>
       </div>

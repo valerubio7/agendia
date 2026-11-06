@@ -4362,7 +4362,7 @@ main.services-screen[aria-labelledby="services-title"] .services-field label {
   line-height: 1.4;
 }
 
-main.services-screen[aria-labelledby="services-title"] :is(input, textarea) {
+main.services-screen[aria-labelledby="services-title"] :is(input, textarea, select) {
   width: 100%;
   min-width: 0;
   min-height: 3.125rem;
@@ -4384,17 +4384,17 @@ main.services-screen[aria-labelledby="services-title"] textarea {
   scrollbar-color: var(--services-stroke) var(--white);
 }
 
-main.services-screen[aria-labelledby="services-title"] :is(input, textarea):hover:not(:disabled) {
+main.services-screen[aria-labelledby="services-title"] :is(input, textarea, select):hover:not(:disabled) {
   border-color: var(--pine);
 }
 
-main.services-screen[aria-labelledby="services-title"] :is(input, textarea):focus-visible {
+main.services-screen[aria-labelledby="services-title"] :is(input, textarea, select):focus-visible {
   border-color: var(--pine);
   outline: 2px solid var(--pine);
   outline-offset: 2px;
 }
 
-main.services-screen[aria-labelledby="services-title"] fieldset:disabled :is(input, textarea) {
+main.services-screen[aria-labelledby="services-title"] fieldset:disabled :is(input, textarea, select) {
   background: var(--paper);
   color: var(--ink-2);
   cursor: not-allowed;
@@ -4507,6 +4507,15 @@ main.services-screen[aria-labelledby="services-title"] :is(.services-list, .serv
   border: 1px solid var(--sand);
   border-radius: 0.875rem;
   background: var(--white);
+}
+
+main.services-screen[aria-labelledby="services-title"] .services-list > section > h2 {
+  margin: 1.25rem 1.5rem 0.5rem;
+  overflow-wrap: anywhere;
+}
+
+main.services-screen[aria-labelledby="services-title"] .services-list > section > button {
+  margin: 0 1.5rem;
 }
 
 main.services-screen[aria-labelledby="services-title"] .services-item {

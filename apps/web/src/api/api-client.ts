@@ -35,7 +35,9 @@ export type Profile = {
   description: string;
   address: string;
 };
+export type ServiceCategory = { id: string; name: string };
 export type Service = {
+  categoryId: string | null;
   id: string;
   name: string;
   description: string | null;
@@ -64,6 +66,7 @@ export type ResourceInput = {
   weeklySchedule: Resource["weeklySchedule"];
 };
 export type ServiceInput = {
+  categoryId?: string | null;
   name: string;
   description?: string;
   durationMinutes: number;
@@ -410,6 +413,11 @@ export class ApiClient {
     this.call<Resource>(`/me/resources/${encodeURIComponent(id)}/status`, "PUT", { status }, undefined, signal);
   retireResource = (id: string, signal?: AbortSignal) =>
     this.call<{ id: string }>(`/me/resources/${encodeURIComponent(id)}`, "DELETE", undefined, undefined, signal);
+  serviceCategories = (signal?: AbortSignal) => this.call<ServiceCategory[]>("/me/service-categories", "GET", undefined, undefined, signal);
+  createServiceCategory = (name: string, signal?: AbortSignal) =>
+    this.call<ServiceCategory>("/me/service-categories", "POST", { name }, undefined, signal);
+  deleteServiceCategory = (id: string, signal?: AbortSignal) =>
+    this.call<void>(`/me/service-categories/${encodeURIComponent(id)}`, "DELETE", undefined, undefined, signal);
   services = (signal?: AbortSignal) => this.call<Service[]>("/me/services", "GET", undefined, undefined, signal);
   createService = (body: ServiceInput, signal?: AbortSignal) =>
     this.call<Service>("/me/services", "POST", body, undefined, signal);

@@ -15,6 +15,7 @@ import {
   type ResponseTiming,
   type Session,
   type Service,
+  type ServiceCategory,
   type Resource,
   type WhatsAppStatus,
 } from "../api/api-client";
@@ -56,6 +57,7 @@ const agentFields = [
   "active",
 ] as const;
 type AdminData = { businesses: Business[]; registrations: Registration[] | null; responseTiming: ResponseTiming };
+type ServicesData = { services: Service[]; categories: ServiceCategory[] };
 const sameSession = (a: Session, b: Session) =>
   typeof a.sessionId === "string" && a.sessionId.length > 0 && a.sessionId === b.sessionId &&
   a.identityId === b.identityId && a.role === b.role && a.businessId === b.businessId;
@@ -179,6 +181,8 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
   const adminControllerRef = useRef<AbortController | null>(null);
   const adminLoadRef = useRef<AbortController | null>(null);
   const adminOwnerRef = useRef<Session | null>(null);
+  const servicesOwnerRef = useRef<Session | null>(null);
+  const servicesGenerationRef = useRef(0);
   const adminAttemptRef = useRef(0);
   const [adminPending, setAdminPending] = useState(false);
   const [adminWarning, setAdminWarning] = useState(false);
@@ -302,6 +306,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
   const load = async () => {
     if (mode === "login") return;
     const attempt = ++loadAttemptRef.current;
+    servicesOwnerRef.current = null;
     adminOwnerRef.current = null;
     adminLoadRef.current?.abort();
     const adminLoad = mode === "admin" ? new AbortController() : null;
@@ -377,7 +382,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
           : mode === "resources"
             ? await Promise.all([api.resources(), api.services()]).then(([resources, services]) => ({ resources, services }))
           : mode === "services"
-            ? await api.services()
+            ? await Promise.all([api.services(), api.serviceCategories()]).then(([services, categories]) => ({ services, categories }))
           : mode === "profile"
             ? await api.profile()
             : mode === "agent"
@@ -391,6 +396,19 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
     }
     if (!isCurrent()) return;
 
+    if (mode === "services") {
+      try {
+        const currentSession = await api.session();
+        if (!isCurrent()) return;
+        if (!sameSession(session, currentSession)) throw new Error("Session changed");
+      } catch (cause) {
+        if (!isCurrent()) return;
+        setError(api.errorMessage(cause));
+        setViewState("load-error");
+        return;
+      }
+      servicesOwnerRef.current = session;
+    }
     setData(loaded);
     if (mode === "admin") adminOwnerRef.current = session;
     if (mode === "admin" && (loaded as AdminData).registrations === null) setAdminWarning(true);
@@ -687,6 +705,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
   const logout = async () => {
     if (logoutPendingRef.current) return;
     logoutPendingRef.current = true;
+    servicesGenerationRef.current += 1;
     adminOwnerRef.current = null;
     adminLoadRef.current?.abort();
     adminLoadRef.current = null;
@@ -871,6 +890,32 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
     );
   }
   if (mode === "services") {
+    const owner = servicesOwnerRef.current;
+    const current = (signal: AbortSignal, attempt: number, generation: number) =>
+      !signal.aborted && !logoutPendingRef.current && loadAttemptRef.current === attempt &&
+      servicesGenerationRef.current === generation && servicesOwnerRef.current === owner;
+    const verifyOwner = async (signal: AbortSignal, attempt: number, generation: number) => {
+      if (!current(signal, attempt, generation) || !owner) return false;
+      try {
+        const session = await api.session();
+        if (!current(signal, attempt, generation)) return false;
+        if (sameSession(owner, session)) return true;
+      } catch { if (!current(signal, attempt, generation)) return false; }
+      servicesOwnerRef.current = null;
+      setData(null);
+      setError("Tu sesión cambió. Volvé a cargar el panel.");
+      setViewState("load-error");
+      return false;
+    };
+    const handleAuthFailure = (cause: unknown, signal: AbortSignal, attempt: number, generation: number) => {
+      if (!signal.aborted && !logoutPendingRef.current && loadAttemptRef.current === attempt && servicesGenerationRef.current === generation && servicesOwnerRef.current === owner &&
+          cause instanceof ApiError && (cause.status === 401 || cause.status === 403 || cause.code === "UNAUTHENTICATED" || cause.code === "FORBIDDEN")) {
+        servicesOwnerRef.current = null;
+        setData(null);
+        setError(api.errorMessage(cause));
+        setViewState("load-error");
+      }
+    };
     return (
       <AuthenticatedShell
         variant="business"
@@ -879,47 +924,98 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
         logoutAction={() => void logout()}
       >
         <ServicesScreen
-          services={data as Service[]}
+          services={(data as ServicesData).services}
+          categories={(data as ServicesData).categories}
+          onCategory={async (operation, signal) => {
+            const attempt = loadAttemptRef.current, generation = servicesGenerationRef.current;
+            if (operation.kind === "delete" && !(data as ServicesData).categories.some(category => category.id === operation.id)) throw new Error("Unknown category");
+            if (!await verifyOwner(signal, attempt, generation)) return null;
+            let saved: ServiceCategory | void;
+            try { saved = operation.kind === "create" ? await api.createServiceCategory(operation.name, signal) : await api.deleteServiceCategory(operation.id, signal); }
+            catch (cause) {
+              handleAuthFailure(cause, signal, attempt, generation);
+              if (!current(signal, attempt, generation)) return null;
+              throw cause;
+            }
+            if (!await verifyOwner(signal, attempt, generation)) return null;
+            setData((value: unknown) => {
+              const catalog = value as ServicesData;
+              return operation.kind === "create" && saved
+                ? { ...catalog, categories: [...catalog.categories.filter(category => category.id !== saved.id), saved] }
+                : operation.kind === "delete" ? { categories: catalog.categories.filter(category => category.id !== operation.id),
+                    services: catalog.services.map(service => service.categoryId === operation.id ? { ...service, categoryId: null } : service) } : catalog;
+            });
+            try {
+              const [services, categories] = await Promise.all([api.services(signal), api.serviceCategories(signal)]);
+              if (!await verifyOwner(signal, attempt, generation)) return null;
+              setData({ services, categories });
+              return true;
+            } catch (cause) {
+              handleAuthFailure(cause, signal, attempt, generation);
+              return await verifyOwner(signal, attempt, generation) ? false : null;
+            }
+          }}
           onSave={async (id, body, signal) => {
-            const attempt = loadAttemptRef.current;
-            const saved = id ? await api.updateService(id, body, signal) : await api.createService(body, signal);
-            if (signal.aborted || loadAttemptRef.current !== attempt) return false;
+            const attempt = loadAttemptRef.current, generation = servicesGenerationRef.current;
+            if (!await verifyOwner(signal, attempt, generation)) return null;
+            let saved: Service;
+            try { saved = id ? await api.updateService(id, body, signal) : await api.createService(body, signal); }
+            catch (cause) {
+              handleAuthFailure(cause, signal, attempt, generation);
+              if (!current(signal, attempt, generation)) return null;
+              throw cause;
+            }
+            if (!await verifyOwner(signal, attempt, generation)) return null;
             setData((current: unknown) => {
-              const services = current as Service[];
-              return services.some(service => service.id === saved.id)
-                ? services.map(service => service.id === saved.id ? saved : service)
-                : [...services, saved];
+              const catalog = current as ServicesData;
+              return { ...catalog, services: catalog.services.some(service => service.id === saved.id)
+                ? catalog.services.map(service => service.id === saved.id ? saved : service)
+                : [...catalog.services, saved] };
             });
             try {
               const services = await api.services(signal);
-              if (!signal.aborted && loadAttemptRef.current === attempt) setData(services);
+              if (!await verifyOwner(signal, attempt, generation)) return null;
+              setData((current: unknown) => ({ ...current as ServicesData, services }));
               return true;
-            } catch {
-              return false; // The mutation committed; only its catalog refresh failed.
+            } catch (cause) {
+              handleAuthFailure(cause, signal, attempt, generation);
+              return await verifyOwner(signal, attempt, generation) ? false : null;
             }
           }}
           onLifecycle={async (id, action, signal) => {
-            const attempt = loadAttemptRef.current;
-            if (!(data as Service[]).some(service => service.id === id)) throw new Error("Unknown service");
-            const saved = action === "retire"
-              ? await api.retireService(id, signal)
-              : await api.setServiceStatus(id, action, signal);
-            if (signal.aborted || loadAttemptRef.current !== attempt) return false;
+            const attempt = loadAttemptRef.current, generation = servicesGenerationRef.current;
+            if (!(data as ServicesData).services.some(service => service.id === id)) throw new Error("Unknown service");
+            if (!await verifyOwner(signal, attempt, generation)) return null;
+            let saved: Service | { id: string };
+            try { saved = action === "retire" ? await api.retireService(id, signal) : await api.setServiceStatus(id, action, signal); }
+            catch (cause) {
+              handleAuthFailure(cause, signal, attempt, generation);
+              if (!current(signal, attempt, generation)) return null;
+              throw cause;
+            }
+            if (!await verifyOwner(signal, attempt, generation)) return null;
             if (saved.id !== id) throw new Error("Unexpected service response");
-            setData((current: unknown) => (current as Service[]).flatMap(service =>
-              service.id !== saved.id ? [service] : action === "retire" ? [] : [saved as Service]));
+            setData((current: unknown) => ({ ...current as ServicesData, services: (current as ServicesData).services.flatMap(service =>
+              service.id !== saved.id ? [service] : action === "retire" ? [] : [saved as Service]) }));
             try {
               const services = await api.services(signal);
-              if (!signal.aborted && loadAttemptRef.current === attempt) setData(services);
+              if (!await verifyOwner(signal, attempt, generation)) return null;
+              setData((current: unknown) => ({ ...current as ServicesData, services }));
               return true;
-            } catch {
-              return false; // Committed mutation; recovery must only repeat GET.
+            } catch (cause) {
+              handleAuthFailure(cause, signal, attempt, generation);
+              return await verifyOwner(signal, attempt, generation) ? false : null;
             }
           }}
           onRefresh={async signal => {
-            const attempt = loadAttemptRef.current;
-            const services = await api.services(signal);
-            if (!signal.aborted && loadAttemptRef.current === attempt) setData(services);
+            const attempt = loadAttemptRef.current, generation = servicesGenerationRef.current;
+            if (!await verifyOwner(signal, attempt, generation)) return false;
+            try {
+              const [services, categories] = await Promise.all([api.services(signal), api.serviceCategories(signal)]);
+              if (!await verifyOwner(signal, attempt, generation)) return false;
+              setData({ services, categories });
+              return true;
+            } catch (cause) { handleAuthFailure(cause, signal, attempt, generation); await verifyOwner(signal, attempt, generation); throw cause; }
           }}
         />
         {feedback}
