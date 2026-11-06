@@ -280,6 +280,42 @@ async function pendingFrozenReschedule() {
 }
 
 describe("standalone sender-scoped WhatsApp agenda persistence", () => {
+  test("categorized service keeps WhatsApp catalog and booking terms unchanged", async () => {
+    const h = await fixture();
+    let before: AgentToolResult | undefined;
+    const catalogBefore = await factoryTurn(h, "Consultar servicios", [{ name: "read_catalog", arguments: {} }], ["data"], results => {
+      before = results[0];
+      return scriptedAgentReply(results);
+    });
+    const [category] = await db.sql<{ id: string }[]>`insert into service_categories(business_id,name) values(${h.business},'Peluquería') returning id`;
+    await db.sql`update services set category_id=${category!.id} where id=${h.service}`;
+    const catalogAfter = await factoryTurn(h, "Consultar servicios", [{ name: "read_catalog", arguments: {} }], ["data"], results => {
+      expect(results[0]).toEqual(before);
+      return scriptedAgentReply(results);
+    });
+    expect(catalogAfter.text).toBe(catalogBefore.text);
+    expect(catalogAfter.text).toContain("Corte: 30 minutos, ARS 1500");
+    expect(catalogAfter.text).not.toContain("Peluquería");
+    const initial = await factoryTurn(h, "Reservar Corte el 2035-04-02 a las 10:00", [book(h)], ["clarification"], toolReply);
+    expect(initial.text).toBe("Decime tu nombre y apellido.");
+    const quote = await factoryTurn(h, "Mi nombre es María Pérez", [{ name: "confirm_quote", arguments: {} }], ["prepared_quote"], toolReply);
+    expect(quote.text).toContain("Corte");
+    expect(quote.text).toContain("30 minutos, ARS 1500");
+    expect(quote.text).not.toContain("Peluquería");
+    expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
+    await delivered(quote);
+    const saved = await factoryTurn(h, "dale reservame ese", factoryAcceptance, ["staged_action"], toolReply);
+    expect(saved.text).toContain("Guardado:");
+    expect(saved.text).toContain("30 minutos, ARS 1500");
+    expect(saved.text).not.toContain("Peluquería");
+    const [appointment] = await appointments(h);
+    expect(appointment!.terms).toMatchObject({ serviceId: h.service, serviceName: "Corte", durationMinutes: 30, priceArs: 1500 });
+    expect(appointment!.startMs).toBe(Date.parse(startsAt));
+    expect(appointment!.endMs - appointment!.startMs).toBe(30 * 60000);
+    expect(appointment!.origin).toBe("ai");
+    expect(await counts(h)).toMatchObject({ clients: 1, appointments: 1, effects: 1 });
+  });
+
   test("catalog, own history and real adaptive same-day slots create no clients", async () => {
     const h = await fixture();
     const catalog = await turn(h, "Consultar servicios", { name: "read_catalog", arguments: {} });

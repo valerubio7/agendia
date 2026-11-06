@@ -35,6 +35,15 @@ describe("service input", () => {
     }
   });
 
+  test("accepts omitted, null or UUID category assignments and rejects invalid IDs", () => {
+    const categoryId = "11111111-1111-4111-8111-111111111111";
+    expect(ServiceInputSchema.parse(valid)).toEqual(valid);
+    expect(ServiceInputSchema.parse({ ...valid, categoryId }).categoryId).toBe(categoryId);
+    expect(ServiceInputSchema.parse({ ...valid, categoryId: null }).categoryId).toBeNull();
+    for (const invalid of ["bad", 42, [], {}])
+      expect(ServiceInputSchema.safeParse({ ...valid, categoryId: invalid }).success).toBe(false);
+  });
+
   test("accepts an omitted description or optional text, including empty text", () => {
     expect(ServiceInputSchema.parse(valid)).toEqual(valid);
     for (const description of ["Skin care", "", "  descriptive text  "]) {

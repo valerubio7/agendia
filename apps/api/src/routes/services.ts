@@ -10,6 +10,36 @@ export function registerServiceRoutes(
     serviceNotFound: symbol;
   },
 ) {
+  app.get("/me/service-categories", async (request, reply) => {
+    const auth = await requireTenant(request, reply);
+    if (!auth) return;
+    try {
+      return await pools.api.run(context(auth, request), repo => repo.listServiceCategories());
+    } catch (error) { return serviceFailure(error, request, reply); }
+  });
+  app.post("/me/service-categories", async (request, reply) => {
+    const auth = await requireTenant(request, reply, true);
+    if (!auth) return;
+    const parsed = z.object({ name: z.string().trim().min(1).refine(name => !name.includes("\u0000")) }).safeParse(request.body);
+    if (!parsed.success) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid category name");
+    try {
+      const saved = await tenantWrite(auth, request, "service_category.created", repo =>
+        repo.createServiceCategory(auth.business_id!, parsed.data.name));
+      return reply.code(201).send(saved);
+    } catch (error) { return serviceFailure(error, request, reply); }
+  });
+  app.delete("/me/service-categories/:id", async (request, reply) => {
+    const auth = await requireTenant(request, reply, true);
+    if (!auth) return;
+    const params = z.object({ id: z.string().uuid().transform(id => id.toLowerCase()) }).safeParse(request.params);
+    if (!params.success) return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid category ID");
+    try {
+      await tenantWrite(auth, request, "service_category.deleted", async repo => {
+        if (!await repo.deleteServiceCategory(auth.business_id!, params.data.id)) throw serviceNotFound;
+      }, { id: params.data.id });
+      return { id: params.data.id };
+    } catch (error) { return serviceFailure(error, request, reply); }
+  });
   app.get("/me/services", async (request, reply) => {
     const auth = await requireTenant(request, reply);
     if (!auth) return;

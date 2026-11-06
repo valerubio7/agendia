@@ -246,6 +246,8 @@ export function buildApi(input: AuthService | ApiOptions) {
     const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
     if (code === "23505")
       return fail(reply, request, 409, "CONFLICT", "Service name already exists");
+    if (code === "23503" && error && typeof error === "object" && "constraint_name" in error && error.constraint_name === "services_category_business_fk")
+      return fail(reply, request, 400, "VALIDATION_FAILED", "Category must belong to this business");
     // A valid domain duration may exceed PostgreSQL's integer representation.
     if (code === "22003")
       return fail(reply, request, 400, "VALIDATION_FAILED", "Service value cannot be stored");

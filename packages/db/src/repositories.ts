@@ -224,6 +224,15 @@ export class PostgresRepositories {
   async updateClient(businessId: string, id: string, input: ClientRegistryInput) {
     return clients.updateClient(this.db, this, businessId, id, input);
   }
+  listServiceCategories() {
+    return catalog.listServiceCategories(this.db);
+  }
+  createServiceCategory(businessId: string, name: string) {
+    return catalog.createServiceCategory(this.db, businessId, name);
+  }
+  deleteServiceCategory(businessId: string, id: string) {
+    return catalog.deleteServiceCategory(this.db, this, businessId, id);
+  }
   listServices() {
     return catalog.listServices(this.db);
   }

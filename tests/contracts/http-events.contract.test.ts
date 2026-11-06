@@ -64,6 +64,15 @@ describe("safe HTTP and event contracts", () => {
     expect(PRODUCT_HTTP_ROUTES.some(route => /services.*delete/.test(route))).toBe(false); // DELETE uses the existing detail URI.
   });
 
+  test("documents category management and optional service assignment", () => {
+    const document = toOpenApiDocument();
+    expect(document.paths).toHaveProperty("/me/service-categories.get");
+    expect(document.paths).toHaveProperty("/me/service-categories.post");
+    expect(document.paths).toHaveProperty("/me/service-categories/:id.delete");
+    expect(document.paths).toHaveProperty("/me/services.post.description");
+    expect(document.paths).toHaveProperty("/me/services/:id.put.description");
+  });
+
   test("allowlists resource catalog lifecycle paths without booking operations", () => {
     const routes = ["/me/resources", "/me/resources/:id", "/me/resources/:id/status"];
     expect(new Set<string>(PRODUCT_HTTP_ROUTES.filter(route => route.includes("resources")))).toEqual(new Set(routes));
@@ -102,7 +111,7 @@ describe("safe HTTP and event contracts", () => {
     expect(CatalogDeletionAckSchema.parse({ id })).toEqual({ id });
     expect(CatalogDeletionAckSchema.safeParse({ id, status: "active" }).success).toBe(false);
     expect(CatalogDeletionAckSchema.safeParse({ id: "bad" }).success).toBe(false);
-    expect(new Set(Object.entries(document.paths).filter(([, item]) => "delete" in item).map(([route]) => route))).toEqual(new Set(["/me/services/:id", "/me/resources/:id"]));
+    expect(new Set(Object.entries(document.paths).filter(([, item]) => "delete" in item).map(([route]) => route))).toEqual(new Set(["/me/services/:id", "/me/resources/:id", "/me/service-categories/:id"]));
     expect(document.paths["/me/clients/:id"]).not.toHaveProperty("delete");
     expect(new Set(PRODUCT_HTTP_ROUTES.filter(route => /appointments|booking|slots/.test(route)))).toEqual(new Set(["/me/appointments", "/me/appointments/:appointmentId", "/me/appointments/:appointmentId/notes", "/me/appointments/:appointmentId/state", "/me/appointments/availability"]));
   });
