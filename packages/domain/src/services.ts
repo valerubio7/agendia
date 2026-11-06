@@ -5,6 +5,7 @@ export const ServiceInputSchema = z.object({
   description: z.string().refine(text => !text.includes("\u0000")).optional(),
   durationMinutes: z.number().int().positive().multipleOf(5),
   priceArs: z.number().finite().nonnegative(),
+  categoryId: z.string().uuid().nullable().optional(),
 });
 
 export type ServiceInput = z.infer<typeof ServiceInputSchema>;

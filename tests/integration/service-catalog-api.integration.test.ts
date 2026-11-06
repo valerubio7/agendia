@@ -48,7 +48,7 @@ beforeAll(async () => {
 afterAll(async () => { await app?.close(); await pools?.end(); await database?.stop(); });
 
 test("requires business session and protects every catalog mutation", async () => {
-  for (const [method, url] of [["GET", "/me/services"], ["POST", "/me/services"], ["PUT", `/me/services/${randomUUID()}`], ["PUT", `/me/services/${randomUUID()}/status`], ["DELETE", `/me/services/${randomUUID()}`]] as const) {
+  for (const [method, url] of [["GET", "/me/services"], ["POST", "/me/services"], ["PUT", `/me/services/${randomUUID()}`], ["PUT", `/me/services/${randomUUID()}/status`], ["DELETE", `/me/services/${randomUUID()}`], ["GET", "/me/service-categories"], ["POST", "/me/service-categories"], ["DELETE", `/me/service-categories/${randomUUID()}`]] as const) {
     expect((await request(method, url, undefined, input)).statusCode).toBe(401);
     expect((await request(method, url, admin, input)).statusCode).toBe(403);
     if (method !== "GET") {
@@ -325,6 +325,141 @@ test("service DELETE rejects malformed/foreign IDs and ALL future states without
     expect(result.body).not.toMatch(/postgres|sql|2099|Retire /i); expect(result.body).not.toContain(service.id);
     expect(await retirementSnapshot()).toEqual(snapshot);
   }
+});
+
+test("service categories organize owned services and deletion preserves them", async () => {
+  const categoryResponse = await request("POST", "/me/service-categories", a, { name: "Odontología" });
+  expect(categoryResponse.statusCode).toBe(201);
+  const category = categoryResponse.json();
+  expect(category.name).toBe("Odontología");
+  expect((await request("GET", "/me/service-categories", a)).json()).toContainEqual(category);
+  expect((await request("GET", "/me/service-categories", b)).json()).not.toContainEqual(category);
+
+  const created = await request("POST", "/me/services", a, { name: "Consulta dental", durationMinutes: 30, priceArs: 1200, categoryId: category.id });
+  expect(created.statusCode).toBe(201);
+  expect(created.json()).toMatchObject({ categoryId: category.id, priceArs: 1200, durationMinutes: 30 });
+  const id = created.json().id;
+  const updated = await request("PUT", `/me/services/${id}`, a, { name: "Consulta dental", durationMinutes: 30, priceArs: 1200 });
+  expect(updated.statusCode).toBe(200);
+  expect(updated.json().categoryId).toBe(category.id);
+  expect((await request("POST", "/me/services", b, { ...input, name: "Foreign category", categoryId: category.id })).statusCode).toBe(400);
+  expect((await request("DELETE", `/me/service-categories/${category.id}`, b)).statusCode).toBe(404);
+  expect((await request("DELETE", `/me/service-categories/${category.id}`, a)).statusCode).toBe(200);
+  const services = (await request("GET", "/me/services", a)).json();
+  expect(services.find((service: { id: string }) => service.id === id)).toMatchObject({ categoryId: null, priceArs: 1200, durationMinutes: 30 });
+});
+
+test("service categories enforce assignment, ownership and atomic effects", async () => {
+  const category = (await request("POST", "/me/service-categories", a, { name: "  Group  " })).json();
+  expect(category.name).toBe("Group");
+  const service = (await request("POST", "/me/services", a, { ...input, name: `Assigned ${randomUUID()}`, categoryId: category.id })).json();
+  const retired = (await request("POST", "/me/services", a, { ...input, name: `Retired ${randomUUID()}`, categoryId: category.id })).json();
+  expect((await request("DELETE", `/me/services/${retired.id}`, a)).statusCode).toBe(200);
+  const cleared = await request("PUT", `/me/services/${service.id}`, a, { ...input, name: service.name, categoryId: null });
+  expect(cleared.statusCode).toBe(200);
+  expect(cleared.json().categoryId).toBeNull();
+  expect((await request("PUT", `/me/services/${service.id}`, a, { ...input, name: service.name, categoryId: category.id })).json().categoryId).toBe(category.id);
+  const snapshot = async () => ({ categories: [...await database.sql`select * from service_categories order by id`], services: [...await database.sql`select * from services order by id`],
+    audit: [...await database.sql`select * from audit_events order by id`], outbox: [...await database.sql`select * from outbox_events order by id`] });
+  const before = await snapshot();
+  for (const response of [
+    await request("POST", "/me/service-categories", a, { name: " \t" }),
+    await request("POST", "/me/services", b, { ...input, name: `Foreign ${randomUUID()}`, categoryId: category.id }),
+    await request("PUT", `/me/services/${service.id}`, a, { ...input, name: service.name, categoryId: randomUUID() }),
+    await request("PUT", `/me/services/${service.id}`, a, { ...input, name: service.name, categoryId: "bad" }),
+    await request("DELETE", "/me/service-categories/bad", a),
+  ]) expect(response.statusCode).toBe(400);
+  expect((await request("DELETE", `/me/service-categories/${category.id}`, b)).statusCode).toBe(404);
+  expect(await snapshot()).toEqual(before);
+  const raw = postgres(await createRoleLogin(database, "category_rls_probe", "agendia_runtime"));
+  try {
+    expect(await withTenantTransaction(raw, ctx(b), tx => tx`select id from service_categories where id=${category.id}`)).toHaveLength(0);
+    await expect(withTenantTransaction(raw, ctx(b), tx => tx`insert into service_categories(business_id,name) values(${a.businessId},'Forbidden')`)).rejects.toMatchObject({ code: "42501" });
+    await expect(withTenantTransaction(raw, ctx(b), tx => tx`insert into services(business_id,name,duration_minutes,price_ars,category_id) values(${b.businessId},'Foreign physical category',30,0,${category.id})`)).rejects.toMatchObject({ code: "23503" });
+  } finally { await raw.end(); }
+  expect(await snapshot()).toEqual(before);
+  await database.sql.unsafe(`create function require_category_delete_lock() returns trigger language plpgsql as $$
+    declare key bigint := hashtextextended('business-calendar:' || OLD.business_id::text,0);
+    begin if not exists(select 1 from pg_locks where locktype='advisory' and pid=pg_backend_pid()
+      and classid=((key >> 32) & 4294967295)::oid and objid=(key & 4294967295)::oid and objsubid=1 and granted)
+      then raise exception 'category delete without lock'; end if; return OLD; end $$`);
+  await database.sql`create trigger require_category_delete_lock before delete on service_categories for each row execute function require_category_delete_lock()`;
+  try {
+    for (const table of ["audit_events", "outbox_events"]) {
+      await database.sql.unsafe(`create function reject_category_effect() returns trigger language plpgsql as $$ begin raise exception 'forced category effect failure'; end $$`);
+      await database.sql.unsafe(`create trigger reject_category_effect before insert on ${table} for each row execute function reject_category_effect()`);
+      try {
+        expect((await request("DELETE", `/me/service-categories/${category.id}`, a)).statusCode).toBe(500);
+        expect(await snapshot()).toEqual(before);
+      } finally {
+        await database.sql.unsafe(`drop trigger reject_category_effect on ${table}`);
+        await database.sql`drop function reject_category_effect()`;
+      }
+    }
+    expect((await request("DELETE", `/me/service-categories/${category.id}`, a)).statusCode).toBe(200);
+    const rows = await database.sql`select id,category_id,name,duration_minutes,price_ars::float8 price from services where id in ${database.sql([service.id, retired.id])} order by id`;
+    expect(rows).toHaveLength(2);
+    for (const row of rows) expect(row).toMatchObject({ category_id: null, duration_minutes: 30, price: 0 });
+    expect((await database.sql`select count(*)::int count from audit_events where event_type='service_category.deleted'`)[0]!.count).toBeGreaterThan(0);
+    expect((await database.sql`select count(*)::int count from outbox_events where topic='service_category.deleted'`)[0]!.count).toBeGreaterThan(0);
+  } finally {
+    await database.sql`drop trigger require_category_delete_lock on service_categories`;
+    await database.sql`drop function require_category_delete_lock()`;
+  }
+});
+
+test("category deletion races service assignment without a dangling category", async () => {
+  const categoryResponse = await request("POST", "/me/service-categories", a, { name: "Race category" });
+  expect(categoryResponse.statusCode).toBe(201);
+  const category = categoryResponse.json();
+  const created = await request("POST", "/me/services", a, { ...input, name: `Category race ${randomUUID()}` });
+  expect(created.statusCode).toBe(201);
+  const service = created.json();
+  let pending!: [ReturnType<typeof request>, ReturnType<typeof request>];
+  await database.sql.begin(async tx => {
+    await tx`select pg_advisory_xact_lock(hashtextextended(${"business-calendar:" + a.businessId},0))`;
+    pending = [
+      request("PUT", `/me/services/${service.id}`, a, { ...input, name: service.name, categoryId: category.id }),
+      request("DELETE", `/me/service-categories/${category.id}`, a),
+    ];
+    let waiting = 0;
+    for (let attempt = 0; attempt < 100 && waiting < 2; attempt++) {
+      const [row] = await database.sql`select count(*)::int count from pg_locks where locktype='advisory' and not granted
+        and (classid::bigint << 32 | objid::bigint) = hashtextextended(${"business-calendar:" + a.businessId},0)`;
+      waiting = row!.count;
+      if (waiting < 2) await Bun.sleep(20);
+    }
+    expect(waiting).toBe(2);
+  });
+  const [assignment, deletion] = await Promise.all(pending);
+  expect(deletion.statusCode).toBe(200);
+  expect(deletion.json<{ id: string }>()).toEqual({ id: category.id });
+  expect([200, 400]).toContain(assignment.statusCode);
+  if (assignment.statusCode === 200) expect(assignment.json().categoryId).toBe(category.id);
+  else expect(assignment.json()).toMatchObject({ code: "VALIDATION_FAILED", message: "Category must belong to this business" });
+  expect((await request("GET", "/me/service-categories", a)).json()).not.toContainEqual(category);
+  const services = (await request("GET", "/me/services", a)).json();
+  expect(services.find((row: { id: string }) => row.id === service.id)).toEqual(service);
+});
+
+test("category assignment and deletion preserve an existing booking", async () => {
+  const { service, saved } = await retirementFixture(true);
+  const before = await request("GET", `/me/appointments/${saved.id}`, a);
+  expect(before.statusCode).toBe(200);
+  const categoryResponse = await request("POST", "/me/service-categories", a, { name: "Booking category" });
+  expect(categoryResponse.statusCode).toBe(201);
+  const category = categoryResponse.json();
+  const assigned = await request("PUT", `/me/services/${service.id}`, a, { ...input, name: service.name, categoryId: category.id });
+  expect(assigned.statusCode).toBe(200);
+  expect(assigned.json().categoryId).toBe(category.id);
+  expect((await request("GET", `/me/appointments/${saved.id}`, a)).json()).toEqual(before.json());
+  expect((await request("DELETE", `/me/service-categories/${category.id}`, a)).statusCode).toBe(200);
+  const after = await request("GET", `/me/appointments/${saved.id}`, a);
+  expect(after.statusCode).toBe(200);
+  expect(after.json()).toEqual(before.json());
+  expect(after.json().terms).toEqual(saved.terms);
+  const services = (await request("GET", "/me/services", a)).json();
+  expect(services.find((row: { id: string }) => row.id === service.id)).toEqual(service);
 });
 
 test("service DELETE rolls back physical tombstone/link failures and audit/outbox failures safely", async () => {

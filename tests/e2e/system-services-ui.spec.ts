@@ -223,6 +223,251 @@ test("Servicios creates and edits persisted owned services with safe validation 
   }
 });
 
+test("categorías ocultan el catálogo cuando falla la autorización al refrescar", async ({ page, system }) => {
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
+  await createBusinessInAdminUi(page, { name: "Catálogo privado", email: "category-auth@example.test", password: "category auth safe password" });
+  await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
+  await login(page, system.webUrl, "category-auth@example.test", "category auth safe password");
+  await expect(page).toHaveURL(/\/profile$/);
+  await seedService(page, "Servicio privado", 500);
+  await page.goto(`${system.webUrl}/services`);
+  await expect(page.getByRole("heading", { name: "Servicio privado" })).toBeVisible();
+  await page.route("**/api/me/service-categories", async route => {
+    if (route.request().method() === "GET") await route.fulfill({ status: 401, contentType: "application/json", body: '{"code":"UNAUTHENTICATED"}' });
+    else await route.continue();
+  });
+  const form = page.getByRole("form", { name: "Crear categoría" });
+  await form.getByLabel("Nombre de categoría").fill("Privada");
+  await form.getByRole("button", { name: "Crear categoría" }).click();
+  await expect(page.getByRole("heading", { name: "Servicio privado" })).toHaveCount(0);
+  await expect(page.getByText("Privada", { exact: true })).toHaveCount(0);
+});
+
+test("un cambio de sesión no mezcla catálogos ni envía cambios desde la pestaña anterior", async ({ page, system }) => {
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
+  for (const [name, email] of [["Primer negocio", "category-owner-a@example.test"], ["Segundo negocio", "category-owner-b@example.test"]] as const)
+    await createBusinessInAdminUi(page, { name, email, password: "category owner safe password" });
+  await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
+  await login(page, system.webUrl, "category-owner-a@example.test", "category owner safe password");
+  await expect(page).toHaveURL(/\/profile$/);
+  await seedService(page, "Servicio del primero", 300);
+  await page.goto(`${system.webUrl}/services`);
+  await expect(page.getByRole("heading", { name: "Servicio del primero" })).toBeVisible();
+  const second = await page.context().newPage();
+  await second.goto(`${system.webUrl}/profile`);
+  await second.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
+  await login(second, system.webUrl, "category-owner-b@example.test", "category owner safe password");
+  await expect(second).toHaveURL(/\/profile$/);
+  let posts = 0;
+  page.on("request", request => { if (request.method() === "POST" && request.url().endsWith("/api/me/service-categories")) posts++; });
+  const form = page.getByRole("form", { name: "Crear categoría" });
+  await form.getByLabel("Nombre de categoría").fill("No enviar");
+  await form.getByRole("button", { name: "Crear categoría" }).click();
+  await expect(page.getByRole("heading", { name: "Servicio del primero" })).toHaveCount(0);
+  expect(posts).toBe(0);
+  await second.close();
+});
+
+test("categorías agrupan servicios y al eliminarlas conservan sus datos", async ({ page, system }, testInfo) => {
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
+  await createBusinessInAdminUi(page, { name: "Odontología", email: "categories@example.test", password: "categories safe password" });
+  await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
+  await login(page, system.webUrl, "categories@example.test", "categories safe password");
+  await expect(page).toHaveURL(/\/profile$/);
+  await page.goto(`${system.webUrl}/services`);
+  const screen = page.getByRole("main");
+  const categoryForm = screen.getByRole("form", { name: "Crear categoría" });
+  await categoryForm.getByLabel("Nombre de categoría").fill("Odontología");
+  await categoryForm.getByRole("button", { name: "Crear categoría" }).click();
+  const create = screen.getByRole("form", { name: "Crear servicio" });
+  for (const name of ["Consulta", "Tratamiento de conducto"]) {
+    await create.getByLabel("Nombre", { exact: true }).fill(name);
+    await create.getByLabel("Precio (ARS)").fill("1200");
+    await create.getByLabel("Categoría", { exact: true }).selectOption({ label: "Odontología" });
+    await create.getByRole("button", { name: "Crear servicio" }).click();
+    await expect(create.getByRole("status")).toHaveText("Servicio creado");
+  }
+  const group = screen.getByRole("region", { name: "Odontología", exact: true });
+  await expect(group.getByRole("heading", { name: "Consulta", exact: true })).toBeVisible();
+  await expect(group.getByRole("heading", { name: "Tratamiento de conducto", exact: true })).toBeVisible();
+  for (const width of [1280, 360]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`category-${width}.png`), fullPage: true });
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await categoryForm.getByLabel("Nombre de categoría").fill("Otra categoría");
+  await categoryForm.getByRole("button", { name: "Crear categoría" }).click();
+  await expect(screen.getByRole("region", { name: "Otra categoría" })).toBeVisible();
+  await group.getByRole("button", { name: "Editar Consulta" }).click();
+  const edit = screen.getByRole("form", { name: "Editar servicio" });
+  await edit.getByLabel("Categoría", { exact: true }).selectOption({ label: "Otra categoría" });
+  await edit.getByRole("button", { name: "Guardar cambios" }).click();
+  const other = screen.getByRole("region", { name: "Otra categoría" });
+  await expect(other.getByRole("heading", { name: "Consulta", exact: true })).toBeVisible();
+  await other.getByRole("button", { name: "Editar Consulta" }).click();
+  await edit.getByLabel("Categoría", { exact: true }).selectOption("");
+  await edit.getByRole("button", { name: "Guardar cambios" }).click();
+  await expect(screen.getByRole("region", { name: "Sin categoría" }).getByRole("heading", { name: "Consulta", exact: true })).toBeVisible();
+  await screen.getByRole("button", { name: "Editar Consulta" }).click();
+  await edit.getByLabel("Categoría", { exact: true }).selectOption({ label: "Odontología" });
+  await edit.getByRole("button", { name: "Guardar cambios" }).click();
+  await expect(group.getByRole("heading", { name: "Consulta", exact: true })).toBeVisible();
+  const deleteButton = group.getByRole("button", { name: "Eliminar categoría Odontología" });
+  await deleteButton.click();
+  await expect(screen.getByRole("region", { name: "Confirmar eliminación de categoría" }).getByRole("button", { name: "Cancelar" })).toBeFocused();
+  await screen.getByRole("region", { name: "Confirmar eliminación de categoría" }).getByRole("button", { name: "Cancelar" }).click();
+  await expect(deleteButton).toBeFocused();
+  await deleteButton.click();
+  const confirmation = screen.getByRole("region", { name: "Confirmar eliminación de categoría" });
+  await expect(confirmation).toContainText("Los servicios se conservan y quedan sin categoría");
+  await confirmation.getByRole("button", { name: "Confirmar eliminación" }).click();
+  const unassigned = screen.getByRole("region", { name: "Sin categoría" });
+  await expect(unassigned.getByRole("heading", { name: "Consulta", exact: true })).toBeVisible();
+  await expect(unassigned.getByRole("heading", { name: "Tratamiento de conducto", exact: true })).toBeVisible();
+  await page.reload();
+  await expect(unassigned.getByText("15 min")).toHaveCount(2);
+  await expect(unassigned.getByText(/^ARS\s+1\.200,00$/)).toHaveCount(2);
+  await unassigned.getByRole("button", { name: "Editar Consulta", exact: true }).click();
+  await expect(screen.getByRole("form", { name: "Editar servicio" }).getByLabel("Categoría", { exact: true })).toHaveValue("");
+});
+
+test("an interrupted services operation stays interrupted after logout fails", async ({ page, system }) => {
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
+  await createBusinessInAdminUi(page, { name: "Carreras", email: "services-race@example.test", password: "services race safe password" });
+  await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
+  await login(page, system.webUrl, "services-race@example.test", "services race safe password");
+  await expect(page).toHaveURL(/\/profile$/);
+  await page.goto(`${system.webUrl}/services`);
+  const category = page.getByRole("form", { name: "Crear categoría" });
+  await expect(category).toBeVisible();
+  let writes = 0;
+  page.on("request", request => {
+    if (/\/api\/me\/(services|service-categories)(?:\/.*)?$/.test(request.url()) && request.method() !== "GET") writes++;
+  });
+  await page.route("**/api/auth/logout", route => route.fulfill({ status: 500, contentType: "application/json", body: '{"code":"INTERNAL_ERROR"}' }));
+
+  let releaseSession!: () => void, sessionReached!: () => void;
+  const sessionHeld = new Promise<void>(resolve => { releaseSession = resolve; });
+  const sessionStarted = new Promise<void>(resolve => { sessionReached = resolve; });
+  const holdSession = async (route: import("@playwright/test").Route) => {
+    const response = await route.fetch();
+    sessionReached();
+    await sessionHeld;
+    await route.fulfill({ response });
+  };
+  await page.route("**/api/auth/session", holdSession);
+  await category.getByLabel("Nombre de categoría").fill("No enviar");
+  await category.getByRole("button", { name: "Crear categoría" }).click();
+  await sessionStarted;
+  await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Cerrar sesión", exact: true })).toBeEnabled();
+  releaseSession();
+  await expect(category.getByRole("button", { name: "Crear categoría" })).toBeEnabled();
+  expect(writes).toBe(0);
+  await expect(category.getByLabel("Nombre de categoría")).toHaveValue("No enviar");
+  await expect(category.getByRole("status")).toHaveCount(0);
+  await page.unroute("**/api/auth/session", holdSession);
+
+  let releaseSave!: () => void, saveReached!: () => void;
+  const saveHeld = new Promise<void>(resolve => { releaseSave = resolve; });
+  const saveStarted = new Promise<void>(resolve => { saveReached = resolve; });
+  await page.route("**/api/me/services", async route => {
+    if (route.request().method() !== "POST") return route.continue();
+    const response = await route.fetch();
+    saveReached();
+    await saveHeld;
+    await route.fulfill({ response });
+  });
+  const form = page.getByRole("form", { name: "Crear servicio" });
+  await form.getByLabel("Nombre", { exact: true }).fill("Respuesta vieja");
+  await form.getByLabel("Precio (ARS)").fill("100");
+  await form.getByRole("button", { name: "Crear servicio" }).click();
+  await saveStarted;
+  await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Cerrar sesión", exact: true })).toBeEnabled();
+  releaseSave();
+  await expect(form).toHaveAttribute("aria-busy", "false");
+  expect(writes).toBe(1);
+  await expect(form.getByLabel("Nombre", { exact: true })).toHaveValue("Respuesta vieja");
+  await expect(form.getByRole("status")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Respuesta vieja", exact: true })).toHaveCount(0);
+});
+
+test("categorías informan errores y reintentan solo la lectura", async ({ page, system }) => {
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
+  await createBusinessInAdminUi(page, { name: "Errores categorías", email: "category-errors@example.test", password: "category errors safe password" });
+  await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
+  await login(page, system.webUrl, "category-errors@example.test", "category errors safe password");
+  await expect(page).toHaveURL(/\/profile$/);
+  await page.goto(`${system.webUrl}/services`);
+  const serviceForm = page.getByRole("form", { name: "Crear servicio" });
+  await serviceForm.getByLabel("Nombre", { exact: true }).fill("Servicio sin categoría");
+  await serviceForm.getByLabel("Precio (ARS)").fill("450");
+  await serviceForm.getByRole("button", { name: "Crear servicio" }).click();
+  const unassigned = page.getByRole("region", { name: "Sin categoría" });
+  await expect(unassigned.getByRole("heading", { name: "Servicio sin categoría" })).toBeVisible();
+  await expect(unassigned.getByText("15 min")).toBeVisible();
+  const form = page.getByRole("form", { name: "Crear categoría" });
+  const url = "**/api/me/service-categories";
+  const failCreate = async (route: import("@playwright/test").Route) => {
+    if (route.request().method() === "POST") await route.fulfill({ status: 500, contentType: "application/json", body: '{"code":"INTERNAL_ERROR"}' });
+    else await route.continue();
+  };
+  await page.route(url, failCreate);
+  await form.getByLabel("Nombre de categoría").fill("Prueba");
+  await form.getByRole("button", { name: "Crear categoría" }).click();
+  await expect(form.getByRole("alert")).toHaveText("No se pudo completar la operación.");
+  await expect(form.getByLabel("Nombre de categoría")).toHaveValue("Prueba");
+  await page.unroute(url, failCreate);
+  let posts = 0;
+  page.on("request", request => { if (request.url().endsWith("/api/me/service-categories") && request.method() === "POST") posts++; });
+  const failGet = async (route: import("@playwright/test").Route) => {
+    if (route.request().method() === "GET") await route.fulfill({ status: 500, contentType: "application/json", body: '{"code":"INTERNAL_ERROR"}' });
+    else await route.continue();
+  };
+  await page.route(url, failGet);
+  await form.getByRole("button", { name: "Crear categoría" }).click();
+  await expect(form.getByRole("status")).toHaveText("Categoría creada");
+  await expect(page.getByRole("region", { name: "Actualización del catálogo" })).toBeVisible();
+  expect(posts).toBe(1);
+  await page.unroute(url, failGet);
+  let releaseRefresh!: () => void, refreshReached!: () => void;
+  const refreshHeld = new Promise<void>(resolve => { releaseRefresh = resolve; });
+  const refreshStarted = new Promise<void>(resolve => { refreshReached = resolve; });
+  const holdRefresh = async (route: import("@playwright/test").Route) => {
+    const response = await route.fetch();
+    refreshReached();
+    await refreshHeld;
+    await route.fulfill({ response });
+  };
+  await page.route(url, holdRefresh);
+  await page.route("**/api/auth/logout", route => route.fulfill({ status: 500, contentType: "application/json", body: '{"code":"INTERNAL_ERROR"}' }));
+  const retry = page.getByRole("button", { name: "Actualizar catálogo" });
+  await retry.click();
+  await refreshStarted;
+  await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Cerrar sesión", exact: true })).toBeEnabled();
+  releaseRefresh();
+  await expect(retry).toBeEnabled();
+  await expect(page.getByRole("region", { name: "Actualización del catálogo" })).toBeVisible();
+  await page.unroute(url, holdRefresh);
+  await retry.click();
+  await expect(page.getByRole("region", { name: "Actualización del catálogo" })).toHaveCount(0);
+  expect(posts).toBe(1);
+  const group = page.getByRole("region", { name: "Prueba", exact: true });
+  await group.getByRole("button", { name: "Eliminar categoría Prueba" }).click();
+  const confirm = page.getByRole("region", { name: "Confirmar eliminación de categoría" });
+  await page.route("**/api/me/service-categories/*", route => route.fulfill({ status: 500, contentType: "application/json", body: '{"code":"INTERNAL_ERROR"}' }));
+  await confirm.getByRole("button", { name: "Confirmar eliminación" }).click();
+  await expect(confirm.getByRole("alert")).toHaveText("No se pudo completar la operación.");
+  await expect(group).toBeVisible();
+  await confirm.getByRole("button", { name: "Cancelar" }).click();
+  await expect(group.getByRole("button", { name: "Eliminar categoría Prueba" })).toBeFocused();
+  await page.reload();
+  await expect(group).toBeVisible();
+});
+
 test("Servicios confirms lifecycle actions, persists changes and recovers without repeating mutations", async ({ page, system }, testInfo) => {
   await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   await createBusinessInAdminUi(page, {

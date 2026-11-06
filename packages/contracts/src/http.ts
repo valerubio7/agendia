@@ -34,6 +34,8 @@ export const PRODUCT_HTTP_ROUTES = Object.freeze([
   "/me/services",
   "/me/services/:id",
   "/me/services/:id/status",
+  "/me/service-categories",
+  "/me/service-categories/:id",
   "/me/resources",
   "/me/resources/:id",
   "/me/resources/:id/status",
@@ -164,12 +166,26 @@ export function toOpenApiDocument() {
             content: { "application/json": { schema: { $ref: `#/components/schemas/${status === 200 ? "AppointmentRecord" : "SafeError"}` } } },
           }])),
         } }),
-      } : route === "/me/services/:id" || route === "/me/resources/:id" ? {
+      } : route === "/me/service-categories" ? {
+        get: {
+          summary: "List owned service categories",
+          responses: { 200: { description: "Categories with id and name, ordered by name and id" } },
+        },
+        post: {
+          summary: "Create an owned service category (business session, Origin and CSRF required)",
+          description: "Name is trimmed, nonblank and cannot contain NUL. Categories have no price or duration and are not bookable.",
+          requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["name"], properties: { name: { type: "string", minLength: 1 } } } } } },
+          responses: { 201: { description: "Created category with id and name" }, ...Object.fromEntries([400, 401, 403, 500].map(status => [String(status), { description: "Safe operation error", content: { "application/json": { schema: { $ref: "#/components/schemas/SafeError" } } } }])) },
+        },
+      } : route === "/me/services" ? {
+        post: { description: "Create a service with optional nullable categoryId belonging to the current business; omitted or null means uncategorized. Price and duration belong to the service.", responses: { 201: { description: "Created service, including nullable categoryId" } } },
+      } : route === "/me/services/:id" || route === "/me/resources/:id" || route === "/me/service-categories/:id" ? {
+        ...(route === "/me/services/:id" ? { put: { description: "Update a service: omitted categoryId preserves its assignment, null clears it, and a UUID assigns an owned category.", responses: { 200: { description: "Updated service, including nullable categoryId" } } } } : {}),
         delete: {
-          summary: "Retire owned catalog item (business session, Origin and CSRF required)",
+          summary: route === "/me/service-categories/:id" ? "Delete owned category and clear assignments without deleting services (business session, Origin and CSRF required)" : "Retire owned catalog item (business session, Origin and CSRF required)",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
           responses: Object.fromEntries([200, 400, 401, 403, 404, 409, 500].map(status => [String(status), {
-            description: status === 200 ? "Retired catalog identity" : "Safe operation error",
+            description: status === 200 ? (route === "/me/service-categories/:id" ? "Deleted category identity" : "Retired catalog identity") : "Safe operation error",
             content: { "application/json": { schema: { $ref: `#/components/schemas/${status === 200 ? "CatalogDeletionAck" : "SafeError"}` } } },
           }])),
         },

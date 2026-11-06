@@ -26,6 +26,7 @@ export type ServiceCatalogInput = {
   description?: string | undefined;
   durationMinutes: number;
   priceArs: number;
+  categoryId?: string | null | undefined;
 };
 export type CatalogService = {
   id: string;
@@ -34,6 +35,7 @@ export type CatalogService = {
   durationMinutes: number;
   priceArs: number;
   status: "active" | "suspended";
+  categoryId: string | null;
 };
 
 export function listResources(db: Db, businessId: string) {
@@ -110,32 +112,50 @@ export async function setResourceStatus(db: Db, repo: PostgresRepositories, busi
   await db`update resources set status=${status} where business_id=${businessId} and id=${id} and deleted_at is null`;
   return repo.getResource(businessId, id);
 }
+export function listServiceCategories(db: Db) {
+  return db<{ id: string; name: string }[]>`select id,name from service_categories order by name,id`;
+}
+export async function createServiceCategory(db: Db, businessId: string, name: string) {
+  const [row] = await db<{ id: string; name: string }[]>`
+    insert into service_categories(business_id,name) values(${businessId},${name}) returning id,name`;
+  return row!;
+}
+export async function deleteServiceCategory(db: Db, repo: PostgresRepositories, businessId: string, id: string) {
+  await repo.acquireBusinessCalendarLock({ businessId });
+  const [category] = await db`select id from service_categories where business_id=${businessId} and id=${id}`;
+  if (!category) return false;
+  await db`update services set category_id=null where business_id=${businessId} and category_id=${id}`;
+  await db`delete from service_categories where business_id=${businessId} and id=${id}`;
+  return true;
+}
 export function listServices(db: Db) {
   return db<CatalogService[]>`
-      select id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status
+      select id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status,category_id "categoryId"
       from services where deleted_at is null order by normalized_name,id`;
 }
 export async function createService(db: Db, repo: PostgresRepositories, businessId: string, input: ServiceCatalogInput) {
   await repo.acquireBusinessCalendarLock({ businessId });
   const [row] = await db<CatalogService[]>`
-      insert into services(business_id,name,description,duration_minutes,price_ars)
-      values(${businessId},${input.name},${input.description ?? null},${input.durationMinutes},${input.priceArs})
-      returning id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status`;
+      insert into services(business_id,name,description,duration_minutes,price_ars,category_id)
+      values(${businessId},${input.name},${input.description ?? null},${input.durationMinutes},${input.priceArs},${input.categoryId ?? null})
+      returning id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status,category_id "categoryId"`;
   return row!;
 }
 export async function updateService(db: Db, repo: PostgresRepositories, businessId: string, id: string, input: ServiceCatalogInput) {
   await repo.acquireBusinessCalendarLock({ businessId });
   const [row] = await db<CatalogService[]>`
       update services set name=${input.name},description=${input.description ?? null},
-      duration_minutes=${input.durationMinutes},price_ars=${input.priceArs} where business_id=${businessId} and id=${id} and deleted_at is null
-      returning id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status`;
+      duration_minutes=${input.durationMinutes},price_ars=${input.priceArs},
+      category_id=case when ${input.categoryId !== undefined} then ${input.categoryId ?? null}::uuid else category_id end
+      where business_id=${businessId} and id=${id} and deleted_at is null
+      returning id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status,category_id "categoryId"`;
   return row ?? null;
 }
 export async function setServiceStatus(db: Db, repo: PostgresRepositories, businessId: string, id: string, status: CatalogService["status"]) {
   await repo.acquireBusinessCalendarLock({ businessId });
   const [row] = await db<CatalogService[]>`
       update services set status=${status} where business_id=${businessId} and id=${id} and deleted_at is null
-      returning id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status`;
+      returning id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status,category_id "categoryId"`;
   return row ?? null;
 }
 /** Internal retirement only: caller UoW owns tombstone + links + audit/outbox rollback. */
