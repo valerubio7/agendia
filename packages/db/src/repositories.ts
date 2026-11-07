@@ -317,6 +317,14 @@ export class PostgresRepositories {
   }) {
     return business.createBusinessUser(this.db, this, row);
   }
+  async admitBusinessSend(id: string) {
+    const [row] = await this.db`select admit_business_send(${id}) as admitted`;
+    return row?.admitted === true;
+  }
+  async deleteBusiness(id: string, session: string, actor: string, request: string) {
+    const [row] = await this.db`select delete_business(${id},${session},${actor},${request}) as deleted`;
+    return row?.deleted === true;
+  }
   async setBusinessStatus(id: string, status: string) {
     return business.setBusinessStatus(this.db, id, status);
   }

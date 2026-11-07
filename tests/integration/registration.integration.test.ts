@@ -47,6 +47,70 @@ test("registration remains pending without a session until administrator approva
   expect((await list()).json().find((row: { id: string }) => row.id === request!.id)).toBeUndefined();
 });
 
+test("administrator can permanently delete a business and release its email", async () => {
+  const email = "deleted-business@example.test";
+  expect((await register(email)).statusCode).toBe(202);
+  const id = ((await list()).json() as { id: string; email: string }[]).find(row => row.email === email)!.id;
+  expect((await decide(id, "approve")).statusCode).toBe(200);
+  const signedIn = await login(email);
+  expect(signedIn.statusCode).toBe(200);
+  const businessCookie = String(signedIn.headers["set-cookie"]).split(";")[0]!;
+  const headers = { origin, cookie: admin.cookie, "x-csrf-token": admin.csrf };
+  const response = await app.inject({ method: "DELETE", url: `/admin/businesses/${id}`, headers });
+  expect(response.statusCode).toBe(200);
+  expect((await login(email)).statusCode).toBe(401);
+  expect((await app.inject({ method: "GET", url: "/auth/session", headers: { cookie: businessCookie } })).statusCode).toBe(401);
+  const businesses = (await app.inject({ method: "GET", url: "/admin/businesses", headers: { cookie: admin.cookie } })).json() as { id: string }[];
+  expect(businesses.some(row => row.id === id)).toBe(false);
+  expect((await register(email)).statusCode).toBe(202);
+});
+
+test("concurrent deletion records one audit event and cannot affect another business", async () => {
+  const email = "delete-race@example.test";
+  const otherEmail = "delete-race-other@example.test";
+  for (const address of [email, otherEmail]) expect((await register(address)).statusCode).toBe(202);
+  const pending = (await list()).json() as { id: string; email: string }[];
+  const id = pending.find(row => row.email === email)!.id;
+  const otherId = pending.find(row => row.email === otherEmail)!.id;
+  for (const business of [id, otherId]) expect((await decide(business, "approve")).statusCode).toBe(200);
+  const [actor] = await database.sql`select id from auth_identities where normalized_email='admin@example.test'`;
+  const headers = { origin, cookie: admin.cookie, "x-csrf-token": admin.csrf };
+  const remove = () => app.inject({ method: "DELETE", url: `/admin/businesses/${id}`, headers });
+  const results = await Promise.all([remove(), remove()]);
+  expect(results.map(response => response.statusCode).sort()).toEqual([200, 404]);
+  expect((await remove()).statusCode).toBe(404);
+  const audit = await database.sql`select business_id,actor_id from audit_events where business_id=${id} and event_type='business.deleted'`;
+  expect(Array.from(audit)).toEqual([{ business_id: id, actor_id: String(actor!.id) }]);
+  expect((await login(email)).statusCode).toBe(401);
+  expect((await login(otherEmail)).statusCode).toBe(200);
+  expect((await database.sql`select status from businesses where id=${otherId}`)[0]!.status).toBe("active");
+});
+
+test("business deletion requires administrator authentication, origin and CSRF", async () => {
+  const email = "delete-protected@example.test";
+  expect((await register(email)).statusCode).toBe(202);
+  const id = ((await list()).json() as { id: string; email: string }[]).find(row => row.email === email)!.id;
+  expect((await decide(id, "approve")).statusCode).toBe(200);
+  const signedIn = await login(email);
+  expect(signedIn.statusCode).toBe(200);
+  const businessCookie = String(signedIn.headers["set-cookie"]).split(";")[0]!;
+  const url = `/admin/businesses/${id}`;
+  const attempts = [
+    { headers: { origin }, status: 401 },
+    { headers: { cookie: admin.cookie, "x-csrf-token": admin.csrf }, status: 403 },
+    { headers: { origin, cookie: admin.cookie }, status: 403 },
+    { headers: { origin, cookie: businessCookie, "x-csrf-token": signedIn.json().csrfToken }, status: 404 },
+  ];
+  for (const attempt of attempts) {
+    const response = await app.inject({ method: "DELETE", url, headers: attempt.headers });
+    expect(response.statusCode).toBe(attempt.status);
+    expect((await app.inject({ method: "GET", url: "/auth/session", headers: { cookie: businessCookie } })).statusCode).toBe(200);
+    const businesses = (await app.inject({ method: "GET", url: "/admin/businesses", headers: { cookie: admin.cookie } })).json() as { id: string }[];
+    expect(businesses.some(row => row.id === id)).toBe(true);
+  }
+  expect((await login(email)).statusCode).toBe(200);
+});
+
 test("rejecting a pending request releases the email for a new registration", async () => {
   expect((await register("reject@example.test")).statusCode).toBe(202);
   const pending = (await list()).json() as { id: string; email: string }[];

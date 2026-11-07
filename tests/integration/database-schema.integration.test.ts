@@ -97,6 +97,7 @@ test("capability roles, forced tenant policies and owner-only throttle storage r
     where schemaname='public' and tablename='agent_configs' order by policyname`]).toEqual([
     { policyname: "agent_configs_tenant", cmd: "ALL", roles: ["agendia_runtime"] },
     { policyname: "agent_configs_worker", cmd: "SELECT", roles: ["agendia_worker_runtime"] },
+    { policyname: "business_purge_scope", cmd: "ALL", roles: ["agendia_business_purge"] },
   ]);
   for (const role of roles.map(row => row.rolname)) {
     for (const privilege of ["SELECT", "INSERT", "UPDATE", "DELETE"]) {
@@ -105,6 +106,12 @@ test("capability roles, forced tenant policies and owner-only throttle storage r
           : role === "agendia_worker_runtime" && privilege === "SELECT");
     }
   }
+  const purge = (await db.sql`select cmd,roles,qual,with_check from pg_policies where schemaname='public' and tablename='agent_configs' and policyname='business_purge_scope'`)[0]!;
+  expect(purge).toMatchObject({ cmd: 'ALL', roles: ['agendia_business_purge'] });
+  expect(purge.qual).toBe(purge.with_check);
+  expect(purge.qual).toContain("current_setting('app.purge_business'::text, true)");
+  for (const privilege of ['SELECT', 'DELETE', 'INSERT', 'UPDATE', 'TRUNCATE'])
+    expect((await db.sql`select has_table_privilege('agendia_business_purge','agent_configs',${privilege}) allowed`)[0]!.allowed).toBe(['SELECT', 'DELETE'].includes(privilege));
   const policy = (await db.sql`select cmd,roles,qual,with_check from pg_policies
     where schemaname='public' and tablename='business_profiles' and policyname='business_profiles_tenant'`)[0]!;
   expect(policy).toMatchObject({ cmd: 'ALL', roles: ['agendia_runtime'] });
@@ -113,6 +120,14 @@ test("capability roles, forced tenant policies and owner-only throttle storage r
   const businessId = randomUUID(), other = randomUUID();
   await db.sql`insert into businesses(id,name) values(${businessId},'Visible'),(${other},'Hidden')`;
   await db.sql`insert into business_profiles(business_id,display_name) values(${businessId},'Visible'),(${other},'Hidden')`;
+  await db.sql`insert into agent_configs(business_id) values(${businessId}),(${other})`;
+  await db.sql.begin(async tx => {
+    await tx`set local role agendia_business_purge`;
+    expect(await tx`select business_id from agent_configs`).toHaveLength(0);
+    await tx`select set_config('app.purge_business',${businessId},true)`;
+    expect([...await tx`select business_id from agent_configs`]).toEqual([{ business_id: businessId }]);
+    expect(await tx`delete from agent_configs where business_id=${other} returning business_id`).toHaveLength(0);
+  });
   await db.sql.begin(async tx => {
     await tx`set local role agendia_runtime`;
     await tx`select set_config('app.tenant_id',${businessId},true)`;

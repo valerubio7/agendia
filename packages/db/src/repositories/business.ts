@@ -31,7 +31,7 @@ export function listBusinesses(db: Db) {
 export async function business(db: Db, id: string) {
   return (
     (
-      await db`select id,name,status,created_at "createdAt",last_technical_activity_at "lastTechnicalActivityAt" from businesses where id=${id}`
+      await db`select id,name,status,created_at "createdAt",last_technical_activity_at "lastTechnicalActivityAt" from businesses where id=${id} and deleted_at is null`
     )[0] ?? null
   );
 }

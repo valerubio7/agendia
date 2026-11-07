@@ -66,6 +66,59 @@ async function keyboardFocus(page: Page, locator: Locator) {
   })).toBe(true);
 }
 
+test("delete requires confirmation and distinguishes failed deletion from failed refresh", async ({ page, system }) => {
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
+  const approve = await registerPending(page, "Negocio a eliminar", "delete-admin@example.test", "delete initial password");
+  await approve.click();
+  const row = businessRow(page, page.locator(".admin-directory"), "Negocio a eliminar");
+  const management = await openManagement(row);
+  const remove = management.getByRole("button", { name: "Eliminar Negocio a eliminar" });
+  let writes = 0, failed = true, failRefresh = false;
+  let release!: () => void, observed!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const requested = new Promise<void>(resolve => { observed = resolve; });
+  await page.route("**/admin/businesses/**", async route => {
+    if (route.request().method() !== "DELETE") return route.continue();
+    writes++;
+    if (failed) return route.fulfill({ status: 500, json: { code: "INTERNAL_ERROR" } });
+    failRefresh = true;
+    observed();
+    await held;
+    return route.fulfill({ status: 200, json: { deleted: true } });
+  });
+  await page.route("**/admin/businesses", async route => {
+    if (failRefresh) return route.fulfill({ status: 500, json: { code: "INTERNAL_ERROR" } });
+    return route.continue();
+  });
+  page.once("dialog", async dialog => {
+    expect(dialog.message()).toContain("irreversible");
+    expect(dialog.message()).toContain("copias");
+    expect(dialog.message()).toContain("historial");
+    expect(dialog.message()).toContain("mensajes");
+    await dialog.dismiss();
+  });
+  await remove.click();
+  expect(writes).toBe(0);
+  page.once("dialog", dialog => dialog.accept());
+  await remove.click();
+  await expect(management.getByRole("alert")).toContainText("No se pudo eliminar");
+  await expect(row).toBeVisible();
+  expect(writes).toBe(1);
+  failed = false;
+  page.once("dialog", dialog => dialog.accept());
+  await remove.click();
+  try {
+    await requested;
+    await expect(remove).toBeDisabled();
+    expect(writes).toBe(2);
+  } finally { release(); }
+  await expect(row).toHaveCount(0);
+  await expect(page.locator(".admin-feedback").getByRole("status")).toHaveText("Negocio eliminado");
+  await expect(page.locator(".admin-feedback").getByRole("alert")).toBeVisible();
+  await page.getByRole("button", { name: "Reintentar consulta" }).click();
+  expect(writes).toBe(2);
+});
+
 test("initial registration read failure leaves admin controls available and retries reads only", async ({ page, system }) => {
   await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
   const approve = await registerPending(page, "Negocio existente", "existing-retry@example.test", "existing initial password");
@@ -373,7 +426,8 @@ test("the redesigned administration screen preserves the real business workflow 
   await expect(management.getByRole("button", { name: "Reactivar", exact: true })).toBeVisible();
   await expect(management.getByRole("button", { name: "Suspender", exact: true })).toHaveCount(0);
   await expect(screen.locator("a")).toHaveCount(0);
-  await expect(screen.getByRole("button", { name: /Eliminar|Ver detalle|Conversaciones?|Métricas?|Dashboard|Duplicar|Editar/i })).toHaveCount(0);
+  await expect(management.getByRole("button", { name: `Eliminar ${tenant.name}` })).toBeVisible();
+  await expect(screen.getByRole("button", { name: /Ver detalle|Conversaciones?|Métricas?|Dashboard|Duplicar|Editar/i })).toHaveCount(0);
   await expect(screen.locator('a[href*="conversation"], a[href*="conversacion"]')).toHaveCount(0);
   for (const locator of [heading, requests, inventory, managedRow, management]) await expectReachable(locator);
   await expectNoHorizontalOverflow(page);

@@ -157,19 +157,41 @@ test("receipt/fence scope is tenant AND identity, with original auth/CSRF/role c
   expect((await app.inject({ method: "GET", url: `/me/appointment-operations/${key}` })).statusCode).toBe(401);
   expect((await app.inject({ method: "POST", url: `/me/appointment-operations/${key}/cancel`, headers: { ...headers(o), "x-csrf-token": "wrong" }, payload: { key, kind: "create", target: null } })).statusCode).toBe(403);
   const actor = randomUUID(), email = `${actor}@example.test`;
-  // Replace the binding, never bypass the one-business-user invariant.
-  await database.sql`update auth_identities set role='platform_admin',business_id=null where id=${o.actor}`;
-  await database.sql`insert into auth_identities(id,normalized_email,password_phc,role,business_id) values(${actor},${email},${phc},'business_user',${o.business})`;
-  const login = await app.inject({ method: "POST", url: "/auth/login", headers: { origin }, payload: { email, password: "correct horse battery staple" } });
-  const cookies = login.headers["set-cookie"]!;
-  const second = { ...o, actor, cookie: (Array.isArray(cookies) ? cookies[0]! : cookies).split(";")[0]!, csrf: login.json().csrfToken };
-  expect((await receipt(second, key)).json()).toMatchObject({ state: "not_found", appointment: null });
-  expect((await fenced(second, key)).json().state).toBe("cancelled");
-  await database.sql`update auth_identities set role='platform_admin',business_id=null where id=${actor}`;
-  await database.sql`update auth_identities set role='business_user',business_id=${o.business} where id=${o.actor}`;
-  expect((await receipt(o, key)).json()).toMatchObject({ state: "completed", appointment: saved });
-  const visible = await pools.api.run({ businessId: o.business, actorId: actor, role: "business_user", requestId: randomUUID() }, repo => repo.appointmentOperation({ businessId: o.business, actorId: o.actor, role: "business_user", requestId: randomUUID() }, key));
-  expect(visible).toBeNull();
+  await database.sql`insert into auth_identities(id,normalized_email,password_phc,role,business_id) values(${actor},${email},${phc},'platform_admin',null)`;
+  const identityBefore = (await database.sql`select * from auth_identities where id=${o.actor}`)[0];
+  await expect(database.sql`update auth_identities set role='platform_admin',business_id=null where id=${o.actor}`.execute()).rejects.toMatchObject({
+    code: "42501", message: 'new row violates row-level security policy for table "auth_identities"',
+  });
+  expect((await database.sql`select * from auth_identities where id=${o.actor}`)[0]).toEqual(identityBefore);
+  // Simulate identity turnover only in privileged fixture transactions; HTTP and RLS run with all guards enabled.
+  const rebind = async (remove: string, add: string) => database.sql.begin(async tx => {
+    await tx`set local session_replication_role = replica`;
+    await tx`update auth_identities set role='platform_admin',business_id=null where id=${remove}`;
+    await tx`update auth_identities set role='business_user',business_id=${o.business} where id=${add}`;
+  });
+  try {
+    await rebind(o.actor, actor);
+    const login = await app.inject({ method: "POST", url: "/auth/login", headers: { origin }, payload: { email, password: "correct horse battery staple" } });
+    expect(login.statusCode).toBe(200);
+    const cookies = login.headers["set-cookie"]!;
+    const second = { ...o, actor, cookie: (Array.isArray(cookies) ? cookies[0]! : cookies).split(";")[0]!, csrf: login.json().csrfToken };
+    const hidden = await receipt(second, key);
+    expect(hidden.statusCode).toBe(200);
+    expect(hidden.json()).toMatchObject({ state: "not_found", appointment: null });
+    const visible = await pools.api.run({ businessId: o.business, actorId: actor, role: "business_user", requestId: randomUUID() }, repo => repo.appointmentOperation({ businessId: o.business, actorId: o.actor, role: "business_user", requestId: randomUUID() }, key));
+    expect(visible).toBeNull();
+    const cancellation = await fenced(second, key);
+    expect(cancellation.statusCode).toBe(200);
+    expect(cancellation.json()).toMatchObject({ state: "cancelled", appointment: null });
+    expect((await receipt(second, key)).json()).toMatchObject({ state: "cancelled", appointment: null });
+    const rows = await database.sql`select actor_id,state from appointment_operation_receipts where business_id=${o.business} and operation_key=${key} order by actor_id`;
+    expect([...rows].sort((a, b) => a.actor_id.localeCompare(b.actor_id))).toEqual([{ actor_id: o.actor, state: "completed" }, { actor_id: actor, state: "cancelled" }].sort((a, b) => a.actor_id.localeCompare(b.actor_id)));
+  } finally {
+    await rebind(actor, o.actor);
+  }
+  const original = await receipt(o, key);
+  expect(original.statusCode).toBe(200);
+  expect(original.json()).toMatchObject({ state: "completed", appointment: saved });
 });
 
 test("POST commits server terms, normalized new identity, manual Confirmed and generic events only", async () => {

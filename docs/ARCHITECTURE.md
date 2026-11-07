@@ -63,10 +63,16 @@ flowchart LR
 - **Idempotencia explícita.** Las operaciones de turno aceptan `x-appointment-operation-key` y se registran en `appointment_operation_receipts` para que un reintento no duplique.
 - **Adaptadores aislados.** DeepSeek y Baileys viven en paquetes propios; el dominio depende de interfaces, no de proveedores.
 
+## Baja de negocios
+
+La API administrativa ejecuta la purga, auditoría y marca irreversible en una sola transacción. Los disparadores de escritura bloquean la fila del negocio hasta terminar cada transacción y rechazan nuevas escrituras tras la baja. Los trabajos de IA ya publicados encuentran ausentes sus mensajes de origen; no se purgan los jobs de `pgboss`.
+
+El manager actual vuelve a admitir cada envío bajo el lock del negocio antes de invocar el gateway; no espera la entrega bajo ese lock. El gateway de producción puede recorrer varios adaptadores de forma asíncrona, por lo que la admisión aún no demuestra que la llamada al proveedor ya haya comenzado. Un manager antiguo tampoco tiene la segunda comprobación. No se cierran ni drenan todos los sockets antiguos. La auditoría histórica y las copias anteriores pueden conservar datos.
+
 ## Límites conocidos
 
 - No hay automatización de backup/restore en el repositorio.
-- El negocio se registra sin verificación de correo y queda pendiente sin poder iniciar sesión hasta que administración apruebe. Rechazar libera el correo; administración no crea negocios manualmente ni cambia su nombre o contraseña, pero conserva la suspensión y reactivación. La eliminación completa está postergada.
+- El negocio se registra sin verificación de correo y queda pendiente sin poder iniciar sesión hasta que administración apruebe. Rechazar libera el correo; administración no crea negocios manualmente ni cambia su nombre o contraseña, pero conserva la suspensión y reactivación. La baja elimina los datos activos y conserva el historial de auditoría.
 - La vinculación y revinculación de WhatsApp se hacen desde el panel; el manager reconecta solo cuando la sesión sigue siendo válida.
 - No hay API pública para terceros; los contratos son internos entre API y web.
 

@@ -802,6 +802,10 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
             decision === "approve" ? "Solicitud aprobada" : "Solicitud rechazada",
             state => ({ ...state, registrations: state.registrations?.filter(row => row.id !== id) ?? null }),
           )}
+          deleteBusinessAction={(id) => runAdminMutation(
+            signal => api.deleteBusiness(id, signal), "Negocio eliminado",
+            state => ({ ...state, businesses: state.businesses.filter(row => row.id !== id) }),
+          )}
           setStatusAction={(id, status) =>
             runAdminMutation(
               () => api.setBusinessStatus(id, status),

@@ -141,7 +141,11 @@ test("runtime physical grants and forced tenant RLS prevent cross-business acces
   expect(visible.some(item => item.id === own.id)).toBe(true);
   await code(tenant(undefined, sql => insert(row(), sql)), "42501");
   await code(tenant(a.business, sql => insert(row(b), sql)), "42501");
-  await code(tenant(a.business, sql => sql`update appointments set business_id=${b.business},client_id=${b.client},service_id=${b.service},resource_id=${b.resource} where id=${own.id}`), "42501");
+  const beforeOwnershipChange = (await database.sql`select * from appointments where id=${own.id}`)[0];
+  await expect(tenant(a.business, sql => sql`update appointments set business_id=${b.business},client_id=${b.client},service_id=${b.service},resource_id=${b.resource} where id=${own.id}`)).rejects.toMatchObject({
+    code: "42501", message: 'new row violates row-level security policy for table "appointments"',
+  });
+  expect((await database.sql`select * from appointments where id=${own.id}`)[0]).toEqual(beforeOwnershipChange);
   expect(await tenant(a.business, sql => sql`update appointments set notes='hidden' where id=${foreign.id} returning id`)).toHaveLength(0);
   const created = await tenant(a.business, sql => insert(row(), sql));
   const edited = await tenant(a.business, sql => sql`update appointments set notes='edited' where id=${created.id} returning id,notes`);

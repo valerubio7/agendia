@@ -129,8 +129,21 @@ describe("current WhatsApp reply pacing", () => {
 
   test("tenant isolation, current policies and narrow runtime grants remain enforced", async () => {
     const group = await burst();
-    const policies = await db.sql`select policyname,cmd,roles from pg_policies where schemaname='public' and tablename='conversations'`;
-    expect([...policies]).toEqual([{ policyname: "conversations_internal", cmd: "ALL", roles: ["agendia_whatsapp_runtime", "agendia_worker_runtime"] }]);
+    const policies = await db.sql`select policyname,cmd,roles,qual,with_check from pg_policies where schemaname='public' and tablename='conversations' order by policyname`;
+    expect(policies.map(({ policyname, cmd, roles }) => ({ policyname, cmd, roles }))).toEqual([
+      { policyname: "business_purge_scope", cmd: "ALL", roles: ["agendia_business_purge"] },
+      { policyname: "conversations_internal", cmd: "ALL", roles: ["agendia_whatsapp_runtime", "agendia_worker_runtime"] },
+    ]);
+    expect(policies[0]!.qual).toBe(policies[0]!.with_check);
+    expect(policies[0]!.qual).toContain("current_setting('app.purge_business'::text, true)");
+    await db.sql.begin(async tx => {
+      await tx`set local role agendia_business_purge`;
+      await tx`select set_config('app.purge_business',${B},true)`;
+      expect(await tx`select id from conversations where id=${group.id}`).toHaveLength(0);
+      expect(await tx`delete from conversations where id=${group.id} returning id`).toHaveLength(0);
+    });
+    for (const privilege of ['SELECT', 'DELETE', 'INSERT', 'UPDATE', 'TRUNCATE'])
+      expect((await db.sql`select has_table_privilege('agendia_business_purge','conversations',${privilege}) allowed`)[0]!.allowed).toBe(['SELECT', 'DELETE'].includes(privilege));
     expect(await pools.worker.run(context(B), r => r.loadAiMessage(group.latest))).toBeNull();
     const grants = (await db.sql`select
       has_function_privilege('agendia_whatsapp_runtime','claim_owned_outbound(text,uuid[])','EXECUTE') manager_claim,

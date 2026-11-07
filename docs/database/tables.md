@@ -7,7 +7,7 @@ Convenciones: las PK `id` son `uuid`; los `created_at`/`updated_at`/`occurred_at
 ## Identidad y acceso
 
 ### `businesses`
-Raíz del tenant. `status` es `active` o `suspended`; suspender no borra datos. `last_technical_activity_at` lo actualiza un disparador al insertar `technical_events`.
+Raíz del tenant. `status` es `active` o `suspended`; suspender no borra datos. `last_technical_activity_at` lo actualiza un disparador al insertar `technical_events`. La baja conserva esta fila suspendida, con `deleted_at` irreversible, para identificar la auditoría y rechazar escrituras posteriores.
 
 ### `tenant_records`
 Tabla mínima para demostrar el aislamiento por RLS. No es una tabla de agenda ni de negocio real.
@@ -16,7 +16,7 @@ Tabla mínima para demostrar el aislamiento por RLS. No es una tabla de agenda n
 Solicitudes aún no decididas, con nombre, correo normalizado y hash Argon2id. Aprobar crea el negocio y su identidad; rechazar elimina la solicitud y libera el correo. El administrador no puede leer el hash.
 
 ### `auth_identities`
-Usuarios web. `role` es `platform_admin` (sin negocio) o `business_user` (con `business_id` obligatorio). Un índice parcial permite un solo `business_user` por negocio. `password_phc` es Argon2id.
+Usuarios web. `role` es `platform_admin` (sin negocio) o `business_user` (con `business_id` obligatorio). Un índice parcial permite un solo `business_user` por negocio. `password_phc` es Argon2id, salvo una identidad inactiva anonimizada que la purga privada conserva si otro negocio la referencia en un comprobante; esa identidad no tiene contraseña utilizable ni correo personal.
 
 ### `web_sessions`
 Sesiones web. Guarda `token_sha256` y `csrf_sha256`, nunca el token original. `absolute_expires_at` e `idle_expires_at` se evalúan en la aplicación; `revoked_at` permite revocar.

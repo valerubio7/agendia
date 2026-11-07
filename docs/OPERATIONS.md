@@ -67,6 +67,12 @@ Dokploy construye las imágenes desde el repositorio; el workflow no publica im�
 
 Las migraciones deben ser compatibles con la versión anterior mientras esta siga activa: la dependencia de Compose no detiene procesos que ya están ejecutándose. Para cambios incompatibles, planificá una ventana de mantenimiento y un backup verificado. Volver a una versión anterior de la aplicación no revierte el esquema.
 
+## Baja de negocios
+
+La baja administrativa es irreversible: purga los datos activos, revoca las sesiones, conserva la auditoría histórica y libera el correo. No ejecutes la primitiva privada directamente. Las copias anteriores y los mensajes ya entregados pueden conservar datos. Los trabajos ya publicados en `pgboss` no se eliminan, pero sus datos de origen ya no estarán disponibles; la comprobación actual precede al gateway asíncrono y no demuestra que toda llamada al proveedor haya comenzado antes de la baja; un manager antiguo también podría iniciar después un envío reclamado previamente. No se garantiza el cierre de sockets antiguos.
+
+La migración necesita un login capaz de crear roles y otorgarse membresía en el rol de purga sin login; los logins de aplicación no deben recibir esa membresía. Probá la migración con el rol migrador real en una base descartable antes del despliegue.
+
 ## Backups
 
 No hay automatización de backup/restore en el repositorio. La copia depende del proveedor de PostgreSQL o de Dokploy. Para una copia manual:

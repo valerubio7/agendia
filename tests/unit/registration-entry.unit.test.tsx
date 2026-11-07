@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { createRequire } from "node:module";
 import { RegisterScreen } from "../../apps/web/src/features/auth/register-screen";
 import { AdminBusinessesScreen } from "../../apps/web/src/features/administration/admin-businesses-screen";
+import { ApiClient } from "../../apps/web/src/api/api-client";
 const require = createRequire(new URL("../../apps/web/package.json", import.meta.url));
 const { createElement } = require("react");
 const { renderToStaticMarkup } = require("react-dom/server");
@@ -36,13 +37,36 @@ test("admin business management offers status but no name or password editing", 
     registrations: [], responseTiming: { responseTiming: { initialDelaySeconds: 0, activeDelaySeconds: 0, inactivityResetSeconds: 60 } },
     notice: "", error: "", refreshWarning: false, refreshPending: false,
     retryRefreshAction: () => {}, decideAction: async () => true, saveResponseTimingAction: async () => true,
-    setStatusAction: async () => true,
+    setStatusAction: async () => true, deleteBusinessAction: async () => true,
   }));
   expect(html).toContain("Suspender");
+  expect(html).toContain('aria-label="Eliminar Negocio"');
   expect(html).not.toContain("Renombrar");
   expect(html).not.toContain("Cambiar contraseña");
   expect(html).not.toContain('name="password"');
   expect(html).not.toContain('name="name"');
+});
+test("admin deletion uses authenticated encoded DELETE and propagates errors without replay", async () => {
+  const calls: { path: string; init?: RequestInit }[] = [];
+  let fail = false;
+  const client = new ApiClient(async (path, init) => {
+    calls.push({ path, init });
+    if (path.endsWith("/login")) return Response.json({ csrfToken: "csrf" });
+    if (path.endsWith("/session")) return Response.json({ identityId: "a", role: "platform_admin", businessId: null });
+    return fail ? Response.json({ code: "FORBIDDEN" }, { status: 403 }) : Response.json({ deleted: true });
+  });
+  await client.login("admin@example.test", "password", true);
+  const signal = new AbortController().signal;
+  await client.deleteBusiness("id/a", signal);
+  expect(calls.at(-1)?.path).toBe("/api/admin/businesses/id%2Fa");
+  expect(calls.at(-1)?.init).toMatchObject({ method: "DELETE", credentials: "include", signal });
+  expect(calls.at(-1)?.init?.body).toBeUndefined();
+  expect(new Headers(calls.at(-1)?.init?.headers).get("x-csrf-token")).toBe("csrf");
+  fail = true;
+  const before = calls.length;
+  await expect(client.deleteBusiness("id/a", signal)).rejects.toMatchObject({ code: "FORBIDDEN", status: 403 });
+  expect(calls.length).toBe(before + 1);
+  expect(client.errorMessage(new Error())).toBe("No se pudo completar la operación.");
 });
 test("admin shows pending registrations and accessible decision actions", () => {
   const html = renderToStaticMarkup(createElement(AdminBusinessesScreen, {
@@ -50,7 +74,7 @@ test("admin shows pending registrations and accessible decision actions", () => 
     responseTiming: { responseTiming: { initialDelaySeconds: 0, activeDelaySeconds: 0, inactivityResetSeconds: 60 } },
     notice: "", error: "", refreshWarning: true, refreshPending: false,
     retryRefreshAction: () => {}, decideAction: async () => true, saveResponseTimingAction: async () => true,
-    setStatusAction: async () => true,
+    setStatusAction: async () => true, deleteBusinessAction: async () => true,
   }));
   expect(html).toContain("a@example.test");
   expect(html).toContain('aria-label="Aprobar Negocio"');

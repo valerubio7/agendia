@@ -88,6 +88,14 @@ erDiagram
 
 El migrador registra cada archivo en `agendia_production_migrations` con su checksum y rechaza historial editado o desconocido. En desarrollo se ejecuta con `bun run db:migrate:dev`; en producción Compose ejecuta el target `db-setup` de `Dockerfile.api` antes de iniciar la API y los workers. Consultá [Operaciones](OPERATIONS.md) para configurar el login migrador y manejar cambios incompatibles. La cola `pgboss` la administra la biblioteca, no estas migraciones.
 
+### Baja de negocios
+
+`0007_private_business_purge.sql` incorpora una marca irreversible `businesses.deleted_at` y la función `delete_business`, accesible únicamente al rol de administración con una sesión de administrador vigente. La transacción bloquea el negocio, purga sus datos activos, conserva la auditoría y agrega un evento con administrador, negocio y fecha. Disparadores serializan inserciones y actualizaciones de datos del negocio contra esa baja y rechazan escrituras posteriores, incluso de procesos anteriores. La fila identificatoria queda suspendida y oculta de la lista administrativa; el correo vuelve a estar disponible.
+
+La función usa un rol sin login ni BYPASSRLS con permisos específicos y políticas de purga; el login migrador debe poder crear roles y otorgarse membresía en ese rol. Los roles de aplicación no reciben esa membresía. La primitiva `purge_business_data_private` no es una API y no debe invocarse directamente.
+
+Si un comprobante de otro negocio referencia una identidad eliminada, se conserva inactiva y anonimizada, sin sesiones ni contraseña utilizable. La auditoría histórica es inmutable y puede contener datos personales. Los jobs ya publicados en `pgboss` no se borran; los procesadores encuentran los datos de origen ausentes. El manager actual comprueba la baja antes de invocar el gateway, pero el gateway puede esperar antes de llamar al proveedor. Por eso todavía no se demuestra que toda llamada al proveedor haya comenzado antes de la baja. Un manager antiguo podría iniciar después un envío reclamado previamente. La baja no cierra ni drena sockets antiguos.
+
 ## Datos sensibles
 
 | Dato | Tratamiento |
