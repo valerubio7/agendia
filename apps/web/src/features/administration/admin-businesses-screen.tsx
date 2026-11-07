@@ -17,12 +17,14 @@ type AdminBusinessesScreenProps = {
   registrations: Registration[] | null;
   decideAction: (id: string, decision: "approve" | "reject") => Promise<boolean>;
   setStatusAction: (id: string, status: "active" | "suspended") => Promise<boolean>;
+  deleteBusinessAction: (id: string) => Promise<boolean>;
 };
 
 type PendingAction =
   | { kind: "instructions" }
   | { kind: "registration"; registrationId: string }
-  | { kind: "status"; businessId: string };
+  | { kind: "status"; businessId: string }
+  | { kind: "delete"; businessId: string };
 
 const timestampFormatter = new Intl.DateTimeFormat("es-AR", {
   dateStyle: "medium",
@@ -61,7 +63,7 @@ const whatsappStatusLabels: Record<Business["whatsappStatus"], string> = {
 export function AdminBusinessesScreen({
   businesses, responseTiming, saveResponseTimingAction, notice, error,
   refreshWarning, refreshPending, retryRefreshAction, registrations, decideAction,
-  setStatusAction,
+  setStatusAction, deleteBusinessAction,
 }: AdminBusinessesScreenProps) {
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [failedAction, setFailedAction] = useState<PendingAction | null>(null);
@@ -184,12 +186,19 @@ export function AdminBusinessesScreen({
                       {rowPending && pendingAction.kind === "status" ? business.status === "active" ? "Suspendiendo…" : "Reactivando…" : business.status === "active" ? "Suspender" : "Reactivar"}
                     </button>
                   </div>
+                  <button className="admin-danger" type="button" disabled={anyPending} aria-label={`Eliminar ${business.name}`}
+                    onClick={() => {
+                      if (pendingRef.current || !window.confirm(`¿Eliminar ${business.name}? Esta acción es irreversible y borrará los datos del negocio del sistema activo. El historial de auditoría y las copias anteriores pueden conservar datos. Los mensajes ya entregados fuera de Agendia no se borrarán.`)) return;
+                      void runAction({ kind: "delete", businessId: business.id }, () => deleteBusinessAction(business.id));
+                    }}>
+                    {rowPending && pendingAction.kind === "delete" ? "Eliminando…" : "Eliminar"}
+                  </button>
                   <dl className="admin-technical-details">
                     <div><dt>Alta · UTC</dt><dd>{formatCreatedTimestamp(business.createdAt)}</dd></div>
                     <div><dt>Última actividad técnica · UTC</dt><dd>{formatActivityTimestamp(business.lastTechnicalActivityAt)}</dd></div>
                   </dl>
                   {rowFailure && error && <div className="admin-context-error" role="alert">
-                    <strong>No se pudo actualizar el estado de {business.name}.</strong>
+                    <strong>{rowFailure.kind === "delete" ? `No se pudo eliminar ${business.name}.` : `No se pudo actualizar el estado de ${business.name}.`}</strong>
                     <span>{error}</span>
                   </div>}
                 </div>

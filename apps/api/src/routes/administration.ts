@@ -58,6 +58,18 @@ export function registerAdministrationRoutes(
       }
     });
   }
+  app.delete("/admin/businesses/:id", async (request, reply) => {
+    const auth = await requireAdmin(request, reply, true);
+    if (!auth) return;
+    const id = z.string().uuid().safeParse((request.params as { id: string }).id);
+    if (!id.success) return fail(reply, request, 404, "NOT_FOUND", "Resource not found");
+    try {
+      const deleted = await pools.admin.run(undefined, repo => repo.deleteBusiness(id.data, auth.session_id, auth.identity_id, request.id));
+      return deleted ? { deleted: true } : fail(reply, request, 404, "NOT_FOUND", "Resource not found");
+    } catch {
+      return fail(reply, request, 500, "INTERNAL_ERROR", "Business deletion failed");
+    }
+  });
   app.put("/admin/businesses/:id/status", async (request, reply) => {
     const auth = await requireAdmin(request, reply, true);
     if (!auth) return;

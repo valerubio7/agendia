@@ -331,6 +331,8 @@ export class ApiClient {
   saveResponseTiming = (responseTiming: ResponseTiming["responseTiming"]) =>
     this.call<ResponseTiming>("/admin/response-timing", "PUT", { responseTiming });
   businesses = () => this.call<Business[]>("/admin/businesses");
+  deleteBusiness = (id: string, signal?: AbortSignal) =>
+    this.call<void>(`/admin/businesses/${encodeURIComponent(id)}`, "DELETE", undefined, undefined, signal);
   setBusinessStatus = (id: string, status: "active" | "suspended") =>
     this.call<Business>(
       `/admin/businesses/${encodeURIComponent(id)}/status`,
