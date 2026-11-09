@@ -9,6 +9,24 @@ export const businesses = pgTable("businesses", {
   lastTechnicalActivityAt: timestamp("last_technical_activity_at", { withTimezone: true }),
 });
 
+// FORCE RLS, grants, and the business write trigger remain in the SQL migrations.
+export const businessProfiles = pgTable("business_profiles", {
+  businessId: uuid("business_id").primaryKey(),
+  displayName: varchar("display_name", { length: 160 }).notNull(),
+  description: varchar("description", { length: 4000 }).notNull().default(""),
+  address: varchar("address", { length: 500 }).notNull().default(""),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => {
+  const tenantScope = sql`business_id = nullif(current_setting('app.tenant_id', true), '')::uuid`;
+  const purgeScope = sql`business_id = nullif(current_setting('app.purge_business', true), '')::uuid`;
+  return [
+    foreignKey({ name: "business_profiles_business_id_fkey", columns: [table.businessId], foreignColumns: [businesses.id] }),
+    pgPolicy("business_profiles_tenant", { for: "all", to: "agendia_runtime", using: tenantScope, withCheck: tenantScope }),
+    pgPolicy("business_profiles_worker", { for: "select", to: "agendia_worker_runtime", using: tenantScope }),
+    pgPolicy("business_purge_scope", { for: "all", to: "agendia_business_purge", using: purgeScope, withCheck: purgeScope }),
+  ];
+}).enableRLS();
+
 export const whatsappAgendaReceipts = pgTable("whatsapp_agenda_receipts", {
   businessId: uuid("business_id").notNull().references(() => businesses.id),
   messageId: uuid("message_id").primaryKey(),
