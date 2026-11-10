@@ -1,6 +1,6 @@
 # Base de datos
 
-agendIA usa PostgreSQL 16. Las migraciones SQL son la autoridad del modelo: `packages/db/migrations/` define tablas, roles, políticas RLS, funciones y disparadores. [`schema.ts`](../packages/db/src/schema.ts) declara solo 3 tablas y no es el inventario completo.
+agendIA usa PostgreSQL 16. [`schema.ts`](../packages/db/src/schema.ts) representa en Drizzle 0.45.2 las **35 tablas públicas de aplicación y la vista `admin_business_status`**, con sus restricciones, índices y políticas RLS, efectivas tras 0000–0008. Las migraciones SQL de `packages/db/migrations/` siguen siendo la autoridad de instalación y ejecución; esta representación no cambia el migrador ni los repositorios actuales.
 
 Esta guía describe el repositorio; no inspecciona una base en ejecución ni confirma qué migraciones se aplicaron en un servidor.
 
@@ -21,7 +21,7 @@ Un **negocio** es la unidad de aislamiento. Su `business_id` acompaña a casi to
 | Eventos y control | Auditoría, diagnóstico, outbox/inbox y límites de login. | `audit_events`, `technical_events`, `outbox_events`, `inbox_events`, `operational_controls`, `login_throttle_global`, `login_throttle_accounts` |
 | WhatsApp | Conexión, credenciales cifradas y vinculación. | `whatsapp_connections`, `whatsapp_auth_records`, `whatsapp_link_codes`, `whatsapp_sender_bindings`, `whatsapp_received_senders` |
 | Conversaciones | Historial, resúmenes, envíos y estado del agente. | `conversations`, `messages`, `conversation_summaries`, `outbound_commands`, `whatsapp_agenda_dialogues`, `whatsapp_agenda_receipts` |
-| Catálogo | Servicios, recursos y clientes. | `services`, `resources`, `resource_services`, `clients` |
+| Catálogo | Categorías, servicios, recursos y clientes. | `service_categories`, `services`, `resources`, `resource_services`, `clients` |
 | Agenda | Calendario, cierres, turnos e idempotencia. | `business_calendars`, `business_calendar_closures`, `appointments`, `appointment_operation_receipts` |
 
 ## Relaciones
@@ -65,11 +65,27 @@ erDiagram
   messages ||--o| whatsapp_agenda_receipts : comprobante
 ```
 
-`outbound_commands.source_message_id` es una referencia lógica con índice único, no una FK. `audit_events.business_id` puede ser NULL para eventos de plataforma.
+`outbound_commands.source_message_id` es una referencia lógica con índice único, no una FK. `audit_events.business_id` puede ser NULL para eventos de plataforma. `registration_throttle` limita el registro público por separado del login.
+
+## Representación Drizzle y límites
+
+El módulo mantiene los exports públicos existentes y usa `bigint` de JavaScript para columnas PostgreSQL `bigint`, cadenas para `numeric` sin precisión fija y `Buffer` para `bytea`. Las fechas de calendario usan cadenas; los timestamps usan `Date`. No agrega enums ni FKs a referencias lógicas.
+
+| En Drizzle | Conservado en SQL |
+| --- | --- |
+| Columnas, defaults y expresiones de columnas generadas | Collation ICU `service_name_case` y `COLLATE "C"` de `services.normalized_name` y `resources.normalized_name`; no hay API pública de collation de columna en 0.45.2. |
+| PK, UNIQUE, CHECK y FKs con nombres, orden y acciones | Exclusión GiST `appointments_confirmed_capacity`: evita superposición de turnos confirmados; **no es un índice ordinario**. |
+| 15 índices independientes, incluidos parciales, expresiones, DESC y GIN | Extensión `btree_gist`, esquema `pgboss` y filas singleton iniciales. |
+| `ENABLE RLS` y políticas completas: roles, comandos, USING y WITH CHECK | `FORCE RLS`; roles, membresías y ACLs completas, incluidos permisos por columna y revocaciones. |
+| Definición final de `admin_business_status`, que oculta negocios eliminados | Funciones, incluidas las `SECURITY DEFINER`, sus propietarios/search_path, y triggers de auditoría, actividad y baja. |
+
+La suite [`drizzle-schema-catalog.integration.test.ts`](../tests/integration/drizzle-schema-catalog.integration.test.ts) aplica las nueve migraciones **solo en PostgreSQL 16 desechable** y materializa los metadatos públicos en un esquema de prueba. PostgreSQL canonicaliza las expresiones de ambos catálogos. La comparación parametrizada cubre inventario, columnas/defaults/generación/collation, restricciones nombradas y ordenadas, acciones FK, índices independientes (orden, opclasses y predicados), políticas y flags RLS. Cuatro mutaciones revertidas comprueban que detecta drift de default, acción FK, índice y política.
+
+Las excepciones de collation se aplican explícitamente al esquema de prueba: no se afirma que Drizzle las emita. Se comprueban aparte FORCE RLS, la exclusión, collations, roles, membresía de purga, ACLs sensibles, triggers, SQLSTATE `42501`, extensión/esquema y seeds. Estos checks **no constituyen equivalencia exhaustiva de todos los cuerpos de funciones, grants ni su comportamiento concurrente**; el SQL histórico y las pruebas funcionales de seguridad siguen siendo necesarios. El helper es solo de pruebas, no un generador ni un runner de migraciones. No incluye objetos internos de extensiones, la cola `pgboss` ni la tabla de historial del migrador en el inventario de aplicación.
 
 ## Aislamiento y roles
 
-- 26 tablas tienen `ENABLE` + `FORCE ROW LEVEL SECURITY`. Las globales incluyen `businesses`, `auth_identities`, `web_sessions`, `operational_controls`, los throttles de login y las dos tablas de registro. El rol de administración solo puede leer los datos no sensibles de las solicitudes pendientes; las decisiones pasan por una función acotada.
+- 27 tablas tienen `ENABLE` + `FORCE ROW LEVEL SECURITY` (incluida `service_categories`). Las globales incluyen `businesses`, `auth_identities`, `web_sessions`, `operational_controls`, los throttles de login y las dos tablas de registro. El rol de administración solo puede leer los datos no sensibles de las solicitudes pendientes; las decisiones pasan por una función acotada.
 - Hay cuatro roles de capacidad, todos `NOLOGIN` y `NOBYPASSRLS`: `agendia_runtime` (panel del negocio), `agendia_admin_runtime` (administración), `agendia_whatsapp_runtime` (Baileys) y `agendia_worker_runtime` (agente y resúmenes).
 - Los logins de conexión (`agendia_api`, `agendia_admin`, `agendia_worker`, `agendia_manager`) solo tienen membresía. Cada transacción ejecuta `SET LOCAL ROLE` y publica `app.tenant_id`, `app.actor_role`, `app.actor_id` y `app.request_id`; las políticas comparan esos valores.
 - Las funciones `SECURITY DEFINER` (`route_whatsapp_session`, `claim_ai_outbox`, `claim_owned_outbound`, `append_runtime_audit`, etc.) son el acceso acotado para reclamar trabajo, enrutar sesiones y auditar. Su ejecución está revocada de `PUBLIC`.
@@ -85,6 +101,10 @@ erDiagram
 | `0002_agent_silent_completion.sql` | Permite `whatsapp_agenda_receipts.outbound_id` NULL y agrega el `CHECK` de operación `silent`. |
 | `0003_session_idle_ttl.sql` | Agrega la política de inactividad de sesión. |
 | `0004_registration.sql` | Agrega solicitudes pendientes, throttle de registro y funciones de envío y decisión. La aprobación crea negocio e identidad; el rechazo libera el correo. |
+| `0005_service_duration_five_minutes.sql` | Cambia a múltiplos positivos de cinco minutos la duración de servicios y turnos. |
+| `0006_service_categories.sql` | Agrega categorías con RLS y una FK compuesta de servicio a categoría del mismo negocio. |
+| `0007_private_business_purge.sql` | Agrega `deleted_at`, purga privada, políticas y triggers de baja; filtra la vista administrativa. |
+| `0008_ownership_sqlstate.sql` | Conserva el SQLSTATE `42501` al rechazar cambios de propietario, sin quitar la barrera de baja. |
 
 El migrador registra cada archivo en `agendia_production_migrations` con su checksum y rechaza historial editado o desconocido. En desarrollo se ejecuta con `bun run db:migrate:dev`; en producción Compose ejecuta el target `db-setup` de `Dockerfile.api` antes de iniciar la API y los workers. Consultá [Operaciones](OPERATIONS.md) para configurar el login migrador y manejar cambios incompatibles. La cola `pgboss` la administra la biblioteca, no estas migraciones.
 

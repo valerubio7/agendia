@@ -48,7 +48,7 @@ flowchart LR
 ## Aislamiento y seguridad
 
 - Toda tabla de negocio lleva `business_id`; las relaciones usan claves foráneas compuestas `(business_id, id)` para que un cruce entre negocios sea imposible a nivel SQL.
-- 26 tablas tienen `ENABLE` + `FORCE ROW LEVEL SECURITY`. Las globales incluyen `businesses`, `auth_identities`, `web_sessions`, `operational_controls`, los throttles de login y las tablas de registro.
+- 27 tablas tienen `ENABLE` + `FORCE ROW LEVEL SECURITY`, incluida `service_categories`. Las globales incluyen `businesses`, `auth_identities`, `web_sessions`, `operational_controls`, los throttles de login y las tablas de registro.
 - Hay cuatro roles de capacidad: `agendia_runtime`, `agendia_admin_runtime`, `agendia_whatsapp_runtime` y `agendia_worker_runtime`. El login de conexión solo tiene membresía; cada transacción activa el rol y los settings `app.tenant_id`, `app.actor_role`, `app.actor_id` y `app.request_id`.
 - Las credenciales de WhatsApp se cifran con AES-256-GCM. `BAILEYS_KMS_KEY` y `WHATSAPP_LINK_CODE_KEY` deben ser base64 de exactamente 32 bytes y se validan al arrancar.
 - La sesión es un token opaco de 32 bytes; se guarda su SHA-256. Sin «Mantener sesión iniciada», el negocio dura hasta 7 días (2 días de inactividad) y administración 8 h (30 min de inactividad); la cookie termina con el navegador. Con la casilla, el negocio dura hasta 6 meses calendario (30 días de inactividad) y administración 7 días (1 día de inactividad); la cookie persistente nunca supera el límite absoluto. Solo la interacción humana en el panel renueva la inactividad mediante `POST /auth/activity`, protegido por origen y CSRF; consultas, sondeos y bootstrap de CSRF no la renuevan. El login tiene throttle global y por cuenta.
@@ -57,7 +57,7 @@ flowchart LR
 ## Decisiones y por qué
 
 - **Cuatro procesos, no un monolito.** Los sockets de WhatsApp son stateful y fallan distinto que la API; separarlos aísla fallas y permite escalar la API sin duplicar sesiones.
-- **Migraciones SQL como autoridad.** El modelo incluye RLS, funciones `SECURITY DEFINER`, triggers y exclusiones GiST que Drizzle no expresa. `packages/db/src/schema.ts` declara solo 3 tablas y no es el modelo.
+- **Metadatos Drizzle; ejecución todavía SQL.** `packages/db/src/schema.ts` representa las 35 tablas públicas de aplicación, la vista administrativa, restricciones, índices y políticas RLS tras 0000–0008. La suite de paridad compara su catálogo con PostgreSQL 16 desechable. El migrador con checksum, las transacciones y los repositorios actuales no cambian en esta etapa. SQL conserva FORCE RLS, exclusiones GiST, collations, roles/ACLs/membresías, funciones `SECURITY DEFINER`, triggers, extensiones/esquemas y seeds; no se puede regenerar la instalación completa solo desde esos metadatos. Ver [límites de representación y verificación](DATABASE.md#representación-drizzle-y-límites).
 - **Outbox transaccional.** La mutación, la auditoría y el trabajo pendiente se confirman juntos; publicar la cola es un paso reintentable, no una pérdida posible.
 - **pg-boss sobre PostgreSQL.** Evita un servicio extra de colas y reutiliza la misma base con el esquema `pgboss`.
 - **Idempotencia explícita.** Las operaciones de turno aceptan `x-appointment-operation-key` y se registran en `appointment_operation_receipts` para que un reintento no duplique.
