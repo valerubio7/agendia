@@ -1,5 +1,5 @@
 import postgres from "postgres";
-import { migrateDatabase, MigrationHistoryError } from "./db-migrate.ts";
+import { migrateDevelopmentDatabase, MigrationHistoryError, MigrationOutcomeError } from "./db-migrate.ts";
 
 export const capabilities = [
   "agendia_runtime", "agendia_admin_runtime",
@@ -51,18 +51,18 @@ export async function provisionLogins(sql: postgres.Sql, env: Record<string, str
 if (import.meta.main) {
   try {
     if (!process.env.DATABASE_URL?.trim()) throw new Error("DATABASE_URL is required");
-    const sql = postgres(process.env.DATABASE_URL, { max: 1 });
-    try {
-      if (process.argv[2] === "migrate") await migrateDatabase(sql);
-      else if (process.argv[2]) throw new Error("Unknown setup command");
-      else await provisionLogins(sql, process.env);
-    } finally {
-      await sql.end();
+    if (process.argv[2] === "migrate") await migrateDevelopmentDatabase();
+    else {
+      if (process.argv[2]) throw new Error("Unknown setup command");
+      const sql = postgres(process.env.DATABASE_URL, { max: 1 });
+      try { await provisionLogins(sql, process.env); }
+      finally { await sql.end(); }
     }
     console.log("Production database setup completed");
   } catch (error) {
     // Do not expose SQL/passwords or connection URLs in setup logs.
-    console.error(error instanceof MigrationHistoryError ? error.message : "Production database setup failed");
+    console.error(error instanceof MigrationHistoryError || error instanceof MigrationOutcomeError
+      ? error.message : "Production database setup failed");
     process.exitCode = 1;
   }
 }

@@ -1,348 +1,277 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readMigrationFiles } from "drizzle-orm/migrator";
-import { drizzle } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Client } from "pg";
 import postgres, { type Sql } from "postgres";
+import { migrateDatabase } from "../../scripts/db/db-migrate.ts";
+import { capabilities, provisionLogins } from "../../scripts/db/provision-production-db.ts";
 import { startTestPostgres, type TestPostgres } from "../support/postgres.ts";
 
 let database: TestPostgres;
 let nextDatabase = 0;
 beforeAll(async () => { database = await startTestPostgres(); }, 120_000);
 afterAll(async () => { await database?.stop(); });
-
 const base = "create table proof (value text primary key, pid integer not null);\n--> statement-breakpoint\ninsert into proof values ('base', pg_backend_pid());";
 const next = "insert into proof values ('next', pg_backend_pid());";
 const failure = "create table pending_ddl (id integer);\n--> statement-breakpoint\nselect deliberately_missing_function();";
-const lock = "select pg_advisory_lock(hashtext('agendia:production-setup'))";
+const hash = (source: string) => createHash("sha256").update(source).digest("hex");
 
-function signal() {
-  let resolve!: () => void;
-  const promise = new Promise<void>(done => { resolve = done; });
-  return { promise, resolve };
-}
-
-async function fixture(sources: string[], run: (url: string, folder: string, observer: Sql) => Promise<void>) {
-  const folder = await mkdtemp(join(tmpdir(), "agendia-drizzle-proof-"));
-  const name = `migration_proof_${++nextDatabase}`;
+async function fixture(sources: string[], body: (f: {
+  url: string; folder: string; observer: Sql; client: Client;
+  run: () => Promise<void>; journal: { version: string; dialect: string; entries: { idx: number; version: string; when: number; tag: string; breakpoints: boolean; sha256: string }[] };
+}) => Promise<void>) {
+  const folder = await mkdtemp(join(tmpdir(), "agendia-drizzle-transaction-"));
+  const name = `migration_transaction_${++nextDatabase}`;
   await database.sql`create database ${database.sql(name)}`;
   const url = new URL(database.container.getConnectionUri());
   url.pathname = `/${name}`;
-  const observer = postgres(url.toString(), { max: 1 });
+  const observer = postgres(url.toString(), { max: 1, onnotice: () => {} });
+  const client = new Client({ connectionString: url.toString(), application_name: "agendia-db-migrate" });
   try {
     await mkdir(join(folder, "meta"));
-    await writeFile(join(folder, "meta/_journal.json"), JSON.stringify({
-      version: "7", dialect: "postgresql", entries: sources.map((_, idx) => ({
-        idx, version: "7", when: 1000 + idx, tag: `000${idx}_proof`, breakpoints: true,
-      })),
-    }));
+    const journal = { version: "7", dialect: "postgresql", entries: sources.map((source, idx) => ({
+      idx, version: "7", when: 1700000000000 + idx, tag: `000${idx}_proof`, breakpoints: true, sha256: hash(source),
+    })) };
+    await writeFile(join(folder, "meta/_journal.json"), JSON.stringify(journal));
     await Promise.all(sources.map((source, idx) => writeFile(join(folder, `000${idx}_proof.sql`), source)));
-    await run(url.toString(), folder, observer);
+    // Each invocation gets a new dedicated client. The first remains observable for loss tests.
+    let first = true;
+    const run = () => migrateDatabase(url.toString(), { migrationsFolder: folder, connect: connection => {
+      if (first) { first = false; return client; }
+      return new Client({ connectionString: connection, application_name: "agendia-db-migrate" });
+    } });
+    await body({ url: url.toString(), folder, observer, client, run, journal });
   } finally {
-    await observer.end();
-    await rm(folder, { recursive: true, force: true });
+    await client.end(); await observer.end(); await rm(folder, { recursive: true, force: true });
   }
 }
-
-type History = { name: string; checksum: string };
-type Ledger = { hash: string; created_at: string };
-
-// Test-only candidate: dedicated, non-reconnecting session; no runtime cutover.
-async function coordinate(url: string, folder: string, hooks: {
-  locked?: (client: Client, pid: number) => Promise<void>;
-  beforeStock?: (client: Client, pid: number, stopped: Promise<void>) => Promise<void>;
-  afterLoss?: (client: Client) => Promise<void>;
-  query?: (query: string) => void;
-} = {}) {
-  let lost = false;
-  let finishing = false;
-  let held = false;
-  let committed = false;
-  let stockStarted = false;
-  const closed = signal();
-  const client = new Client({
-    connectionString: url,
-    application_name: "agendia-stock-migration-proof",
-  });
-  // pg reports idle errors via events and active-query errors via query rejection.
-  client.on("error", () => { lost = true; });
-  client.on("end", () => {
-    if (!finishing) lost = true;
-    closed.resolve();
-  });
-  let shutdown: Promise<void> | undefined;
-  function stop() {
-    finishing = true;
-    return shutdown ??= client.end();
-  }
-  try {
-    await client.connect();
-    const { rows: [{ pid } = { pid: 0 }] } = await client.query<{ pid: number }>("select pg_backend_pid() as pid");
-    hooks.query?.(lock);
-    await client.query(lock);
-    held = true;
-    await hooks.locked?.(client, pid);
-    if (lost) throw new Error("Session lost before transaction");
-    // Stock BEGIN nests without a savepoint; stock COMMIT ends this outer transaction.
-    await client.query("BEGIN");
-    const migrations = readMigrationFiles({ migrationsFolder: folder });
-    const { rows: [{ legacy, ledger } = { legacy: null, ledger: null }] } = await client.query<{
-      legacy: string | null; ledger: string | null;
-    }>(`select to_regclass('public.agendia_production_migrations') as legacy,
-        to_regclass('drizzle.__drizzle_migrations') as ledger`);
-    const applied = legacy ? (await client.query<History>(
-      "select name, checksum from public.agendia_production_migrations order by name")).rows : [];
-    const recorded = ledger ? (await client.query<Ledger>(
-      "select hash, created_at from drizzle.__drizzle_migrations order by created_at")).rows : [];
-    for (const [idx, row] of applied.entries()) {
-      const migration = migrations[idx];
-      if (!migration || row.name !== `000${idx}_proof.sql` || row.checksum !== migration.hash)
-        throw new Error("Legacy history is not an unchanged chronological prefix");
-    }
-    for (const [idx, row] of recorded.entries()) {
-      const migration = migrations[idx];
-      if (!migration || row.hash !== migration.hash || Number(row.created_at) !== migration.folderMillis)
-        throw new Error("Drizzle history is not an unchanged chronological prefix");
-    }
-    if (recorded.length && recorded.length < applied.length)
-      throw new Error("Conflicting ledgers");
-    if (!recorded.length && applied.length) {
-      // Exact stock ledger shape; no public bootstrap-only API exists for adoption.
-      await client.query("create schema if not exists drizzle");
-      await client.query(`create table if not exists drizzle.__drizzle_migrations
-        (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at bigint)`);
-      for (const migration of migrations.slice(0, applied.length)) {
-        await client.query("insert into drizzle.__drizzle_migrations(hash, created_at) values ($1, $2)",
-          [migration.hash, migration.folderMillis]);
-      }
-    }
-    await hooks.beforeStock?.(client, pid, closed.promise);
-    if (lost) throw new Error("Session lost before stock migrator");
-    stockStarted = true;
-    await migrate(drizzle(client), { migrationsFolder: folder });
-    committed = true; // The stock migrator owns COMMIT; no required writes follow it.
-    if (lost) throw new Error("Session lost at commit");
-  } catch (cause) {
-    if (!committed && !lost) {
-      try { await client.query("ROLLBACK"); }
-      catch (rollbackCause) {
-        lost = true;
-        cause = new AggregateError([cause, rollbackCause], "Rollback could not be confirmed");
-      }
-    }
-    if (lost) {
-      await stop();
-      await hooks.afterLoss?.(client);
-      // A lost COMMIT acknowledgement is not proof of rollback; never auto-retry.
-      throw new Error(stockStarted
-        ? "Session lost during stock migration; durable outcome requires reconciliation"
-        : "Session lost before stock migration; transaction aborted", { cause });
-    }
-    throw cause;
-  } finally {
-    try {
-      if (held && !lost) await client.query("select pg_advisory_unlock(hashtext('agendia:production-setup'))");
-    } finally {
-      await stop();
-    }
-  }
-}
-
-async function legacyPrefix(observer: Sql, folder: string) {
-  const [migration] = readMigrationFiles({ migrationsFolder: folder });
-  if (!migration) throw new Error("Missing fixture migration");
+async function legacy(observer: Sql) {
   await observer.unsafe(base);
   await observer`create table public.agendia_production_migrations
     (name text primary key, checksum text not null, applied_at timestamptz not null default now())`;
-  await observer`insert into public.agendia_production_migrations(name, checksum)
-    values ('0000_proof.sql', ${migration.hash})`;
+  await observer`insert into public.agendia_production_migrations(name,checksum) values('0000_proof.sql',${hash(base)})`;
 }
-
-async function state(observer: Sql) {
-  const [relations] = await observer`select to_regclass('public.proof') as proof,
-    to_regclass('public.pending_ddl') as pending,
-    to_regclass('drizzle.__drizzle_migrations') as ledger,
-    to_regclass('drizzle.__drizzle_migrations_id_seq') as counter,
-    to_regnamespace('drizzle') as schema`;
-  return relations;
+async function snapshot(observer: Sql) {
+  const [objects] = await observer`select to_regclass('public.proof') proof,to_regclass('public.pending_ddl') pending,
+    to_regclass('drizzle.__drizzle_migrations') ledger,to_regnamespace('drizzle') schema,
+    to_regclass('public.agendia_production_migrations') legacy`;
+  return {
+    objects,
+    rows: objects!.proof ? [...await observer`select * from proof order by value`] : null,
+    legacy: objects!.legacy ? [...await observer`select * from public.agendia_production_migrations order by name`] : null,
+    ledger: objects!.ledger ? [...await observer`select * from drizzle.__drizzle_migrations order by id`] : null,
+    counter: objects!.ledger ? [...await observer`select * from drizzle.__drizzle_migrations_id_seq`] : null,
+  };
 }
-
-async function expectHistory(observer: Sql, folder: string) {
-  const migrations = readMigrationFiles({ migrationsFolder: folder });
-  expect([...(await observer`select id, hash, created_at from drizzle.__drizzle_migrations order by id`)])
-    .toEqual(migrations.map((migration, idx) => ({ id: idx + 1, hash: migration.hash, created_at: String(migration.folderMillis) })));
-}
-
-async function expectReleased(observer: Sql) {
-  expect([...(await observer`select pg_try_advisory_lock(hashtext('agendia:production-setup')) as acquired`)])
-    .toEqual([{ acquired: true }]);
+async function released(observer: Sql) {
+  expect([...(await observer`select pg_try_advisory_lock(hashtext('agendia:production-setup')) acquired`)]).toEqual([{ acquired: true }]);
   await observer`select pg_advisory_unlock(hashtext('agendia:production-setup'))`;
-  expect(await observer`select pid from pg_stat_activity where application_name = 'agendia-stock-migration-proof'`)
-    .toHaveLength(0);
+  expect(await observer`select pid from pg_stat_activity where application_name='agendia-db-migrate'`).toHaveLength(0);
+}
+async function waitFor(check: () => Promise<boolean>) {
+  for (let i = 0; i < 100; i++) {
+    if (await check()) return;
+    await Bun.sleep(10);
+  }
+  throw new Error("Expected database boundary was not reached");
 }
 
-test("reserved runtime is not the complete root client required by the public Drizzle constructor", async () => {
-  await fixture([base], async url => {
-    const root = postgres(url, { max: 1 });
-    const reserved = await root.reserve();
-    try {
-      expect(typeof root.begin).toBe("function");
-      expect(root.options).toBeDefined();
-      expect("begin" in reserved).toBe(false);
-      expect("options" in reserved).toBe(false);
-    } finally { reserved.release(); await root.end(); }
+test("public executor keeps one backend, complete stock hashes and idempotent counters", async () => {
+  await fixture([base, next], async ({ run, observer, journal }) => {
+    await run();
+    const before = await snapshot(observer);
+    expect(before.rows).toHaveLength(2);
+    expect(new Set(before.rows!.map(row => row.pid)).size).toBe(1);
+    expect(before.ledger).toEqual(journal.entries.map((entry, idx) => ({ id: idx + 1, hash: entry.sha256, created_at: String(entry.when) })));
+    await run();
+    expect(await snapshot(observer)).toEqual(before);
+    await released(observer);
   });
 });
-
-test("fresh stock execution and idempotent rerun keep one backend and complete hash history", async () => {
-  await fixture([base, next], async (url, folder, observer) => {
-    let pid = 0;
-    await coordinate(url, folder, { locked: async (_client, backend) => { pid = backend; } });
-    const rows = [...(await observer`select * from proof order by value`)];
-    expect(rows).toEqual([{ value: "base", pid }, { value: "next", pid }]);
-    await expectHistory(observer, folder);
-    const counter = [...(await observer`select last_value, is_called from drizzle.__drizzle_migrations_id_seq`)];
-    await coordinate(url, folder);
-    expect([...(await observer`select * from proof order by value`)]).toEqual(rows);
-    await expectHistory(observer, folder);
-    expect([...(await observer`select last_value, is_called from drizzle.__drizzle_migrations_id_seq`)]).toEqual(counter);
-    await expectReleased(observer);
-  });
-});
-
-test("chronological legacy adoption seeds stock hashes without replay and freezes legacy evidence", async () => {
-  await fixture([base, next], async (url, folder, observer) => {
-    await legacyPrefix(observer, folder);
-    const legacy = [...(await observer`select * from public.agendia_production_migrations`)];
-    const original = [...(await observer`select * from proof`)];
-    await coordinate(url, folder);
-    expect([...(await observer`select * from proof where value = 'base'`)]).toEqual(original);
-    expect(await observer`select * from proof`).toHaveLength(2);
-    await expectHistory(observer, folder);
-    await coordinate(url, folder);
-    expect([...(await observer`select * from public.agendia_production_migrations`)]).toEqual(legacy);
-    expect(await observer`select * from proof`).toHaveLength(2);
-    await expectHistory(observer, folder);
-    await expectReleased(observer);
-  });
-});
-
 for (const adopt of [false, true]) {
-  test(`later migration failure rolls back bootstrap, adoption and DDL (legacy=${adopt})`, async () => {
-    await fixture([base, next, failure], async (url, folder, observer) => {
-      if (adopt) await legacyPrefix(observer, folder);
-      const before = await state(observer);
-      const rows = adopt ? [...(await observer`select * from proof`)] : [];
-      const legacy = adopt ? [...(await observer`select * from public.agendia_production_migrations`)] : [];
-      await expect(coordinate(url, folder)).rejects.toThrow("deliberately_missing_function");
-      expect(await state(observer)).toEqual(before);
-      if (adopt) {
-        expect([...(await observer`select * from proof`)]).toEqual(rows);
-        expect([...(await observer`select * from public.agendia_production_migrations`)]).toEqual(legacy);
-      }
-      await expectReleased(observer);
+  test(`public executor rolls back pending batch DDL, bootstrap and adoption (legacy=${adopt})`, async () => {
+    await fixture([base, next, failure], async ({ observer, run }) => {
+      if (adopt) await legacy(observer);
+      const before = await snapshot(observer);
+      await expect(run()).rejects.toThrow();
+      expect(await snapshot(observer)).toEqual(before);
+      await released(observer);
     });
   });
 }
 
-test("invalid prefix and conflicting Drizzle hash reject without changing rows, ledgers or counter", async () => {
-  await fixture([base, next], async (url, folder, observer) => {
-    await legacyPrefix(observer, folder);
-    await observer`update public.agendia_production_migrations set name = '0001_proof.sql'`;
-    const badLegacy = [...(await observer`select * from public.agendia_production_migrations`)];
-    const before = await state(observer);
-    const rows = [...(await observer`select * from proof`)];
-    await expect(coordinate(url, folder)).rejects.toThrow("Legacy history is not an unchanged chronological prefix");
-    expect(await state(observer)).toEqual(before);
-    expect([...(await observer`select * from proof`)]).toEqual(rows);
-    expect([...(await observer`select * from public.agendia_production_migrations`)]).toEqual(badLegacy);
-    await observer`update public.agendia_production_migrations set name = '0000_proof.sql'`;
-    await coordinate(url, folder);
-    await observer`update drizzle.__drizzle_migrations set hash = 'conflict' where id = 1`;
-    const ledger = [...(await observer`select * from drizzle.__drizzle_migrations order by id`)];
-    const counter = [...(await observer`select * from drizzle.__drizzle_migrations_id_seq`)];
-    const complete = [...(await observer`select * from proof order by value`)];
-    await expect(coordinate(url, folder)).rejects.toThrow("Drizzle history is not an unchanged chronological prefix");
-    expect([...(await observer`select * from drizzle.__drizzle_migrations order by id`)]).toEqual(ledger);
-    expect([...(await observer`select * from drizzle.__drizzle_migrations_id_seq`)]).toEqual(counter);
-    expect([...(await observer`select * from proof order by value`)]).toEqual(complete);
-    await expectReleased(observer);
+test("already adopted pending-batch failure preserves records and history (sequences may advance on rollback)", async () => {
+  await fixture([base], async ({ observer, run, folder, journal }) => {
+    await run();
+    const before = await snapshot(observer);
+    for (const [idx, source] of [[1, next], [2, failure]] as const) {
+      journal.entries.push({ idx, version: "7", when: 1700000000000 + idx, tag: `000${idx}_proof`, breakpoints: true, sha256: hash(source) });
+      await writeFile(join(folder, `000${idx}_proof.sql`), source);
+    }
+    await writeFile(join(folder, "meta/_journal.json"), JSON.stringify(journal));
+    await expect(run()).rejects.toThrow();
+    const after = await snapshot(observer);
+    // PostgreSQL sequences are nontransactional; a failed stock insert can consume an ID.
+    expect({ ...after, counter: null }).toEqual({ ...before, counter: null });
+    const repaired = "insert into proof values('recovered',pg_backend_pid());";
+    journal.entries[2]!.sha256 = hash(repaired);
+    await writeFile(join(folder, "0002_proof.sql"), repaired);
+    await writeFile(join(folder, "meta/_journal.json"), JSON.stringify(journal));
+    await run();
+    const recovered = await snapshot(observer);
+    expect(recovered.rows).toHaveLength(3);
+    expect(recovered.ledger!.map(row => row.id)).toEqual([1, 3, 4]);
+    await run();
+    expect(await snapshot(observer)).toEqual(recovered);
+    await released(observer);
   });
 });
 
-test("concurrent coordinators serialize on the provisioning key before reading or adopting history", async () => {
-  await fixture([base, next], async (url, folder, observer) => {
-    const firstLocked = signal();
-    const secondTrying = signal();
-    const release = signal();
-    let firstCommitted = false;
-    const first = coordinate(url, folder, { locked: async () => {
-      firstLocked.resolve();
-      await release.promise;
-    } }).then(() => { firstCommitted = true; });
-    await firstLocked.promise;
-    // This xact-lock is the existing provisioning API's lock form, not another key.
-    expect([...(await observer`select pg_try_advisory_xact_lock(hashtext('agendia:production-setup')) as acquired`)])
-      .toEqual([{ acquired: false }]);
-    const second = coordinate(url, folder, {
-      query: query => { if (query === lock) secondTrying.resolve(); },
-      locked: async client => {
-        expect((await client.query("select * from proof")).rows).toHaveLength(2);
-      },
+for (const corruption of ["index", "timestamp", "unsafe timestamp", "tag", "hash", "extra file", "missing file", "duplicate timestamp", "duplicate tag", "order"] as const) {
+  test(`journal/source ${corruption} rejects before any stored changes`, async () => {
+    await fixture([base], async ({ observer, run, folder, journal }) => {
+      await legacy(observer);
+      const before = await snapshot(observer);
+      if (corruption === "index") journal.entries[0]!.idx = 1;
+      if (corruption === "timestamp") journal.entries[0]!.when = 0;
+      if (corruption === "unsafe timestamp") journal.entries[0]!.when = Number.MAX_SAFE_INTEGER + 1;
+      if (corruption === "tag") journal.entries[0]!.tag = "../escape";
+      if (corruption === "hash") await writeFile(join(folder, "0000_proof.sql"), base + " select 1;");
+      if (corruption === "extra file") await writeFile(join(folder, "extra.sql"), next);
+      if (corruption === "missing file") journal.entries[0]!.tag = "missing";
+      if (["duplicate timestamp", "duplicate tag", "order"].includes(corruption)) {
+        const first = journal.entries[0]!;
+        journal.entries.push({ ...first, idx: 1, tag: "0001_proof", when: first.when + 1, sha256: hash(next) });
+        await writeFile(join(folder, "0001_proof.sql"), next);
+        if (corruption === "duplicate timestamp") journal.entries[1]!.when = first.when;
+        if (corruption === "duplicate tag") journal.entries[1]!.tag = first.tag;
+        if (corruption === "order") journal.entries.reverse();
+      }
+      await writeFile(join(folder, "meta/_journal.json"), JSON.stringify(journal));
+      await expect(run()).rejects.toThrow(corruption === "hash" ? "Migration source does not match journal checksum" : "Migration journal or file set is invalid");
+      expect(await snapshot(observer)).toEqual(before);
     });
-    await secondTrying.promise;
-    release.resolve();
-    await Promise.all([first, second]);
-    expect(firstCommitted).toBe(true);
-    expect(await observer`select * from proof`).toHaveLength(2);
-    expect(await observer`select distinct pid from proof`).toHaveLength(1);
-    await expectHistory(observer, folder);
-    await expectReleased(observer);
+  });
+}
+
+test("two actual runners and actual provisioning contend on the exact same advisory key", async () => {
+  await fixture([base, next], async ({ observer, run, url }) => {
+    for (const role of capabilities) await observer.unsafe(`do $$ begin create role ${role} nologin; exception when duplicate_object then null; end $$`);
+    await observer`select pg_advisory_lock(hashtext('agendia:production-setup'))`;
+    const provision = postgres(url, { max: 1, onnotice: () => {} });
+    const pending = [run(), run(), provisionLogins(provision, {
+      API_DB_PASSWORD: "test-api", ADMIN_DB_PASSWORD: "test-admin", WORKER_DB_PASSWORD: "test-worker", MANAGER_DB_PASSWORD: "test-manager",
+    })];
+    // Attach rejection handling immediately, even if the observation fails.
+    const completed = Promise.allSettled(pending);
+    try {
+      await waitFor(async () => Number((await observer`select count(*) n from pg_locks where locktype='advisory' and not granted`)[0]!.n) === 3);
+      expect((await snapshot(observer)).objects!.proof).toBeNull();
+      expect(await observer`select rolname from pg_roles where rolname='agendia_api'`).toHaveLength(0);
+    } finally { await observer`select pg_advisory_unlock(hashtext('agendia:production-setup'))`; }
+    expect((await completed).map(result => result.status)).toEqual(["fulfilled", "fulfilled", "fulfilled"]);
+    await provision.end();
+    expect((await snapshot(observer)).rows).toHaveLength(2);
+    expect(new Set((await snapshot(observer)).rows!.map(row => row.pid)).size).toBe(1);
+    await released(observer);
   });
 });
 
-test("disconnect after adoption but before stock entry aborts and permanently shuts down the dedicated client", async () => {
-  await fixture([base, next], async (url, folder, observer) => {
-    await legacyPrefix(observer, folder);
-    const before = await state(observer);
-    const rows = [...(await observer`select * from proof`)];
-    const legacy = [...(await observer`select * from public.agendia_production_migrations`)];
-    let checkedDeadClient = false;
-    await expect(coordinate(url, folder, { beforeStock: async (client, pid, stopped) => {
-      expect([...(await observer`select pg_terminate_backend(${pid}) as terminated`)])
-        .toEqual([{ terminated: true }]);
-      await stopped;
-      await expect(client.query("select 'unlocked replacement'"))
-        .rejects.toThrow("Client has encountered a connection error and is not queryable");
-      checkedDeadClient = true;
-    } })).rejects.toThrow("Session lost before stock migration; transaction aborted");
-    expect(checkedDeadClient).toBe(true);
-    expect(await state(observer)).toEqual(before);
-    expect([...(await observer`select * from proof`)]).toEqual(rows);
-    expect([...(await observer`select * from public.agendia_production_migrations`)]).toEqual(legacy);
-    await expectReleased(observer);
+test("real disconnect before stock execution cannot reconnect or continue unlocked", async () => {
+  await fixture([base, next], async ({ observer, run, url, client }) => {
+    await legacy(observer);
+    const before = await snapshot(observer);
+    const blocker = new Client({ connectionString: url });
+    await blocker.connect();
+    await blocker.query("begin");
+    await blocker.query("lock public.agendia_production_migrations in access exclusive mode");
+    const pending = run();
+    const outcome = pending.catch(error => error);
+    try {
+      let pid = 0;
+      await waitFor(async () => {
+        const rows = await observer`select pid from pg_stat_activity where application_name='agendia-db-migrate' and wait_event_type='Lock'`;
+        pid = rows[0]?.pid ?? 0;
+        return pid > 0;
+      });
+      expect([...(await observer`select pg_terminate_backend(${pid}) terminated`)]).toEqual([{ terminated: true }]);
+      expect((await outcome).message).toBe("Migration connection lost before stock execution; transaction aborted");
+      await expect(client.query("select 'unlocked replacement'" )).rejects.toThrow();
+    } finally { await blocker.query("rollback"); await blocker.end(); }
+    expect(await snapshot(observer)).toEqual(before);
+    await released(observer);
   });
 });
 
-test("disconnect inside a real stock migration fails closed; reconciliation observes all-or-none state", async () => {
-  const disconnect = "create table pending_ddl (id integer);\n--> statement-breakpoint\nselect pg_terminate_backend(pg_backend_pid());\n--> statement-breakpoint\ninsert into proof values ('must-not-continue', pg_backend_pid());";
-  await fixture([base, disconnect], async (url, folder, observer) => {
-    let checkedDeadClient = false;
-    await expect(coordinate(url, folder, { afterLoss: async client => {
-      await expect(client.query("select 'unlocked replacement'"))
-        .rejects.toThrow("Client has encountered a connection error and is not queryable");
-      checkedDeadClient = true;
-    } })).rejects.toThrow("Session lost during stock migration; durable outcome requires reconciliation");
-    expect(checkedDeadClient).toBe(true);
-    // This injection is before COMMIT. It does not prove what a commit-time disconnect returns.
-    expect(await state(observer)).toEqual({ proof: null, pending: null, ledger: null, counter: null, schema: null });
-    expect([...(await observer`select to_regclass('public.agendia_production_migrations') as legacy`)])
-      .toEqual([{ legacy: null }]);
-    await expectReleased(observer);
-    // Explicit reconciliation with a valid fixture is proven by the fresh/rerun test above;
-    // retrying this intentionally self-terminating migration would only kill another session.
+test("public client idle-error event is consumed and prevents entry into stock execution", async () => {
+  await fixture([base, next], async ({ observer, run, client }) => {
+    const before = await snapshot(observer);
+    client.once("connect", () => { client.emit("error", new Error("injected idle error with withheld details")); });
+    await expect(run()).rejects.toThrow("Migration connection lost before stock execution; transaction aborted");
+    await expect(client.query("select 'unlocked replacement'")).rejects.toThrow();
+    expect(await snapshot(observer)).toEqual(before);
+    await released(observer);
+  });
+});
+
+test("disconnect at the public adoption/bootstrap boundary rolls back without entering stock", async () => {
+  await fixture([base, next], async ({ observer, run, client }) => {
+    await legacy(observer);
+    await observer`create schema drizzle`;
+    const before = await snapshot(observer);
+    let closed: Promise<void> | undefined;
+    // pg's public NOTICE event exposes the existing-schema boundary before adoption DDL.
+    client.once("notice", () => { closed = client.end(); });
+    await expect(run()).rejects.toThrow("Migration connection lost before stock execution; transaction aborted");
+    await closed;
+    await expect(client.query("select 'unlocked replacement'")).rejects.toThrow();
+    expect(await snapshot(observer)).toEqual(before);
+    await released(observer);
+  });
+});
+
+test("connect failure never queues a rollback on an unconnected public client", async () => {
+  await fixture([base], async ({ observer, folder, url }) => {
+    const failed = new Client({ connectionString: url });
+    failed.connect = async () => { throw new Error("injected connection failure"); };
+    let queries = 0;
+    failed.on("connect", () => { queries++; });
+    const before = await snapshot(observer);
+    await expect(migrateDatabase(url, { migrationsFolder: folder, connect: () => failed })).rejects.toThrow("injected connection failure");
+    expect(queries).toBe(0);
+    expect(await snapshot(observer)).toEqual(before);
+  });
+});
+
+test("real disconnect inside stock SQL preserves unknown-outcome diagnosis and rolls back this pre-COMMIT injection", async () => {
+  const disconnect = "create table pending_ddl(id integer);\n--> statement-breakpoint\nselect pg_terminate_backend(pg_backend_pid());\n--> statement-breakpoint\ninsert into proof values('must-not-continue',pg_backend_pid());";
+  await fixture([base, disconnect], async ({ observer, run, client }) => {
+    const before = await snapshot(observer);
+    await expect(run()).rejects.toThrow("Migration connection lost; durable outcome requires reconciliation");
+    await expect(client.query("select 'unlocked replacement'")).rejects.toThrow();
+    expect(await snapshot(observer)).toEqual(before);
+    await released(observer);
+  });
+});
+
+test("stock authority advances while adopted legacy evidence stays frozen", async () => {
+  await fixture([base], async ({ observer, run, folder, journal }) => {
+    await legacy(observer);
+    await run();
+    const adopted = await snapshot(observer);
+    journal.entries.push({ idx: 1, version: "7", when: 1700000000001,
+      tag: "0001_proof", breakpoints: true, sha256: hash(next) });
+    await writeFile(join(folder, "0001_proof.sql"), next);
+    await writeFile(join(folder, "meta/_journal.json"), JSON.stringify(journal));
+    await run();
+    const advanced = await snapshot(observer);
+    expect(advanced.legacy).toEqual(adopted.legacy);
+    expect(advanced.rows).toHaveLength(2);
+    expect(advanced.ledger!.map(row => row.hash)).toEqual([hash(base), hash(next)]);
+    await run();
+    expect(await snapshot(observer)).toEqual(advanced);
+    await released(observer);
   });
 });

@@ -1,6 +1,6 @@
 # Base de datos
 
-agendIA usa PostgreSQL 16. [`schema.ts`](../packages/db/src/schema.ts) representa en Drizzle 0.45.2 las **35 tablas públicas de aplicación y la vista `admin_business_status`**, con sus restricciones, índices y políticas RLS, efectivas tras 0000–0008. Las migraciones SQL de `packages/db/migrations/` siguen siendo la autoridad de instalación y ejecución; esta representación no cambia el migrador ni los repositorios actuales.
+agendIA usa PostgreSQL 16. [`schema.ts`](../packages/db/src/schema.ts) representa en Drizzle 0.45.2 las **35 tablas públicas de aplicación y la vista `admin_business_status`**, con sus restricciones, índices y políticas RLS, efectivas tras 0000–0008. Las migraciones SQL de `packages/db/migrations/` siguen siendo la autoridad de instalación; el migrador oficial de Drizzle las ejecuta mediante un `pg.Client` dedicado. Los repositorios y las transacciones de aplicación todavía usan su implementación anterior.
 
 Esta guía describe el repositorio; no inspecciona una base en ejecución ni confirma qué migraciones se aplicaron en un servidor.
 
@@ -106,7 +106,15 @@ Las excepciones de collation se aplican explícitamente al esquema de prueba: no
 | `0007_private_business_purge.sql` | Agrega `deleted_at`, purga privada, políticas y triggers de baja; filtra la vista administrativa. |
 | `0008_ownership_sqlstate.sql` | Conserva el SQLSTATE `42501` al rechazar cambios de propietario, sin quitar la barrera de baja. |
 
-El migrador registra cada archivo en `agendia_production_migrations` con su checksum y rechaza historial editado o desconocido. En desarrollo se ejecuta con `bun run db:migrate:dev`; en producción Compose ejecuta el target `db-setup` de `Dockerfile.api` antes de iniciar la API y los workers. Consultá [Operaciones](OPERATIONS.md) para configurar el login migrador y manejar cambios incompatibles. La cola `pgboss` la administra la biblioteca, no estas migraciones.
+El migrador oficial de Drizzle ejecuta el SQL y mantiene `drizzle.__drizzle_migrations`. El journal estático `meta/_journal.json` referencia directamente 0000–0008, sin modificar esos archivos; su campo adicional `sha256` fija el hash del archivo completo. Antes de escribir se validan todos los archivos, el orden, los índices, tags y timestamps únicos y crecientes del journal, y ambos historiales completos como prefijos cronológicos exactos. Los IDs SERIAL pueden tener saltos tras un rollback: no definen el orden de migración.
+
+Una base nueva ejecuta las nueve migraciones. Una base con un prefijo legacy válido se adopta insertando solamente las filas correspondientes en el historial Drizzle; el migrador stock ejecuta el sufijo pendiente. `public.agendia_production_migrations` queda **congelada como evidencia**, sin escritura dual ni borrado. Un historial Drizzle no vacío más corto que el legacy es un conflicto, no una adopción parcial. Una base pública inicializada sin historial, incluso con tablas de historial vacías, se rechaza.
+
+Un lock de sesión con `hashtext('agendia:production-setup')` serializa migradores y provisión de logins. La validación/adopción y el lote pendiente comparten una transacción explícita: el BEGIN del migrador stock se anida en ella y su COMMIT la termina. No hay escrituras requeridas después del COMMIT. Una falla SQL revierte DDL y filas de historial del lote; las secuencias PostgreSQL existentes pueden consumir valores aunque se revierta la transacción.
+
+En desarrollo se ejecuta con `bun run db:migrate:dev`; en producción Compose ejecuta el target `db-setup` de `Dockerfile.api` antes de iniciar la API y los workers. Se conservan los mensajes normales y códigos de salida. Consultá [Operaciones](OPERATIONS.md) para diagnósticos y reconciliación. La cola `pgboss` la administra la biblioteca, no estas migraciones.
+
+**Límites:** validar fuentes/historial no demuestra equivalencia del esquema vivo. Las pruebas aisladas comparan catálogos, seguridad y datos al actualizar cada prefijo histórico; no se repara drift manual o no soportado. Ante drift, detené el despliegue e investigá. La generación con Drizzle Kit, su configuración/snapshot y la migración de repositorios/transacciones de aplicación siguen pendientes; este corte solo cambia ejecución y adopción del historial.
 
 ### Baja de negocios
 

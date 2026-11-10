@@ -1,0 +1,15 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    { "idx": 0, "version": "7", "when": 1700000000000, "tag": "0000_base", "breakpoints": true, "sha256": "652c76ab246480fbe90d0ccac9a6b66a43e3994fcbc8218802111cee14d278dc" },
+    { "idx": 1, "version": "7", "when": 1700000000001, "tag": "0001_remove_admin_ai_guidance", "breakpoints": true, "sha256": "995301ccf5843662f5ad89369b68fff0eb66eaec19e14fcae5c74a254b1463a2" },
+    { "idx": 2, "version": "7", "when": 1700000000002, "tag": "0002_agent_silent_completion", "breakpoints": true, "sha256": "b2743a6d9ec4a02e532f10f686e1b62e8fbc49ffc288ed14a668e263daa1ec60" },
+    { "idx": 3, "version": "7", "when": 1700000000003, "tag": "0003_session_idle_ttl", "breakpoints": true, "sha256": "795e41f464b66b69b3f43c03660cea77829d51e9e8e0076568f812ed8fdbc76c" },
+    { "idx": 4, "version": "7", "when": 1700000000004, "tag": "0004_registration", "breakpoints": true, "sha256": "655fea8a7f00de1f39989385d23a9ec7b707f8ced8a8a48c2e234fbdd4673dc3" },
+    { "idx": 5, "version": "7", "when": 1700000000005, "tag": "0005_service_duration_five_minutes", "breakpoints": true, "sha256": "cf86f3675660c557736a364ac7f03cc24eabe8eb6324218a205af0f9f02683cd" },
+    { "idx": 6, "version": "7", "when": 1700000000006, "tag": "0006_service_categories", "breakpoints": true, "sha256": "cc86c75f4f9a654f561af9c6c9e0d657bdbfb8aeab2546e7bd12ab54d7c7d446" },
+    { "idx": 7, "version": "7", "when": 1700000000007, "tag": "0007_private_business_purge", "breakpoints": true, "sha256": "5712137d97044d143a418e16afd0cd583049d9f7b979e755ed1dd4e0d7bd3a51" },
+    { "idx": 8, "version": "7", "when": 1700000000008, "tag": "0008_ownership_sqlstate", "breakpoints": true, "sha256": "35c79c43cb3dfce72501b3f933647d59f823702f4142d295bf12ebb7e1313faa" }
+  ]
+}

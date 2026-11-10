@@ -94,11 +94,36 @@ Restaurá en una base nueva, aplicá las migraciones y probá el restore antes d
 | Envío incierto | `outbound_commands.state = 'delivery_unknown'`; `provider_message_id`. | No reenvíes a ciegas: el mensaje pudo haberse entregado. Verificá el estado en WhatsApp antes de decidir. |
 | Login bloqueado | `login_throttle_global`, `login_throttle_accounts`. | Esperá la ventana (1 minuto global, 15 minutos por cuenta); el throttle se limpia solo. |
 | Negocio suspendido | `businesses.status`. | La sesión y el ruteo del agente dejan de operar; reactivá el negocio desde administración. |
-| Migración rechazada | `agendia_production_migrations`, checksum del archivo. | No edites una migración aplicada. Restaurá el historial correcto o la base desde un backup. |
+| Migración rechazada | Journal/fuentes y ambos historiales (`drizzle.__drizzle_migrations` y evidencia legacy `agendia_production_migrations`). | Detené el despliegue. No edites SQL aplicado ni marques migraciones como realizadas para saltarlas; investigá el origen y restaurá una copia verificada si corresponde. |
+| Resultado de migración incierto | `Migration connection lost; durable outcome requires reconciliation`. | No reintentes automáticamente: seguí la reconciliación debajo. |
 | Contenedor caído | Logs del servicio; desde la red `app` (por ejemplo, dentro de `agendia-web`): `curl -i http://agendia-api:3001/me/business-profile` (401 sin sesión). | No hay endpoint de salud ni healthcheck declarado; usá logs y el puerto. |
+
+## Historial y pérdida de conexión del migrador
+
+El stock migrator de Drizzle es la autoridad de ejecución e historial futuro. La adopción valida el prefijo legacy completo y lo conserva congelado; no requiere ni produce escritura dual. Desplegá fuentes y journal como un conjunto inmutable. La provisión de logins conserva su validación de contraseñas/roles y su lock transaccional; comparte la clave exacta con el lock de sesión del migrador. El migrador termina antes de provisionar logins y antes de arrancar servicios nuevos.
+
+Los errores controlados salen por stderr con código 1, sin SQL, errores crudos ni URLs:
+
+| Diagnóstico exacto | Significado |
+| --- | --- |
+| `No migrations found` | No hay fuentes SQL. |
+| `Migration journal or file set is invalid` | Journal inválido, archivos faltantes/extra o tags/índices/timestamps incompatibles. |
+| `Migration source does not match journal checksum` | Alguna fuente completa no coincide con su SHA-256 fijado. |
+| `Applied migration is missing from migration files` / `Applied migration changed` | Evidencia legacy desconocida o checksum alterado. |
+| `Legacy history is not an unchanged chronological prefix` | El legacy contiene huecos o un orden incompatible. |
+| `Drizzle history is not an unchanged chronological prefix` | Hash/timestamp desconocido, cambiado, duplicado o con huecos. |
+| `Conflicting migration histories` | El historial Drizzle no vacío es más corto que el legacy. |
+| `Migration history is required for an initialized database` | Esquema público inicializado sin historial útil. No se lo marca como aplicado. |
+| `Migration connection lost before stock execution; transaction aborted` | Se cerró la sesión dedicada antes de entrar al migrador stock. |
+| `Migration connection lost; durable outcome requires reconciliation` | Se perdió la sesión durante la ejecución stock; no se conoce el resultado durable. |
+
+Los demás errores siguen usando `Development migration failed; database details withheld.` o `Production database setup failed`. La conexión dedicada no reconecta ni continúa sin lock. Un fallo antes del COMMIT revierte el lote, pero **perder la confirmación de COMMIT no demuestra rollback**. No hay reintento automático.
+
+Para reconciliar, mantené detenidos los despliegues competidores, confirmá que terminó la sesión anterior y, en una conexión nueva autorizada, inspeccioná **ambos historiales completos**, hashes/timestamps contra el journal inmutable y los efectos esperados en esquema/datos/seguridad. Conservá backup y evidencia; no borres filas ni completes huecos a mano. Solo después de establecer si el lote quedó íntegramente aplicado o revertido, y de descartar drift, decidí humanamente si corresponde ejecutar de nuevo el mismo comando. La validación de fuentes no prueba equivalencia del esquema vivo ni repara drift.
 
 ## Límites conocidos
 
+- Drizzle Kit/configuración/snapshot y la conversión de repositorios/transacciones de aplicación siguen pendientes; este migrador no completa toda la adopción de Drizzle.
 - Sin backup/restore automatizado (issue #121).
 - Sin endpoint de salud ni healthcheck en los contenedores.
 - Sin rotación automática de claves de cifrado.

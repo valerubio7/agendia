@@ -16,7 +16,7 @@ bun run db:migrate:dev
 bun scripts/db/bootstrap-admin.ts
 ```
 
-`db:migrate:dev` aplica las migraciones pendientes y verifica los checksums. `bootstrap-admin.ts` crea el único `platform_admin`; la contraseña debe tener al menos 16 caracteres y no empezar con `password`, `contraseña` o `123456`. Si ya existe otro administrador, falla.
+`db:migrate:dev` aplica las migraciones pendientes con el migrador oficial de Drizzle y verifica todos los checksums/journal e historiales antes de escribir. Adopta un prefijo legacy válido sin reejecutarlo y conserva el historial anterior como evidencia; Drizzle mantiene el historial futuro. `bootstrap-admin.ts` crea el único `platform_admin`; la contraseña debe tener al menos 16 caracteres y no empezar con `password`, `contraseña` o `123456`. Si ya existe otro administrador, falla.
 
 ## Levantar los servicios
 
@@ -77,8 +77,10 @@ Los tests de integración y E2E levantan PostgreSQL con Testcontainers. E2E comp
 
 ## Migraciones
 
-- `0004_registration.sql` agrega las solicitudes pendientes y el límite de registro; aplicala antes de probar el flujo. Agregá futuras migraciones en `packages/db/migrations/` con el siguiente número.
-- No edites una migración ya aplicada: el migrador compara checksums y rechaza el historial cambiado.
+- `0004_registration.sql` agrega las solicitudes pendientes y el límite de registro; aplicala antes de probar el flujo. El journal estático `packages/db/migrations/meta/_journal.json` referencia las nueve fuentes históricas originales con hashes SHA-256 completos.
+- No edites una migración ya aplicada ni renumeres el journal. Nuevas fuentes necesitan una entrada con índice siguiente, tag coincidente, timestamp seguro estrictamente creciente y hash completo; no se genera el journal durante la ejecución.
+- Drizzle Kit/configuración/snapshot todavía están pendientes. La representación Drizzle del esquema no implica que Kit ya genere todos los objetos SQL ni que los repositorios actuales usen Drizzle.
+- Un historial desconocido, cambiado, con huecos o incompatible se rechaza sin escrituras. Una base inicializada sin historial también se rechaza. Los diagnósticos controlados y el procedimiento ante desconexión están en [Operaciones](OPERATIONS.md): no reintentes automáticamente un resultado incierto.
 - Para reiniciar la base local: `docker compose down -v && docker compose up -d postgres && bun run db:migrate:dev`. `-v` borra el volumen local; no lo uses contra una base con datos que quieras conservar.
 - El esquema `pgboss` lo administra la biblioteca de colas; no lo modifiques a mano.
 
