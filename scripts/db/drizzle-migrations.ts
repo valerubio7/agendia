@@ -19,12 +19,14 @@ export function validatedMigrations(folder: string) {
       if (!entry || entry.idx !== idx || entry.version !== "7" || !Number.isSafeInteger(entry.when)
         || entry.when <= previous || typeof entry.tag !== "string" || !/^[a-zA-Z0-9_-]+$/.test(entry.tag)
         || `${entry.tag}.sql` !== names[idx] || typeof entry.breakpoints !== "boolean"
-        || typeof entry.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(entry.sha256)) throw new Error("Invalid journal");
+        // The nine legacy entries retain their mandatory pins; Kit appends unpinned entries.
+        || ((idx < 9 || "sha256" in entry)
+          && (typeof entry.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(entry.sha256)))) throw new Error("Invalid journal");
       previous = entry.when;
     }
     const migrations = readMigrationFiles({ migrationsFolder: folder });
     return migrations.map((migration, idx) => {
-      if (migration.hash !== journal.entries[idx].sha256)
+      if (journal.entries[idx].sha256 !== undefined && migration.hash !== journal.entries[idx].sha256)
         throw new MigrationHistoryError("Migration source does not match journal checksum");
       return { ...migration, name: names[idx]! };
     });

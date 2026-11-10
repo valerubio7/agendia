@@ -78,11 +78,36 @@ Los tests de integración y E2E levantan PostgreSQL con Testcontainers. E2E comp
 ## Migraciones
 
 - `0004_registration.sql` agrega las solicitudes pendientes y el límite de registro; aplicala antes de probar el flujo. El journal estático `packages/db/migrations/meta/_journal.json` referencia las nueve fuentes históricas originales con hashes SHA-256 completos.
-- No edites una migración ya aplicada ni renumeres el journal. Nuevas fuentes necesitan una entrada con índice siguiente, tag coincidente, timestamp seguro estrictamente creciente y hash completo; no se genera el journal durante la ejecución.
-- Drizzle Kit/configuración/snapshot todavía están pendientes. La representación Drizzle del esquema no implica que Kit ya genere todos los objetos SQL ni que los repositorios actuales usen Drizzle.
+- No edites una migración ya aplicada ni renumeres el journal. Drizzle Kit agrega las nuevas entradas y snapshots; los nueve pins `sha256` históricos son obligatorios y se conservan. Las entradas nuevas pueden omitir ese campo: el hash del SQL completo queda fijado en el historial Drizzle al aplicarlas. Un pin opcional también se valida.
+- Los repositorios y las transacciones de aplicación aún no están migrados a Drizzle. Generar DDL no cambia esa implementación.
 - Un historial desconocido, cambiado, con huecos o incompatible se rechaza sin escrituras. Una base inicializada sin historial también se rechaza. Los diagnósticos controlados y el procedimiento ante desconexión están en [Operaciones](OPERATIONS.md): no reintentes automáticamente un resultado incierto.
 - Para reiniciar la base local: `docker compose down -v && docker compose up -d postgres && bun run db:migrate:dev`. `-v` borra el volumen local; no lo uses contra una base con datos que quieras conservar.
 - El esquema `pgboss` lo administra la biblioteca de colas; no lo modifiques a mano.
+
+### Generar un cambio (sin conexión a PostgreSQL)
+
+1. Modificá `packages/db/src/schema.ts`.
+2. Desde la raíz, ejecutá el CLI oficial fijado en Drizzle Kit 0.31.8:
+
+   ```bash
+   bun --no-env-file run db:generate --help
+   bun --no-env-file run db:generate --name=agregar_nota
+   ```
+
+3. Revisá el SQL, el journal y el snapshot nuevos en `packages/db/migrations/`. Sin cambios de esquema, el comando no escribe nada. Conservá juntos esos archivos; no regeneres SQL ni snapshots históricos.
+4. Agregá el SQL compañero que corresponda, probá contra PostgreSQL desechable y luego aplicá con `bun run db:migrate:dev` en tu base local autorizada.
+
+Para objetos que el esquema Drizzle no representa, usá la opción stock:
+
+```bash
+bun --no-env-file run db:generate --custom --name=seguridad_tabla
+```
+
+Completá el nuevo `.sql` antes de aplicarlo. También podés ajustar SQL generado **nunca aplicado**; no hay un comando de sellado. Tras la primera aplicación, cualquier edición se rechaza contra el hash almacenado, incluso si se agrega o cambia un pin en el journal.
+
+`drizzle.config.ts` solo declara dialecto PostgreSQL, esquema y salida: no carga entorno ni credenciales. La generación no necesita `DATABASE_URL` ni acceso a una base. No uses `push`, introspección ni el migrador directo de Kit como sustitutos del ejecutor validado del proyecto.
+
+**Revisión obligatoria del SQL compañero:** nuevas tablas/columnas pueden necesitar FORCE RLS, exclusiones, collations, permisos por rol/columna, funciones o triggers. Kit no los completa automáticamente ni descubre drift de la base; consultá los [límites del esquema](DATABASE.md#representación-drizzle-y-límites). El snapshot único `meta/0008_snapshot.json`, producido una vez con la API pública `generateDrizzleJson` desde el esquema completo posterior a 0008, inicia la generación sin inventar snapshots anteriores ni una migración baseline adicional.
 
 ## Depuración
 

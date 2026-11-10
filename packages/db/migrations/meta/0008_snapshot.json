@@ -1,0 +1,4640 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.agent_configs": {
+      "name": "agent_configs",
+      "schema": "",
+      "columns": {
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "active": {
+          "name": "active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "style": {
+          "name": "style",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "business_instructions": {
+          "name": "business_instructions",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "agent_configs_business_id_fkey": {
+          "name": "agent_configs_business_id_fkey",
+          "tableFrom": "agent_configs",
+          "tableTo": "businesses",
+          "columnsFrom": [
+            "business_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "agent_configs_tenant": {
+          "name": "agent_configs_tenant",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "agent_configs_worker": {
+          "name": "agent_configs_worker",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "agent_configs_revision_check": {
+          "name": "agent_configs_revision_check",
+          "value": "revision >= 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.appointment_operation_receipts": {
+      "name": "appointment_operation_receipts",
+      "schema": "",
+      "columns": {
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "operation_key": {
+          "name": "operation_key",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "target_id": {
+          "name": "target_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "fingerprint": {
+          "name": "fingerprint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "result": {
+          "name": "result",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "appointment_operation_receipts_business_id_fkey": {
+          "name": "appointment_operation_receipts_business_id_fkey",
+          "tableFrom": "appointment_operation_receipts",
+          "tableTo": "businesses",
+          "columnsFrom": [
+            "business_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "appointment_operation_receipts_actor_id_fkey": {
+          "name": "appointment_operation_receipts_actor_id_fkey",
+          "tableFrom": "appointment_operation_receipts",
+          "tableTo": "auth_identities",
+          "columnsFrom": [
+            "actor_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "appointment_operation_receipts_pkey": {
+          "name": "appointment_operation_receipts_pkey",
+          "columns": [
+            "business_id",
+            "actor_id",
+            "operation_key"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {
+        "appointment_operation_owner": {
+          "name": "appointment_operation_owner",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id',true),'')::uuid\n    AND actor_id = nullif(current_setting('app.actor_id',true),'')::uuid\n    AND current_setting('app.actor_role',true) = 'business_user'",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id',true),'')::uuid\n    AND actor_id = nullif(current_setting('app.actor_id',true),'')::uuid\n    AND current_setting('app.actor_role',true) = 'business_user'"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        },
+        "business_purge_receipt_reference": {
+          "name": "business_purge_receipt_reference",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "true"
+        }
+      },
+      "checkConstraints": {
+        "appointment_operation_receipts_kind_check": {
+          "name": "appointment_operation_receipts_kind_check",
+          "value": "kind IN ('create','change','notes','state')"
+        },
+        "appointment_operation_receipts_state_check": {
+          "name": "appointment_operation_receipts_state_check",
+          "value": "state IN ('completed','failed','cancelled')"
+        },
+        "appointment_operation_receipts_check": {
+          "name": "appointment_operation_receipts_check",
+          "value": "(kind = 'create') = (target_id IS NULL)"
+        },
+        "appointment_operation_receipts_check1": {
+          "name": "appointment_operation_receipts_check1",
+          "value": "(state = 'cancelled' AND fingerprint IS NULL AND result IS NULL)\n      OR (state IN ('completed','failed') AND fingerprint IS NOT NULL AND result IS NOT NULL)"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.appointments": {
+      "name": "appointments",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "client_id": {
+          "name": "client_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "service_id": {
+          "name": "service_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resource_id": {
+          "name": "resource_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "customer_resource_preference_id": {
+          "name": "customer_resource_preference_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "service_label": {
+          "name": "service_label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resource_label": {
+          "name": "resource_label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "price_ars": {
+          "name": "price_ars",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "duration_minutes": {
+          "name": "duration_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "start_raw": {
+          "name": "start_raw",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "start_ms": {
+          "name": "start_ms",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "end_ms": {
+          "name": "end_ms",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "origin": {
+          "name": "origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "appointments_business_id_fkey": {
+          "name": "appointments_business_id_fkey",
+          "tableFrom": "appointments",
+          "tableTo": "businesses",
+          "columnsFrom": [
+            "business_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "appointments_business_id_client_id_fkey": {
+          "name": "appointments_business_id_client_id_fkey",
+          "tableFrom": "appointments",
+          "tableTo": "clients",
+          "columnsFrom": [
+            "business_id",
+            "client_id"
+          ],
+          "columnsTo": [
+            "business_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "appointments_business_id_service_id_fkey": {
+          "name": "appointments_business_id_service_id_fkey",
+          "tableFrom": "appointments",
+          "tableTo": "services",
+          "columnsFrom": [
+            "business_id",
+            "service_id"
+          ],
+          "columnsTo": [
+            "business_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "appointments_business_id_resource_id_fkey": {
+          "name": "appointments_business_id_resource_id_fkey",
+          "tableFrom": "appointments",
+          "tableTo": "resources",
+          "columnsFrom": [
+            "business_id",
+            "resource_id"
+          ],
+          "columnsTo": [
+            "business_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "appointments_business_id_customer_resource_preference_id_fkey": {
+          "name": "appointments_business_id_customer_resource_preference_id_fkey",
+          "tableFrom": "appointments",
+          "tableTo": "resources",
+          "columnsFrom": [
+            "business_id",
+            "customer_resource_preference_id"
+          ],
+          "columnsTo": [
+            "business_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "appointments_business_id_id_key": {
+          "name": "appointments_business_id_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {
+        "appointments_tenant": {
+          "name": "appointments_tenant",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "agenda_worker_read": {
+          "name": "agenda_worker_read",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        },
+        "agenda_worker_appointment_create": {
+          "name": "agenda_worker_appointment_create",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "agenda_worker_appointment_change": {
+          "name": "agenda_worker_appointment_change",
+          "as": "PERMISSIVE",
+          "for": "UPDATE",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "appointments_service_label_check": {
+          "name": "appointments_service_label_check",
+          "value": "btrim(service_label, U&'\\0009\\000A\\000B\\000C\\000D\\0020\\00A0\\1680\\2000\\2001\\2002\\2003\\2004\\2005\\2006\\2007\\2008\\2009\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF') <> ''"
+        },
+        "appointments_resource_label_check": {
+          "name": "appointments_resource_label_check",
+          "value": "btrim(resource_label, U&'\\0009\\000A\\000B\\000C\\000D\\0020\\00A0\\1680\\2000\\2001\\2002\\2003\\2004\\2005\\2006\\2007\\2008\\2009\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF') <> ''"
+        },
+        "appointments_price_ars_check": {
+          "name": "appointments_price_ars_check",
+          "value": "price_ars >= 0 AND price_ars < 'Infinity'::numeric"
+        },
+        "appointments_duration_minutes_check": {
+          "name": "appointments_duration_minutes_check",
+          "value": "duration_minutes > 0 AND duration_minutes % 5 = 0"
+        },
+        "appointments_start_ms_check": {
+          "name": "appointments_start_ms_check",
+          "value": "start_ms BETWEEN -62135683140000 AND 253402387139999"
+        },
+        "appointments_end_ms_check": {
+          "name": "appointments_end_ms_check",
+          "value": "end_ms BETWEEN -62135683140000 AND 253402387139999"
+        },
+        "appointments_check": {
+          "name": "appointments_check",
+          "value": "end_ms > start_ms AND end_ms::numeric = start_ms::numeric + duration_minutes::numeric * 60000"
+        },
+        "appointments_state_check": {
+          "name": "appointments_state_check",
+          "value": "state IN ('confirmed', 'done', 'cancelled', 'no_show')"
+        },
+        "appointments_origin_check": {
+          "name": "appointments_origin_check",
+          "value": "origin IN ('manual', 'ai')"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.audit_events": {
+      "name": "audit_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "outcome": {
+          "name": "outcome",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "request_id": {
+          "name": "request_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "metadata": {
+          "name": "metadata",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'"
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "stream_sequence": {
+          "name": "stream_sequence",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "previous_hash": {
+          "name": "previous_hash",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "event_hash": {
+          "name": "event_hash",
+          "type": "char(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "hmac_key_version": {
+          "name": "hmac_key_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'runtime'"
+        }
+      },
+      "indexes": {
+        "audit_events_stream_sequence_idx": {
+          "name": "audit_events_stream_sequence_idx",
+          "columns": [
+            {
+              "expression": "coalesce(business_id::text, 'platform')",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "stream_sequence",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "audit_events_verify_idx": {
+          "name": "audit_events_verify_idx",
+          "columns": [
+            {
+              "expression": "business_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "stream_sequence",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "previous_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "event_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "audit_events_business_id_fkey": {
+          "name": "audit_events_business_id_fkey",
+          "tableFrom": "audit_events",
+          "tableTo": "businesses",
+          "columnsFrom": [
+            "business_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "audit_events_business_id_id_key": {
+          "name": "audit_events_business_id_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {
+        "audit_events_tenant": {
+          "name": "audit_events_tenant",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "audit_events_manager_runtime": {
+          "name": "audit_events_manager_runtime",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_whatsapp_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "audit_events_admin_http": {
+          "name": "audit_events_admin_http",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "agendia_admin_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "audit_events_admin_http_insert": {
+          "name": "audit_events_admin_http_insert",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "agendia_admin_runtime"
+          ],
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "audit_events_worker_select": {
+          "name": "audit_events_worker_select",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "audit_events_worker_insert": {
+          "name": "audit_events_worker_insert",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_audit": {
+          "name": "business_purge_audit",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "audit_events_outcome_check": {
+          "name": "audit_events_outcome_check",
+          "value": "outcome IN ('success', 'failure', 'denied')"
+        },
+        "audit_events_stream_sequence_check": {
+          "name": "audit_events_stream_sequence_check",
+          "value": "stream_sequence > 0"
+        },
+        "audit_events_previous_hash_check": {
+          "name": "audit_events_previous_hash_check",
+          "value": "previous_hash ~ '^[0-9a-f]{64}$' OR previous_hash = 'GENESIS'"
+        },
+        "audit_events_event_hash_check": {
+          "name": "audit_events_event_hash_check",
+          "value": "event_hash ~ '^[0-9a-f]{64}$'"
+        },
+        "audit_events_hmac_key_version_check": {
+          "name": "audit_events_hmac_key_version_check",
+          "value": "length(hmac_key_version) > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.auth_identities": {
+      "name": "auth_identities",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "normalized_email": {
+          "name": "normalized_email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "password_phc": {
+          "name": "password_phc",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "active": {
+          "name": "active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "auth_one_business_user": {
+          "name": "auth_one_business_user",
+          "columns": [
+            {
+              "expression": "business_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "role = 'business_user'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "auth_identities_business_id_fkey": {
+          "name": "auth_identities_business_id_fkey",
+          "tableFrom": "auth_identities",
+          "tableTo": "businesses",
+          "columnsFrom": [
+            "business_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "auth_identities_normalized_email_key": {
+          "name": "auth_identities_normalized_email_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "normalized_email"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "auth_identities_role_check": {
+          "name": "auth_identities_role_check",
+          "value": "role IN ('platform_admin', 'business_user')"
+        },
+        "auth_identities_check": {
+          "name": "auth_identities_check",
+          "value": "(role = 'platform_admin' AND business_id IS NULL) OR (role = 'business_user' AND business_id IS NOT NULL)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.business_calendar_closures": {
+      "name": "business_calendar_closures",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "closed_date": {
+          "name": "closed_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "start_raw": {
+          "name": "start_raw",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "end_raw": {
+          "name": "end_raw",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "start_ms": {
+          "name": "start_ms",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "end_ms": {
+          "name": "end_ms",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "business_calendar_closures_business_id": {
+          "name": "business_calendar_closures_business_id",
+          "columns": [
+            {
+              "expression": "business_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "business_calendar_closures_business_id_fkey": {
+          "name": "business_calendar_closures_business_id_fkey",
+          "tableFrom": "business_calendar_closures",
+          "tableTo": "businesses",
+          "columnsFrom": [
+            "business_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "business_calendar_closures_tenant": {
+          "name": "business_calendar_closures_tenant",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "agenda_worker_read": {
+          "name": "agenda_worker_read",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "business_calendar_closures_kind_check": {
+          "name": "business_calendar_closures_kind_check",
+          "value": "kind IN ('date', 'interval')"
+        },
+        "business_calendar_closures_check": {
+          "name": "business_calendar_closures_check",
+          "value": "\n    (kind = 'date' AND closed_date IS NOT NULL\n      AND closed_date BETWEEN DATE '0001-01-01' AND DATE '9999-12-31'\n      AND start_raw IS NULL AND end_raw IS NULL AND start_ms IS NULL AND end_ms IS NULL)\n    OR (kind = 'interval' AND closed_date IS NULL\n      AND start_raw IS NOT NULL AND end_raw IS NOT NULL\n      AND start_ms IS NOT NULL AND end_ms IS NOT NULL AND end_ms > start_ms\n      AND start_ms BETWEEN -62135683140000 AND 253402387139999\n      AND end_ms BETWEEN -62135683140000 AND 253402387139999)"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.business_calendars": {
+      "name": "business_calendars",
+      "schema": "",
+      "columns": {
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "weekly_schedule": {
+          "name": "weekly_schedule",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "business_calendars_business_id_fkey": {
+          "name": "business_calendars_business_id_fkey",
+          "tableFrom": "business_calendars",
+          "tableTo": "businesses",
+          "columnsFrom": [
+            "business_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "business_calendars_tenant": {
+          "name": "business_calendars_tenant",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "agenda_worker_read": {
+          "name": "agenda_worker_read",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "business_calendars_weekly_schedule_check": {
+          "name": "business_calendars_weekly_schedule_check",
+          "value": "valid_business_weekly_schedule(weekly_schedule)"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.business_profiles": {
+      "name": "business_profiles",
+      "schema": "",
+      "columns": {
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "varchar(160)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "varchar(4000)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "address": {
+          "name": "address",
+          "type": "varchar(500)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "business_profiles_business_id_fkey": {
+          "name": "business_profiles_business_id_fkey",
+          "tableFrom": "business_profiles",
+          "tableTo": "businesses",
+          "columnsFrom": [
+            "business_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "business_profiles_tenant": {
+          "name": "business_profiles_tenant",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_profiles_worker": {
+          "name": "business_profiles_worker",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "public.businesses": {
+      "name": "businesses",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(160)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "last_technical_activity_at": {
+          "name": "last_technical_activity_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "businesses_name_check": {
+          "name": "businesses_name_check",
+          "value": "length(trim(name)) > 0"
+        },
+        "businesses_status_check": {
+          "name": "businesses_status_check",
+          "value": "status IN ('active', 'suspended')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.clients": {
+      "name": "clients",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "first_name": {
+          "name": "first_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_name": {
+          "name": "last_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "phone": {
+          "name": "phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "clients_business_id_fkey": {
+          "name": "clients_business_id_fkey",
+          "tableFrom": "clients",
+          "tableTo": "businesses",
+          "columnsFrom": [
+            "business_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "clients_business_phone_key": {
+          "name": "clients_business_phone_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id",
+            "phone"
+          ]
+        },
+        "clients_business_id_key": {
+          "name": "clients_business_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {
+        "clients_tenant": {
+          "name": "clients_tenant",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "agenda_worker_read": {
+          "name": "agenda_worker_read",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        },
+        "agenda_worker_client_create": {
+          "name": "agenda_worker_client_create",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "clients_phone_check": {
+          "name": "clients_phone_check",
+          "value": "phone ~ '^\\+[1-9][0-9]{1,14}$'"
+        },
+        "clients_first_name_check": {
+          "name": "clients_first_name_check",
+          "value": "btrim(first_name, U&'\\0009\\000A\\000B\\000C\\000D\\0020\\00A0\\1680\\2000\\2001\\2002\\2003\\2004\\2005\\2006\\2007\\2008\\2009\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF') <> ''"
+        },
+        "clients_last_name_check": {
+          "name": "clients_last_name_check",
+          "value": "btrim(last_name, U&'\\0009\\000A\\000B\\000C\\000D\\0020\\00A0\\1680\\2000\\2001\\2002\\2003\\2004\\2005\\2006\\2007\\2008\\2009\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF') <> ''"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.conversation_summaries": {
+      "name": "conversation_summaries",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "covered_through": {
+          "name": "covered_through",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "structured_summary": {
+          "name": "structured_summary",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "conversation_summaries_business_id_conversation_id_fkey": {
+          "name": "conversation_summaries_business_id_conversation_id_fkey",
+          "tableFrom": "conversation_summaries",
+          "tableTo": "conversations",
+          "columnsFrom": [
+            "business_id",
+            "conversation_id"
+          ],
+          "columnsTo": [
+            "business_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "conversation_summaries_business_id_conversation_id_version_key": {
+          "name": "conversation_summaries_business_id_conversation_id_version_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id",
+            "conversation_id",
+            "version"
+          ]
+        },
+        "conversation_summaries_business_id_id_key": {
+          "name": "conversation_summaries_business_id_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {
+        "conversation_summaries_worker": {
+          "name": "conversation_summaries_worker",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "conversation_summaries_version_check": {
+          "name": "conversation_summaries_version_check",
+          "value": "version > 0"
+        },
+        "conversation_summaries_covered_through_check": {
+          "name": "conversation_summaries_covered_through_check",
+          "value": "covered_through >= 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.conversations": {
+      "name": "conversations",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connection_id": {
+          "name": "connection_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "remote_jid": {
+          "name": "remote_jid",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "next_sequence": {
+          "name": "next_sequence",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "1"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "reply_due_at": {
+          "name": "reply_due_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "latest_inbound_id": {
+          "name": "latest_inbound_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_exchange_at": {
+          "name": "last_exchange_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_reply_at": {
+          "name": "last_reply_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "conversations_business_id_connection_id_fkey": {
+          "name": "conversations_business_id_connection_id_fkey",
+          "tableFrom": "conversations",
+          "tableTo": "whatsapp_connections",
+          "columnsFrom": [
+            "business_id",
+            "connection_id"
+          ],
+          "columnsTo": [
+            "business_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "conversations_business_id_connection_id_remote_jid_key": {
+          "name": "conversations_business_id_connection_id_remote_jid_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id",
+            "connection_id",
+            "remote_jid"
+          ]
+        },
+        "conversations_business_id_id_key": {
+          "name": "conversations_business_id_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {
+        "conversations_internal": {
+          "name": "conversations_internal",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_whatsapp_runtime",
+            "agendia_worker_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "public.inbox_events": {
+      "name": "inbox_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "stable_key": {
+          "name": "stable_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "received_at": {
+          "name": "received_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "inbox_events_business_id_fkey": {
+          "name": "inbox_events_business_id_fkey",
+          "tableFrom": "inbox_events",
+          "tableTo": "businesses",
+          "columnsFrom": [
+            "business_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "inbox_events_business_id_source_stable_key_key": {
+          "name": "inbox_events_business_id_source_stable_key_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id",
+            "source",
+            "stable_key"
+          ]
+        },
+        "inbox_events_business_id_id_key": {
+          "name": "inbox_events_business_id_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {
+        "inbox_events_tenant": {
+          "name": "inbox_events_tenant",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "inbox_events_manager_runtime": {
+          "name": "inbox_events_manager_runtime",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_whatsapp_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "public.login_throttle_accounts": {
+      "name": "login_throttle_accounts",
+      "schema": "",
+      "columns": {
+        "account_hash": {
+          "name": "account_hash",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resets_at": {
+          "name": "resets_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "login_throttle_accounts_expiry": {
+          "name": "login_throttle_accounts_expiry",
+          "columns": [
+            {
+              "expression": "resets_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "login_throttle_accounts_account_hash_check": {
+          "name": "login_throttle_accounts_account_hash_check",
+          "value": "account_hash ~ '^[a-f0-9]{64}$'"
+        },
+        "login_throttle_accounts_attempts_check": {
+          "name": "login_throttle_accounts_attempts_check",
+          "value": "attempts BETWEEN 1 AND 20"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.login_throttle_global": {
+      "name": "login_throttle_global",
+      "schema": "",
+      "columns": {
+        "singleton": {
+          "name": "singleton",
+          "type": "boolean",
+          "primaryKey": true,
+          "notNull": true,
+          "default": true
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resets_at": {
+          "name": "resets_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "login_throttle_global_singleton_check": {
+          "name": "login_throttle_global_singleton_check",
+          "value": "singleton"
+        },
+        "login_throttle_global_attempts_check": {
+          "name": "login_throttle_global_attempts_check",
+          "value": "attempts BETWEEN 0 AND 120"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.messages": {
+      "name": "messages",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connection_id": {
+          "name": "connection_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_message_id": {
+          "name": "provider_message_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sequence": {
+          "name": "sequence",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "direction": {
+          "name": "direction",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "raw_text": {
+          "name": "raw_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "received_at": {
+          "name": "received_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "processing_state": {
+          "name": "processing_state",
+          "type": "varchar(24)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        }
+      },
+      "indexes": {
+        "messages_conversation_order_idx": {
+          "name": "messages_conversation_order_idx",
+          "columns": [
+            {
+              "expression": "business_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "conversation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "sequence",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "messages_context_order_idx": {
+          "name": "messages_context_order_idx",
+          "columns": [
+            {
+              "expression": "business_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "conversation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "sequence",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "first"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "messages_context_search_idx": {
+          "name": "messages_context_search_idx",
+          "columns": [
+            {
+              "expression": "to_tsvector('simple', raw_text)",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "gin",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "messages_business_id_conversation_id_fkey": {
+          "name": "messages_business_id_conversation_id_fkey",
+          "tableFrom": "messages",
+          "tableTo": "conversations",
+          "columnsFrom": [
+            "business_id",
+            "conversation_id"
+          ],
+          "columnsTo": [
+            "business_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "messages_business_id_connection_id_fkey": {
+          "name": "messages_business_id_connection_id_fkey",
+          "tableFrom": "messages",
+          "tableTo": "whatsapp_connections",
+          "columnsFrom": [
+            "business_id",
+            "connection_id"
+          ],
+          "columnsTo": [
+            "business_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "messages_business_id_connection_id_provider_message_id_key": {
+          "name": "messages_business_id_connection_id_provider_message_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id",
+            "connection_id",
+            "provider_message_id"
+          ]
+        },
+        "messages_business_id_conversation_id_sequence_key": {
+          "name": "messages_business_id_conversation_id_sequence_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id",
+            "conversation_id",
+            "sequence"
+          ]
+        },
+        "messages_business_id_id_key": {
+          "name": "messages_business_id_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {
+        "messages_internal": {
+          "name": "messages_internal",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_whatsapp_runtime",
+            "agendia_worker_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "messages_direction_check": {
+          "name": "messages_direction_check",
+          "value": "direction IN ('inbound','outbound')"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.operational_controls": {
+      "name": "operational_controls",
+      "schema": "",
+      "columns": {
+        "singleton": {
+          "name": "singleton",
+          "type": "boolean",
+          "primaryKey": true,
+          "notNull": true,
+          "default": true
+        },
+        "automation_disabled": {
+          "name": "automation_disabled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "incident_reference": {
+          "name": "incident_reference",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "initial_delay_seconds": {
+          "name": "initial_delay_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 600
+        },
+        "active_delay_seconds": {
+          "name": "active_delay_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 90
+        },
+        "inactivity_reset_seconds": {
+          "name": "inactivity_reset_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 3600
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "operational_controls_singleton_check": {
+          "name": "operational_controls_singleton_check",
+          "value": "singleton"
+        },
+        "operational_controls_initial_delay_seconds_check": {
+          "name": "operational_controls_initial_delay_seconds_check",
+          "value": "initial_delay_seconds BETWEEN 0 AND 86400"
+        },
+        "operational_controls_active_delay_seconds_check": {
+          "name": "operational_controls_active_delay_seconds_check",
+          "value": "active_delay_seconds BETWEEN 0 AND 86400"
+        },
+        "operational_controls_inactivity_reset_seconds_check": {
+          "name": "operational_controls_inactivity_reset_seconds_check",
+          "value": "inactivity_reset_seconds BETWEEN 1 AND 604800"
+        },
+        "operational_controls_check": {
+          "name": "operational_controls_check",
+          "value": "NOT automation_disabled OR length(trim(incident_reference)) > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.outbound_commands": {
+      "name": "outbound_commands",
+      "schema": "",
+      "columns": {
+        "outbound_id": {
+          "name": "outbound_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connection_id": {
+          "name": "connection_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "text": {
+          "name": "text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "varchar(24)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "claimed_by": {
+          "name": "claimed_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "claimed_at": {
+          "name": "claimed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "send_started_at": {
+          "name": "send_started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "provider_message_id": {
+          "name": "provider_message_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "acknowledged_at": {
+          "name": "acknowledged_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "failure_code": {
+          "name": "failure_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "source_message_id": {
+          "name": "source_message_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ownership_token": {
+          "name": "ownership_token",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "outbound_commands_claim_idx": {
+          "name": "outbound_commands_claim_idx",
+          "columns": [
+            {
+              "expression": "connection_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "state",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "state = 'generated'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "outbound_commands_provider_message_idx": {
+          "name": "outbound_commands_provider_message_idx",
+          "columns": [
+            {
+              "expression": "business_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "connection_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "provider_message_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "provider_message_id IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "outbound_commands_source_message_idx": {
+          "name": "outbound_commands_source_message_idx",
+          "columns": [
+            {
+              "expression": "source_message_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "source_message_id IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "outbound_commands_business_id_conversation_id_fkey": {
+          "name": "outbound_commands_business_id_conversation_id_fkey",
+          "tableFrom": "outbound_commands",
+          "tableTo": "conversations",
+          "columnsFrom": [
+            "business_id",
+            "conversation_id"
+          ],
+          "columnsTo": [
+            "business_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "outbound_commands_business_id_connection_id_fkey": {
+          "name": "outbound_commands_business_id_connection_id_fkey",
+          "tableFrom": "outbound_commands",
+          "tableTo": "whatsapp_connections",
+          "columnsFrom": [
+            "business_id",
+            "connection_id"
+          ],
+          "columnsTo": [
+            "business_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "outbound_commands_business_id_outbound_id_key": {
+          "name": "outbound_commands_business_id_outbound_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id",
+            "outbound_id"
+          ]
+        }
+      },
+      "policies": {
+        "outbound_commands_worker": {
+          "name": "outbound_commands_worker",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "outbound_commands_manager": {
+          "name": "outbound_commands_manager",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_whatsapp_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "outbound_commands_text_check": {
+          "name": "outbound_commands_text_check",
+          "value": "length(text) > 0"
+        },
+        "outbound_commands_state_check": {
+          "name": "outbound_commands_state_check",
+          "value": "state IN ('pending','processing','generated','sending','sent','failed','delivery_unknown')"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.outbox_events": {
+      "name": "outbox_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "topic": {
+          "name": "topic",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "stable_key": {
+          "name": "stable_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "published_at": {
+          "name": "published_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "claim_token": {
+          "name": "claim_token",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "claimed_at": {
+          "name": "claimed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "publish_attempts": {
+          "name": "publish_attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "next_attempt_at": {
+          "name": "next_attempt_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "link_admitted_at": {
+          "name": "link_admitted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "outbox_events_ai_dispatch_idx": {
+          "name": "outbox_events_ai_dispatch_idx",
+          "columns": [
+            {
+              "expression": "next_attempt_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "topic='ai.generate' AND published_at IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "outbox_events_business_id_fkey": {
+          "name": "outbox_events_business_id_fkey",
+          "tableFrom": "outbox_events",
+          "tableTo": "businesses",
+          "columnsFrom": [
+            "business_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "outbox_events_business_id_stable_key_key": {
+          "name": "outbox_events_business_id_stable_key_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id",
+            "stable_key"
+          ]
+        },
+        "outbox_events_business_id_id_key": {
+          "name": "outbox_events_business_id_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {
+        "outbox_events_tenant": {
+          "name": "outbox_events_tenant",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "outbox_events_manager_runtime": {
+          "name": "outbox_events_manager_runtime",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_whatsapp_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "outbox_events_worker_runtime": {
+          "name": "outbox_events_worker_runtime",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "outbox_events_worker_publish": {
+          "name": "outbox_events_worker_publish",
+          "as": "PERMISSIVE",
+          "for": "UPDATE",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "outbox_events_admin_http": {
+          "name": "outbox_events_admin_http",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "agendia_admin_runtime"
+          ],
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "agenda_worker_outbox": {
+          "name": "agenda_worker_outbox",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "public.pending_registrations": {
+      "name": "pending_registrations",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(160)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "password_phc": {
+          "name": "password_phc",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "pending_registrations_email_key": {
+          "name": "pending_registrations_email_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "email"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "pending_registrations_name_check": {
+          "name": "pending_registrations_name_check",
+          "value": "length(trim(name)) > 0"
+        },
+        "pending_registrations_email_check": {
+          "name": "pending_registrations_email_check",
+          "value": "length(email) <= 254 AND email = lower(trim(email))"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.registration_throttle": {
+      "name": "registration_throttle",
+      "schema": "",
+      "columns": {
+        "singleton": {
+          "name": "singleton",
+          "type": "boolean",
+          "primaryKey": true,
+          "notNull": true,
+          "default": true
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resets_at": {
+          "name": "resets_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "registration_throttle_singleton_check": {
+          "name": "registration_throttle_singleton_check",
+          "value": "singleton"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.resource_services": {
+      "name": "resource_services",
+      "schema": "",
+      "columns": {
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resource_id": {
+          "name": "resource_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "service_id": {
+          "name": "service_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "resource_services_business_id_resource_id_fkey": {
+          "name": "resource_services_business_id_resource_id_fkey",
+          "tableFrom": "resource_services",
+          "tableTo": "resources",
+          "columnsFrom": [
+            "business_id",
+            "resource_id"
+          ],
+          "columnsTo": [
+            "business_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "resource_services_business_id_service_id_fkey": {
+          "name": "resource_services_business_id_service_id_fkey",
+          "tableFrom": "resource_services",
+          "tableTo": "services",
+          "columnsFrom": [
+            "business_id",
+            "service_id"
+          ],
+          "columnsTo": [
+            "business_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "resource_services_pkey": {
+          "name": "resource_services_pkey",
+          "columns": [
+            "business_id",
+            "resource_id",
+            "service_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {
+        "resource_services_tenant": {
+          "name": "resource_services_tenant",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "agenda_worker_read": {
+          "name": "agenda_worker_read",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "public.resources": {
+      "name": "resources",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "normalized_name": {
+          "name": "normalized_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "lower(btrim(name, U&'\\0009\\000A\\000B\\000C\\000D\\0020\\00A0\\1680\\2000\\2001\\2002\\2003\\2004\\2005\\2006\\2007\\2008\\2009\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF') COLLATE service_name_case)",
+            "type": "stored"
+          }
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "weekly_schedule": {
+          "name": "weekly_schedule",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "resources_business_name_key": {
+          "name": "resources_business_name_key",
+          "columns": [
+            {
+              "expression": "business_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "service_name_sha256(normalized_name)",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "deleted_at IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "resources_business_id_fkey": {
+          "name": "resources_business_id_fkey",
+          "tableFrom": "resources",
+          "tableTo": "businesses",
+          "columnsFrom": [
+            "business_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "resources_business_id_id_key": {
+          "name": "resources_business_id_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {
+        "resources_tenant": {
+          "name": "resources_tenant",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "agenda_worker_read": {
+          "name": "agenda_worker_read",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "resources_status_check": {
+          "name": "resources_status_check",
+          "value": "status IN ('active', 'suspended')"
+        },
+        "resources_weekly_schedule_check": {
+          "name": "resources_weekly_schedule_check",
+          "value": "valid_business_weekly_schedule(weekly_schedule)"
+        },
+        "resources_normalized_name_check": {
+          "name": "resources_normalized_name_check",
+          "value": "normalized_name <> ''"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.service_categories": {
+      "name": "service_categories",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "service_categories_business_id_fkey": {
+          "name": "service_categories_business_id_fkey",
+          "tableFrom": "service_categories",
+          "tableTo": "businesses",
+          "columnsFrom": [
+            "business_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "service_categories_business_id_id_key": {
+          "name": "service_categories_business_id_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {
+        "service_categories_tenant": {
+          "name": "service_categories_tenant",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "service_categories_name_check": {
+          "name": "service_categories_name_check",
+          "value": "btrim(name, U&'\\0009\\000A\\000B\\000C\\000D\\0020\\00A0\\1680\\2000\\2001\\2002\\2003\\2004\\2005\\2006\\2007\\2008\\2009\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF') <> ''"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.services": {
+      "name": "services",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "normalized_name": {
+          "name": "normalized_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "lower(btrim(name, U&'\\0009\\000A\\000B\\000C\\000D\\0020\\00A0\\1680\\2000\\2001\\2002\\2003\\2004\\2005\\2006\\2007\\2008\\2009\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF') COLLATE service_name_case)",
+            "type": "stored"
+          }
+        },
+        "duration_minutes": {
+          "name": "duration_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "price_ars": {
+          "name": "price_ars",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "category_id": {
+          "name": "category_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "services_business_name_key": {
+          "name": "services_business_name_key",
+          "columns": [
+            {
+              "expression": "business_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "service_name_sha256(normalized_name)",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "deleted_at IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "services_business_id_fkey": {
+          "name": "services_business_id_fkey",
+          "tableFrom": "services",
+          "tableTo": "businesses",
+          "columnsFrom": [
+            "business_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "services_category_business_fk": {
+          "name": "services_category_business_fk",
+          "tableFrom": "services",
+          "tableTo": "service_categories",
+          "columnsFrom": [
+            "business_id",
+            "category_id"
+          ],
+          "columnsTo": [
+            "business_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "services_business_id_id_key": {
+          "name": "services_business_id_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {
+        "services_tenant": {
+          "name": "services_tenant",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "agenda_worker_read": {
+          "name": "agenda_worker_read",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "services_duration_minutes_check": {
+          "name": "services_duration_minutes_check",
+          "value": "duration_minutes > 0 AND duration_minutes % 5 = 0"
+        },
+        "services_price_ars_check": {
+          "name": "services_price_ars_check",
+          "value": "price_ars >= 0 AND price_ars < 'Infinity'::numeric"
+        },
+        "services_status_check": {
+          "name": "services_status_check",
+          "value": "status IN ('active', 'suspended')"
+        },
+        "services_normalized_name_check": {
+          "name": "services_normalized_name_check",
+          "value": "normalized_name <> ''"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.technical_events": {
+      "name": "technical_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "component": {
+          "name": "component",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "code": {
+          "name": "code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "severity": {
+          "name": "severity",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "safe_details": {
+          "name": "safe_details",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'"
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "technical_events_business_id_fkey": {
+          "name": "technical_events_business_id_fkey",
+          "tableFrom": "technical_events",
+          "tableTo": "businesses",
+          "columnsFrom": [
+            "business_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "technical_events_business_id_id_key": {
+          "name": "technical_events_business_id_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {
+        "technical_events_tenant": {
+          "name": "technical_events_tenant",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "technical_events_manager_runtime": {
+          "name": "technical_events_manager_runtime",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_whatsapp_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "technical_events_worker": {
+          "name": "technical_events_worker",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "technical_events_severity_check": {
+          "name": "technical_events_severity_check",
+          "value": "severity IN ('info', 'warning', 'error', 'critical')"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.tenant_records": {
+      "name": "tenant_records",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "tenant_records_business_id_fkey": {
+          "name": "tenant_records_business_id_fkey",
+          "tableFrom": "tenant_records",
+          "tableTo": "businesses",
+          "columnsFrom": [
+            "business_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "tenant_records_business_id_id_key": {
+          "name": "tenant_records_business_id_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {
+        "tenant_records_business_user": {
+          "name": "tenant_records_business_user",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_runtime"
+          ],
+          "using": "current_setting('app.actor_role', true) = 'business_user'\n    AND business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "current_setting('app.actor_role', true) = 'business_user'\n    AND business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "tenant_records_admin_deny": {
+          "name": "tenant_records_admin_deny",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "agendia_admin_runtime"
+          ],
+          "using": "false"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "public.web_sessions": {
+      "name": "web_sessions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "identity_id": {
+          "name": "identity_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token_sha256": {
+          "name": "token_sha256",
+          "type": "char(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "csrf_sha256": {
+          "name": "csrf_sha256",
+          "type": "char(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "last_seen_at": {
+          "name": "last_seen_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "absolute_expires_at": {
+          "name": "absolute_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "idle_expires_at": {
+          "name": "idle_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "idle_ttl_ms": {
+          "name": "idle_ttl_ms",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "web_sessions_identity_id_fkey": {
+          "name": "web_sessions_identity_id_fkey",
+          "tableFrom": "web_sessions",
+          "tableTo": "auth_identities",
+          "columnsFrom": [
+            "identity_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "web_sessions_token_sha256_key": {
+          "name": "web_sessions_token_sha256_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "token_sha256"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.whatsapp_agenda_dialogues": {
+      "name": "whatsapp_agenda_dialogues",
+      "schema": "",
+      "columns": {
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connection_id": {
+          "name": "connection_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "phone": {
+          "name": "phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "dialogue": {
+          "name": "dialogue",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "whatsapp_agenda_dialogues_business_id_fkey": {
+          "name": "whatsapp_agenda_dialogues_business_id_fkey",
+          "tableFrom": "whatsapp_agenda_dialogues",
+          "tableTo": "businesses",
+          "columnsFrom": [
+            "business_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "whatsapp_agenda_dialogues_business_id_connection_id_fkey": {
+          "name": "whatsapp_agenda_dialogues_business_id_connection_id_fkey",
+          "tableFrom": "whatsapp_agenda_dialogues",
+          "tableTo": "whatsapp_connections",
+          "columnsFrom": [
+            "business_id",
+            "connection_id"
+          ],
+          "columnsTo": [
+            "business_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "whatsapp_agenda_dialogues_business_id_connection_id_phone_fkey": {
+          "name": "whatsapp_agenda_dialogues_business_id_connection_id_phone_fkey",
+          "tableFrom": "whatsapp_agenda_dialogues",
+          "tableTo": "whatsapp_sender_bindings",
+          "columnsFrom": [
+            "business_id",
+            "connection_id",
+            "phone"
+          ],
+          "columnsTo": [
+            "business_id",
+            "connection_id",
+            "phone"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "whatsapp_agenda_dialogues_pkey": {
+          "name": "whatsapp_agenda_dialogues_pkey",
+          "columns": [
+            "business_id",
+            "connection_id",
+            "phone"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {
+        "tenant_manager": {
+          "name": "tenant_manager",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_whatsapp_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "tenant_worker": {
+          "name": "tenant_worker",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "public.whatsapp_agenda_receipts": {
+      "name": "whatsapp_agenda_receipts",
+      "schema": "",
+      "columns": {
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "message_id": {
+          "name": "message_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "outbound_id": {
+          "name": "outbound_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "operation": {
+          "name": "operation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "whatsapp_agenda_receipts_business_id_fkey": {
+          "name": "whatsapp_agenda_receipts_business_id_fkey",
+          "tableFrom": "whatsapp_agenda_receipts",
+          "tableTo": "businesses",
+          "columnsFrom": [
+            "business_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "whatsapp_agenda_receipts_business_id_message_id_fkey": {
+          "name": "whatsapp_agenda_receipts_business_id_message_id_fkey",
+          "tableFrom": "whatsapp_agenda_receipts",
+          "tableTo": "messages",
+          "columnsFrom": [
+            "business_id",
+            "message_id"
+          ],
+          "columnsTo": [
+            "business_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "whatsapp_agenda_receipts_business_id_outbound_id_fkey": {
+          "name": "whatsapp_agenda_receipts_business_id_outbound_id_fkey",
+          "tableFrom": "whatsapp_agenda_receipts",
+          "tableTo": "outbound_commands",
+          "columnsFrom": [
+            "business_id",
+            "outbound_id"
+          ],
+          "columnsTo": [
+            "business_id",
+            "outbound_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "tenant_manager": {
+          "name": "tenant_manager",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_whatsapp_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "tenant_worker": {
+          "name": "tenant_worker",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "whatsapp_agenda_receipts_silent_output_check": {
+          "name": "whatsapp_agenda_receipts_silent_output_check",
+          "value": "(operation = 'silent' AND outbound_id IS NULL) OR (operation <> 'silent' AND outbound_id IS NOT NULL)"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.whatsapp_auth_records": {
+      "name": "whatsapp_auth_records",
+      "schema": "",
+      "columns": {
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connection_id": {
+          "name": "connection_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "record_name": {
+          "name": "record_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "nonce": {
+          "name": "nonce",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ciphertext": {
+          "name": "ciphertext",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "auth_tag": {
+          "name": "auth_tag",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "whatsapp_auth_records_business_id_connection_id_fkey": {
+          "name": "whatsapp_auth_records_business_id_connection_id_fkey",
+          "tableFrom": "whatsapp_auth_records",
+          "tableTo": "whatsapp_connections",
+          "columnsFrom": [
+            "business_id",
+            "connection_id"
+          ],
+          "columnsTo": [
+            "business_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "whatsapp_auth_records_pkey": {
+          "name": "whatsapp_auth_records_pkey",
+          "columns": [
+            "business_id",
+            "connection_id",
+            "record_name"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {
+        "whatsapp_auth_manager_only": {
+          "name": "whatsapp_auth_manager_only",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_whatsapp_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "whatsapp_auth_records_version_check": {
+          "name": "whatsapp_auth_records_version_check",
+          "value": "version > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.whatsapp_connections": {
+      "name": "whatsapp_connections",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "session_public_id": {
+          "name": "session_public_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "state": {
+          "name": "state",
+          "type": "varchar(24)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'LINK_REQUIRED'"
+        },
+        "linked_number": {
+          "name": "linked_number",
+          "type": "varchar(40)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "linked_at": {
+          "name": "linked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_connected_at": {
+          "name": "last_connected_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "heartbeat_at": {
+          "name": "heartbeat_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "wrapped_dek": {
+          "name": "wrapped_dek",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "wrapped_dek_nonce": {
+          "name": "wrapped_dek_nonce",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "wrapped_dek_tag": {
+          "name": "wrapped_dek_tag",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "kek_version": {
+          "name": "kek_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ownership_token": {
+          "name": "ownership_token",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "link_command_id": {
+          "name": "link_command_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "link_pending": {
+          "name": "link_pending",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "whatsapp_connections_business_id_fkey": {
+          "name": "whatsapp_connections_business_id_fkey",
+          "tableFrom": "whatsapp_connections",
+          "tableTo": "businesses",
+          "columnsFrom": [
+            "business_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "whatsapp_connections_business_id_key": {
+          "name": "whatsapp_connections_business_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id"
+          ]
+        },
+        "whatsapp_connections_session_public_id_key": {
+          "name": "whatsapp_connections_session_public_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "session_public_id"
+          ]
+        },
+        "whatsapp_connections_business_id_id_key": {
+          "name": "whatsapp_connections_business_id_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {
+        "whatsapp_connections_tenant": {
+          "name": "whatsapp_connections_tenant",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "agendia_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "whatsapp_connections_manager": {
+          "name": "whatsapp_connections_manager",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_whatsapp_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "whatsapp_connections_worker": {
+          "name": "whatsapp_connections_worker",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "whatsapp_connections_state_check": {
+          "name": "whatsapp_connections_state_check",
+          "value": "state IN ('LINK_REQUIRED','LINKING','CONNECTED','RECONNECTING','DISCONNECTED','ERROR')"
+        },
+        "whatsapp_connections_version_check": {
+          "name": "whatsapp_connections_version_check",
+          "value": "version >= 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.whatsapp_link_codes": {
+      "name": "whatsapp_link_codes",
+      "schema": "",
+      "columns": {
+        "connection_id": {
+          "name": "connection_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token": {
+          "name": "token",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ciphertext": {
+          "name": "ciphertext",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "nonce": {
+          "name": "nonce",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "auth_tag": {
+          "name": "auth_tag",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "whatsapp_link_codes_expiry": {
+          "name": "whatsapp_link_codes_expiry",
+          "columns": [
+            {
+              "expression": "expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "whatsapp_link_codes_business_id_connection_id_fkey": {
+          "name": "whatsapp_link_codes_business_id_connection_id_fkey",
+          "tableFrom": "whatsapp_link_codes",
+          "tableTo": "whatsapp_connections",
+          "columnsFrom": [
+            "business_id",
+            "connection_id"
+          ],
+          "columnsTo": [
+            "business_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "whatsapp_link_codes_token_key": {
+          "name": "whatsapp_link_codes_token_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "token"
+          ]
+        }
+      },
+      "policies": {
+        "whatsapp_link_codes_tenant": {
+          "name": "whatsapp_link_codes_tenant",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "agendia_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "whatsapp_link_codes_tenant_expiry": {
+          "name": "whatsapp_link_codes_tenant_expiry",
+          "as": "PERMISSIVE",
+          "for": "DELETE",
+          "to": [
+            "agendia_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "whatsapp_link_codes_manager": {
+          "name": "whatsapp_link_codes_manager",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_whatsapp_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "whatsapp_link_codes_nonce_check": {
+          "name": "whatsapp_link_codes_nonce_check",
+          "value": "octet_length(nonce)=12"
+        },
+        "whatsapp_link_codes_auth_tag_check": {
+          "name": "whatsapp_link_codes_auth_tag_check",
+          "value": "octet_length(auth_tag)=16"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.whatsapp_received_senders": {
+      "name": "whatsapp_received_senders",
+      "schema": "",
+      "columns": {
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "message_id": {
+          "name": "message_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "connection_id": {
+          "name": "connection_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "phone": {
+          "name": "phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "whatsapp_received_senders_business_id_fkey": {
+          "name": "whatsapp_received_senders_business_id_fkey",
+          "tableFrom": "whatsapp_received_senders",
+          "tableTo": "businesses",
+          "columnsFrom": [
+            "business_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "whatsapp_received_senders_business_id_message_id_fkey": {
+          "name": "whatsapp_received_senders_business_id_message_id_fkey",
+          "tableFrom": "whatsapp_received_senders",
+          "tableTo": "messages",
+          "columnsFrom": [
+            "business_id",
+            "message_id"
+          ],
+          "columnsTo": [
+            "business_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "whatsapp_received_senders_business_id_connection_id_fkey": {
+          "name": "whatsapp_received_senders_business_id_connection_id_fkey",
+          "tableFrom": "whatsapp_received_senders",
+          "tableTo": "whatsapp_connections",
+          "columnsFrom": [
+            "business_id",
+            "connection_id"
+          ],
+          "columnsTo": [
+            "business_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "whatsapp_received_senders_business_id_connection_id_phone_fkey": {
+          "name": "whatsapp_received_senders_business_id_connection_id_phone_fkey",
+          "tableFrom": "whatsapp_received_senders",
+          "tableTo": "whatsapp_sender_bindings",
+          "columnsFrom": [
+            "business_id",
+            "connection_id",
+            "phone"
+          ],
+          "columnsTo": [
+            "business_id",
+            "connection_id",
+            "phone"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "tenant_manager": {
+          "name": "tenant_manager",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_whatsapp_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "tenant_worker": {
+          "name": "tenant_worker",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "public.whatsapp_sender_bindings": {
+      "name": "whatsapp_sender_bindings",
+      "schema": "",
+      "columns": {
+        "business_id": {
+          "name": "business_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connection_id": {
+          "name": "connection_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "phone": {
+          "name": "phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "pn_jid": {
+          "name": "pn_jid",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "lid_jid": {
+          "name": "lid_jid",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "whatsapp_sender_bindings_business_id_fkey": {
+          "name": "whatsapp_sender_bindings_business_id_fkey",
+          "tableFrom": "whatsapp_sender_bindings",
+          "tableTo": "businesses",
+          "columnsFrom": [
+            "business_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "whatsapp_sender_bindings_business_id_connection_id_fkey": {
+          "name": "whatsapp_sender_bindings_business_id_connection_id_fkey",
+          "tableFrom": "whatsapp_sender_bindings",
+          "tableTo": "whatsapp_connections",
+          "columnsFrom": [
+            "business_id",
+            "connection_id"
+          ],
+          "columnsTo": [
+            "business_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "whatsapp_sender_bindings_pkey": {
+          "name": "whatsapp_sender_bindings_pkey",
+          "columns": [
+            "business_id",
+            "connection_id",
+            "phone"
+          ]
+        }
+      },
+      "uniqueConstraints": {
+        "whatsapp_sender_bindings_business_id_connection_id_pn_jid_key": {
+          "name": "whatsapp_sender_bindings_business_id_connection_id_pn_jid_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id",
+            "connection_id",
+            "pn_jid"
+          ]
+        },
+        "whatsapp_sender_bindings_business_id_connection_id_lid_jid_key": {
+          "name": "whatsapp_sender_bindings_business_id_connection_id_lid_jid_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "business_id",
+            "connection_id",
+            "lid_jid"
+          ]
+        }
+      },
+      "policies": {
+        "tenant_manager": {
+          "name": "tenant_manager",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_whatsapp_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "tenant_worker": {
+          "name": "tenant_worker",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_worker_runtime"
+          ],
+          "using": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        },
+        "business_purge_scope": {
+          "name": "business_purge_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "agendia_business_purge"
+          ],
+          "using": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid",
+          "withCheck": "business_id = nullif(current_setting('app.purge_business', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "whatsapp_sender_bindings_phone_check": {
+          "name": "whatsapp_sender_bindings_phone_check",
+          "value": "phone ~ '^\\+[1-9][0-9]{6,14}$'"
+        }
+      },
+      "isRLSEnabled": true
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {
+    "public.admin_business_status": {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(160)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_technical_activity_at": {
+          "name": "last_technical_activity_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "agent_status": {
+          "name": "agent_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "whatsapp_status": {
+          "name": "whatsapp_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "definition": "SELECT b.id,b.name,b.status,b.created_at,b.last_technical_activity_at,\n  CASE WHEN a.active THEN 'active' ELSE 'inactive' END agent_status,\n  coalesce(lower(w.state),'link_required') whatsapp_status\n  FROM businesses b LEFT JOIN agent_configs a ON a.business_id=b.id\n  LEFT JOIN whatsapp_connections w ON w.business_id=b.id WHERE b.deleted_at IS NULL",
+      "name": "admin_business_status",
+      "schema": "public",
+      "isExisting": false,
+      "materialized": false
+    }
+  },
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "id": "ace351e4-5fb9-4bb0-8daa-d0057ae34bce",
+  "prevId": "00000000-0000-0000-0000-000000000000"
+}

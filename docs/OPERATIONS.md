@@ -100,14 +100,14 @@ Restaurá en una base nueva, aplicá las migraciones y probá el restore antes d
 
 ## Historial y pérdida de conexión del migrador
 
-El stock migrator de Drizzle es la autoridad de ejecución e historial futuro. La adopción valida el prefijo legacy completo y lo conserva congelado; no requiere ni produce escritura dual. Desplegá fuentes y journal como un conjunto inmutable. La provisión de logins conserva su validación de contraseñas/roles y su lock transaccional; comparte la clave exacta con el lock de sesión del migrador. El migrador termina antes de provisionar logins y antes de arrancar servicios nuevos.
+El stock migrator de Drizzle es la autoridad de ejecución e historial futuro. La adopción valida el prefijo legacy completo y lo conserva congelado; no requiere ni produce escritura dual. Desplegá fuentes, journal y snapshots revisados como un conjunto inmutable. La generación ocurre offline durante desarrollo (`bun --no-env-file run db:generate --help`, `--name=agregar_nota` o `--custom --name=seguridad_tabla`), no contra producción. Kit conserva los nueve pins históricos obligatorios; las entradas nuevas pueden no tener `sha256`, pero su SQL completo queda fijado por el hash almacenado al aplicarse. Editarlo después, incluso recalculando un pin opcional, se rechaza. Nunca rehashees historia aplicada para desbloquear un despliegue. Revisá SQL compañero para FORCE RLS, exclusiones, collations, ACLs, funciones y triggers; no los genera automáticamente el snapshot. No uses `push` ni el migrador directo de Kit para eludir la validación del proyecto. La provisión de logins conserva su validación de contraseñas/roles y su lock transaccional; comparte la clave exacta con el lock de sesión del migrador. El migrador termina antes de provisionar logins y antes de arrancar servicios nuevos.
 
 Los errores controlados salen por stderr con código 1, sin SQL, errores crudos ni URLs:
 
 | Diagnóstico exacto | Significado |
 | --- | --- |
 | `No migrations found` | No hay fuentes SQL. |
-| `Migration journal or file set is invalid` | Journal inválido, archivos faltantes/extra o tags/índices/timestamps incompatibles. |
+| `Migration journal or file set is invalid` | Journal inválido, pin histórico faltante, pin malformado, archivos faltantes/extra o tags/índices/timestamps incompatibles. |
 | `Migration source does not match journal checksum` | Alguna fuente completa no coincide con su SHA-256 fijado. |
 | `Applied migration is missing from migration files` / `Applied migration changed` | Evidencia legacy desconocida o checksum alterado. |
 | `Legacy history is not an unchanged chronological prefix` | El legacy contiene huecos o un orden incompatible. |
@@ -123,7 +123,7 @@ Para reconciliar, mantené detenidos los despliegues competidores, confirmá que
 
 ## Límites conocidos
 
-- Drizzle Kit/configuración/snapshot y la conversión de repositorios/transacciones de aplicación siguen pendientes; este migrador no completa toda la adopción de Drizzle.
+- La conversión de repositorios/transacciones de aplicación sigue pendiente; generación y ejecución de migraciones no completan toda la adopción de Drizzle.
 - Sin backup/restore automatizado (issue #121).
 - Sin endpoint de salud ni healthcheck en los contenedores.
 - Sin rotación automática de claves de cifrado.
