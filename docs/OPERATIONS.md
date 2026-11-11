@@ -123,7 +123,6 @@ Para reconciliar, mantené detenidos los despliegues competidores, confirmá que
 
 ## Límites conocidos
 
-- La conversión de repositorios/transacciones de aplicación sigue pendiente; generación y ejecución de migraciones no completan toda la adopción de Drizzle.
 - Sin backup/restore automatizado (issue #121).
 - Sin endpoint de salud ni healthcheck en los contenedores.
 - Sin rotación automática de claves de cifrado.

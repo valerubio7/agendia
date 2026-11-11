@@ -3,7 +3,9 @@ import { BusinessClosureInputSchema, parseInstantMs, WeeklyScheduleSchema, isRes
   type BusinessClosure, type BusinessClosureInput, type WeeklySchedule } from "@agendia/domain";
 import type { PostgresRepositories } from "../repositories.ts";
 import { ResourceCatalogError, appointmentInterval, type SavedAppointmentInterval } from "./catalog.ts";
-import { asDbJson, type Db } from "./shared.ts";
+import { and, eq, sql } from "drizzle-orm";
+import { businessCalendars, businessCalendarClosures } from "../schema.ts";
+import { asDbJson, execute, result, type Db } from "./shared.ts";
 
 export type BusinessCalendar = { weeklySchedule: WeeklySchedule };
 
@@ -21,15 +23,15 @@ function closureValues(input: BusinessClosureInput) {
 }
 
 export async function getBusinessCalendar(db: Db, businessId: string): Promise<{ weeklySchedule: WeeklySchedule | null }> {
-  const [row] = await db<{ weeklySchedule: WeeklySchedule }[]>`
-      select weekly_schedule "weeklySchedule" from business_calendars where business_id=${businessId}`;
+  const [row] = await result(db.select({ weeklySchedule: businessCalendars.weeklySchedule })
+    .from(businessCalendars).where(eq(businessCalendars.businessId, businessId)));
   return { weeklySchedule: row ? WeeklyScheduleSchema.parse(row.weeklySchedule) : null };
 }
 /** Called only after the shared early lock; B2 protects Confirmed only, unlike B1 resources. */
 async function futureConfirmedIntervals(db: Db, businessId: string, nowMs: number): Promise<EpochInterval[]> {
   if (!Number.isSafeInteger(nowMs)) throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
-  const rows = await db<SavedAppointmentInterval[]>`select start_raw "startRaw",start_ms "startMs",end_ms "endMs",duration_minutes "durationMinutes"
-      from appointments where business_id=${businessId} and state='confirmed' and start_ms>${nowMs}`;
+  const rows = await execute<SavedAppointmentInterval>(db, sql`select start_raw "startRaw",start_ms "startMs",end_ms "endMs",duration_minutes "durationMinutes"
+      from appointments where business_id=${businessId} and state='confirmed' and start_ms>${nowMs}`);
   return rows.map(appointmentInterval);
 }
 async function guardClosureAppointments(db: Db, businessId: string, input: BusinessClosureInput, nowMs: number) {
@@ -46,15 +48,15 @@ export async function saveBusinessCalendar(db: Db, repo: PostgresRepositories, b
     throw new ResourceCatalogError("HOURS_CONFLICT");
   if ((await futureConfirmedIntervals(db, businessId, nowMs)).some(interval => !isEpochIntervalWithinWeeklySchedule(interval, valid)))
     throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
-  const [row] = await db<BusinessCalendar[]>`
-      insert into business_calendars(business_id,weekly_schedule) values(${businessId},${db.json(asDbJson(valid))})
-      on conflict(business_id) do update set weekly_schedule=excluded.weekly_schedule
-      returning weekly_schedule "weeklySchedule"`;
+  const normalized = asDbJson(valid);
+  const [row] = await result(db.insert(businessCalendars).values({ businessId, weeklySchedule: normalized })
+    .onConflictDoUpdate({ target: businessCalendars.businessId, set: { weeklySchedule: normalized } })
+    .returning({ weeklySchedule: sql<WeeklySchedule>`${businessCalendars.weeklySchedule}` }));
   return row!;
 }
 export async function listBusinessClosures(db: Db, businessId: string): Promise<BusinessClosure[]> {
-  const rows = await db<ClosureRow[]>`select id,kind,closed_date::text date,start_raw start,end_raw "end"
-      from business_calendar_closures where business_id=${businessId} order by id`;
+  const rows = await execute<ClosureRow>(db, sql`select id,kind,closed_date::text date,start_raw start,end_raw "end"
+      from business_calendar_closures where business_id=${businessId} order by id`);
   return rows.map(closureDto);
 }
 /** All closure mutations require the shared early calendar lock in the caller's UoW. */
@@ -63,27 +65,30 @@ export async function createBusinessClosure(db: Db, repo: PostgresRepositories, 
   const nowMs = Date.now();
   const v = closureValues(input);
   await guardClosureAppointments(db, businessId, input, nowMs);
-  const [row] = await db<ClosureRow[]>`insert into business_calendar_closures
+  const [row] = await execute<ClosureRow>(db, sql`insert into business_calendar_closures
       (business_id,kind,closed_date,start_raw,end_raw,start_ms,end_ms)
       values(${businessId},${v.kind},${v.date},${v.start},${v.end},${v.startMs},${v.endMs})
-      returning id,kind,closed_date::text date,start_raw start,end_raw "end"`;
+      returning id,kind,closed_date::text date,start_raw start,end_raw "end"`);
   return closureDto(row!);
 }
 export async function updateBusinessClosure(db: Db, repo: PostgresRepositories, businessId: string, id: string, input: BusinessClosureInput): Promise<BusinessClosure | null> {
   await repo.acquireBusinessCalendarLock({ businessId });
   const nowMs = Date.now();
-  const [owned] = await db`select id from business_calendar_closures where business_id=${businessId} and id=${id}`;
+  const [owned] = await result(db.select({ id: businessCalendarClosures.id }).from(businessCalendarClosures)
+    .where(and(eq(businessCalendarClosures.businessId, businessId), eq(businessCalendarClosures.id, id))));
   if (!owned) return null;
   const v = closureValues(input);
   await guardClosureAppointments(db, businessId, input, nowMs);
-  const [row] = await db<ClosureRow[]>`update business_calendar_closures set kind=${v.kind},closed_date=${v.date},
+  const [row] = await execute<ClosureRow>(db, sql`update business_calendar_closures set kind=${v.kind},closed_date=${v.date},
       start_raw=${v.start},end_raw=${v.end},start_ms=${v.startMs},end_ms=${v.endMs}
       where business_id=${businessId} and id=${id}
-      returning id,kind,closed_date::text date,start_raw start,end_raw "end"`;
+      returning id,kind,closed_date::text date,start_raw start,end_raw "end"`);
   return row ? closureDto(row) : null;
 }
 export async function deleteBusinessClosure(db: Db, repo: PostgresRepositories, businessId: string, id: string): Promise<boolean> {
   await repo.acquireBusinessCalendarLock({ businessId });
-  const rows = await db`delete from business_calendar_closures where business_id=${businessId} and id=${id} returning id`;
+  const rows = await result(db.delete(businessCalendarClosures)
+    .where(and(eq(businessCalendarClosures.businessId, businessId), eq(businessCalendarClosures.id, id)))
+    .returning({ id: businessCalendarClosures.id }));
   return rows.length > 0;
 }

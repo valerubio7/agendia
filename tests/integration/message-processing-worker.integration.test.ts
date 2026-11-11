@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { PgBoss } from "pg-boss";
+import { sql } from "drizzle-orm";
+import { createDrizzleRuntime } from "../support/drizzle-runtime.ts";
 import type { AiProvider, ToolAgentMessage, ToolConversationProvider } from '@agendia/domain';
 import { createRuntimePools, tenantContext, PostgresRepositories } from "@agendia/db";
 import {
@@ -62,6 +64,7 @@ const event = (
 let db: TestPostgres,
   pools: ReturnType<typeof createRuntimePools>,
   boss: PgBoss;
+let native: ReturnType<typeof createDrizzleRuntime>;
 
 beforeAll(async () => {
   db = await startTestPostgres();
@@ -81,6 +84,7 @@ beforeAll(async () => {
     "agendia_worker_runtime",
   );
   pools = createRuntimePools(db.container.getConnectionUri());
+  native = createDrizzleRuntime(db.container.getConnectionUri());
   boss = new PgBoss({
     connectionString: workerUrl,
     schema: "pgboss",
@@ -92,6 +96,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await boss?.stop();
   await pools?.end();
+  await native?.$client.end();
   await db?.stop();
 });
 
@@ -794,10 +799,10 @@ describe("PostgreSQL messaging workers", () => {
     const inbound = new PostgresInboundHandler(pools);
     await inbound.handle(event({ providerMessageId: 'boundary-start', remoteJid: 'boundary@s.whatsapp.net' }));
     for (const [index, gap, replied, delay] of [[1, 0, false, 600], [2, 0, true, 90], [3, 3600.001, true, 600]] as const) {
-      await db.sql.begin(async tx => {
-        await tx`update conversations set reply_due_at=null,last_reply_at=case when ${replied} then now()-interval '2 hours' else null end,last_exchange_at=now()-${gap}*interval '1 second' where remote_jid='boundary@s.whatsapp.net'`;
+      await native.transaction(async tx => {
+        await tx.execute(sql`update conversations set reply_due_at=null,last_reply_at=case when ${replied} then now()-interval '2 hours' else null end,last_exchange_at=now()-${gap}*interval '1 second' where remote_jid='boundary@s.whatsapp.net'`);
         await new PostgresRepositories(tx).ingestInbound({ businessId: A, connectionId: CA, providerId: `boundary-${index}`, remoteJid: 'boundary@s.whatsapp.net', text: 'medianoche', receivedAt: new Date('2026-01-01T00:00:00Z'), classification: 'accepted' });
-        const row = (await tx`select extract(epoch from reply_due_at-last_exchange_at) seconds from conversations where remote_jid='boundary@s.whatsapp.net'`)[0]!;
+        const row = (await tx.execute(sql`select extract(epoch from reply_due_at-last_exchange_at) seconds from conversations where remote_jid='boundary@s.whatsapp.net'`))[0]!;
         expect(Math.round(Number(row.seconds)*1000)).toBe(delay*1000);
       });
     }

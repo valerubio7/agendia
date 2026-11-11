@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import type { TransactionSql } from "postgres";
-import { asDbJson, type Db } from "./repositories/shared.ts";
+import { sql } from "drizzle-orm";
+import { appointmentOperationReceipts, businessProfiles, agentConfigs } from "./schema.ts";
+import { asDbJson, execute, result, isTransaction, type Transaction, type Db } from "./repositories/shared.ts";
 import * as identity from "./repositories/identity.ts";
 import * as business from "./repositories/business.ts";
 import * as registration from "./repositories/registration.ts";
@@ -36,12 +37,12 @@ import type { AppointmentActionContext, ResourceInput,
  * C/T05/T09 must use this same namespace. Hash collisions only serialize businesses;
  * tenant identity remains enforced by context and RLS, never by the hash.
  */
-export async function acquireBusinessCalendarLock(tx: TransactionSql, context: Pick<TenantContext, "businessId">) {
-  if ("begin" in tx) throw new Error("Calendar lock requires a transaction");
+export async function acquireBusinessCalendarLock(tx: Transaction, context: Pick<TenantContext, "businessId">) {
+  if (!isTransaction(tx)) throw new Error("Calendar lock requires a transaction");
   const businessId = context.businessId.toLowerCase();
-  const [scope] = await tx`select current_setting('app.tenant_id',true) tenant`;
+  const [scope] = await execute<{ tenant: string | null }>(tx, sql`select current_setting('app.tenant_id',true) tenant`);
   if (scope?.tenant?.toLowerCase() !== businessId) throw new Error("Calendar lock requires matching tenant context");
-  await tx`select pg_advisory_xact_lock(hashtextextended(${"business-calendar:" + businessId},0))`;
+  await execute(tx, sql`select pg_advisory_xact_lock(hashtextextended(${"business-calendar:" + businessId},0))`);
 }
 
 export type SealedLinkCode = {
@@ -108,29 +109,29 @@ export type AppointmentOperationRow = {
 export class PostgresRepositories {
   constructor(private readonly db: Db) {}
   async lockAppointmentOperation(context: TenantContext, key: string, wait = true): Promise<boolean> {
-    if ("begin" in this.db) throw new Error("Operation lock requires a transaction");
+    if (!isTransaction(this.db)) throw new Error("Operation lock requires a transaction");
     const lock = `appointment-operation:${context.businessId}:${context.actorId}:${key}`;
-    if (wait) { await this.db`select pg_advisory_xact_lock(hashtextextended(${lock},0))`; return true; }
-    const [row] = await this.db`select pg_try_advisory_xact_lock(hashtextextended(${lock},0)) acquired`;
+    if (wait) { await execute(this.db, sql`select pg_advisory_xact_lock(hashtextextended(${lock},0))`); return true; }
+    const [row] = await execute<{ acquired: boolean }>(this.db, sql`select pg_try_advisory_xact_lock(hashtextextended(${lock},0)) acquired`);
     return row!.acquired;
   }
   async appointmentOperation(context: TenantContext, key: string): Promise<AppointmentOperationRow | null> {
-    const [row] = await this.db<AppointmentOperationRow[]>`select kind,target_id target,fingerprint,state,result
-      from appointment_operation_receipts where business_id=${context.businessId} and actor_id=${context.actorId} and operation_key=${key}`;
+    const [row] = await execute<AppointmentOperationRow>(this.db, sql`select kind,target_id target,fingerprint,state,result
+      from appointment_operation_receipts where business_id=${context.businessId} and actor_id=${context.actorId} and operation_key=${key}`);
     return row ?? null;
   }
   async recordAppointmentOperation(context: TenantContext, key: string, row: AppointmentOperationRow) {
-    await this.db`insert into appointment_operation_receipts(business_id,actor_id,operation_key,kind,target_id,fingerprint,state,result)
-      values(${context.businessId},${context.actorId},${key},${row.kind},${row.target},${row.fingerprint},${row.state},
-        ${row.result === null ? null : this.db.json(asDbJson(row.result))})`;
+    await result(this.db.insert(appointmentOperationReceipts).values({ businessId: context.businessId,
+      actorId: context.actorId, operationKey: key, kind: row.kind, targetId: row.target, fingerprint: row.fingerprint,
+      state: row.state, result: row.result === null ? null : asDbJson(row.result) }));
   }
   appointmentOperationSavepoint<T>(work: (repo: PostgresRepositories) => Promise<T>): Promise<T> {
-    if ("begin" in this.db) throw new Error("Operation savepoint requires a transaction");
-    return (this.db as TransactionSql).savepoint(tx => work(new PostgresRepositories(tx))) as Promise<T>;
+    if (!isTransaction(this.db)) throw new Error("Operation savepoint requires a transaction");
+    return result(this.db.transaction(tx => work(new PostgresRepositories(tx))));
   }
   acquireBusinessCalendarLock(context: Pick<TenantContext, "businessId">) {
-    if ("begin" in this.db) throw new Error("Calendar lock requires a transaction");
-    return acquireBusinessCalendarLock(this.db as TransactionSql, context);
+    if (!isTransaction(this.db)) throw new Error("Calendar lock requires a transaction");
+    return acquireBusinessCalendarLock(this.db, context);
   }
   /** Read-only owned projection: current client identity, frozen catalog terms. */
   async getAppointment(businessId: string, id: string): Promise<StoredAppointment | null> {
@@ -318,11 +319,11 @@ export class PostgresRepositories {
     return business.createBusinessUser(this.db, this, row);
   }
   async admitBusinessSend(id: string) {
-    const [row] = await this.db`select admit_business_send(${id}) as admitted`;
+    const [row] = await execute(this.db, sql`select admit_business_send(${id}) as admitted`);
     return row?.admitted === true;
   }
   async deleteBusiness(id: string, session: string, actor: string, request: string) {
-    const [row] = await this.db`select delete_business(${id},${session},${actor},${request}) as deleted`;
+    const [row] = await execute(this.db, sql`select delete_business(${id},${session},${actor},${request}) as deleted`);
     return row?.deleted === true;
   }
   async setBusinessStatus(id: string, status: string) {
@@ -550,30 +551,10 @@ export class PostgresRepositories {
     return events.auditCount(this.db);
   }
   async tenantSnapshot() {
-    const profile = (
-      await this.db<
-        { display_name: string }[]
-      >`select display_name from business_profiles limit 1`
-    )[0];
-    const agent = (
-      await this.db<
-        { active: boolean }[]
-      >`select active from agent_configs limit 1`
-    )[0];
-    const inbox = Number(
-      (
-        await this.db<
-          { count: string }[]
-        >`select count(*) count from inbox_events`
-      )[0]?.count ?? 0,
-    );
-    const outbox = Number(
-      (
-        await this.db<
-          { count: string }[]
-        >`select count(*) count from outbox_events`
-      )[0]?.count ?? 0,
-    );
+    const [profile] = await result(this.db.select({ display_name: businessProfiles.displayName }).from(businessProfiles).limit(1));
+    const [agent] = await result(this.db.select({ active: agentConfigs.active }).from(agentConfigs).limit(1));
+    const inbox = Number((await execute<{ count: string }>(this.db, sql`select count(*) count from inbox_events`))[0]?.count ?? 0);
+    const outbox = Number((await execute<{ count: string }>(this.db, sql`select count(*) count from outbox_events`))[0]?.count ?? 0);
     return {
       profile: profile?.display_name ?? null,
       agentActive: agent?.active ?? null,
@@ -582,10 +563,10 @@ export class PostgresRepositories {
     };
   }
   conversationTexts() {
-    return this.db`select raw_text from messages`;
+    return execute(this.db, sql`select raw_text from messages`);
   }
   authRecordNames() {
-    return this.db`select record_name from whatsapp_auth_records`;
+    return execute(this.db, sql`select record_name from whatsapp_auth_records`);
   }
 }
 

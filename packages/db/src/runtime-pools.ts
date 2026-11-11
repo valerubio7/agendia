@@ -1,4 +1,7 @@
 import postgres, { type Sql } from "postgres";
+import { sql as query } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/postgres-js";
+import { execute, result, type Db } from "./repositories/shared.ts";
 import { PostgresRepositories } from "./repositories.ts";
 import type { TenantContext } from "./tenant-context.ts";
 
@@ -12,27 +15,29 @@ export class RolePool {
   private readonly lockSessions = new Set<Sql>();
   private ending = false;
   private shutdown?: Promise<void>;
+  private readonly db: Db;
   constructor(
     private readonly sql: Sql,
     readonly role: RuntimeRole,
     private readonly lockUrl?: string,
-  ) {}
+  ) {
+    this.db = drizzle(sql);
+  }
   run<T>(
     context: TenantContext | undefined,
     work: (repositories: PostgresRepositories) => Promise<T>,
   ): Promise<T> {
-    return this.sql.begin(async (tx) => {
-      await tx.unsafe(`set local role ${this.role}`);
-      if (context)
-        for (const [key, value] of Object.entries({
-          tenant_id: context.businessId,
-          actor_role: context.role,
-          actor_id: context.actorId,
-          request_id: context.requestId,
-        }))
-          await tx`select set_config(${`app.${key}`},${value},true)`;
+    return result(this.db.transaction(async (tx) => {
+      await execute(tx, query`set local role ${query.identifier(this.role)}`);
+      for (const [key, value] of Object.entries({
+        tenant_id: context?.businessId ?? "",
+        actor_role: context?.role ?? "",
+        actor_id: context?.actorId ?? "",
+        request_id: context?.requestId ?? "",
+      }))
+        await execute(tx, query`select set_config(${`app.${key}`},${value},true)`);
       return work(new PostgresRepositories(tx));
-    }) as Promise<T>;
+    }));
   }
   async reserveAdvisoryLock(
     key: string,

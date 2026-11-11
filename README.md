@@ -66,7 +66,7 @@ Cada suite cubre una capa distinta y se explica en [Desarrollo](docs/DEVELOPMENT
 
 ## Cambiar el esquema
 
-Editá `packages/db/src/schema.ts` y generá offline con `bun --no-env-file run db:generate --name=agregar_nota` (ayuda: `bun --no-env-file run db:generate --help`). Para SQL explícito, usá `--custom --name=seguridad_tabla`. Revisá el SQL y sus archivos de metadatos antes de aplicar con el migrador del proyecto; nunca edites historia aplicada. Kit no completa automáticamente FORCE RLS, exclusiones, collations, permisos, funciones ni triggers: requieren SQL compañero. [Flujo completo](docs/DEVELOPMENT.md#migraciones). Los repositorios y las transacciones de aplicación aún usan su implementación anterior.
+Editá `packages/db/src/schema.ts` y generá offline con `bun --no-env-file run db:generate --name=agregar_nota` (ayuda: `bun --no-env-file run db:generate --help`). Para SQL explícito, usá `--custom --name=seguridad_tabla`. Revisá el SQL y sus archivos de metadatos antes de aplicar con el migrador del proyecto; nunca edites historia aplicada. Kit no completa automáticamente FORCE RLS, exclusiones, collations, permisos, funciones ni triggers: requieren SQL compañero. [Flujo completo](docs/DEVELOPMENT.md#migraciones).
 
 ## Documentación
 

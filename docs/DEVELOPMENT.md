@@ -79,7 +79,6 @@ Los tests de integración y E2E levantan PostgreSQL con Testcontainers. E2E comp
 
 - `0004_registration.sql` agrega las solicitudes pendientes y el límite de registro; aplicala antes de probar el flujo. El journal estático `packages/db/migrations/meta/_journal.json` referencia las nueve fuentes históricas originales con hashes SHA-256 completos.
 - No edites una migración ya aplicada ni renumeres el journal. Drizzle Kit agrega las nuevas entradas y snapshots; los nueve pins `sha256` históricos son obligatorios y se conservan. Las entradas nuevas pueden omitir ese campo: el hash del SQL completo queda fijado en el historial Drizzle al aplicarlas. Un pin opcional también se valida.
-- Los repositorios y las transacciones de aplicación aún no están migrados a Drizzle. Generar DDL no cambia esa implementación.
 - Un historial desconocido, cambiado, con huecos o incompatible se rechaza sin escrituras. Una base inicializada sin historial también se rechaza. Los diagnósticos controlados y el procedimiento ante desconexión están en [Operaciones](OPERATIONS.md): no reintentes automáticamente un resultado incierto.
 - Para reiniciar la base local: `docker compose down -v && docker compose up -d postgres && bun run db:migrate:dev`. `-v` borra el volumen local; no lo uses contra una base con datos que quieras conservar.
 - El esquema `pgboss` lo administra la biblioteca de colas; no lo modifiques a mano.

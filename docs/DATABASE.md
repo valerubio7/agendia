@@ -1,6 +1,6 @@
 # Base de datos
 
-agendIA usa PostgreSQL 16. [`schema.ts`](../packages/db/src/schema.ts) representa en Drizzle 0.45.2 las **35 tablas públicas de aplicación y la vista `admin_business_status`**, con sus restricciones, índices y políticas RLS, efectivas tras 0000–0008. Las migraciones SQL de `packages/db/migrations/` siguen siendo la autoridad de instalación; el migrador oficial de Drizzle las ejecuta mediante un `pg.Client` dedicado. Los repositorios y las transacciones de aplicación todavía usan su implementación anterior.
+agendIA usa PostgreSQL 16. [`schema.ts`](../packages/db/src/schema.ts) representa en Drizzle 0.45.2 las **35 tablas públicas de aplicación y la vista `admin_business_status`**, con sus restricciones, índices y políticas RLS, efectivas tras 0000–0008. Las migraciones SQL de `packages/db/migrations/` siguen siendo la autoridad de instalación; el migrador oficial de Drizzle las ejecuta mediante un `pg.Client` dedicado. Los repositorios usan handles públicos de Drizzle sobre postgres.js; `RolePool` abre la transacción exterior y comparte ese mismo handle con todos los dominios, auditoría y outbox.
 
 Esta guía describe el repositorio; no inspecciona una base en ejecución ni confirma qué migraciones se aplicaron en un servidor.
 
@@ -92,6 +92,14 @@ Las excepciones de collation se aplican explícitamente al esquema de prueba: no
 - El bootstrap garantiza un único `platform_admin` con un lock y una verificación en la aplicación; la tabla no impone esa unicidad. Sí impone un solo `business_user` por negocio mediante un índice parcial.
 - RLS no protege frente a superusuarios y no es cifrado: los datos siguen legibles para quien tenga la clave o privilegios elevados.
 
+## Transacciones y repositorios
+
+`RolePool.run` crea una transacción nativa de Drizzle, aplica el rol y los cuatro settings locales en ella (vacíos cuando falta contexto) y entrega la fachada `PostgresRepositories`. Sus constructores directos aceptan una base o transacción pública de Drizzle, nunca `TransactionSql` de postgres.js. Las operaciones que exigen transacción comprueban la identidad pública de `PostgresJsTransaction`. `withTenantTransaction` conserva su callback SQL original para pruebas físicas; no es un puente hacia los repositorios.
+
+El CRUD simple usa builders tipados y los codecs de `schema.ts`. Los joins/proyecciones PostgreSQL, funciones, locks y consultas complejas usan `sql` parametrizado y `execute`. El borde compartido restaura timestamps `Date` de resultados crudos sin perder `RowList.count` ni metadatos; no cambia parsers globales. JSON conserva la normalización y el rechazo de valores no serializables. El helper compartido produce un parámetro `jsonb`: un valor normalizado a `null` en la raíz se enlaza como **SQL NULL**, por lo que una columna NOT NULL conserva su error PostgreSQL `23502`; los null anidados siguen siendo JSON válido. `bytea` conserva `Buffer`, y los DTOs mantienen sus conversiones explícitas de bigint/numeric. Los errores se desenvuelven antes de los catches de dominio para conservar SQLSTATE, constraint y mensaje PostgreSQL, no el SQL/params del wrapper.
+
+Los savepoints son transacciones nativas anidadas: una falla determinista revierte sus efectos y permite confirmar solo su comprobante; una falla desconocida revierte toda la operación. Los locks transaccionales de operación, calendario, auditoría, resumen, remitente y diálogo mantienen su orden. Los locks de vida de socket/job siguen usando conexiones dedicadas independientes del pool transaccional y no se convierten en locks de transacción.
+
 ## Migraciones
 
 | Archivo | Qué hace |
@@ -116,7 +124,7 @@ En desarrollo se ejecuta con `bun run db:migrate:dev`; en producción Compose ej
 
 Para generar DDL sin conexión, `bun --no-env-file run db:generate --name=agregar_nota` usa el CLI oficial y `drizzle.config.ts`. El snapshot genuino `meta/0008_snapshot.json` representa el esquema Drizzle completo posterior a 0008 (35 tablas y una vista); no hay snapshots ficticios anteriores, SQL baseline adicional ni una entrada extra de instalación. El esquema actual genera un no-op, sin cambiar fuentes, journal ni snapshot. `--help` expone las opciones stock; `--custom --name=seguridad_tabla` crea una migración SQL para completar antes de aplicarla. El flujo y los checks están en [Desarrollo](DEVELOPMENT.md#generar-un-cambio-sin-conexión-a-postgresql).
 
-**Límites:** el snapshot no incluye FORCE RLS, exclusiones, collations, ACLs, funciones ni triggers SQL-only. Revisá y escribí SQL compañero cuando nuevas tablas/columnas los afecten; Kit no garantiza esos objetos automáticamente. Validar fuentes/historial tampoco demuestra equivalencia del esquema vivo. Las pruebas aisladas comparan catálogos, seguridad y datos al actualizar cada prefijo histórico; no se repara drift manual o no soportado. Ante drift, detené el despliegue e investigá. La migración de repositorios/transacciones de aplicación sigue pendiente.
+**Límites:** el snapshot no incluye FORCE RLS, exclusiones, collations, ACLs, funciones ni triggers SQL-only. Revisá y escribí SQL compañero cuando nuevas tablas/columnas los afecten; Kit no garantiza esos objetos automáticamente. Validar fuentes/historial tampoco demuestra equivalencia del esquema vivo. Las pruebas aisladas comparan catálogos, seguridad y datos al actualizar cada prefijo histórico; no se repara drift manual o no soportado. Ante drift, detené el despliegue e investigá. El corte de transporte de repositorios no cambia el SQL histórico ni autoriza aplicar migraciones en bases reales.
 
 ### Baja de negocios
 

@@ -1,7 +1,9 @@
 import { ResourceInputSchema, isResourceScheduleWithinBusiness, normalizeWeeklySchedule, isStructurallyAvailable,
   parseInstantMs, type EpochInterval, type ResourceInput } from "@agendia/domain";
 import type { PostgresRepositories } from "../repositories.ts";
-import { appointmentId, asDbJson, type Db } from "./shared.ts";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { services, resources, resourceServices, serviceCategories } from "../schema.ts";
+import { appointmentId, asDbJson, execute, result, type Db } from "./shared.ts";
 
 export type CatalogResource = Omit<ResourceInput, "description"> & {
   id: string; description: string | null; status: "active" | "suspended";
@@ -39,16 +41,16 @@ export type CatalogService = {
 };
 
 export function listResources(db: Db, businessId: string) {
-  return db<CatalogResource[]>`select r.id,r.name,r.description,r.status,r.weekly_schedule "weeklySchedule",
+  return execute<CatalogResource>(db, sql`select r.id,r.name,r.description,r.status,r.weekly_schedule "weeklySchedule",
       array(select rs.service_id::text from resource_services rs join services s on (s.business_id,s.id)=(rs.business_id,rs.service_id)
         where rs.business_id=r.business_id and rs.resource_id=r.id and s.deleted_at is null order by rs.service_id) "serviceIds"
-      from resources r where r.business_id=${businessId} and r.deleted_at is null order by r.normalized_name,r.id`;
+      from resources r where r.business_id=${businessId} and r.deleted_at is null order by r.normalized_name,r.id`);
 }
 export async function getResource(db: Db, businessId: string, id: string) {
-  const [row] = await db<CatalogResource[]>`select r.id,r.name,r.description,r.status,r.weekly_schedule "weeklySchedule",
+  const [row] = await execute<CatalogResource>(db, sql`select r.id,r.name,r.description,r.status,r.weekly_schedule "weeklySchedule",
       array(select rs.service_id::text from resource_services rs join services s on (s.business_id,s.id)=(rs.business_id,rs.service_id)
         where rs.business_id=r.business_id and rs.resource_id=r.id and s.deleted_at is null order by rs.service_id) "serviceIds"
-      from resources r where r.business_id=${businessId} and r.id=${id} and r.deleted_at is null`;
+      from resources r where r.business_id=${businessId} and r.id=${id} and r.deleted_at is null`);
   return row ?? null;
 }
 async function validateResource(db: Db, repo: PostgresRepositories, businessId: string, input: ResourceInput) {
@@ -57,23 +59,24 @@ async function validateResource(db: Db, repo: PostgresRepositories, businessId: 
   if (!isResourceScheduleWithinBusiness(valid.weeklySchedule, calendar.weeklySchedule ?? {}))
     throw new ResourceCatalogError("HOURS_CONFLICT");
   if (valid.serviceIds.length) {
-    const services = await db`select id from services where business_id=${businessId} and deleted_at is null and id in ${db(valid.serviceIds)}`;
-    if (services.length !== valid.serviceIds.length) throw new ResourceCatalogError("UNKNOWN_SERVICE");
+    const owned = await result(db.select({ id: services.id }).from(services)
+      .where(and(eq(services.businessId, businessId), isNull(services.deletedAt), inArray(services.id, valid.serviceIds))));
+    if (owned.length !== valid.serviceIds.length) throw new ResourceCatalogError("UNKNOWN_SERVICE");
   }
   return valid;
 }
 async function replaceResourceServices(db: Db, businessId: string, id: string, serviceIds: string[]) {
-  await db`delete from resource_services where business_id=${businessId} and resource_id=${id}`;
-  if (serviceIds.length) await db`insert into resource_services ${db(serviceIds.map(serviceId => ({
-    business_id: businessId, resource_id: id, service_id: serviceId,
-  })))}`;
+  await result(db.delete(resourceServices).where(and(eq(resourceServices.businessId, businessId), eq(resourceServices.resourceId, id))));
+  if (serviceIds.length) await result(db.insert(resourceServices).values(serviceIds.map(serviceId => ({
+    businessId, resourceId: id, serviceId,
+  }))));
 }
 /** All mutations require a tenant transaction; assignments and caller audit/outbox share its rollback. */
 export async function createResource(db: Db, repo: PostgresRepositories, businessId: string, input: ResourceInput): Promise<CatalogResource> {
   await repo.acquireBusinessCalendarLock({ businessId });
   const valid = await validateResource(db, repo, businessId, input);
-  const [row] = await db<{ id: string }[]>`insert into resources(business_id,name,description,weekly_schedule)
-      values(${businessId},${valid.name},${valid.description ?? null},${db.json(asDbJson(valid.weeklySchedule))}) returning id`;
+  const [row] = await result(db.insert(resources).values({ businessId, name: valid.name,
+    description: valid.description ?? null, weeklySchedule: asDbJson(valid.weeklySchedule) }).returning({ id: resources.id }));
   await replaceResourceServices(db, businessId, row!.id, valid.serviceIds);
   return (await repo.getResource(businessId, row!.id))!;
 }
@@ -84,9 +87,9 @@ async function guardResourceAppointments(db: Db, businessId: string, current: Ca
   const removedAssignment = current.serviceIds.some(serviceId => !proposed.serviceIds.includes(serviceId));
   if (!hoursChanged && !removedAssignment) return;
   if (!Number.isSafeInteger(nowMs)) throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
-  const appointments = await db<(SavedAppointmentInterval & { serviceId: string })[]>`
+  const appointments = await execute<SavedAppointmentInterval & { serviceId: string }>(db, sql`
       select service_id "serviceId",start_raw "startRaw",start_ms "startMs",end_ms "endMs",duration_minutes "durationMinutes"
-      from appointments where business_id=${businessId} and resource_id=${current.id} and start_ms>${nowMs}`;
+      from appointments where business_id=${businessId} and resource_id=${current.id} and start_ms>${nowMs}`);
   for (const appointment of appointments) {
     appointmentInterval(appointment); // Hostile raw SQL must not cause a false pass.
     if (!proposed.serviceIds.includes(appointment.serviceId)
@@ -102,60 +105,67 @@ export async function updateResource(db: Db, repo: PostgresRepositories, busines
   if (!current) return null;
   const valid = await validateResource(db, repo, businessId, input);
   await guardResourceAppointments(db, businessId, current, valid, nowMs);
-  await db`update resources set name=${valid.name},description=${valid.description ?? null},
-      weekly_schedule=${db.json(asDbJson(valid.weeklySchedule))} where business_id=${businessId} and id=${id} and deleted_at is null`;
+  await result(db.update(resources).set({ name: valid.name, description: valid.description ?? null,
+    weeklySchedule: asDbJson(valid.weeklySchedule) }).where(and(eq(resources.businessId, businessId), eq(resources.id, id), isNull(resources.deletedAt))));
   await replaceResourceServices(db, businessId, id, valid.serviceIds);
   return repo.getResource(businessId, id);
 }
 export async function setResourceStatus(db: Db, repo: PostgresRepositories, businessId: string, id: string, status: CatalogResource["status"]): Promise<CatalogResource | null> {
   await repo.acquireBusinessCalendarLock({ businessId });
-  await db`update resources set status=${status} where business_id=${businessId} and id=${id} and deleted_at is null`;
+  await result(db.update(resources).set({ status }).where(and(eq(resources.businessId, businessId), eq(resources.id, id), isNull(resources.deletedAt))));
   return repo.getResource(businessId, id);
 }
 export function listServiceCategories(db: Db) {
-  return db<{ id: string; name: string }[]>`select id,name from service_categories order by name,id`;
+  return result(db.select({ id: serviceCategories.id, name: serviceCategories.name }).from(serviceCategories)
+    .orderBy(asc(serviceCategories.name), asc(serviceCategories.id)));
 }
 export async function createServiceCategory(db: Db, businessId: string, name: string) {
-  const [row] = await db<{ id: string; name: string }[]>`
-    insert into service_categories(business_id,name) values(${businessId},${name}) returning id,name`;
+  const [row] = await result(db.insert(serviceCategories).values({ businessId, name })
+    .returning({ id: serviceCategories.id, name: serviceCategories.name }));
   return row!;
 }
 export async function deleteServiceCategory(db: Db, repo: PostgresRepositories, businessId: string, id: string) {
   await repo.acquireBusinessCalendarLock({ businessId });
-  const [category] = await db`select id from service_categories where business_id=${businessId} and id=${id}`;
+  const [category] = await result(db.select({ id: serviceCategories.id }).from(serviceCategories)
+    .where(and(eq(serviceCategories.businessId, businessId), eq(serviceCategories.id, id))));
   if (!category) return false;
-  await db`update services set category_id=null where business_id=${businessId} and category_id=${id}`;
-  await db`delete from service_categories where business_id=${businessId} and id=${id}`;
+  await result(db.update(services).set({ categoryId: null }).where(and(eq(services.businessId, businessId), eq(services.categoryId, id))));
+  await result(db.delete(serviceCategories).where(and(eq(serviceCategories.businessId, businessId), eq(serviceCategories.id, id))));
   return true;
 }
+const serviceProjection = {
+  id: services.id,
+  name: services.name,
+  description: services.description,
+  durationMinutes: services.durationMinutes,
+  priceArs: sql<number>`${services.priceArs}::float8`,
+  status: sql<CatalogService["status"]>`${services.status}`,
+  categoryId: services.categoryId,
+};
 export function listServices(db: Db) {
-  return db<CatalogService[]>`
-      select id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status,category_id "categoryId"
-      from services where deleted_at is null order by normalized_name,id`;
+  return result(db.select(serviceProjection).from(services).where(isNull(services.deletedAt))
+    .orderBy(asc(services.normalizedName), asc(services.id)));
 }
 export async function createService(db: Db, repo: PostgresRepositories, businessId: string, input: ServiceCatalogInput) {
   await repo.acquireBusinessCalendarLock({ businessId });
-  const [row] = await db<CatalogService[]>`
-      insert into services(business_id,name,description,duration_minutes,price_ars,category_id)
-      values(${businessId},${input.name},${input.description ?? null},${input.durationMinutes},${input.priceArs},${input.categoryId ?? null})
-      returning id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status,category_id "categoryId"`;
+  const [row] = await result(db.insert(services).values({ businessId, name: input.name,
+    description: input.description ?? null, durationMinutes: input.durationMinutes,
+    priceArs: sql`${input.priceArs}`, categoryId: input.categoryId ?? null }).returning(serviceProjection));
   return row!;
 }
 export async function updateService(db: Db, repo: PostgresRepositories, businessId: string, id: string, input: ServiceCatalogInput) {
   await repo.acquireBusinessCalendarLock({ businessId });
-  const [row] = await db<CatalogService[]>`
-      update services set name=${input.name},description=${input.description ?? null},
-      duration_minutes=${input.durationMinutes},price_ars=${input.priceArs},
-      category_id=case when ${input.categoryId !== undefined} then ${input.categoryId ?? null}::uuid else category_id end
-      where business_id=${businessId} and id=${id} and deleted_at is null
-      returning id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status,category_id "categoryId"`;
+  const [row] = await result(db.update(services).set({ name: input.name, description: input.description ?? null,
+    durationMinutes: input.durationMinutes, priceArs: sql`${input.priceArs}`,
+    categoryId: sql`case when ${input.categoryId !== undefined} then ${input.categoryId ?? null}::uuid else ${services.categoryId} end`,
+  }).where(and(eq(services.businessId, businessId), eq(services.id, id), isNull(services.deletedAt)))
+    .returning(serviceProjection));
   return row ?? null;
 }
 export async function setServiceStatus(db: Db, repo: PostgresRepositories, businessId: string, id: string, status: CatalogService["status"]) {
   await repo.acquireBusinessCalendarLock({ businessId });
-  const [row] = await db<CatalogService[]>`
-      update services set status=${status} where business_id=${businessId} and id=${id} and deleted_at is null
-      returning id,name,description,duration_minutes "durationMinutes",price_ars::float8 "priceArs",status,category_id "categoryId"`;
+  const [row] = await result(db.update(services).set({ status })
+    .where(and(eq(services.businessId, businessId), eq(services.id, id), isNull(services.deletedAt))).returning(serviceProjection));
   return row ?? null;
 }
 /** Internal retirement only: caller UoW owns tombstone + links + audit/outbox rollback. */
@@ -165,17 +175,17 @@ export async function retireCatalogItem(db: Db, repo: PostgresRepositories, busi
   const ownedId = appointmentId.safeParse(id);
   if (!ownedId.success) return false;
   id = ownedId.data;
-  const [owned] = await db`select id from ${db(table)} where business_id=${businessId} and id=${id} and deleted_at is null`;
+  const [owned] = await execute(db, sql`select id from ${sql.identifier(table)} where business_id=${businessId} and id=${id} and deleted_at is null`);
   if (!owned) return false;
   if (!Number.isSafeInteger(nowMs)) throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
   const column = table === "services" ? "service_id" : "resource_id";
   // ALL states, actual assignment only. A historical preference FK does not reserve this resource.
-  const future = await db`select id from appointments where business_id=${businessId}
-      and ${db(column)}=${id} and start_ms>${nowMs} limit 1`;
+  const future = await execute(db, sql`select id from appointments where business_id=${businessId}
+      and ${sql.identifier(column)}=${id} and start_ms>${nowMs} limit 1`);
   if (future.length) throw new ResourceCatalogError("FUTURE_APPOINTMENT_CONFLICT");
-  const updated = await db`update ${db(table)} set deleted_at=${new Date(nowMs)}
-      where business_id=${businessId} and id=${id} and deleted_at is null returning id`;
+  const updated = await execute(db, sql`update ${sql.identifier(table)} set deleted_at=${new Date(nowMs).toISOString()}
+      where business_id=${businessId} and id=${id} and deleted_at is null returning id`);
   if (!updated.length) return false;
-  await db`delete from resource_services where business_id=${businessId} and ${db(column)}=${id}`;
+  await execute(db, sql`delete from resource_services where business_id=${businessId} and ${sql.identifier(column)}=${id}`);
   return true;
 }

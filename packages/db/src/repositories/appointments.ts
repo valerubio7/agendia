@@ -9,7 +9,9 @@ import { ClientInputSchema, InstantSchema, AppointmentOriginSchema, captureAppoi
 import type { PostgresRepositories } from "../repositories.ts";
 import type { RegistryClient } from "./clients.ts";
 import type { CatalogService, CatalogResource } from "./catalog.ts";
-import { appointmentId, type Db } from "./shared.ts";
+import { and, eq, sql } from "drizzle-orm";
+import { appointments } from "../schema.ts";
+import { appointmentId, execute, result, type Db } from "./shared.ts";
 
 const appointmentCommand = z.object({
   serviceId: appointmentId, resourceId: appointmentId, startRaw: InstantSchema,
@@ -73,7 +75,7 @@ export class AppointmentError extends Error {
 
 /** Shared owned projection for detail and untruncated history; never converts epochs to ISO. */
 function appointmentRows(db: Db, businessId: string, filters: { id?: string; clientId?: string; fromMs?: number; toMs?: number } = {}) {
-  return db<AppointmentRow[]>`select ap.id,ap.client_id "clientId",
+  return execute<AppointmentRow>(db, sql`select ap.id,ap.client_id "clientId",
       c.first_name "firstName",c.last_name "lastName",c.phone,
       ap.start_raw "startsAt",ap.start_ms "startMs",ap.end_ms "endMs",
       ap.service_id "serviceId",ap.service_label "serviceName",ap.resource_id "resourceId",ap.resource_label "resourceName",
@@ -85,7 +87,7 @@ function appointmentRows(db: Db, businessId: string, filters: { id?: string; cli
         and (${filters.clientId ?? null}::uuid is null or ap.client_id=${filters.clientId ?? null}::uuid)
         and (${filters.fromMs ?? null}::bigint is null or ap.start_ms>=${filters.fromMs ?? null}::bigint)
         and (${filters.toMs ?? null}::bigint is null or ap.start_ms<${filters.toMs ?? null}::bigint)
-      order by ap.start_ms,ap.id`;
+      order by ap.start_ms,ap.id`);
 }
 /** Read-only owned projection: current client identity, frozen catalog terms. */
 export async function getAppointment(db: Db, businessId: string, id: string): Promise<StoredAppointment | null> {
@@ -116,8 +118,9 @@ export async function setAppointmentNotes(db: Db, repo: PostgresRepositories, bu
   const { current } = await appointmentAction(repo, businessId, id, trusted);
   if (!canEditAppointmentNotes(current.state).ok) throw new AppointmentError("NOTES_LOCKED");
   if (current.notes === parsed.data.notes) return current;
-  const updated = await db`update appointments set notes=${parsed.data.notes},updated_at=now()
-      where business_id=${businessId} and id=${current.id} and state='confirmed' returning id`;
+  const updated = await result(db.update(appointments).set({ notes: parsed.data.notes, updatedAt: sql`now()` })
+    .where(and(eq(appointments.businessId, businessId), eq(appointments.id, current.id), eq(appointments.state, "confirmed")))
+    .returning({ id: appointments.id }));
   if (!updated.length) throw new AppointmentError("STATE_LOCKED");
   return { ...current, notes: parsed.data.notes };
 }
@@ -134,8 +137,9 @@ export async function transitionAppointment(db: Db, repo: PostgresRepositories, 
       before_start: "BEFORE_START", confirmation_required: "CONFIRMATION_REQUIRED" } as const;
     throw new AppointmentError(errors[policy.error]);
   }
-  const updated = await db`update appointments set state=${parsed.data},updated_at=now()
-      where business_id=${businessId} and id=${current.id} and state='confirmed' returning id`;
+  const updated = await result(db.update(appointments).set({ state: parsed.data, updatedAt: sql`now()` })
+    .where(and(eq(appointments.businessId, businessId), eq(appointments.id, current.id), eq(appointments.state, "confirmed")))
+    .returning({ id: appointments.id }));
   if (!updated.length) throw new AppointmentError("STATE_LOCKED");
   return { ...current, state: parsed.data };
 }
@@ -150,8 +154,8 @@ export async function createAppointment(db: Db, repo: PostgresRepositories, busi
   const facts = appointmentChangeFacts.extend({ origin: AppointmentOriginSchema }).safeParse(trusted);
   if (!parsed.success || !facts.success) throw new AppointmentError("INVALID_INPUT");
   const value = parsed.data;
-  const [service] = await db<CatalogService[]>`select id,name,description,duration_minutes "durationMinutes",
-      price_ars::float8 "priceArs",status from services where business_id=${businessId} and id=${value.serviceId} and deleted_at is null`;
+  const [service] = await execute<CatalogService>(db, sql`select id,name,description,duration_minutes "durationMinutes",
+      price_ars::float8 "priceArs",status from services where business_id=${businessId} and id=${value.serviceId} and deleted_at is null`);
   const resource = await repo.getResource(businessId, value.resourceId);
   const client = value.clientId ? await repo.getClientById(value.clientId) : null;
   if (!service || !resource || (value.clientId && !client)) throw new AppointmentError("UNKNOWN_OWNED_ID");
@@ -171,16 +175,16 @@ export async function createAppointment(db: Db, repo: PostgresRepositories, busi
     }, facts.data.now)) throw new AppointmentError("UNAVAILABLE");
   // Compare exact epochs directly; irrelevant historical UTC year-zero busy rows
   // cannot be round-tripped through an external positive-year Instant string.
-  const busy = await db`select id from appointments where business_id=${businessId}
-      and resource_id=${resource.id} and state='confirmed' and start_ms<${endMs} and end_ms>${startMs} limit 1`;
+  const busy = await execute(db, sql`select id from appointments where business_id=${businessId}
+      and resource_id=${resource.id} and state='confirmed' and start_ms<${endMs} and end_ms>${startMs} limit 1`);
   if (busy.length) throw new AppointmentError("BUSY");
   try {
     const selectedClient = client ?? await repo.createClient(businessId, value.newClient!);
-    const [saved] = await db<{ id: string }[]>`insert into appointments
+    const [saved] = await execute<{ id: string }>(db, sql`insert into appointments
         (business_id,client_id,service_id,resource_id,service_label,resource_label,price_ars,duration_minutes,
          start_raw,start_ms,end_ms,state,origin,notes,customer_resource_preference_id)
         values(${businessId},${selectedClient.id},${terms.serviceId},${terms.resourceId},${terms.serviceName},${terms.resourceName},
-          ${terms.priceArs},${terms.durationMinutes},${value.startRaw},${startMs},${endMs},'confirmed',${facts.data.origin},${value.notes ?? null},${preference}) returning id`;
+          ${terms.priceArs},${terms.durationMinutes},${value.startRaw},${startMs},${endMs},'confirmed',${facts.data.origin},${value.notes ?? null},${preference}) returning id`);
     return (await repo.getAppointment(businessId, saved!.id))!;
   } catch (error) {
     const code = (error as { code?: string }).code;
@@ -216,8 +220,8 @@ export async function listAppointmentAvailability(db: Db, repo: PostgresReposito
     if (parseInstantMs(now)! >= current.startMs) throw new AppointmentError("STARTED_STRUCTURE_LOCKED");
   }
   const value = parsed.data;
-  const [service] = await db<CatalogService[]>`select id,name,description,duration_minutes "durationMinutes",
-      price_ars::float8 "priceArs",status from services where business_id=${businessId} and id=${value.serviceId} and deleted_at is null`;
+  const [service] = await execute<CatalogService>(db, sql`select id,name,description,duration_minutes "durationMinutes",
+      price_ars::float8 "priceArs",status from services where business_id=${businessId} and id=${value.serviceId} and deleted_at is null`);
   const resources = value.resourceId
     ? [await repo.getResource(businessId, value.resourceId)] : await repo.listResources(businessId);
   if (!service || resources.some(resource => !resource)) throw new AppointmentError("UNKNOWN_OWNED_ID");
@@ -251,11 +255,11 @@ export async function listAppointmentAvailability(db: Db, repo: PostgresReposito
   const earliestStart = choices.reduce((earliest, choice) => Math.min(earliest, choice.startMs), Infinity);
   const latestEnd = choices.reduce((latest, choice) => Math.max(latest, choice.endMs), -Infinity);
   // Numeric occupancy only: raw busy strings need not be coherent or positive-year ISO.
-  const busy = await db<{ resourceId: string; startMs: string; endMs: string }[]>`
+  const busy = await execute<{ resourceId: string; startMs: string; endMs: string }>(db, sql`
       select resource_id "resourceId",start_ms "startMs",end_ms "endMs" from appointments
-      where business_id=${businessId} and state='confirmed' and resource_id in ${db(eligible.map(resource => resource.id))}
+      where business_id=${businessId} and state='confirmed' and resource_id in (${sql.join(eligible.map(resource => sql`${resource.id}`), sql`, `)})
         and (${current?.id ?? null}::uuid is null or id<>${current?.id ?? null}::uuid)
-        and start_ms<${latestEnd} and end_ms>${earliestStart}`;
+        and start_ms<${latestEnd} and end_ms>${earliestStart}`);
   const busyByResource = new Map<string, EpochInterval[]>();
   for (const row of busy) {
     const intervals = busyByResource.get(row.resourceId) ?? [];
@@ -299,8 +303,8 @@ export async function changeAppointment(db: Db, repo: PostgresRepositories, busi
     && parseInstantMs(parsed.data.startRaw) === current.startMs && !preferenceChanged) return current;
   if (preferenceChanged && parseInstantMs(facts.data.now)! >= current.startMs)
     throw new AppointmentError("STARTED_STRUCTURE_LOCKED");
-  const [service] = await db<CatalogService[]>`select id,name,description,duration_minutes "durationMinutes",
-      price_ars::float8 "priceArs",status from services where business_id=${businessId} and id=${parsed.data.serviceId} and deleted_at is null`;
+  const [service] = await execute<CatalogService>(db, sql`select id,name,description,duration_minutes "durationMinutes",
+      price_ars::float8 "priceArs",status from services where business_id=${businessId} and id=${parsed.data.serviceId} and deleted_at is null`);
   const resource = await repo.getResource(businessId, parsed.data.resourceId);
   if (!service || !resource) throw new AppointmentError("UNKNOWN_OWNED_ID");
   const calendar = await repo.getBusinessCalendar(businessId);
@@ -320,15 +324,15 @@ export async function changeAppointment(db: Db, repo: PostgresRepositories, busi
   const startMs = parseInstantMs(plan.startsAt)!, endMs = startMs + plan.terms.durationMinutes * 60000;
   if (!Number.isSafeInteger(endMs) || endMs <= startMs || endMs > 253402387139999)
     throw new AppointmentError("UNAVAILABLE");
-  const busy = await db`select id from appointments where business_id=${businessId} and resource_id=${plan.terms.resourceId}
-      and state='confirmed' and id<>${id} and start_ms<${endMs} and end_ms>${startMs} limit 1`;
+  const busy = await execute(db, sql`select id from appointments where business_id=${businessId} and resource_id=${plan.terms.resourceId}
+      and state='confirmed' and id<>${id} and start_ms<${endMs} and end_ms>${startMs} limit 1`);
   if (busy.length) throw new AppointmentError("BUSY");
   try {
-    const updated = await db`update appointments set service_id=${plan.terms.serviceId},resource_id=${plan.terms.resourceId},
+    const updated = await execute(db, sql`update appointments set service_id=${plan.terms.serviceId},resource_id=${plan.terms.resourceId},
         service_label=${plan.terms.serviceName},resource_label=${plan.terms.resourceName},price_ars=${plan.terms.priceArs},
         duration_minutes=${plan.terms.durationMinutes},start_raw=${plan.startsAt},start_ms=${startMs},end_ms=${endMs},
         customer_resource_preference_id=${preference},updated_at=now()
-        where business_id=${businessId} and id=${id} and state='confirmed' returning id`;
+        where business_id=${businessId} and id=${id} and state='confirmed' returning id`);
     if (!updated.length) throw new AppointmentError("STATE_LOCKED");
     return (await repo.getAppointment(businessId, id))!;
   } catch (error) {

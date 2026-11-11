@@ -1,4 +1,6 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+import { drizzle } from "drizzle-orm/postgres-js";
+import type { SQLWrapper } from "drizzle-orm";
 import { PostgresRepositories } from "./repositories.ts";
 
 const turn = (sequence: number, closesGroup = false) => ({
@@ -27,15 +29,21 @@ async function loadGroup(turns: ReturnType<typeof turn>[], latest: ReturnType<ty
     [],
   ];
   let calls = 0;
-  const sql = async (_strings: TemplateStringsArray, ..._values: unknown[]) => {
+  const db = drizzle.mock();
+  const nativeExecute = db.execute.bind(db);
+  const execute = spyOn(db, "execute").mockImplementation(<TRow extends Record<string, unknown>>(statement: SQLWrapper | string) => {
     const response = responses[calls++];
     if (!response) throw new Error("Unexpected SQL read");
-    return response;
-  };
-  const repository = new PostgresRepositories(
-    sql as unknown as ConstructorParameters<typeof PostgresRepositories>[0],
-  );
+    const query = nativeExecute<TRow>(statement);
+    spyOn(query, "execute").mockResolvedValue(Object.assign(response, {
+      count: response.length, command: "SELECT", columns: [],
+      statement: { name: "", string: "", types: [], columns: [] }, state: { status: "I", pid: 0, secret: 0 },
+    }) as unknown as Awaited<ReturnType<typeof query.execute>>);
+    return query;
+  });
+  const repository = new PostgresRepositories(db);
   const loaded = await repository.loadAiMessage(latest.id, true);
+  execute.mockRestore();
   expect(calls).toBe(5);
   expect(loaded).not.toBeNull();
   return loaded!;

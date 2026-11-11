@@ -1,42 +1,38 @@
+import { sql } from "drizzle-orm";
 import { ReplyPacingSchema, type ReplyPacing } from "@agendia/domain";
-import type { Db } from "./shared.ts";
+import { agentConfigs, operationalControls } from "../schema.ts";
+import { result, type Db } from "./shared.ts";
+
+const pacing = { initialDelaySeconds: operationalControls.initialDelaySeconds,
+  activeDelaySeconds: operationalControls.activeDelaySeconds, inactivityResetSeconds: operationalControls.inactivityResetSeconds };
+const agentProjection = { style: agentConfigs.style, businessInstructions: agentConfigs.businessInstructions,
+  active: agentConfigs.active, revision: agentConfigs.revision };
 
 export async function updateResponseTiming(db: Db, responseTiming: ReplyPacing): Promise<ReplyPacing> {
   const policy = ReplyPacingSchema.parse(responseTiming);
-  const [row] = await db<ReplyPacing[]>`
-      update operational_controls set initial_delay_seconds=${policy.initialDelaySeconds},
-        active_delay_seconds=${policy.activeDelaySeconds}, inactivity_reset_seconds=${policy.inactivityResetSeconds}
-      where singleton returning initial_delay_seconds "initialDelaySeconds", active_delay_seconds "activeDelaySeconds",
-        inactivity_reset_seconds "inactivityResetSeconds"`;
+  const [row] = await result(db.update(operationalControls).set(policy).where(sql`${operationalControls.singleton}`).returning(pacing));
   if (!row) throw new Error("Global reply pacing singleton missing");
   return ReplyPacingSchema.parse(row);
 }
 export async function globalReplyPacing(db: Db): Promise<ReplyPacing> {
-  const [row] = await db<ReplyPacing[]>`
-      select initial_delay_seconds "initialDelaySeconds", active_delay_seconds "activeDelaySeconds",
-        inactivity_reset_seconds "inactivityResetSeconds" from operational_controls where singleton`;
+  const [row] = await result(db.select(pacing).from(operationalControls).where(sql`${operationalControls.singleton}`));
   if (!row) throw new Error("Global reply pacing singleton missing");
   return ReplyPacingSchema.parse(row);
 }
 export function saveAgent(db: Db, businessId: string, active: boolean) {
-  return db`insert into agent_configs (business_id,active) values (${businessId},${active}) on conflict (business_id) do update set active=excluded.active,revision=agent_configs.revision+1,updated_at=now()`;
+  return result(db.insert(agentConfigs).values({ businessId, active }).onConflictDoUpdate({ target: agentConfigs.businessId,
+    set: { active, revision: sql`${agentConfigs.revision}+1`, updatedAt: sql`now()` } }));
 }
 export async function agent(db: Db) {
-  return (
-    (
-      await db`select style,business_instructions "businessInstructions",active,revision from agent_configs limit 1`
-    )[0] ?? null
-  );
+  const [row] = await result(db.select(agentProjection).from(agentConfigs).limit(1));
+  return row ?? null;
 }
-export async function saveFullAgent(
-  db: Db,
-  businessId: string,
-  p: Record<string, unknown>,
-  expected: number,
-) {
-  return (
-    (
-      await db`insert into agent_configs(business_id,style,business_instructions,active,revision) values(${businessId},${p.style as string},${p.businessInstructions as string},${p.active as boolean},1) on conflict(business_id) do update set style=excluded.style,business_instructions=excluded.business_instructions,active=excluded.active,revision=agent_configs.revision+1,updated_at=now() where agent_configs.revision=${expected} returning style,business_instructions "businessInstructions",active,revision`
-    )[0] ?? null
-  );
+export async function saveFullAgent(db: Db, businessId: string, p: Record<string, unknown>, expected: number) {
+  const values = { style: p.style as string, businessInstructions: p.businessInstructions as string, active: p.active as boolean };
+  const [row] = await result(db.insert(agentConfigs).values({ businessId, ...values, revision: 1 }).onConflictDoUpdate({
+    target: agentConfigs.businessId,
+    set: { ...values, revision: sql`${agentConfigs.revision}+1`, updatedAt: sql`now()` },
+    setWhere: sql`${agentConfigs.revision}=${expected}`,
+  }).returning(agentProjection));
+  return row ?? null;
 }

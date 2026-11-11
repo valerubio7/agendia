@@ -4,6 +4,7 @@ import { type Sql } from "postgres";
 import { randomUUID, createHash } from "node:crypto";
 import { PostgresRepositories } from "../../packages/db/src/repositories.ts";
 import { normalizeResourceName } from "@agendia/domain";
+import { createDrizzleRuntime, withDrizzleContext } from "../support/drizzle-runtime.ts";
 import {
   tenantContext,
   withTenantTransaction,
@@ -17,12 +18,14 @@ import {
 
 let database: TestPostgres;
 let admin: Sql;
+let runtime: ReturnType<typeof createDrizzleRuntime>;
 const tenantA = "11111111-1111-4111-8111-111111111111";
 const tenantB = "22222222-2222-4222-8222-222222222222";
 
 beforeAll(async () => {
   database = await startTestPostgres();
   admin = database.sql;
+  runtime = createDrizzleRuntime(database.container.getConnectionUri());
   await applyPostgresMigrations(
     admin,
     join(import.meta.dir, "../../packages/db/migrations"),
@@ -32,12 +35,13 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
+  await runtime?.$client.end();
   await database?.stop();
 });
 
 const resourceContext = (businessId = tenantA) => tenantContext({ businessId, actorId: "resource-test", role: "business_user", requestId: randomUUID() });
 const resourceWork = <T>(work: (repo: PostgresRepositories) => Promise<T>, businessId = tenantA) =>
-  withTenantTransaction(admin, resourceContext(businessId), tx => work(new PostgresRepositories(tx)));
+  withDrizzleContext(runtime, resourceContext(businessId), tx => work(new PostgresRepositories(tx)));
 const resourceInput = { name: "Resource", serviceIds: [] as string[], weeklySchedule: {} };
 
 async function workerCatalogProbe(table: string) {
@@ -136,7 +140,7 @@ test("resource repository preserves identity, canonical owned assignments and tr
   expect(updated).toMatchObject({ id: created.id, serviceIds: [], description: "Description" });
   expect(updated).not.toBeNull();
   expect(await resourceWork(repo => repo.listResources(tenantA))).toContainEqual(updated!);
-  await expect(new PostgresRepositories(admin).createResource(tenantA,resourceInput)).rejects.toThrow(/transaction/i);
+  await expect(new PostgresRepositories(runtime).createResource(tenantA,resourceInput)).rejects.toThrow(/transaction/i);
 });
 
 test("resource names use uncapped Unicode case/outer trim hashing, not accent or inner-space folding", async () => {
@@ -176,8 +180,8 @@ test("tombstones preserve forced physical RLS and least privileges separately fr
       await expect(withTenantTransaction(admin, resourceContext(), tx => tx.unsafe(operation))).rejects.toMatchObject({ code: "42501" });
     await expect(resourceWork(repo => table === "services" ? repo.deleteService(tenantB, id) : repo.deleteResource(tenantB, id))).rejects.toThrow("matching tenant context");
     expect(await resourceWork(repo => table === "services" ? repo.deleteService(tenantA, id) : repo.deleteResource(tenantA, id))).toBe(false);
-    await expect((table === "services" ? new PostgresRepositories(admin).deleteService(tenantB, id)
-      : new PostgresRepositories(admin).deleteResource(tenantB, id))).rejects.toThrow("requires a transaction");
+    await expect((table === "services" ? new PostgresRepositories(runtime).deleteService(tenantB, id)
+      : new PostgresRepositories(runtime).deleteResource(tenantB, id))).rejects.toThrow("requires a transaction");
   }
   await expect(withTenantTransaction(admin, resourceContext(), tx => tx`insert into services(business_id,name,duration_minutes,price_ars)
     values(${tenantB},'Physical foreign insert',15,0)`)).rejects.toMatchObject({ code: "42501" });

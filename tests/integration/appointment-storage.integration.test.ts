@@ -1,7 +1,11 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import postgres, { type Sql } from "postgres";
+import { sql as query, type SQLWrapper } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
+import { drizzle } from "drizzle-orm/postgres-js";
+import { withDrizzleContext } from "../support/drizzle-runtime.ts";
 import { parseInstantMs, type WeeklySchedule, type AppointmentActionContext } from "@agendia/domain";
 import { PostgresRepositories, RolePool, TenantUnitOfWork, tenantContext,
   type AppointmentCreationContext, type AppointmentChangeContext } from "@agendia/db";
@@ -9,6 +13,8 @@ import { applyPostgresMigrations, createRoleLogin, startTestPostgres, type TestP
 
 let database: TestPostgres;
 let runtime: Sql;
+let physicalRuntime: Sql;
+let runtimeDb: ReturnType<typeof drizzle>;
 type Owner = { business: string; client: string; service: string; resource: string; alternate: string };
 let a: Owner, b: Owner;
 const start = parseInstantMs("2026-06-01T10:00:00-03:00")!;
@@ -38,7 +44,7 @@ const insert = async (value = row(), sql = database.sql) => {
 const code = async (work: Promise<unknown>, expected: string) => {
   await expect(Promise.resolve(work)).rejects.toMatchObject({ code: expected });
 };
-const tenant = <T>(business: string | undefined, work: (sql: Sql) => Promise<T>) => runtime.begin(async tx => {
+const tenant = <T>(business: string | undefined, work: (sql: Sql) => Promise<T>) => physicalRuntime.begin(async tx => {
   await tx`select set_config('app.tenant_id',${business ?? ""},true)`;
   return work(tx as unknown as Sql);
 });
@@ -46,11 +52,14 @@ const tenant = <T>(business: string | undefined, work: (sql: Sql) => Promise<T>)
 beforeAll(async () => {
   database = await startTestPostgres();
   await applyPostgresMigrations(database.sql, join(import.meta.dir, "../../packages/db/migrations"));
-  runtime = postgres(await createRoleLogin(database, "appointment_test", "agendia_runtime"));
+  const url = await createRoleLogin(database, "appointment_test", "agendia_runtime");
+  physicalRuntime = postgres(url);
+  runtime = postgres(url);
+  runtimeDb = drizzle(runtime);
   a = await fixture();
   b = await fixture();
 }, 120_000);
-afterAll(async () => { await runtime?.end(); await database?.stop(); });
+afterAll(async () => { await physicalRuntime?.end(); await runtime?.end(); await database?.stop(); });
 
 test("appointment storage exists with generated stable UUID and owned composite uniqueness", async () => {
   const value = row();
@@ -285,17 +294,23 @@ test("availability rejects hostile body fields before clock and resolves only ow
 // Observe rows returned by the real occupancy SELECT, not elapsed time or raw date text.
 const measuredAvailability = async (owner: Owner, input: unknown, appointmentId?: string) => {
   const occupancyRows: number[] = [];
-  const choices = await tenant(owner.business, async sql => {
-    const observed = new Proxy(sql, {
-      apply(target, receiver, args) {
-        const query = Reflect.apply(target, receiver, args);
-        if (Array.isArray(args[0]) && /select\s+resource_id/.test(args[0].join("")))
-          return query.then((rows: unknown[]) => { occupancyRows.push(rows.length); return rows; });
-        return query;
-      },
+  const choices = await withDrizzleContext(runtimeDb, context(owner), async tx => {
+    const execute = tx.execute.bind(tx);
+    const observed = spyOn(tx, "execute").mockImplementation(<TRow extends Record<string, unknown>>(statement: SQLWrapper | string) => {
+      const occupancy = typeof statement !== "string" && /select\s+resource_id/.test(new PgDialect().sqlToQuery(statement.getSQL()).sql);
+      const pending = execute<TRow>(statement);
+      const run = pending.execute.bind(pending);
+      spyOn(pending, "execute").mockImplementation(async () => {
+        const rows = await run();
+        if (occupancy) occupancyRows.push(rows.length);
+        return rows;
+      });
+      return pending;
     });
-    return new PostgresRepositories(observed).listAppointmentAvailability(owner.business, input,
-      { clock: () => now, ...(appointmentId ? { appointmentId } : {}) });
+    try {
+      return await new PostgresRepositories(tx).listAppointmentAvailability(owner.business, input,
+        { clock: () => now, ...(appointmentId ? { appointmentId } : {}) });
+    } finally { observed.mockRestore(); }
   });
   return { choices, occupancyRows };
 };
@@ -451,15 +466,15 @@ test("availability clock waits for actual matching-tenant calendar lock and snap
   let release!: () => void, held!: () => void, pid = 0, calls = 0;
   const ready = new Promise<void>(resolve => { held = resolve; });
   const gate = new Promise<void>(resolve => { release = resolve; });
-  const holder = tenant(owner.business, async sql => {
-    await new PostgresRepositories(sql).acquireBusinessCalendarLock({ businessId: owner.business });
+  const holder = withDrizzleContext(runtimeDb, context(owner), async tx => {
+    await new PostgresRepositories(tx).acquireBusinessCalendarLock({ businessId: owner.business });
     held(); await gate;
-    await sql`update services set status='suspended' where id=${owner.service}`;
+    await tx.execute(query`update services set status='suspended' where id=${owner.service}`);
   });
   await ready;
-  const waiting = tenant(owner.business, async sql => {
-    const [backend] = await sql`select pg_backend_pid() pid`; pid = backend!.pid;
-    return new PostgresRepositories(sql).listAppointmentAvailability(owner.business,
+  const waiting = withDrizzleContext(runtimeDb, context(owner), async tx => {
+    const [backend] = await tx.execute(query`select pg_backend_pid() pid`); pid = backend!.pid as number;
+    return new PostgresRepositories(tx).listAppointmentAvailability(owner.business,
       { serviceId: owner.service, date: "2026-06-01" }, { clock: () => { calls++; return now; } });
   });
   try {
@@ -472,8 +487,8 @@ test("availability clock waits for actual matching-tenant calendar lock and snap
     expect(blocked).toBe(true); expect(calls).toBe(0);
   } finally { release(); await holder; }
   expect(await waiting).toEqual([]); expect(calls).toBe(1);
-  await expect(new PostgresRepositories(runtime).listAppointmentAvailability(owner.business, {})).rejects.toThrow("transaction");
-  await expect(tenant(b.business, sql => new PostgresRepositories(sql).listAppointmentAvailability(owner.business, {}))).rejects.toThrow("matching tenant");
+  await expect(new PostgresRepositories(runtimeDb).listAppointmentAvailability(owner.business, {})).rejects.toThrow("transaction");
+  await expect(withDrizzleContext(runtimeDb, context(b), tx => new PostgresRepositories(tx).listAppointmentAvailability(owner.business, {}))).rejects.toThrow("matching tenant");
 });
 
 const book = (owner: Owner, input: unknown = command(owner), trusted: AppointmentCreationContext = { origin: "manual", now }) => {
@@ -617,7 +632,7 @@ test("concurrent repository bookings serialize capacity without orphan clients",
 
 test("creation rejects raw pools/mismatched tenants and acquires lock before any lookup", async () => {
   const owner = await readyOwner(), foreign = await readyOwner();
-  await expect(new PostgresRepositories(runtime).createAppointment(owner.business, command(owner), { origin: "manual", now })).rejects.toThrow("requires a transaction");
+  await expect(new PostgresRepositories(runtimeDb).createAppointment(owner.business, command(owner), { origin: "manual", now })).rejects.toThrow("requires a transaction");
   await expect(new RolePool(runtime, "agendia_runtime").run(context(owner), repo => repo.createAppointment(foreign.business, command(foreign), { origin: "manual", now }))).rejects.toThrow("matching tenant");
   await new RolePool(runtime, "agendia_runtime").run(context(owner), async repo => {
     const original = repo.acquireBusinessCalendarLock.bind(repo);
@@ -867,7 +882,7 @@ test("concurrent edit versus creation arbitrates selected capacity and preserves
 
 test("change locks before owned reads and rejects raw pools and mismatched tenant transactions", async () => {
   const owner = await readyOwner(), saved = await book(owner), foreign = await readyOwner();
-  await expect(new PostgresRepositories(runtime).changeAppointment(owner.business, saved.id, command(owner), { now })).rejects.toThrow("requires a transaction");
+  await expect(new PostgresRepositories(runtimeDb).changeAppointment(owner.business, saved.id, command(owner), { now })).rejects.toThrow("requires a transaction");
   await expect(new RolePool(runtime, "agendia_runtime").run(context(owner), repo => repo.changeAppointment(foreign.business, saved.id, command(owner), { now }))).rejects.toThrow("matching tenant");
   await new RolePool(runtime, "agendia_runtime").run(context(owner), async repo => {
     const lock = repo.acquireBusinessCalendarLock.bind(repo);
@@ -1021,7 +1036,7 @@ test("notes/final mutations lock before lookup and deny foreign IDs or mismatche
   const owner = await readyOwner(), saved = await book(owner), foreign = await readyOwner();
   for (const method of ["setAppointmentNotes", "transitionAppointment"] as const) {
     const input = method === "setAppointmentNotes" ? { notes: "edited" } : "cancelled";
-    await expect(new PostgresRepositories(runtime)[method](owner.business, saved.id, input, actionFacts)).rejects.toThrow("requires a transaction");
+    await expect(new PostgresRepositories(runtimeDb)[method](owner.business, saved.id, input, actionFacts)).rejects.toThrow("requires a transaction");
     await expect(new RolePool(runtime, "agendia_runtime").run(context(owner), repo => repo[method](foreign.business, saved.id, input, actionFacts))).rejects.toThrow("matching tenant");
     await code(new RolePool(runtime, "agendia_runtime").run(context(foreign), repo => repo[method](foreign.business, saved.id, input, actionFacts)), "UNKNOWN_OWNED_ID");
     await code(action(owner, "bad", method === "setAppointmentNotes" ? "notes" : "state", input), "INVALID_INPUT");
@@ -1131,7 +1146,7 @@ test("every client/service/closure mutation rejects raw pools and mismatched sco
   const closure = (await insertClosure(owner)).id;
   const before = await effects(owner);
   for (const mutate of catalogMutations(owner, closure)) {
-    await expect(mutate(new PostgresRepositories(runtime))).rejects.toThrow("requires a transaction");
+    await expect(mutate(new PostgresRepositories(runtimeDb))).rejects.toThrow("requires a transaction");
     await expect(new RolePool(runtime, "agendia_runtime").run(context(owner), repo => mutate(repo, foreign.business))).rejects.toThrow("matching tenant context");
   }
   expect(await effects(owner)).toEqual(before);
