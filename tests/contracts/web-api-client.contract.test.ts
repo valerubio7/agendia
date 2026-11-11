@@ -491,14 +491,16 @@ describe("Next web client against Fastify contracts", () => {
   });
 
   test("login uses Next router replacement with static role destinations", async () => {
-    const panel = await readFile(
-      join(import.meta.dir, "../../apps/web/src/shell/live-panel.tsx"),
-      "utf8",
-    );
+    const [panel, entryPath] = await Promise.all([
+      readFile(join(import.meta.dir, "../../apps/web/src/shell/live-panel.tsx"), "utf8"),
+      readFile(join(import.meta.dir, "../../apps/web/src/shell/entry-path.ts"), "utf8"),
+    ]);
     expect(panel).toContain('import { useRouter } from "next/navigation"');
-    expect(panel).toContain('router.replace("/businesses")');
-    expect(panel).toContain('router.replace("/profile")');
+    expect(panel).toContain("router.replace(entryPathFor(session))");
+    expect(entryPath).toContain('"/businesses"');
+    expect(entryPath).toContain('"/profile"');
     expect(panel).not.toContain("location.href");
+    expect(entryPath).not.toContain("location.href");
   });
 
   test("uses cookie/CSRF and live admin, profile, agent and WhatsApp contracts", async () => {

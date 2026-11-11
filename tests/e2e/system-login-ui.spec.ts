@@ -1,5 +1,5 @@
 import { expect } from "@playwright/test";
-import { test } from "./support/fixtures.ts";
+import { createBusinessInAdminUi, login, test } from "./support/fixtures.ts";
 
 const passwordRecoveryName =
   /(?:olvid|recuper).*(?:contraseña|clave)|(?:contraseña|clave).*(?:olvid|recuper)/i;
@@ -193,4 +193,33 @@ test("login preserves its approved semantic, responsive, and pending-state contr
 
   await expect(page).toHaveURL(/\/businesses$/);
   expect(loginRequestCount).toBe(1);
+});
+
+test("an active session skips the login screens", async ({ browser, system }) => {
+  const adminContext = await browser.newContext();
+  const adminPage = await adminContext.newPage();
+  await login(adminPage, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
+  await expect(adminPage).toHaveURL(/\/businesses$/);
+  await createBusinessInAdminUi(adminPage, {
+    name: "Clínica Centro",
+    email: "centro@example.test",
+    password: "tenant centro password safe",
+  });
+  for (const path of ["/", "/login"]) {
+    await adminPage.goto(`${system.webUrl}${path}`);
+    await expect(adminPage).toHaveURL(/\/businesses$/);
+  }
+  await adminPage.goto(`${system.webUrl}/admin/login`);
+  await expect(adminPage.getByRole("button", { name: "Ingresar", exact: true })).toBeVisible();
+  await adminContext.close();
+
+  const tenantContext = await browser.newContext();
+  const tenantPage = await tenantContext.newPage();
+  await login(tenantPage, system.webUrl, "centro@example.test", "tenant centro password safe");
+  await expect(tenantPage).toHaveURL(/\/profile$/);
+  for (const path of ["/", "/login"]) {
+    await tenantPage.goto(`${system.webUrl}${path}`);
+    await expect(tenantPage).toHaveURL(/\/profile$/);
+  }
+  await tenantContext.close();
 });
