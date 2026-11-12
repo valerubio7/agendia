@@ -205,12 +205,10 @@ test("an active session skips the login screens", async ({ browser, system }) =>
     email: "centro@example.test",
     password: "tenant centro password safe",
   });
-  for (const path of ["/", "/login"]) {
+  for (const path of ["/", "/login", "/admin/login"]) {
     await adminPage.goto(`${system.webUrl}${path}`);
     await expect(adminPage).toHaveURL(/\/businesses$/);
   }
-  await adminPage.goto(`${system.webUrl}/admin/login`);
-  await expect(adminPage.getByRole("button", { name: "Ingresar", exact: true })).toBeVisible();
   await adminContext.close();
 
   const tenantContext = await browser.newContext();
@@ -221,5 +219,11 @@ test("an active session skips the login screens", async ({ browser, system }) =>
     await tenantPage.goto(`${system.webUrl}${path}`);
     await expect(tenantPage).toHaveURL(/\/profile$/);
   }
+  await tenantPage.goto(`${system.webUrl}/admin/login`);
+  await expect(tenantPage.getByRole("heading", { name: "Acceso de administración" })).toBeVisible();
+  await tenantPage.getByLabel("Correo", { exact: true }).fill(system.admin.email);
+  await tenantPage.getByLabel("Contraseña", { exact: true }).fill(system.admin.password);
+  await tenantPage.getByRole("button", { name: "Ingresar", exact: true }).click();
+  await expect(tenantPage).toHaveURL(/\/businesses$/);
   await tenantContext.close();
 });

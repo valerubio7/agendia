@@ -21,7 +21,7 @@ import {
 } from "../api/api-client";
 import { renderWhatsAppQrDataUrl } from "../features/whatsapp/qr-code";
 import { LoginScreen } from "../features/auth/login-screen";
-import { entryPathFor } from "./entry-path";
+import { entryPathFor, entryRedirectFor } from "./entry-path";
 import { startSessionActivity } from "./session-activity";
 import {
   AuthenticatedShell,
@@ -435,8 +435,10 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
     const attempt = ++loadAttemptRef.current;
     const isCurrent = () => loadAttemptRef.current === attempt && !logoutPendingRef.current;
     try {
-      const session = await api.session();
-      if (isCurrent()) router.replace(entryPathFor(session));
+      const destination = entryRedirectFor(await api.session(), adminEntrance);
+      if (!isCurrent()) return;
+      if (destination) router.replace(destination);
+      else setViewState("ready");
     } catch {
       // Without a valid session the entrance keeps showing its login form.
       if (isCurrent()) setViewState("ready");
@@ -460,9 +462,8 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
       setError("");
       setQrDataUrl(null);
       setLinking(false);
-      // The administration entrance stays reachable to start a new admin session.
-      setViewState(adminEntrance ? "ready" : "loading");
-      if (!adminEntrance) void checkEntry();
+      setViewState("loading");
+      void checkEntry();
     } else void load();
     return () => {
       loadAttemptRef.current += 1;

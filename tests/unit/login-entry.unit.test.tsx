@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createRequire } from "node:module";
 import { LoginScreen } from "../../apps/web/src/features/auth/login-screen";
 import { TerminalAuthenticatedState } from "../../apps/web/src/shell/authenticated-shell";
-import { entryPathFor } from "../../apps/web/src/shell/entry-path";
+import { entryPathFor, entryRedirectFor } from "../../apps/web/src/shell/entry-path";
 
 // React belongs to the web workspace, not the repository root.
 const webRequire = createRequire(new URL("../../apps/web/package.json", import.meta.url));
@@ -83,5 +83,11 @@ describe("entrance routing", () => {
   test("sends each role to its own panel", () => {
     expect(entryPathFor({ role: "platform_admin" })).toBe("/businesses");
     expect(entryPathFor({ role: "business_user" })).toBe("/profile");
+  });
+  test("only bounces an administrator session from the administration entrance", () => {
+    expect(entryRedirectFor({ role: "platform_admin" }, true)).toBe("/businesses");
+    expect(entryRedirectFor({ role: "business_user" }, true)).toBeNull();
+    expect(entryRedirectFor({ role: "platform_admin" }, false)).toBe("/businesses");
+    expect(entryRedirectFor({ role: "business_user" }, false)).toBe("/profile");
   });
 });
