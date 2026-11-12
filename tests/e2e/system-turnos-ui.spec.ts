@@ -739,13 +739,15 @@ test("Turnos mounted read recovery resolves a persisted PATCH without blocking u
   } finally { await context.close(); }
 });
 
-test("Turnos stale receipt never replaces current state and requires GET-only freshness recovery", async ({ browser, page, system }, testInfo) => {
+test("Turnos stale receipt never replaces current state and requires GET-only freshness recovery", async ({ browser, system }, testInfo) => {
   test.setTimeout(180_000);
   for (const inspected of [true, false]) {
+    const adminContext = await browser.newContext();
+    const adminPage = await adminContext.newPage();
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     const business = await context.newPage();
     try {
-      const setup = await provision(page, business, system, `stale-receipt-${inspected}`);
+      const setup = await provision(adminPage, business, system, `stale-receipt-${inspected}`);
       const { client, service, resource, date, offer } = setup;
       const saved = await setup.create("appointments", { serviceId: service.id, resourceId: resource.id, clientId: client.id,
         date, startRaw: offer.start, expectedTerms: offer.terms, confirmed: true });
@@ -827,7 +829,7 @@ test("Turnos stale receipt never replaces current state and requires GET-only fr
       await expect(detail.getByRole("button", { name: "Editar notas", exact: true })).toHaveCount(0);
       expect(writes).toBe(1);
       await business.screenshot({ path: testInfo.outputPath(`stale-receipt-${inspected}-fresh.png`), fullPage: true });
-    } finally { await context.close(); }
+    } finally { await context.close(); await adminContext.close(); }
   }
 });
 

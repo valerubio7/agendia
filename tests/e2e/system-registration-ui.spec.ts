@@ -27,8 +27,10 @@ test("registration shares the login layout on desktop and mobile", async ({ page
       };
     });
     await page.goto(`${system.webUrl}/login`);
+    await page.locator('[data-ui="login-frame"]').waitFor({ state: "visible" });
     const loginLayout = await layout();
     await page.goto(`${system.webUrl}/register`);
+    await page.locator('[data-ui="login-frame"]').waitFor({ state: "visible" });
     expect(await layout()).toEqual(loginLayout);
     expect(loginLayout.overflow).toBe(false);
     await expect(page.locator('[data-ui="login-story"]')).toBeVisible();

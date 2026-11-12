@@ -21,6 +21,7 @@ import {
 } from "../api/api-client";
 import { renderWhatsAppQrDataUrl } from "../features/whatsapp/qr-code";
 import { LoginScreen } from "../features/auth/login-screen";
+import { entryPathFor, entryRedirectFor } from "./entry-path";
 import { startSessionActivity } from "./session-activity";
 import {
   AuthenticatedShell,
@@ -430,6 +431,19 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
       }
     }
   };
+  const checkEntry = async () => {
+    const attempt = ++loadAttemptRef.current;
+    const isCurrent = () => loadAttemptRef.current === attempt && !logoutPendingRef.current;
+    try {
+      const destination = entryRedirectFor(await api.session(), adminEntrance);
+      if (!isCurrent()) return;
+      if (destination) router.replace(destination);
+      else setViewState("ready");
+    } catch {
+      // Without a valid session the entrance keeps showing its login form.
+      if (isCurrent()) setViewState("ready");
+    }
+  };
   useEffect(() => {
     monitorRef.current?.abort();
     monitorRef.current = null;
@@ -449,6 +463,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
       setQrDataUrl(null);
       setLinking(false);
       setViewState("loading");
+      void checkEntry();
     } else void load();
     return () => {
       loadAttemptRef.current += 1;
@@ -628,8 +643,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
         adminEntrance,
         form.has("remember"),
       );
-      if (session.role === "platform_admin") router.replace("/businesses");
-      else router.replace("/profile");
+      router.replace(entryPathFor(session));
     } catch (cause) {
       setError(api.loginErrorMessage(cause));
       loginPendingRef.current = false;
@@ -751,7 +765,9 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
   );
 
   if (mode === "login")
-    return (
+    return viewState === "loading" ? (
+      <TerminalAuthenticatedState state="loading" />
+    ) : (
       <LoginScreen
         title={loginTitle}
         adminEntrance={adminEntrance}
