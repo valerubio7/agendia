@@ -84,6 +84,43 @@ pg_dump --format=custom --no-owner --no-privileges "$DATABASE_URL" \
 
 Restaurá en una base nueva, aplicá las migraciones y probá el restore antes de considerarlo válido. No restaures sobre la base productiva sin una ventana y un backup previo.
 
+### Restore de Dokploy + reparación
+
+Usá **Backups → Restore Backup** de Dokploy y, cuando termine, **Run** del Server Job **Reparar base restaurada**. El job migra la base, reconstruye propietarios/permisos (incluidos los permisos por columna) y cancela el trabajo restaurado antes de reiniciar la aplicación. No elige ni restaura el archivo: seleccioná vos el backup más reciente y la base correcta en Dokploy.
+
+**Antes de restaurar:** detené la aplicación completa desde Dokploy y evitá redeploys hasta terminar. El botón Restore no detiene consumidores ni ejecuta un hook posterior: si dejás workers o manager activos, pueden procesar mensajes entre el restore y el job. El job no puede deshacer esos envíos. No es una recuperación de un clic con servicios activos.
+
+Configurá el job una sola vez en el mismo servidor, con el directorio, proyecto, archivo Compose y variables del despliegue existente. Los valores en mayúsculas del ejemplo son marcadores: reemplazalos, verificá `docker compose ps -a` y no crees un proyecto nuevo. Si Dokploy usa un archivo de entorno separado, agregá su mismo `--env-file` a la función `compose`. No copies secretos al script ni habilites `set -x`. La imagen `db-setup` desplegada debe incluir `repair-restored-db.ts`.
+
+```bash
+set -eu
+cd '/ABSOLUTE/EXISTING/DOKPLOY/COMPOSE/DIRECTORY'
+export COMPOSE_PROJECT_NAME='EXISTING_COMPOSE_PROJECT'
+export COMPOSE_FILE='EXISTING_COMPOSE_FILE.yml'
+compose() { docker compose "$@"; }
+
+compose config --quiet
+for service in agendia-api-runtime agendia-web agendia-message-worker agendia-whatsapp-manager; do
+  test -n "$(compose ps -aq "$service")" || {
+    printf 'Missing existing service: %s\n' "$service" >&2
+    exit 1
+  }
+done
+compose stop agendia-api-runtime agendia-web agendia-message-worker agendia-whatsapp-manager
+compose run --rm --no-deps agendia-db-migrate
+compose run --rm --no-deps agendia-db-migrate \
+  bun --no-env-file scripts/db/repair-restored-db.ts
+compose start agendia-api-runtime agendia-web agendia-message-worker agendia-whatsapp-manager
+```
+
+Requisitos: `MIGRATOR_DATABASE_URL` apunta a la misma base elegida en Restore y usa un migrador superusuario; los roles y logins de capacidad conservan sus atributos/membresías seguros. Para un servidor nuevo, primero provisioná roles/logins según **Puesta en marcha** y recuperá las mismas claves de cifrado. El backup de la base no incluye roles del cluster ni claves de entorno.
+
+La reparación usa las migraciones del código desplegado como política actual de propietarios/permisos, no recupera los permisos históricos del archivo ni valida toda su estructura. Creá la referencia en el mismo cluster con espacio y permiso para una base temporal. Solo elimina la referencia creada por esa ejecución; una referencia abandonada requiere inspección manual, nunca borrado por prefijo.
+
+**Qué se cancela:** outbox sin publicar; comandos `pending`, `processing` y `generated` pasan a `failed / restore_cancelled`; los que estaban `sending` pasan a `delivery_unknown`; se vacían todos los jobs de `pgboss`. No reenvíes automáticamente trabajo cancelado o incierto: podría haberse entregado después del backup. Se preservan registros ya terminados.
+
+El job solo llega a `compose start` si migración y reparación terminan con código 0. Ante error, dejá la aplicación detenida y revisá el diagnóstico; la reparación no es una transacción única ni revierte fases anteriores. El mensaje `Restore repair completed:` confirma la comprobación de propietarios/permisos y cancelación, no el funcionamiento completo de los servicios. Después verificá login, datos y logs. Para ensayos usá una base aislada con datos sintéticos, sin claves ni conexiones reales de WhatsApp.
+
 ## Runbook
 
 | Síntoma | Qué revisar | Acción |
@@ -99,7 +136,7 @@ Restaurá en una base nueva, aplicá las migraciones y probá el restore antes d
 
 ## Límites conocidos
 
-- Sin backup/restore automatizado (issue #121).
+- Sin backup/restore automatizado: Restore de Dokploy requiere mantenimiento previo y ejecutar después el job de reparación (issue #135).
 - Sin endpoint de salud ni healthcheck en los contenedores.
 - Sin rotación automática de claves de cifrado.
 - La provisión de PostgreSQL y de los logins de capacidad sigue siendo manual. Las migraciones se ejecutan al desplegar.
