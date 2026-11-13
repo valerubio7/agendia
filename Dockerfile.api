@@ -17,10 +17,10 @@ COPY packages/whatsapp-baileys/package.json ./packages/whatsapp-baileys/package.
 RUN bun install --frozen-lockfile --production
 
 FROM runtime-base AS db-setup
-COPY scripts/db/db-migrate.ts scripts/db/provision-production-db.ts scripts/db/bootstrap-admin.ts scripts/db/repair-restored-db.ts ./scripts/db/
+COPY scripts/db/db-migrate.ts scripts/db/provision-production-db.ts scripts/db/bootstrap-admin.ts scripts/db/repair-restored-db.ts scripts/db/restore-aware-setup.ts ./scripts/db/
 ENV NODE_ENV=production
 USER bun
-CMD ["bun", "--no-env-file", "scripts/db/db-migrate.ts"]
+CMD ["bun", "--no-env-file", "scripts/db/restore-aware-setup.ts"]
 
 FROM runtime-base AS api
 ENV NODE_ENV=production \

@@ -1,6 +1,6 @@
 # Operaciones
 
-agendIA corre como cuatro servicios sobre Dokploy y una base PostgreSQL externa. Un servicio adicional ejecuta las migraciones al desplegar. Este documento describe el despliegue, los secretos y la recuperación; no reemplaza una verificación sobre el servidor.
+agendIA corre como cuatro servicios sobre Dokploy y una base PostgreSQL externa. Un servicio adicional ejecuta las migraciones al desplegar y repara la base cuando detecta un Restore nativo. Este documento describe el despliegue, los secretos y la recuperación; no reemplaza una verificación sobre el servidor.
 
 ## Topología
 
@@ -84,42 +84,31 @@ pg_dump --format=custom --no-owner --no-privileges "$DATABASE_URL" \
 
 Restaurá en una base nueva, aplicá las migraciones y probá el restore antes de considerarlo válido. No restaures sobre la base productiva sin una ventana y un backup previo.
 
-### Restore de Dokploy + reparación
+### Restore de Dokploy
 
-Usá **Backups → Restore Backup** de Dokploy y, cuando termine, **Run** del Server Job **Reparar base restaurada**. El job migra la base, reconstruye propietarios/permisos (incluidos los permisos por columna) y cancela el trabajo restaurado antes de reiniciar la aplicación. No elige ni restaura el archivo: seleccioná vos el backup más reciente y la base correcta en Dokploy.
+El servicio `agendia-db-migrate` corre en cada Start/Deploy antes de la API y los workers. Si detecta que faltan los permisos de los roles de capacidad (la firma de un Restore nativo), repara propietarios y permisos con las migraciones desplegadas, cancela el trabajo restaurado y recién entonces deja arrancar los consumidores.
 
-**Antes de restaurar:** detené la aplicación completa desde Dokploy y evitá redeploys hasta terminar. El botón Restore no detiene consumidores ni ejecuta un hook posterior: si dejás workers o manager activos, pueden procesar mensajes entre el restore y el job. El job no puede deshacer esos envíos. No es una recuperación de un clic con servicios activos.
+Procedimiento:
 
-Configurá el job una sola vez en el mismo servidor, con el directorio, proyecto, archivo Compose y variables del despliegue existente. Los valores en mayúsculas del ejemplo son marcadores: reemplazalos, verificá `docker compose ps -a` y no crees un proyecto nuevo. Si Dokploy usa un archivo de entorno separado, agregá su mismo `--env-file` a la función `compose`. No copies secretos al script ni habilites `set -x`. La imagen `db-setup` desplegada debe incluir `repair-restored-db.ts`.
+1. Detené la aplicación completa desde Dokploy (API, web, worker y manager) y evitá redeploys hasta terminar. El botón Restore no detiene consumidores ni ejecuta ningún hook: si dejás workers activos, pueden procesar mensajes durante el restore.
+2. En **Backups → Restore Backup**, elegí el archivo y la base `agendia`. Dokploy ejecuta `pg_restore -O --clean --if-exists`.
+3. Iniciá la aplicación desde Dokploy. `agendia-db-migrate` aplica migraciones pendientes, detecta el restore, repone propietarios/permisos, cancela outbox y comandos restaurados y vacía `pgboss`. La API y los workers esperan a que termine.
+4. Verificá el log de `agendia-db-migrate`: `Restore detected. Repaired …` o `Database migrations applied; no restore repair needed.`
+5. Probá login, lectura/escritura por negocio y los logs de los servicios.
+
+Si `agendia-db-migrate` falla, la aplicación no arranca. Dejala detenida y revisá el diagnóstico; para reintentar podés volver a iniciar el stack o ejecutar el mismo paso a mano:
 
 ```bash
-set -eu
-cd '/ABSOLUTE/EXISTING/DOKPLOY/COMPOSE/DIRECTORY'
-export COMPOSE_PROJECT_NAME='EXISTING_COMPOSE_PROJECT'
-export COMPOSE_FILE='EXISTING_COMPOSE_FILE.yml'
-compose() { docker compose "$@"; }
-
-compose config --quiet
-for service in agendia-api-runtime agendia-web agendia-message-worker agendia-whatsapp-manager; do
-  test -n "$(compose ps -aq "$service")" || {
-    printf 'Missing existing service: %s\n' "$service" >&2
-    exit 1
-  }
-done
-compose stop agendia-api-runtime agendia-web agendia-message-worker agendia-whatsapp-manager
-compose run --rm --no-deps agendia-db-migrate
-compose run --rm --no-deps agendia-db-migrate \
-  bun --no-env-file scripts/db/repair-restored-db.ts
-compose start agendia-api-runtime agendia-web agendia-message-worker agendia-whatsapp-manager
+docker compose -f compose.production.yml run --rm agendia-db-migrate
 ```
 
-Requisitos: `MIGRATOR_DATABASE_URL` apunta a la misma base elegida en Restore y usa un migrador superusuario; los roles y logins de capacidad conservan sus atributos/membresías seguros. Para un servidor nuevo, primero provisioná roles/logins según **Puesta en marcha** y recuperá las mismas claves de cifrado. El backup de la base no incluye roles del cluster ni claves de entorno.
+Requisitos: `MIGRATOR_DATABASE_URL` apunta a la misma base elegida en Restore y usa un migrador superusuario; los roles y logins de capacidad deben existir (para un servidor nuevo, primero provisioná roles/logins según **Puesta en marcha**). El backup de la base no incluye roles del cluster ni claves de entorno.
 
-La reparación usa las migraciones del código desplegado como política actual de propietarios/permisos, no recupera los permisos históricos del archivo ni valida toda su estructura. Creá la referencia en el mismo cluster con espacio y permiso para una base temporal. Solo elimina la referencia creada por esa ejecución; una referencia abandonada requiere inspección manual, nunca borrado por prefijo.
+La reparación usa las migraciones del código desplegado como política actual de propietarios/permisos, no recupera los permisos históricos del archivo ni valida toda su estructura. Crea una base de referencia temporal en el mismo cluster; necesita espacio y permiso para crearla. Solo elimina la referencia creada por esa ejecución.
 
-**Qué se cancela:** outbox sin publicar; comandos `pending`, `processing` y `generated` pasan a `failed / restore_cancelled`; los que estaban `sending` pasan a `delivery_unknown`; se vacían todos los jobs de `pgboss`. No reenvíes automáticamente trabajo cancelado o incierto: podría haberse entregado después del backup. Se preservan registros ya terminados.
+**Qué se cancela:** outbox sin publicar; comandos `pending`, `processing` y `generated` pasan a `failed / restore_cancelled`; los que estaban `sending` pasan a `delivery_unknown`; se vacían todos los jobs de `pgboss`. No reenvíes automáticamente trabajo cancelado o incierto: podría haberse entregado después del backup. Se preservan registros ya terminados. En un reinicio normal no se cancela nada.
 
-El job solo llega a `compose start` si migración y reparación terminan con código 0. Ante error, dejá la aplicación detenida y revisá el diagnóstico; la reparación no es una transacción única ni revierte fases anteriores. El mensaje `Restore repair completed:` confirma la comprobación de propietarios/permisos y cancelación, no el funcionamiento completo de los servicios. Después verificá login, datos y logs. Para ensayos usá una base aislada con datos sintéticos, sin claves ni conexiones reales de WhatsApp.
+**Errores de `pg_restore`:** los backups con las tablas particionadas de pg-boss pueden reportar errores al limpiar constraints heredadas (`job_common_pkey`, `queue_stats_*_pkey`). El restore continúa y los datos se recuperan; el setup igual repara los permisos. Esos errores desaparecen cuando el backup ya no contiene pg-boss.
 
 ## Runbook
 
@@ -136,7 +125,7 @@ El job solo llega a `compose start` si migración y reparación terminan con có
 
 ## Límites conocidos
 
-- Sin backup/restore automatizado: Restore de Dokploy requiere mantenimiento previo y ejecutar después el job de reparación (issue #135).
+- Sin backup/restore automatizado: el Restore de Dokploy requiere detener la aplicación antes y volver a iniciarla después; el setup de despliegue repara permisos y cancela el trabajo restaurado automáticamente (issue #135).
 - Sin endpoint de salud ni healthcheck en los contenedores.
 - Sin rotación automática de claves de cifrado.
 - La provisión de PostgreSQL y de los logins de capacidad sigue siendo manual. Las migraciones se ejecutan al desplegar.
