@@ -71,7 +71,7 @@ El manager actual vuelve a admitir cada envío bajo el lock del negocio antes de
 
 ## Límites conocidos
 
-- No hay automatización de backup/restore en el repositorio.
+- No hay automatización de backup/restore en el repositorio. El setup de despliegue detecta un Restore nativo, repara permisos y cancela trabajo restaurado antes de iniciar la API y los workers.
 - El negocio se registra sin verificación de correo y queda pendiente sin poder iniciar sesión hasta que administración apruebe. Rechazar libera el correo; administración no crea negocios manualmente ni cambia su nombre o contraseña, pero conserva la suspensión y reactivación. La baja elimina los datos activos y conserva el historial de auditoría.
 - La vinculación y revinculación de WhatsApp se hacen desde el panel; el manager reconecta solo cuando la sesión sigue siendo válida.
 - No hay API pública para terceros; los contratos son internos entre API y web.

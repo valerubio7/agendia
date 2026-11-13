@@ -86,7 +86,7 @@ erDiagram
 | `0003_session_idle_ttl.sql` | Agrega la política de inactividad de sesión. |
 | `0004_registration.sql` | Agrega solicitudes pendientes, throttle de registro y funciones de envío y decisión. La aprobación crea negocio e identidad; el rechazo libera el correo. |
 
-El migrador registra cada archivo en `agendia_production_migrations` con su checksum y rechaza historial editado o desconocido. En desarrollo se ejecuta con `bun run db:migrate:dev`; en producción Compose ejecuta el target `db-setup` de `Dockerfile.api` antes de iniciar la API y los workers. Consultá [Operaciones](OPERATIONS.md) para configurar el login migrador y manejar cambios incompatibles. La cola `pgboss` la administra la biblioteca, no estas migraciones.
+El migrador registra cada archivo en `agendia_production_migrations` con su checksum y rechaza historial editado o desconocido. En desarrollo se ejecuta con `bun run db:migrate:dev`; en producción Compose ejecuta el target `db-setup` de `Dockerfile.api` antes de iniciar la API y los workers. Ese setup también detecta un Restore nativo, repara propietarios/permisos y cancela el trabajo restaurado. Consultá [Operaciones](OPERATIONS.md) para configurar el login migrador, hacer un Restore y manejar cambios incompatibles. La cola `pgboss` la administra la biblioteca, no estas migraciones.
 
 ### Baja de negocios
 
