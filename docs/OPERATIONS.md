@@ -91,10 +91,23 @@ El servicio `agendia-db-migrate` corre en cada Start/Deploy antes de la API y lo
 Procedimiento:
 
 1. Detené la aplicación completa desde Dokploy (API, web, worker y manager) y evitá redeploys hasta terminar. El botón Restore no detiene consumidores ni ejecuta ningún hook: si dejás workers activos, pueden procesar mensajes durante el restore.
-2. En **Backups → Restore Backup**, elegí el archivo y la base `agendia`. Dokploy ejecuta `pg_restore -O --clean --if-exists`.
-3. Iniciá la aplicación desde Dokploy. `agendia-db-migrate` aplica migraciones pendientes, detecta el restore, repone propietarios/permisos, cancela outbox y comandos restaurados y vacía `pgboss`. La API y los workers esperan a que termine.
-4. Verificá el log de `agendia-db-migrate`: `Restore detected. Repaired …` o `Database migrations applied; no restore repair needed.`
-5. Probá login, lectura/escritura por negocio y los logs de los servicios.
+2. Eliminá el esquema de pg-boss en la base `agendia`. Sus tablas particionadas hacen que `pg_restore --clean` intente borrar constraints heredadas y el restore termine con código distinto de 0 aunque los datos se recuperen. Sin el esquema, esas sentencias son no-ops y el restore termina limpio:
+
+   ```bash
+   psql "$MIGRATOR_DATABASE_URL" -c 'DROP SCHEMA IF EXISTS pgboss CASCADE;'
+   ```
+
+   Desde el servidor, si no tenés `psql` a mano:
+
+   ```bash
+   docker exec -i <contenedor-postgres> psql -U <usuario> -d agendia -c 'DROP SCHEMA IF EXISTS pgboss CASCADE;'
+   ```
+
+   El backup que vas a restaurar recrea el esquema, sus tablas y sus jobs; el setup los vacía después. Si el restore falla después de este paso, la base queda sin `pgboss`: recreá el esquema con `CREATE SCHEMA pgboss;` y el worker vuelve a crear sus tablas al arrancar, o reintentá el restore.
+3. En **Backups → Restore Backup**, elegí el archivo y la base `agendia`. Dokploy ejecuta `pg_restore -O --clean --if-exists`.
+4. Iniciá la aplicación desde Dokploy. `agendia-db-migrate` aplica migraciones pendientes, detecta el restore, repone propietarios/permisos, cancela outbox y comandos restaurados y vacía `pgboss`. La API y los workers esperan a que termine.
+5. Verificá el log de `agendia-db-migrate`: `Restore detected. Repaired …` o `Database migrations applied; no restore repair needed.`
+6. Probá login, lectura/escritura por negocio y los logs de los servicios.
 
 Si `agendia-db-migrate` falla, la aplicación no arranca. Dejala detenida y revisá el diagnóstico; para reintentar podés volver a iniciar el stack o ejecutar el mismo paso a mano:
 
@@ -108,7 +121,7 @@ La reparación usa las migraciones del código desplegado como política actual 
 
 **Qué se cancela:** outbox sin publicar; comandos `pending`, `processing` y `generated` pasan a `failed / restore_cancelled`; los que estaban `sending` pasan a `delivery_unknown`; se vacían todos los jobs de `pgboss`. No reenvíes automáticamente trabajo cancelado o incierto: podría haberse entregado después del backup. Se preservan registros ya terminados. En un reinicio normal no se cancela nada.
 
-**Errores de `pg_restore`:** los backups con las tablas particionadas de pg-boss pueden reportar errores al limpiar constraints heredadas (`job_common_pkey`, `queue_stats_*_pkey`). El restore continúa y los datos se recuperan; el setup igual repara los permisos. Esos errores desaparecen cuando el backup ya no contiene pg-boss.
+**Errores de `pg_restore`:** si no eliminaste el esquema `pgboss` antes de restaurar, el restore reporta errores al limpiar constraints heredadas (`job_common_pkey`, `queue_stats_*_pkey`) y termina con código distinto de 0. Los datos se recuperan igual y el setup repara los permisos, pero Dokploy marca el restore como fallido. Con el paso 2 esos errores no aparecen y el restore termina en verde. La causa es un bug de PostgreSQL (BugID 16928): `pg_dump --clean` emite `DROP CONSTRAINT` para constraints que las particiones heredan, y el motor prohíbe borrarlas. Verificado sobre PostgreSQL 16: con el esquema presente el restore sale con código 1 y 3 errores; tras `DROP SCHEMA pgboss CASCADE` el mismo dump restaura con código 0, sin errores y con los datos de pg-boss intactos.
 
 ## Runbook
 
