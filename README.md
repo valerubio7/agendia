@@ -1,73 +1,52 @@
-# agendIA
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="apps/web/public/brand/logo-inverse-outlined.svg">
+  <img src="apps/web/public/brand/logo-primary-outlined.svg" alt="agendIA — logo oficial" width="280">
+</picture>
 
-Panel web para administrar un agente de IA que atiende y agenda turnos por WhatsApp. Cada negocio configura su perfil, servicios, recursos, calendario, clientes y el comportamiento de su agente; el agente conversa con los clientes, consulta disponibilidad y crea o modifica turnos.
+# De la conversación al turno
 
-## Qué incluye
+**Atención por WhatsApp, con la agenda del negocio como fuente de verdad.**
 
-- **Panel del negocio**: perfil, servicios, recursos, calendario y cierres, clientes, turnos y configuración del agente.
-- **Panel de administración**: solicitudes, estado de negocios, tiempos de respuesta y estado de WhatsApp.
-- **Agente de WhatsApp**: recibe mensajes, consulta la agenda y opera turnos con confirmaciones idempotentes.
-- **Multi-tenant**: aislamiento por `business_id` con Row-Level Security en PostgreSQL.
+Coordinar turnos por chat exige responder consultas, cruzar horarios y registrar lo acordado. agendIA reúne un panel de gestión y un agente de IA: el negocio define qué ofrece y cuándo atiende; el agente consulta esos datos y ayuda a reservar, cambiar o cancelar turnos.
 
-## Stack
+[Entender el producto](docs/understanding.md) · [Documentación](docs/README.md) · [Desarrollo local](docs/DEVELOPMENT.md) · [Operaciones](docs/OPERATIONS.md)
 
-Bun 1.4 · TypeScript · Fastify · Next.js 16 · PostgreSQL 16 · Drizzle + SQL · pg-boss · Baileys · DeepSeek
+![El negocio configura las reglas; el cliente conversa por WhatsApp; una reserva confirmada queda en la agenda.](docs/assets/product-overview.svg)
 
-## Mapa del repositorio
+## Un negocio, dos formas de operar su agenda
 
-| Ruta | Qué es |
-| --- | --- |
-| `apps/api` | API HTTP (Fastify), autenticación y unit of work por negocio. |
-| `apps/web` | Panel Next.js: negocio, administración y login. |
-| `apps/message-worker` | Consumidor de la cola de IA: turnos de conversación y resúmenes. |
-| `apps/whatsapp-manager` | Sesiones Baileys, ingesta de mensajes y envío de respuestas. |
-| `packages/db` | Migraciones SQL, roles, unit of work y repositorios. |
-| `packages/domain` | Reglas puras: agenda, disponibilidad, catálogo y agente. |
-| `packages/contracts` | Esquemas Zod compartidos entre API y web. |
-| `packages/auth` | Hash de contraseñas, sesiones y CSRF. |
-| `packages/ai-deepseek` | Adaptador de DeepSeek. |
-| `packages/whatsapp-baileys` | Gateway de Baileys y almacenamiento cifrado de credenciales. |
+- **Desde el panel:** gestionar perfil, servicios, recursos, horarios y cierres, clientes y turnos; configurar el agente y vincular WhatsApp.
+- **Desde la conversación:** consultar información y disponibilidad, preparar propuestas y operar los turnos propios del cliente mediante herramientas de agenda.
+- **Desde administración:** resolver solicitudes de acceso, suspender o reactivar negocios, consultar el estado de WhatsApp y gestionar la baja.
 
-## Arranque local
+> **Una propuesta no es una reserva.** Consultar un horario no lo bloquea. El guardado vuelve a validar condiciones y disponibilidad; la conversación necesita la aceptación de la propuesta entregada.
 
-Requisitos: Bun 1.4.0, Docker y Docker Compose.
+## Empezá por una pregunta
 
-```bash
-bun install
-docker compose up -d postgres
-cp .env.example .env
-bun run db:migrate:dev
-bun scripts/db/bootstrap-admin.ts
-```
+**¿Qué representa cada cosa?** Leé [el modelo del producto](docs/understanding.md): negocio, servicio, recurso, cliente y turno, con un ejemplo y los límites del agente.
 
-En dos terminales:
+**¿Cómo está construido?** Seguí [Arquitectura](docs/ARCHITECTURE.md) y [Base de datos](docs/DATABASE.md). El sistema separa panel, API, procesamiento de IA y conexión con WhatsApp; los datos de cada negocio se aíslan con `business_id` y RLS en PostgreSQL.
 
-```bash
-# API en http://127.0.0.1:3001
-bun apps/api/src/index.ts
+**¿Cómo contribuyo?** Prepará el entorno con [Desarrollo](docs/DEVELOPMENT.md), usando Bun 1.4.0 y Docker. Ahí están el arranque del panel y los workers, las variables y [las suites de pruebas](docs/DEVELOPMENT.md#tests). Para desplegar, consultá [Operaciones](docs/OPERATIONS.md).
 
-# Web en http://127.0.0.1:3000
-AGENDIA_API_ORIGIN=http://127.0.0.1:3001 bun run --cwd apps/web dev
-```
+## Ubicate en el repositorio
 
-El panel queda en `http://127.0.0.1:3000` y el acceso de administración en `/admin/login`. Un negocio solicita acceso en `/register` y espera la aprobación antes de iniciar sesión; no se verifica el correo. Administración puede aprobar o rechazar solicitudes y suspender negocios, pero ya no crearlos manualmente. Rechazar libera el correo para otra solicitud; la eliminación completa queda postergada. Los workers de WhatsApp y de IA se levantan aparte; el detalle de variables y comandos está en [Desarrollo](docs/DEVELOPMENT.md).
+- [`apps/web`](apps/web) — panel de negocio y administración, con Next.js.
+- [`apps/api`](apps/api) — API HTTP con Fastify, sesiones y operaciones del panel.
+- [`apps/message-worker`](apps/message-worker) — agente de IA y resúmenes de conversación.
+- [`apps/whatsapp-manager`](apps/whatsapp-manager) — sesiones de WhatsApp, recepción y envío con Baileys.
+- [`packages`](packages) — dominio, persistencia, contratos, autenticación y adaptadores de proveedores.
 
-## Tests
+**Base técnica:** Bun · TypeScript · Next.js · Fastify · PostgreSQL · Drizzle + SQL · pg-boss · DeepSeek · Baileys.
 
-```bash
-bun run typecheck
-bun run test:unit
-bun run test:integration
-bun run test:contracts
-bun run test:e2e
-```
+La [guía de documentación](docs/README.md) conecta las explicaciones con el código y el [diccionario de tablas](docs/database/tables.md).
 
-Cada suite cubre una capa distinta y se explica en [Desarrollo](docs/DEVELOPMENT.md).
+---
 
-## Documentación
+### Herramientas de desarrollo
 
-- [Mapa y reglas de la documentación](docs/README.md)
-- [Arquitectura](docs/ARCHITECTURE.md)
-- [Base de datos](docs/DATABASE.md)
-- [Desarrollo](docs/DEVELOPMENT.md)
-- [Operaciones](docs/OPERATIONS.md)
+<a href="https://github.com/Gentleman-Programming/gentle-ai">
+  <img src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/built-with-gentle-ai.png" alt="Built with Gentle-AI" width="220">
+</a>
+
+[Desarrollado con Gentle Shell](https://github.com/Gentleman-Programming/gentle-shell). Atribución a las herramientas utilizadas; no implica certificación ni respaldo de sus autores.
