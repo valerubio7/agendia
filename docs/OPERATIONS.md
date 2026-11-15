@@ -2,7 +2,7 @@
 
 # Operaciones
 
-**Desplegá una revisión conocida, comprobá sus fronteras y recuperá sin sobrescribir evidencia.** agendIA usa cuatro procesos y PostgreSQL externo; un servicio temporal aplica las migraciones. Dokploy construye desde el repositorio: un release no despliega por sí solo.
+**Desplegá una revisión conocida, comprobá sus fronteras y recuperá sin sobrescribir evidencia.** agendIA usa cuatro procesos y PostgreSQL externo; un servicio temporal aplica migraciones y repara permisos/trabajo pendiente si detecta un Restore nativo de Dokploy. Dokploy construye desde el repositorio: un release no despliega por sí solo.
 
 [Desplegar](#puesta-en-marcha) · [Actualizar](#release) · [Diagnosticar](#runbook) · [Recuperar](#backups) · [Bajas](#baja-de-negocios)
 
@@ -14,7 +14,7 @@ Esta guía describe lo implementado en **este árbol**, no certifica un servidor
 
 | Servicio | Construcción | Red y acceso a datos |
 | --- | --- | --- |
-| `agendia-db-migrate` | [`Dockerfile.api`](../Dockerfile.api), target `db-setup` | `dokploy`; recibe `MIGRATOR_DATABASE_URL` como `DATABASE_URL`. Termina al aplicar/verificar el historial. |
+| `agendia-db-migrate` | [`Dockerfile.api`](../Dockerfile.api), target `db-setup` | `dokploy`; recibe `MIGRATOR_DATABASE_URL` como `DATABASE_URL`. Aplica/verifica el historial y, si detecta restore, repara permisos y cancela trabajo pendiente. |
 | `agendia-api-runtime` | `Dockerfile.api`, target final `api` | `app` + `dokploy`; alias `agendia-api`. Recibe `API_DATABASE_URL` como `DATABASE_URL` y además `ADMIN_DATABASE_URL`. |
 | `agendia-web` | [`Dockerfile.web`](../Dockerfile.web) | `app` + `dokploy`; proxy construido con `AGENDIA_API_ORIGIN=http://agendia-api:3001`. |
 | `agendia-message-worker` | [`Dockerfile.workers`](../Dockerfile.workers), target `message-worker` | `dokploy`; `WORKER_DATABASE_URL`. |
@@ -28,7 +28,7 @@ API y workers esperan a `agendia-db-migrate` con `service_completed_successfully
 
 ### 1 · Preparar infraestructura y configuración
 
-- Disponé de Docker/Compose en el destino y PostgreSQL compatible con el esquema (local y tests usan **16**). El login migrador debe poder crear roles, extensión `btree_gist`, esquema y funciones, y otorgarse la membresía privada requerida por [0007](../packages/db/migrations/0007_private_business_purge.sql). Probá estos permisos con el rol migrador real en una base descartable antes de desplegar.
+- Disponé de Docker/Compose en el destino y PostgreSQL compatible con el esquema (local y tests usan **16**). El login migrador debe poder crear roles, extensión `btree_gist`, esquema y funciones, y otorgarse la membresía privada requerida por [0007](../packages/db/migrations/0007_private_business_purge.sql). Para la reparación tras restore, además debe ser **superusuario** y poder crear una base de referencia en el mismo cluster. Probá estos permisos con el rol migrador real en una base descartable antes de desplegar.
 - Prepará `dokploy-network`, alcance de PostgreSQL y dominio/TLS. `APP_ORIGIN` debe ser el origen público exacto, por ejemplo `https://agenda.example.test`, sin barra final; es una frontera de login/CSRF, no la URL interna de la API.
 - Cargá **todas** las variables obligatorias de [Compose](../compose.production.yml) en Dokploy, incluso al ejecutar solo el migrador: Compose valida la interpolación del archivo. Usá [`.env.example`](../.env.example) como referencia de nombres, no como configuración productiva lista para usar. Consultá [Secretos](#secretos) antes de generar claves.
 - En una base existente, exigí una copia con restauración comprobada y un plan de aislamiento antes de migrar. Una base nueva debe estar vacía; el migrador rechaza un esquema inicializado sin historial válido.
@@ -41,7 +41,7 @@ Solo para la primera instalación, ejecutá el servicio de migración con la con
 docker compose -f compose.production.yml run --rm agendia-db-migrate
 ```
 
-Debe terminar con código **0** y `Pending database migrations applied.`. Esto crea el esquema y los roles de capacidad, **no** los logins de conexión. Si falla, no arranques los runtimes ni intentes saltarte el historial.
+Debe terminar con código **0** y `Database migrations applied; no restore repair needed.`. El target ahora ejecuta [`restore-aware-setup.ts`](../scripts/db/restore-aware-setup.ts): en una base nueva solo migra. Esto crea el esquema y los roles de capacidad, **no** los logins de conexión. Si falla, no arranques los runtimes ni intentes saltarte el historial.
 
 Para provisionar los logins necesitás Bun 1.4.0 y las dependencias instaladas en un entorno de administración con acceso a esa base. Inyectá allí `DATABASE_URL` del migrador y `API_DB_PASSWORD`, `ADMIN_DB_PASSWORD`, `WORKER_DB_PASSWORD`, `MANAGER_DB_PASSWORD`; luego:
 
@@ -118,7 +118,7 @@ Los mensajes de bootstrap ocultan detalles sensibles, y la API no tiene access l
 
 ## Backups
 
-**No hay scripts ni automatización de backup/restore en este repositorio.** La copia y su retención dependen del proveedor de PostgreSQL o de la infraestructura operada; esta guía no promete un procedimiento ejecutable de restauración.
+**Capturar una copia no es restaurarla ni repararla.** La captura y la retención de backups dependen del proveedor de PostgreSQL, Dokploy o la infraestructura operada; no hay automatización de captura en este árbol. Sí hay [reparación posterior al Restore nativo de Dokploy](#restore-de-dokploy): el setup reconstruye propietarios/permisos y cancela trabajo restaurado cuando detecta la pérdida de permisos característica de ese restore.
 
 Antes de una migración incompatible, baja o cualquier operación irreversible, exigí:
 
@@ -129,7 +129,38 @@ Antes de una migración incompatible, baja o cualquier operación irreversible, 
 
 No restaures sobre producción como primer intento. Mantené la instancia original sin sobrescribir, detené escritores durante el corte acordado y habilitá tráfico solo tras validar la candidata. Reconciliá lo ocurrido después de la copia: una restauración puede perder turnos recientes o reintroducir datos eliminados y no deshace mensajes enviados fuera del sistema.
 
-Borrar volúmenes, purgar colas o reemplazar una base son acciones destructivas, no pasos de diagnóstico. Requieren autorización, aislamiento y copia validada; no se incluyen comandos de borrado o restore a ciegas.
+Borrar volúmenes, purgar colas o reemplazar una base son acciones destructivas, no pasos de diagnóstico. Requieren autorización, aislamiento y copia validada; el único borrado descrito abajo es el preflight acotado de recuperación, nunca un arreglo genérico.
+
+### Restore de Dokploy
+
+**Solo con autorización para reemplazar la base seleccionada y perder su trabajo efímero.** Ensayá primero en un destino aislado con las salvaguardas anteriores. El botón Restore no detiene consumidores ni ejecuta el setup de la aplicación; el arranque nuevo sí lo ejecuta antes de API y workers. No protege frente a procesos viejos todavía activos.
+
+Antes de empezar, confirmá que `MIGRATOR_DATABASE_URL` apunte exactamente al cluster/base elegidos en Restore, con un migrador **superusuario**, espacio y permiso para crear una base de referencia temporal. Deben existir los roles de capacidad y los logins con sus membresías y atributos seguros; para un cluster nuevo, preparalos según [Puesta en marcha](#puesta-en-marcha) en una base vacía antes de restaurar. El backup de una base no incluye los roles del cluster ni las claves de entorno.
+
+1. **Detené y aislá todo.** Detené API, web, worker y manager de todas las revisiones y evitá redeploys hasta terminar. Bloqueá tráfico y contacto con WhatsApp/DeepSeek también durante la validación posterior: restaurar credenciales puede reconectar sesiones.
+2. **Preflight de pg-boss, solo en el destino autorizado.** Con copia validada que incluya el esquema `pgboss`, confirmá identidad de la base, revisá dependencias y aceptá la pérdida de sus colas actuales. `CASCADE` puede eliminar objetos dependientes fuera del esquema; si hay dependencias ajenas, detené el procedimiento. Solo con ese alcance comprobado, descartá el esquema antes del Restore:
+
+   ```bash
+   psql "$MIGRATOR_DATABASE_URL" -c 'DROP SCHEMA IF EXISTS pgboss CASCADE;'
+   ```
+
+   Con tablas particionadas presentes, `pg_restore --clean` puede fallar al borrar constraints heredadas (`job_common_pkey`, `queue_stats_*_pkey`). Este preflight evita ese conflicto; **no garantiza el éxito del resto del restore**. El archivo debe recrear esquema, tablas y jobs; luego el setup cancela los jobs restaurados.
+3. **Restaurá el archivo validado.** En Dokploy, **Backups → Restore Backup**, elegí el archivo y la base confirmados. El flujo nativo usa `pg_restore -O --clean --if-exists`; reconstruye objetos sin los propietarios originales y, con el backup nativo sin ACL, pierde permisos de capacidad. Exigí código **0** y revisá el diagnóstico completo. Ante cualquier fallo, mantené todo detenido: no supongas que recuperar algunas filas equivale a éxito ni arranques workers para recrear lo que falta.
+4. **Ejecutá el setup sin abrir tráfico ni proveedores.** En el contexto de Compose autorizado, usá el mismo servicio de [inicialización](#2--inicializar-una-base-nueva). Aplica migraciones pendientes y luego sondea dos permisos: `SELECT` de `agendia_runtime` en `businesses` y `UPDATE (published_at)` de `agendia_worker_runtime` en `outbox_events`. Si falta alguno, repara y cancela trabajo. No es un detector universal de restores ni de corrupción; no revoques permisos para forzarlo.
+5. **Verificá antes de habilitar consumidores.** El setup debe terminar con código **0**. Una reparación imprime `Restore detected. Repaired …`, con cantidades de propietarios, permisos y trabajo cancelado. Con los dos permisos presentes imprime `Database migrations applied; no restore repair needed.` y no cancela trabajo. Si esperabas reparación y no ocurre, no habilites consumidores sin investigar. Validá historial, permisos, RLS y el estado de trabajo antes del arranque; después repetí [las comprobaciones de acceso y agenda](#4--comprobar-el-resultado-observable) con datos controlados y proveedores todavía bloqueados.
+6. **Reconciliá y recién después reabrí.** Revisá turnos posteriores a la copia, datos eliminados que pudieron reaparecer y envíos ya efectuados. Habilitá consumidores, proveedores y tráfico solo según el corte aprobado, sin reenvíos automáticos del trabajo cancelado o incierto.
+
+La [reparación](../scripts/db/repair-restored-db.ts) usa las migraciones desplegadas como política actual, no los permisos históricos del archivo. Compara el inventario de objetos con una base de referencia, repara propietarios/ACL y asigna objetos de `pgboss` a `agendia_worker`; **no valida toda la estructura, las políticas RLS ni los datos**. Intenta eliminar solo la referencia creada por esa ejecución; si no puede, emite una advertencia con su nombre.
+
+| Trabajo restaurado | Efecto de la reparación |
+| --- | --- |
+| Outbox sin publicar | Marca `published_at` y libera el reclamo **sin publicarlo**. |
+| Comandos `pending`, `processing`, `generated` | Pasan a `failed`, con `failure_code = restore_cancelled`; libera su propiedad/reclamo. |
+| Comandos `sending` | Pasan a `delivery_unknown`, también con `restore_cancelled`; libera su propiedad/reclamo. |
+| Otros comandos | Conservan su estado. |
+| Jobs de `pgboss.job` | Vacía todas sus filas, incluidas sus particiones; no borra el esquema. |
+
+**Si falla el restore o el setup, dejá la aplicación detenida.** Puede haber cambios parciales; ni el restore ni toda la reparación son una única transacción. Después del preflight puede faltar `pgboss`: crear solo el esquema o arrancar un worker no repone sus permisos ni valida la recuperación. Diagnosticá y reintentá el procedimiento validado antes de habilitar consumidores. En un reinicio normal con permisos sanos se preserva el trabajo pendiente; una reparación no revierte mensajes ya entregados ni garantiza entrega exactamente una vez.
 
 ## Baja de negocios
 
@@ -148,9 +179,9 @@ No otorgues el rol privado `agendia_business_purge` a logins runtime, no invoque
 
 ## Límites conocidos
 
-- Sin backup/restore, rollback de esquema ni rotación de claves automatizados.
+- Sin captura/retención de backups, restore completo, rollback de esquema ni rotación de claves automatizados. El Restore de Dokploy requiere detener/aislar antes y validar después; el setup automatiza solo migraciones y reparación/cancelación cuando la sonda detecta permisos ausentes.
 - Sin endpoint de salud dedicado ni healthcheck de los servicios de aplicación en Compose de producción. El healthcheck de PostgreSQL local no cubre este despliegue.
-- Provisión de PostgreSQL, red, TLS, logins y política de copias a cargo de operación; migración de esquema implementada en el setup de despliegue.
+- Provisión de PostgreSQL, red, TLS, logins y política de copias a cargo de operación; migración y reparación posterior al restore implementadas en el setup de despliegue.
 - Sin garantía de entrega exactamente una vez ni borrado de efectos externos; [persistencia y entrega son fronteras distintas](booking-journey.md#06--enviar-la-confirmación).
 
 ---

@@ -84,6 +84,8 @@ El [migrador](../scripts/db/db-migrate.ts) ordena archivos `.sql`, calcula SHA-2
 
 No edites archivos ya aplicados ni trates `schema.ts` como sustituto del historial. Desarrollo y despliegue usan el mismo migrador; los comandos y la compatibilidad entre versiones corresponden a [Desarrollo](DEVELOPMENT.md#migraciones) y [Operaciones](OPERATIONS.md). Las tablas internas de `pgboss` las administra la biblioteca.
 
+**Después de un Restore:** el target `db-setup` de [`Dockerfile.api`](../Dockerfile.api) ejecuta el [setup consciente de restore](../scripts/db/restore-aware-setup.ts) antes del arranque nuevo de API y workers. Primero aplica migraciones; luego comprueba dos permisos de capacidad. Si falta alguno, la [reparación](../scripts/db/repair-restored-db.ts) reconstruye propietarios/ACL desde una base temporal creada con las migraciones desplegadas, ajusta propietarios de objetos de `pgboss` a `agendia_worker` y cancela trabajo pendiente restaurado. No recupera permisos históricos ni valida toda la estructura o los datos. La sonda no detecta todos los restores; con permisos sanos no cancela trabajo en un reinicio normal. Requiere roles/logins preparados y un migrador superusuario: seguí [el procedimiento y sus salvaguardas](OPERATIONS.md#restore-de-dokploy), no lo uses como reparación genérica.
+
 ### Baja de negocios
 
 La baja no es un `DELETE` aislado sobre `businesses`. `delete_business` exige administración con sesión vigente, bloquea la raíz del negocio y confirma purga, auditoría y marca irreversible juntas. Conserva identidad de negocio y auditoría; elimina datos activos y sesiones. Una identidad referenciada desde otro negocio puede permanecer anonimizada e inactiva. No invoques `purge_business_data_private` como operación manual.

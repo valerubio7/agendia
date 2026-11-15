@@ -17,6 +17,15 @@ const systemDependencies: MigrationDependencies = {
 // Only these controlled diagnostics are safe to expose at either CLI boundary.
 export class MigrationHistoryError extends Error {}
 
+// Roles survive database restores; wrap only the original standalone statement
+// while retaining the untouched migration source for ledger checksums.
+export function executableMigrationSource(source: string): string {
+  return source.replace(
+    /^CREATE ROLE agendia_business_purge NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;$/gm,
+    () => "DO $$ BEGIN CREATE ROLE agendia_business_purge NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;",
+  );
+}
+
 export async function migrateDatabase(
   sql: Pick<postgres.Sql, "begin">,
   files: Pick<MigrationDependencies, "list" | "read"> = systemDependencies,
@@ -58,7 +67,7 @@ export async function migrateDatabase(
     const completed = new Set(applied.map((entry) => entry.name));
     for (const migration of migrations) {
       if (completed.has(migration.name)) continue;
-      await tx.unsafe(migration.source);
+      await tx.unsafe(executableMigrationSource(migration.source));
       await tx`insert into public.agendia_production_migrations(name,checksum) values(${migration.name},${migration.checksum})`;
     }
   });

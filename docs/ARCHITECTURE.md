@@ -98,7 +98,7 @@ La [prueba de baja](../tests/integration/business-deletion-purge.integration.tes
 
 - El consentimiento natural y el cumplimiento de instrucciones dependen de interpretación del modelo; las referencias validan procedencia y contexto, no significado.
 - Vincular o revincular WhatsApp requiere el panel; una reconexión automática depende de una sesión todavía válida.
-- No hay API pública de terceros ni automatización de backup/restore en este árbol. Las copias y el despliegue son responsabilidades operativas separadas.
+- No hay API pública de terceros ni captura/retención de backups automatizada en este árbol. El [setup de despliegue](../scripts/db/restore-aware-setup.ts) aplica migraciones y, si detecta la pérdida de permisos característica del Restore nativo de Dokploy, repara propietarios/permisos y cancela trabajo restaurado antes del arranque nuevo de API y workers. No detiene consumidores antiguos ni ejecuta el restore: requiere [aislamiento y operación autorizada](OPERATIONS.md#restore-de-dokploy).
 
 ## Para profundizar
 
