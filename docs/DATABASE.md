@@ -1,117 +1,108 @@
+[agendIA](../README.md) / [Documentación](README.md) / Base de datos
+
 # Base de datos
 
-agendIA usa PostgreSQL 16. Las migraciones SQL son la autoridad del modelo: `packages/db/migrations/` define tablas, roles, políticas RLS, funciones y disparadores. [`schema.ts`](../packages/db/src/schema.ts) declara solo 3 tablas y no es el inventario completo.
+**PostgreSQL guarda lo acordado y el trabajo pendiente, no solo un calendario.** Un turno conserva sus condiciones; una conversación conserva contexto; una orden de envío conserva el estado de entrega. Mezclar esas tres cosas lleva a duplicar reservas o a anunciar operaciones que no se confirmaron.
 
-Esta guía describe el repositorio; no inspecciona una base en ejecución ni confirma qué migraciones se aplicaron en un servidor.
+Las [migraciones SQL](../packages/db/migrations) son la autoridad del modelo. Esta guía describe el árbol del repositorio, **no verifica una base en ejecución**. [`schema.ts`](../packages/db/src/schema.ts) solo declara tres tablas y no representa todo el esquema ni todos sus cambios.
 
 ## Cómo leer
 
-- Vista general y aislamiento: este documento.
-- Cada tabla, su propósito y sus relaciones: [database/tables.md](database/tables.md).
-- DDL exacto, restricciones y políticas: [`packages/db/migrations/`](../packages/db/migrations/), incluida [`0004_registration.sql`](../packages/db/migrations/0004_registration.sql) para registro.
+- **Entender una escritura:** [recorrido de reserva](booking-journey.md).
+- **Entender relaciones y garantías:** esta página.
+- **Consultar una tabla:** [diccionario](database/tables.md), con enlaces al DDL por área.
 
 ## Modelo en pocas palabras
 
-Un **negocio** es la unidad de aislamiento. Su `business_id` acompaña a casi todos los registros y las relaciones usan claves foráneas compuestas `(business_id, id)`, así que un registro no puede apuntar a otro negocio.
+Pensá los datos en tres capas:
 
-| Área | Qué guarda | Tablas |
+| Capa | Pregunta que responde | Referencia |
 | --- | --- | --- |
-| Identidad y acceso | Negocios, solicitudes pendientes, usuarios web y sesiones. | `businesses`, `tenant_records`, `pending_registrations`, `auth_identities`, `web_sessions` |
-| Configuración | Perfil público y comportamiento del agente. | `business_profiles`, `agent_configs` |
-| Eventos y control | Auditoría, diagnóstico, outbox/inbox y límites de login. | `audit_events`, `technical_events`, `outbox_events`, `inbox_events`, `operational_controls`, `login_throttle_global`, `login_throttle_accounts` |
-| WhatsApp | Conexión, credenciales cifradas y vinculación. | `whatsapp_connections`, `whatsapp_auth_records`, `whatsapp_link_codes`, `whatsapp_sender_bindings`, `whatsapp_received_senders` |
-| Conversaciones | Historial, resúmenes, envíos y estado del agente. | `conversations`, `messages`, `conversation_summaries`, `outbound_commands`, `whatsapp_agenda_dialogues`, `whatsapp_agenda_receipts` |
-| Catálogo | Servicios, recursos y clientes. | `services`, `resources`, `resource_services`, `clients` |
-| Agenda | Calendario, cierres, turnos e idempotencia. | `business_calendars`, `business_calendar_closures`, `appointments`, `appointment_operation_receipts` |
+| Configuración actual | ¿Qué ofrece el negocio y cuándo puede atender? | [Catálogo](database/tables.md#catálogo), [calendario](database/tables.md#agenda), perfil y agente. |
+| Acuerdos y contexto | ¿Quién reservó qué? ¿Qué quedó pendiente en la conversación? | `appointments`, `clients`, `whatsapp_agenda_dialogues`, mensajes y resúmenes. |
+| Coordinación y evidencia | ¿Qué falta procesar o enviar? ¿Qué operación ya terminó? | Outbox/inbox, `outbound_commands`, comprobantes y auditoría. |
+
+El **negocio** es la unidad de aislamiento: `business_id` acompaña los datos propios. La identidad del panel no es el cliente de WhatsApp, y un comprobante de operación no es un turno.
 
 ## Relaciones
 
-Identidad y agenda:
+No necesitás memorizar todas las columnas para seguir una reserva:
 
-```mermaid
-erDiagram
-  businesses ||--o| business_profiles : perfil
-  businesses ||--o| agent_configs : agente
-  businesses ||--o| auth_identities : usuario
-  auth_identities ||--o{ web_sessions : sesiones
-  businesses ||--o| business_calendars : calendario
-  businesses ||--o{ business_calendar_closures : cierres
-  businesses ||--o{ services : servicios
-  businesses ||--o{ resources : recursos
-  resources ||--o{ resource_services : habilita
-  services ||--o{ resource_services : asignado
-  businesses ||--o{ clients : clientes
-  businesses ||--o{ appointments : turnos
-  clients ||--o{ appointments : reserva
-  services ||--o{ appointments : servicio
-  resources ||--o{ appointments : atiende
-```
+- `appointments` une **cliente, servicio y recurso** del mismo negocio. Guarda etiquetas, precio y duración como copia de las condiciones acordadas; no reconstruye el pasado leyendo el catálogo actual.
+- `resource_services` habilita servicios para cada recurso. `services.category_id` agrupa el catálogo sin alterar la capacidad de atención.
+- `business_calendars` y `business_calendar_closures` delimitan atención; cada recurso aporta además su horario propio. La validación de disponibilidad cruza estos datos con turnos confirmados.
+- Una `whatsapp_connections` agrupa conversaciones; cada conversación ordena mensajes, resúmenes y órdenes de salida. Los bindings vinculan remitente, teléfono y conexión; el diálogo pendiente no reserva capacidad.
 
-Mensajería:
+**Integridad física frente a relación lógica:** las FK de agenda y mensajería usan normalmente `(business_id, id)` para impedir referencias a entidades de otro negocio. No todas siguen ese patrón: `outbound_commands.source_message_id` es una referencia lógica con índice único, no una FK; `appointment_operation_receipts.actor_id` referencia globalmente a `auth_identities`; `audit_events.business_id` puede ser NULL para la plataforma. No deduzcas una garantía SQL solo por el nombre de una columna.
 
-```mermaid
-erDiagram
-  businesses ||--o| whatsapp_connections : vincula
-  whatsapp_connections ||--o{ whatsapp_auth_records : credenciales
-  whatsapp_connections ||--o| whatsapp_link_codes : código
-  whatsapp_connections ||--o{ conversations : conversaciones
-  conversations ||--o{ messages : mensajes
-  conversations ||--o{ conversation_summaries : resúmenes
-  conversations ||--o{ outbound_commands : envíos
-  whatsapp_connections ||--o{ outbound_commands : conexión
-  whatsapp_connections ||--o{ whatsapp_sender_bindings : números
-  whatsapp_sender_bindings ||--o{ whatsapp_agenda_dialogues : diálogo
-  messages ||--o| whatsapp_received_senders : remitente
-  messages ||--o| whatsapp_agenda_receipts : comprobante
-```
+## Garantías al guardar
 
-`outbound_commands.source_message_id` es una referencia lógica con índice único, no una FK. `audit_events.business_id` puede ser NULL para eventos de plataforma.
+| Regla | Dónde se sostiene | Qué no demuestra |
+| --- | --- | --- |
+| No superponer turnos confirmados de un recurso | Exclusión GiST sobre negocio, recurso e intervalo `[inicio, fin)` en [0000](../packages/db/migrations/0000_base.sql). | Horarios de atención, anticipación o aceptación: se validan en dominio/repositorios. |
+| Conservar condiciones acordadas | Copia en `appointments`; [reglas de cambios](../packages/domain/src/appointments/changes.ts). | Que un servicio siga activo hoy. |
+| Duración positiva en múltiplos de 5 minutos | `CHECK` actualizado por [0005](../packages/db/migrations/0005_service_duration_five_minutes.sql). | Que el inicio sea seleccionable: la grilla de 15 minutos se aplica en el motor de agenda. |
+| Mutación, auditoría y trabajo pendiente coherentes | [Unit of work HTTP](../packages/db/src/unit-of-work.ts) y [sesión de agenda WhatsApp](../apps/message-worker/src/agent/adapters/agenda.ts). | Que el proveedor externo haya recibido la respuesta. |
+| Reintentos de operaciones del panel | Comprobante por negocio, actor y clave de operación, con fingerprint y resultado. | Idempotencia de cualquier mensaje externo o de cualquier petición sin ese protocolo. |
+
+Los intervalos semiabiertos permiten terminar un turno donde empieza el siguiente. El [repositorio](../packages/db/src/repositories/appointments.ts) serializa operaciones con el lock del calendario y vuelve a comprobar estado, reglas y ocupación; la exclusión sigue siendo una barrera para escritores SQL directos.
 
 ## Aislamiento y roles
 
-- 26 tablas tienen `ENABLE` + `FORCE ROW LEVEL SECURITY`. Las globales incluyen `businesses`, `auth_identities`, `web_sessions`, `operational_controls`, los throttles de login y las dos tablas de registro. El rol de administración solo puede leer los datos no sensibles de las solicitudes pendientes; las decisiones pasan por una función acotada.
-- Hay cuatro roles de capacidad, todos `NOLOGIN` y `NOBYPASSRLS`: `agendia_runtime` (panel del negocio), `agendia_admin_runtime` (administración), `agendia_whatsapp_runtime` (Baileys) y `agendia_worker_runtime` (agente y resúmenes).
-- Los logins de conexión (`agendia_api`, `agendia_admin`, `agendia_worker`, `agendia_manager`) solo tienen membresía. Cada transacción ejecuta `SET LOCAL ROLE` y publica `app.tenant_id`, `app.actor_role`, `app.actor_id` y `app.request_id`; las políticas comparan esos valores.
-- Las funciones `SECURITY DEFINER` (`route_whatsapp_session`, `claim_ai_outbox`, `claim_owned_outbound`, `append_runtime_audit`, etc.) son el acceso acotado para reclamar trabajo, enrutar sesiones y auditar. Su ejecución está revocada de `PUBLIC`.
-- El bootstrap garantiza un único `platform_admin` con un lock y una verificación en la aplicación; la tabla no impone esa unicidad. Sí impone un solo `business_user` por negocio mediante un índice parcial.
-- RLS no protege frente a superusuarios y no es cifrado: los datos siguen legibles para quien tenga la clave o privilegios elevados.
+**RLS, permisos y autorización se complementan.** Las tablas de negocio usan `ENABLE` y `FORCE ROW LEVEL SECURITY`; `service_categories` se suma en 0006. Las globales —negocios, identidades, sesiones, controles y admisión de login/registro— dependen de ACL, funciones y verificaciones explícitas, no de una política tenant uniforme.
+
+| Rol de capacidad | Uso principal |
+| --- | --- |
+| `agendia_runtime` | Operaciones del panel del negocio. |
+| `agendia_admin_runtime` | Administración de plataforma, con accesos acotados. |
+| `agendia_whatsapp_runtime` | Conexiones, credenciales, ingesta y entrega de WhatsApp. |
+| `agendia_worker_runtime` | Contexto, herramientas de agenda, generación y resúmenes. |
+
+Son roles `NOLOGIN` y `NOBYPASSRLS`, no usuarios finales. Los logins de conexión se [provisionan por capacidad](../scripts/db/provision-production-db.ts); el manager tiene también membresía de worker para su uso de colas. [`RolePool.run`](../packages/db/src/runtime-pools.ts) activa el rol y publica contexto transaccional local (`app.tenant_id`, actor y request).
+
+Funciones de capacidad como `route_whatsapp_session` y `claim_owned_outbound` usan `SECURITY DEFINER` para enrutar sesiones o reclamar trabajo; su ejecución se revoca de `PUBLIC`. Eso no las convierte en endpoints de uso libre. Administración puede leer datos no sensibles de solicitudes pendientes, pero no su hash de contraseña. Hay un solo `business_user` por negocio mediante índice parcial; la unicidad del administrador la controla el bootstrap, no la tabla.
+
+RLS no es cifrado ni protege frente a superusuarios. Para comprobar el aislamiento al desarrollar, consultá [las pruebas RLS](../tests/integration/tenant-rls.integration.test.ts) y [las de esquema y permisos](../tests/integration/database-schema.integration.test.ts).
 
 ## Migraciones
 
-| Archivo | Qué hace |
-| --- | --- |
-| `0000_base.sql` | Instalación base: 32 tablas, cuatro roles, RLS, funciones, vista `admin_business_status`, extensión `btree_gist` y esquema `pgboss`. |
-| `0001_remove_admin_ai_guidance.sql` | Elimina `operational_controls.additional_instructions`. Es irreversible. |
-| `0002_agent_silent_completion.sql` | Permite `whatsapp_agenda_receipts.outbound_id` NULL y agrega el `CHECK` de operación `silent`. |
-| `0003_session_idle_ttl.sql` | Agrega la política de inactividad de sesión. |
-| `0004_registration.sql` | Agrega solicitudes pendientes, throttle de registro y funciones de envío y decisión. La aprobación crea negocio e identidad; el rechazo libera el correo. |
+El modelo surge de **todo el historial**, no de ejecutar solo la base inicial:
 
-El migrador registra cada archivo en `agendia_production_migrations` con su checksum y rechaza historial editado o desconocido. En desarrollo se ejecuta con `bun run db:migrate:dev`; en producción Compose ejecuta el target `db-setup` de `Dockerfile.api` antes de iniciar la API y los workers. Consultá [Operaciones](OPERATIONS.md) para configurar el login migrador y manejar cambios incompatibles. La cola `pgboss` la administra la biblioteca, no estas migraciones.
+| Archivo | Cambio que importa al leer los datos |
+| --- | --- |
+| [0000 · Base](../packages/db/migrations/0000_base.sql) | Tablas iniciales, roles, RLS, funciones, triggers, vista administrativa, extensión `btree_gist` y esquema `pgboss`. |
+| [0001 · Instrucciones globales](../packages/db/migrations/0001_remove_admin_ai_guidance.sql) | Elimina irreversiblemente `operational_controls.additional_instructions`. |
+| [0002 · Silencio del agente](../packages/db/migrations/0002_agent_silent_completion.sql) | Comprobante sin salida solo cuando `operation = 'silent'`. |
+| [0003 · Inactividad](../packages/db/migrations/0003_session_idle_ttl.sql) | Agrega `web_sessions.idle_ttl_ms`; NULL conserva la política anterior. |
+| [0004 · Registro](../packages/db/migrations/0004_registration.sql) | Solicitudes pendientes, presupuesto de registro y funciones de admisión/decisión. |
+| [0005 · Duración](../packages/db/migrations/0005_service_duration_five_minutes.sql) | Cambia múltiplos de 15 a 5 minutos en servicio y turno; no cambia la grilla de inicios. |
+| [0006 · Categorías](../packages/db/migrations/0006_service_categories.sql) | Agrega `service_categories`, su RLS y la FK tenant de `services.category_id`. |
+| [0007 · Baja privada](../packages/db/migrations/0007_private_business_purge.sql) | Marca irreversible, purga acotada, barreras de escritura y admisión de envío. |
+| [0008 · Ownership](../packages/db/migrations/0008_ownership_sqlstate.sql) | Conserva SQLSTATE `42501` al intentar cambiar la pertenencia de una fila. |
+
+El [migrador](../scripts/db/db-migrate.ts) ordena archivos `.sql`, calcula SHA-256 y valida **todo** el historial registrado antes de ejecutar pendientes. Rechaza archivos aplicados modificados o ausentes y una base inicializada sin historial válido. Mantiene `agendia_production_migrations`, separado del modelo de producto.
+
+No edites archivos ya aplicados ni trates `schema.ts` como sustituto del historial. Desarrollo y despliegue usan el mismo migrador; los comandos y la compatibilidad entre versiones corresponden a [Desarrollo](DEVELOPMENT.md#migraciones) y [Operaciones](OPERATIONS.md). Las tablas internas de `pgboss` las administra la biblioteca.
 
 ### Baja de negocios
 
-`0007_private_business_purge.sql` incorpora una marca irreversible `businesses.deleted_at` y la función `delete_business`, accesible únicamente al rol de administración con una sesión de administrador vigente. La transacción bloquea el negocio, purga sus datos activos, conserva la auditoría y agrega un evento con administrador, negocio y fecha. Disparadores serializan inserciones y actualizaciones de datos del negocio contra esa baja y rechazan escrituras posteriores, incluso de procesos anteriores. La fila identificatoria queda suspendida y oculta de la lista administrativa; el correo vuelve a estar disponible.
+La baja no es un `DELETE` aislado sobre `businesses`. `delete_business` exige administración con sesión vigente, bloquea la raíz del negocio y confirma purga, auditoría y marca irreversible juntas. Conserva identidad de negocio y auditoría; elimina datos activos y sesiones. Una identidad referenciada desde otro negocio puede permanecer anonimizada e inactiva. No invoques `purge_business_data_private` como operación manual.
 
-La función usa un rol sin login ni BYPASSRLS con permisos específicos y políticas de purga; el login migrador debe poder crear roles y otorgarse membresía en ese rol. Los roles de aplicación no reciben esa membresía. La primitiva `purge_business_data_private` no es una API y no debe invocarse directamente.
-
-Si un comprobante de otro negocio referencia una identidad eliminada, se conserva inactiva y anonimizada, sin sesiones ni contraseña utilizable. La auditoría histórica es inmutable y puede contener datos personales. Los jobs ya publicados en `pgboss` no se borran; los procesadores encuentran los datos de origen ausentes. El manager actual comprueba la baja antes de invocar el gateway, pero el gateway puede esperar antes de llamar al proveedor. Por eso todavía no se demuestra que toda llamada al proveedor haya comenzado antes de la baja. Un manager antiguo podría iniciar después un envío reclamado previamente. La baja no cierra ni drena sockets antiguos.
+Los triggers rechazan escrituras tras la baja; la función usa un rol privado `agendia_business_purge` sin login ni BYPASSRLS, con permisos y políticas específicos. Ese rol no se entrega a la aplicación. Los jobs de `pgboss`, copias anteriores y mensajes ya enviados no se purgan con estos datos. Ver [la frontera y los límites de envío](ARCHITECTURE.md#baja-de-negocios) antes de interpretar «baja» como borrado de todo rastro.
 
 ## Datos sensibles
 
-| Dato | Tratamiento |
+| Dato | Tratamiento real |
 | --- | --- |
-| Contraseña (`password_phc`) | Hash Argon2id; no es reversible. |
-| Token de sesión y CSRF | SHA-256 almacenado; no se guarda el token original. |
-| Credenciales de WhatsApp | AES-256-GCM; la DEK se guarda envuelta por la KEK. |
-| Código de vinculación | AES-256-GCM con vencimiento; se elimina al usarlo, al reemplazarlo, en la limpieza de vencidos o al borrar la conexión. |
-| Mensajes y resúmenes | Sin cifrado de aplicación; `raw_text` y `structured_summary` quedan legibles en la base. |
-| Auditoría y eventos técnicos | Pueden contener datos personales; `safe_details` no filtra secretos automáticamente. |
+| Contraseña | Hash Argon2id en `password_phc`; no es cifrado reversible. |
+| Sesión y CSRF | Hash SHA-256 almacenado; no el token original de sesión. |
+| Credenciales de WhatsApp | [AES-256-GCM](../packages/whatsapp-baileys/src/auth-store.ts), con clave de datos envuelta por clave de cifrado. |
+| Código de vinculación | Cifrado, temporal; se elimina al consumirlo o limpiarlo, reemplazarlo o borrar su conexión. |
+| Mensajes y resúmenes | Texto/JSON legible en la base; sin cifrado de aplicación. |
+| Auditoría y diagnóstico | Pueden contener datos personales; el nombre `safe_details` no aplica un filtro automático. |
 
-No copies credenciales, códigos, tokens ni textos de clientes a diagnósticos o capturas. El cifrado de disco, las copias y la retención son decisiones de despliegue, no de este esquema.
+No copies textos reales, tokens, códigos ni credenciales a ejemplos, logs o capturas. Cifrado de disco, copias y retención son decisiones de despliegue, no garantías de este esquema.
 
 ## Para profundizar
 
-- Diccionario de tablas: [database/tables.md](database/tables.md).
-- Migraciones: [`packages/db/migrations/`](../packages/db/migrations/).
-- Roles y pools: [`packages/db/src/runtime-pools.ts`](../packages/db/src/runtime-pools.ts).
-- Cifrado de credenciales: [`packages/whatsapp-baileys/src/auth-store.ts`](../packages/whatsapp-baileys/src/auth-store.ts).
+**Continuá → [Diccionario de tablas](database/tables.md)** para ubicar una entidad. Para entender quién escribe, volvé a [Arquitectura](ARCHITECTURE.md); para separar commit y entrega, al [recorrido de reserva](booking-journey.md). [Volver al mapa](README.md).

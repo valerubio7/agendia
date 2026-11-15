@@ -4,7 +4,7 @@
 
 Documentación para **desarrolladores y colaboradores**. Elegí un recorrido según lo que necesitás resolver: conocer el producto, seguir el código o trabajar con el sistema.
 
-**Primera visita:** [Modelo del producto](understanding.md) → [Arquitectura](ARCHITECTURE.md) → [Desarrollo local](DEVELOPMENT.md).
+**Primera visita:** [Modelo del producto](understanding.md) → [Recorrido de una reserva](booking-journey.md) → [Arquitectura](ARCHITECTURE.md) → [Desarrollo local](DEVELOPMENT.md).
 
 ## 01 · Comprender el producto
 
@@ -15,6 +15,10 @@ El vocabulario compartido: negocio, servicios, recursos, calendario, clientes y 
 **Al terminar:** podés explicar qué decide el negocio, qué interpreta el agente y qué valida el backend.
 
 ## 02 · Seguir el sistema
+
+### [Recorrido de una reserva](booking-journey.md)
+
+Un ejemplo concreto desde la propuesta hasta el turno guardado y su confirmación por WhatsApp. Distingue entrega, aceptación, revalidación y commit, con enlaces al código y sus pruebas.
 
 ### [Arquitectura](ARCHITECTURE.md)
 

@@ -1,83 +1,105 @@
+[agendIA](../README.md) / [Documentación](README.md) / Arquitectura
+
 # Arquitectura
 
-agendIA es un SaaS multi-negocio: cada negocio tiene un agente de IA que atiende por WhatsApp y agenda turnos. Hay dos roles: `business_user` (un usuario por negocio) y `platform_admin` (sin negocio, administra la plataforma).
+**Cuatro procesos conectan el panel y WhatsApp con una misma agenda en PostgreSQL.** La web presenta; la API autoriza las operaciones del panel; el worker conversa y usa herramientas; el manager mantiene WhatsApp y entrega mensajes. Ningún texto del modelo sustituye una escritura confirmada.
+
+Antes de recorrer carpetas, seguí [una reserva de principio a fin](booking-journey.md). Acá está el mapa para decidir dónde cambiar el sistema sin cruzar sus fronteras.
+
+[Componentes](#componentes) · [HTTP](#flujo-http) · [WhatsApp](#flujo-de-un-mensaje-de-whatsapp) · [Seguridad](#aislamiento-y-seguridad) · [Baja](#baja-de-negocios)
+
+![El panel llama a la API. WhatsApp entra y sale por el manager; el worker consulta a DeepSeek y opera la agenda. PostgreSQL guarda datos, trabajo pendiente y colas. Solo el manager envía por WhatsApp.](assets/architecture-map.svg)
 
 ## Componentes
 
-| Componente | Responsabilidad | Proceso |
+### Los procesos
+
+| Dónde empezar | Responsabilidad | No le corresponde |
 | --- | --- | --- |
-| `apps/web` | Panel Next.js 16 (App Router). Sirve UI y reescribe `/api/*` hacia la API. | Puerto **3000**. |
-| `apps/api` | API Fastify 5: sesión, CSRF, rutas de negocio y administración. | Puerto **3001**. |
-| `apps/message-worker` | Consume `ai-generate` y `conversation-summary`; ejecuta el agente y el resumen. | Sin puerto. |
-| `apps/whatsapp-manager` | Mantiene sockets Baileys, ingesta mensajes, publica la cola de IA y envía respuestas. | Sin puerto. |
-| `packages/db` | Migraciones SQL, roles, unit of work, repositorios y colas. | Librería. |
-| `packages/domain` | Reglas puras de agenda, disponibilidad, catálogo y agente. | Librería. |
-| `packages/contracts` | Esquemas Zod compartidos entre API y web. | Librería. |
-| `packages/auth` | Argon2id, sesiones, CSRF y cookie. | Librería. |
-| `packages/ai-deepseek` | Adaptador de DeepSeek. | Librería. |
-| `packages/whatsapp-baileys` | Gateway de Baileys y almacenamiento cifrado. | Librería. |
+| [`apps/web`](../apps/web) · Next.js | Panel de negocio y administración; reescribe `/api/*` a la API. | Autorizar datos por ocultar botones. |
+| [`apps/api`](../apps/api/src/app.ts) · Fastify | Sesión, CSRF, contratos HTTP y operaciones de negocio o administración. | Mantener sockets de WhatsApp. |
+| [`apps/message-worker`](../apps/message-worker/src/index.ts) | Consume `ai-generate` y `conversation-summary`; ejecuta agente y resúmenes con DeepSeek. | Enviar respuestas al canal. |
+| [`apps/whatsapp-manager`](../apps/whatsapp-manager/src/index.ts) | Vincula y restaura sesiones Baileys; ingesta, publica trabajo y despacha salidas. | Decidir por su cuenta las reglas de agenda. |
+
+API y web tienen puertos HTTP; los otros dos procesos trabajan con colas y conexiones persistentes. Los valores de arranque y la topología están en [Desarrollo](DEVELOPMENT.md) y [Operaciones](OPERATIONS.md), no en este mapa de responsabilidades.
+
+### Las piezas compartidas
+
+- **Reglas:** [`packages/domain`](../packages/domain/src) contiene políticas de disponibilidad, cambios, estados y conversación; no llama a proveedores.
+- **Persistencia:** [`packages/db`](../packages/db/src) reúne roles transaccionales, repositorios y unit of work. Las [migraciones SQL](../packages/db/migrations) completan las garantías que no viven en TypeScript.
+- **Interfaces y acceso:** [`contracts`](../packages/contracts/src) comparte esquemas Zod entre web y API; [`auth`](../packages/auth/src) aporta contraseñas, tokens, cookie y protección de mutaciones.
+- **Proveedores:** [`ai-deepseek`](../packages/ai-deepseek) y [`whatsapp-baileys`](../packages/whatsapp-baileys) adaptan IA y canal; este último cifra las credenciales persistidas.
 
 ## Flujo HTTP
 
-1. El navegador entra al panel en `:3000`. La portada (`/`) y `/login` consultan `/auth/session` y, con una sesión vigente, redirigen al panel del rol (`/profile` o `/businesses`); sólo muestran el ingreso cuando no hay sesión válida. En `/admin/login` sólo redirige una sesión de administración; una sesión de negocio conserva el formulario para ingresar como administración. Next reescribe `/api/:path*` a `AGENDIA_API_ORIGIN`; el cliente web siempre usa rutas relativas `/api`.
-2. El ingreso común usa `/auth/login`; el acceso de administración usa `/auth/admin/login`. La API rechaza administradores en el ingreso común. Valida el origen contra `APP_ORIGIN` y la cookie `__Host-agendia_session`. Las mutaciones además exigen `x-csrf-token`. El registro público requiere origen, pero no sesión. `/auth/session` incluye `sessionId`, un identificador no utilizable como credencial que permite detectar el reemplazo de una sesión.
-3. `requireTenant` exige `business_user` con `business_id`; `requireAdmin` exige `platform_admin`. Un rol equivocado recibe 403 o 404, no un recurso ajeno.
-4. Cada escritura corre en `TenantUnitOfWork`: `SET LOCAL ROLE`, `set_config('app.tenant_id', …)` y la operación de dominio. El evento de auditoría y el de outbox se insertan en la misma transacción.
+1. **Panel → API.** El cliente web usa rutas relativas `/api`. El [rewrite de Next](../apps/web/next.config.ts) las dirige a `AGENDIA_API_ORIGIN` si está configurado; no es una API pública para terceros.
+2. **Sesión y rol.** El ingreso común usa `/auth/login`; administración usa `/auth/admin/login`. La [autorización de rutas](../apps/api/src/app.ts) distingue `business_user` con negocio de `platform_admin` sin negocio. El registro público crea una solicitud pendiente, no acceso inmediato: [aprobarla](../apps/api/src/routes/administration.ts) crea negocio e identidad, rechazarla libera el correo. No hay verificación de correo.
+3. **Protección de mutaciones.** La [capa HTTP](../apps/api/src/auth/http-auth.ts) comprueba sesión, origen esperado y `x-csrf-token`. La cookie `__Host-agendia_session` es segura y HttpOnly; la base guarda hashes, no el token de sesión original.
+4. **Operación transaccional.** `RolePool.run` activa un rol y contexto local. Las escrituras de negocio canalizadas por [`TenantUnitOfWork`](../packages/db/src/unit-of-work.ts) confirman mutación, auditoría y outbox juntas. Las operaciones especiales, como registro y baja, tienen sus propias transacciones acotadas.
+
+Las rutas de turnos revalidan disponibilidad y condiciones esperadas antes de guardar. `x-appointment-operation-key` permite registrar el resultado por negocio, actor y clave; repetir la misma operación devuelve el comprobante, no otro turno. Reutilizar la clave con otro contenido produce conflicto. Cancelar una **solicitud de operación** no equivale a cancelar un **turno**.
+
+Las sesiones tienen vencimiento absoluto y por inactividad; «Mantener sesión iniciada» cambia sus plazos. Solo la actividad humana explícita del panel renueva la inactividad mediante `POST /auth/activity`, con origen y CSRF; el polling no la mantiene viva. El login tiene presupuestos global y por cuenta. Ver [rutas de autenticación](../apps/api/src/routes/auth.ts) y [repositorio de identidad](../packages/db/src/repositories/identity.ts).
 
 ## Flujo de un mensaje de WhatsApp
 
-```mermaid
-flowchart LR
-  W[WhatsApp] --> B[Baileys / manager]
-  B --> I[inbox_events + messages]
-  I --> O[outbox_events ai.generate]
-  O --> Q[pg-boss ai-generate]
-  Q --> A[message-worker / agente]
-  A --> C[outbound_commands]
-  C --> B
-  B --> W
-```
+### Recibir y programar
 
-1. Baileys recibe el evento y `PostgresInboundHandler` resuelve la conexión; solo procesa si está `CONNECTED`. Deduplica en `inbox_events`, hace upsert de `conversations` e inserta `messages`.
-2. La ingesta inserta `outbox_events` con tópico `ai.generate` y clave estable `ai:<providerId>`. Los mensajes viejos de la misma conversación se marcan como superados.
-3. `AiOutboxDispatcher` reclama filas con `claim_ai_outbox` (token, TTL 30 s, lote 20) y publica en la cola `ai-generate` con `singletonKey` y `retryLimit: 2`. Si falla, `release_ai_outbox` reintenta con backoff hasta 60 s.
-4. `message-worker` consume `ai-generate` con un lock asesor por conversación. Puede programar antes un `conversation-summary` (`retryLimit: 5`) y luego ejecuta el agente, que usa herramientas de agenda para leer catálogo/disponibilidad y escribir turnos.
-5. El resultado se persiste como `outbound_commands` en estado `generated`, o como `messages.processing_state = silent_completed` si el agente decide no responder. Un fallo del proveedor marca `ai_failed`.
-6. El manager reclama los `generated` con `claim_owned_outbound`, envía por Baileys y cierra en `sent`, `failed` o `delivery_unknown`.
+La [ingesta](../apps/whatsapp-manager/src/inbound.ts) resuelve una sesión conectada, clasifica el evento y deduplica con `inbox_events`. Los grupos y contenidos no textuales no se convierten en pedidos al agente. Para texto individual aceptado guarda conversación, mensaje y evidencia de remitente cuando es válida.
+
+El [repositorio de mensajería](../packages/db/src/repositories/messaging.ts) calcula cuándo responder según la política de ritmo. En la misma transacción inserta `outbox_events` con tópico `ai.generate` y clave estable `ai:<providerId>`. Una entrada nueva puede superar trabajo anterior; una respuesta manual del negocio se registra sin generar otra llamada a la IA. Los ecos identificados de salidas propias no se confunden con respuestas manuales.
+
+[`AiOutboxDispatcher`](../apps/whatsapp-manager/src/ai-outbox.ts) reclama trabajo pendiente con token y vencimiento, publica en pg-boss (`ai-generate`) y marca la publicación. Si falla, libera el reclamo con backoff. El outbox conserva intención durable; no garantiza que todo trabajo termine procesado ni que un mensaje llegue al cliente.
+
+### Conversar y guardar
+
+El [procesador de IA](../apps/message-worker/src/jobs/ai-job.ts) serializa por conversación con un lock asesor y omite fuentes que ya no son vigentes. Puede programar un resumen, separado de la respuesta. El agente recibe contexto acotado y ejecuta [herramientas tipadas](../apps/message-worker/src/agent/tools.ts), no SQL libre.
+
+El [adaptador de agenda](../apps/message-worker/src/agent/adapters/agenda.ts) mantiene la transacción mientras conversa con el proveedor: bloquea fuente, diálogo y calendario, valida remitente y usa los repositorios. Esto preserva atomicidad, pero mantiene locks durante llamadas externas; el runtime [acota rondas y tiempo](../apps/message-worker/src/agent/runtime.ts).
+
+Para reservar o reprogramar distingue propuesta, entrega, aceptación, efecto provisional y commit. La salida válida se guarda como `outbound_commands.generated` junto con los efectos; una finalización silenciosa válida deja `silent_completed`, sin envío ni trabajo de agenda oculto. Un error de infraestructura revierte la sesión. El [recorrido de reserva](booking-journey.md) explica estas fronteras sin confundirlas con entrega.
+
+### Entregar por el canal
+
+El [dispatcher de salida](../apps/whatsapp-manager/src/outbound.ts) reclama solo órdenes elegibles de conexiones que posee, respetando vigencia y ritmo. Antes de invocar el gateway comprueba que el negocio siga activo. Registra `sent` con ACK, `failed` ante rechazo o `delivery_unknown` ante incertidumbre; [el repositorio](../packages/db/src/repositories/messaging.ts) verifica el token de propiedad al cerrar el envío.
+
+**Persistido no significa enviado ni leído.** No hay transacción distribuida con WhatsApp ni promesa de entrega exactamente una vez. El fallo del último envío no revierte un turno ya confirmado.
 
 ## Aislamiento y seguridad
 
-- Toda tabla de negocio lleva `business_id`; las relaciones usan claves foráneas compuestas `(business_id, id)` para que un cruce entre negocios sea imposible a nivel SQL.
-- 26 tablas tienen `ENABLE` + `FORCE ROW LEVEL SECURITY`. Las globales incluyen `businesses`, `auth_identities`, `web_sessions`, `operational_controls`, los throttles de login y las tablas de registro.
-- Hay cuatro roles de capacidad: `agendia_runtime`, `agendia_admin_runtime`, `agendia_whatsapp_runtime` y `agendia_worker_runtime`. El login de conexión solo tiene membresía; cada transacción activa el rol y los settings `app.tenant_id`, `app.actor_role`, `app.actor_id` y `app.request_id`.
-- Las credenciales de WhatsApp se cifran con AES-256-GCM. `BAILEYS_KMS_KEY` y `WHATSAPP_LINK_CODE_KEY` deben ser base64 de exactamente 32 bytes y se validan al arrancar.
-- La sesión es un token opaco de 32 bytes; se guarda su SHA-256. Sin «Mantener sesión iniciada», el negocio dura hasta 7 días (2 días de inactividad) y administración 8 h (30 min de inactividad); la cookie termina con el navegador. Con la casilla, el negocio dura hasta 6 meses calendario (30 días de inactividad) y administración 7 días (1 día de inactividad); la cookie persistente nunca supera el límite absoluto. Solo la interacción humana en el panel renueva la inactividad mediante `POST /auth/activity`, protegido por origen y CSRF; consultas, sondeos y bootstrap de CSRF no la renuevan. El login tiene throttle global y por cuenta.
-- El bootstrap permite un único `platform_admin` a través de la aplicación; la tabla no impone esa unicidad.
+El negocio es el límite de datos, no el proceso que atendió la petición.
+
+- **Aplicación:** sesión y rol autorizan la ruta; en WhatsApp, el remitente verificado limita los turnos que puede operar. Un teléfono escrito en el chat o un ID no prueban titularidad.
+- **Transacción:** [`RolePool`](../packages/db/src/runtime-pools.ts) usa `SET LOCAL ROLE` y settings `app.tenant_id`, `app.actor_role`, `app.actor_id`, `app.request_id`. El contexto no queda como estado global reutilizable del pool.
+- **PostgreSQL:** RLS forzada, ACL y claves compuestas protegen las tablas de negocio; las tablas globales usan permisos y funciones específicos. No todas las relaciones son compuestas: hay [excepciones explícitas](DATABASE.md#relaciones).
+- **Secretos:** Argon2id para contraseñas, SHA-256 para sesión/CSRF y AES-256-GCM para credenciales de WhatsApp. Mensajes, resúmenes y auditoría no están cifrados por la aplicación. RLS no protege frente a superusuarios.
+
+Los cuatro roles runtime tienen capacidades distintas; administración no recibe acceso general a conversaciones o credenciales. El bootstrap limita a un `platform_admin` mediante lock y comprobación de aplicación, no por unicidad SQL. Los detalles y excepciones están en [Base de datos](DATABASE.md#aislamiento-y-roles).
 
 ## Decisiones y por qué
 
-- **Cuatro procesos, no un monolito.** Los sockets de WhatsApp son stateful y fallan distinto que la API; separarlos aísla fallas y permite escalar la API sin duplicar sesiones.
-- **Migraciones SQL como autoridad.** El modelo incluye RLS, funciones `SECURITY DEFINER`, triggers y exclusiones GiST que Drizzle no expresa. `packages/db/src/schema.ts` declara solo 3 tablas y no es el modelo.
-- **Outbox transaccional.** La mutación, la auditoría y el trabajo pendiente se confirman juntos; publicar la cola es un paso reintentable, no una pérdida posible.
-- **pg-boss sobre PostgreSQL.** Evita un servicio extra de colas y reutiliza la misma base con el esquema `pgboss`.
-- **Idempotencia explícita.** Las operaciones de turno aceptan `x-appointment-operation-key` y se registran en `appointment_operation_receipts` para que un reintento no duplique.
-- **Adaptadores aislados.** DeepSeek y Baileys viven en paquetes propios; el dominio depende de interfaces, no de proveedores.
+**Separar fallas sin añadir otra base.** API, sockets y generación fallan distinto. PostgreSQL reúne datos y pg-boss, pero el esquema de colas es administrado por la biblioteca. Los procesos no comparten memoria como autoridad.
+
+**Reglas en más de una frontera.** El dominio expresa políticas; repositorios validan estado actual y serializan agenda; SQL impone relaciones y capacidad. Una exclusión evita superposición, no demuestra consentimiento. Un prompt orienta al agente, no concede permisos.
+
+**Intención durable antes de efectos externos.** Outbox, comprobantes y tokens de propiedad permiten reintentar o descartar trabajo obsoleto sin tratar la red como parte del commit. La idempotencia es específica de cada protocolo, no una garantía universal de «exactamente una vez».
 
 ## Baja de negocios
 
-La API administrativa ejecuta la purga, auditoría y marca irreversible en una sola transacción. Los disparadores de escritura bloquean la fila del negocio hasta terminar cada transacción y rechazan nuevas escrituras tras la baja. Los trabajos de IA ya publicados encuentran ausentes sus mensajes de origen; no se purgan los jobs de `pgboss`.
+**Suspender no es eliminar.** La [baja administrativa](../apps/api/src/routes/administration.ts) llama a `delete_business`, definida en [0007](../packages/db/migrations/0007_private_business_purge.sql), con sesión vigente de administración. En una transacción bloquea el negocio, purga datos activos, conserva auditoría y agrega el evento de baja. Retiene `businesses` suspendido con `deleted_at` irreversible y lo oculta de la lista administrativa; el correo vuelve a estar disponible.
 
-El manager actual vuelve a admitir cada envío bajo el lock del negocio antes de invocar el gateway; no espera la entrega bajo ese lock. El gateway de producción puede recorrer varios adaptadores de forma asíncrona, por lo que la admisión aún no demuestra que la llamada al proveedor ya haya comenzado. Un manager antiguo tampoco tiene la segunda comprobación. No se cierran ni drenan todos los sockets antiguos. La auditoría histórica y las copias anteriores pueden conservar datos.
+Los triggers serializan inserciones y actualizaciones contra ese bloqueo y rechazan escrituras posteriores, incluso de procesos viejos. Una identidad referenciada por un comprobante de otro negocio puede quedar inactiva y anonimizada, sin sesiones ni contraseña utilizable. La primitiva privada de purga no es una interfaz operativa.
+
+**Límite externo:** los jobs publicados en `pgboss` no se purgan; sus procesadores encuentran el origen ausente. El manager actual vuelve a admitir un envío bajo el lock del negocio antes de invocar el gateway, pero el [gateway compuesto](../apps/whatsapp-manager/src/index.ts#L140-L148) puede esperar entre adaptadores: eso no prueba que toda llamada al proveedor empezó antes de la baja. Un manager antiguo puede carecer de esa segunda admisión. No se cierran ni drenan todos los sockets antiguos; auditoría, copias previas y mensajes entregados pueden conservar datos.
+
+La [prueba de baja](../tests/integration/business-deletion-purge.integration.test.ts) cubre purga, aislamiento, rollback y escritores/envíos concurrentes; no demuestra el drenaje de todo proveedor externo.
 
 ## Límites conocidos
 
-- No hay automatización de backup/restore en el repositorio.
-- El negocio se registra sin verificación de correo y queda pendiente sin poder iniciar sesión hasta que administración apruebe. Rechazar libera el correo; administración no crea negocios manualmente ni cambia su nombre o contraseña, pero conserva la suspensión y reactivación. La baja elimina los datos activos y conserva el historial de auditoría.
-- La vinculación y revinculación de WhatsApp se hacen desde el panel; el manager reconecta solo cuando la sesión sigue siendo válida.
-- No hay API pública para terceros; los contratos son internos entre API y web.
+- El consentimiento natural y el cumplimiento de instrucciones dependen de interpretación del modelo; las referencias validan procedencia y contexto, no significado.
+- Vincular o revincular WhatsApp requiere el panel; una reconexión automática depende de una sesión todavía válida.
+- No hay API pública de terceros ni automatización de backup/restore en este árbol. Las copias y el despliegue son responsabilidades operativas separadas.
 
 ## Para profundizar
 
-- Modelo de datos y roles: [DATABASE.md](DATABASE.md).
-- Setup y pruebas: [DEVELOPMENT.md](DEVELOPMENT.md).
-- Despliegue y runbook: [OPERATIONS.md](OPERATIONS.md).
+**Continuá → [Base de datos](DATABASE.md)** para relaciones y garantías de almacenamiento. Para cambiar comportamiento, empezá por el [recorrido y sus pruebas](booking-journey.md#para-seguirlo-en-el-código); para ejecutar el proyecto, [Desarrollo](DEVELOPMENT.md) y [Operaciones](OPERATIONS.md). [Volver al mapa](README.md).

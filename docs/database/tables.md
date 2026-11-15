@@ -1,125 +1,185 @@
+[agendIA](../../README.md) / [Documentación](../README.md) / [Base de datos](../DATABASE.md) / Diccionario
+
 # Diccionario de tablas
 
-Referencia de las tablas de `0000_base.sql` y de registro en `0004_registration.sql`, agrupadas por área. El detalle de columnas, `CHECK`, índices y políticas vive en las migraciones; acá está el propósito de cada tabla y cómo se conecta.
+**Buscá por responsabilidad, no por orden de creación.** Esta referencia cubre las tablas de producto e infraestructura declaradas en todas las [migraciones SQL](../../packages/db/migrations), incluidas registro y categorías. Explica propósito, relaciones y límites; el DDL conserva el detalle exacto de columnas, índices, permisos y restricciones.
 
-Convenciones: las PK `id` son `uuid`; los `created_at`/`updated_at`/`occurred_at` son `timestamptz`. Salvo que se indique lo contrario, las columnas son obligatorias.
+[Acceso](#identidad-y-acceso) · [Configuración](#configuración) · [Eventos](#eventos-y-control) · [WhatsApp](#whatsapp) · [Catálogo](#catálogo) · [Agenda](#agenda)
+
+**Convenciones:** `business_id` delimita el negocio donde corresponde; no implica que toda tabla tenga la misma política RLS. Los identificadores de entidades son UUID, pero hay PK compuestas y filas singleton. Las fechas de eventos usan `timestamptz`; la agenda también conserva entrada textual y milisegundos exactos. Ver [relaciones y excepciones](../DATABASE.md#relaciones).
 
 ## Identidad y acceso
 
+DDL: [0000 · Identidad](../../packages/db/migrations/0000_base.sql#L22-L57), [0003 · Inactividad](../../packages/db/migrations/0003_session_idle_ttl.sql), [0004 · Registro](../../packages/db/migrations/0004_registration.sql) y [0007 · Baja](../../packages/db/migrations/0007_private_business_purge.sql).
+
 ### `businesses`
-Raíz del tenant. `status` es `active` o `suspended`; suspender no borra datos. `last_technical_activity_at` lo actualiza un disparador al insertar `technical_events`. La baja conserva esta fila suspendida, con `deleted_at` irreversible, para identificar la auditoría y rechazar escrituras posteriores.
+
+Raíz del negocio. `status` distingue `active` y `suspended`; suspender no borra datos. `deleted_at` marca una baja irreversible: se conserva la fila suspendida como identidad para auditoría y barrera contra nuevas escrituras, no como negocio operable. Los eventos técnicos proyectan `last_technical_activity_at`.
 
 ### `tenant_records`
-Tabla mínima para demostrar el aislamiento por RLS. No es una tabla de agenda ni de negocio real.
+
+Tabla mínima para comprobar aislamiento RLS. No representa servicios, clientes ni turnos del producto.
 
 ### `pending_registrations`
-Solicitudes aún no decididas, con nombre, correo normalizado y hash Argon2id. Aprobar crea el negocio y su identidad; rechazar elimina la solicitud y libera el correo. El administrador no puede leer el hash.
+
+Solicitud de acceso con nombre, correo normalizado y hash Argon2id. Aprobar crea negocio e identidad; aprobar o rechazar elimina la solicitud. Administración puede consultar sus datos no sensibles, no el hash. No es un historial de decisiones: estas quedan en auditoría.
 
 ### `auth_identities`
-Usuarios web. `role` es `platform_admin` (sin negocio) o `business_user` (con `business_id` obligatorio). Un índice parcial permite un solo `business_user` por negocio. `password_phc` es Argon2id, salvo una identidad inactiva anonimizada que la purga privada conserva si otro negocio la referencia en un comprobante; esa identidad no tiene contraseña utilizable ni correo personal.
+
+Acceso web: `business_user` exige negocio; `platform_admin` no lo tiene. Un índice parcial permite un usuario de negocio por tenant. La baja normalmente elimina su identidad; si un comprobante ajeno la referencia, queda inactiva, con correo anonimizado y sin contraseña utilizable.
 
 ### `web_sessions`
-Sesiones web. Guarda `token_sha256` y `csrf_sha256`, nunca el token original. `absolute_expires_at` e `idle_expires_at` se evalúan en la aplicación; `revoked_at` permite revocar.
+
+Referencia a identidad y hashes de sesión/CSRF. Vencimiento absoluto, inactividad y revocación se comprueban en la aplicación. `idle_ttl_ms` conserva la política elegida al emitir la sesión; NULL permite compatibilidad con sesiones anteriores a 0003. No guarda la credencial original.
 
 ## Configuración
 
+DDL: [0000 · Perfil y agente](../../packages/db/migrations/0000_base.sql#L58-L73).
+
 ### `business_profiles`
-Uno por negocio. `display_name`, `description` y `address`. Es la información pública que usa el agente.
+
+Un perfil por negocio: nombre visible, descripción y dirección. Es información que el agente puede consultar; no contiene la oferta ni el calendario.
 
 ### `agent_configs`
-Uno por negocio. `active`, `style`, `business_instructions` y `revision`. La revisión permite invalidar contexto cuando cambia la configuración.
+
+Una configuración por negocio: activación, estilo, instrucciones y revisión. Nace inactiva. `revision` versiona cambios; las instrucciones no reemplazan las restricciones del dominio o de SQL.
 
 ## Eventos y control
 
+DDL: [0000 · Eventos](../../packages/db/migrations/0000_base.sql#L74-L143), [admisión de login](../../packages/db/migrations/0000_base.sql#L462-L474), [0001](../../packages/db/migrations/0001_remove_admin_ai_guidance.sql) y [0004](../../packages/db/migrations/0004_registration.sql).
+
 ### `audit_events`
-Auditoría append-only con cadena de hashes (`stream_sequence`, `previous_hash`, `event_hash`). `business_id` puede ser NULL para eventos de plataforma. Un disparador rechaza `UPDATE` y `DELETE`; `append_runtime_audit` valida evento, origen y contexto.
+
+Historial append-only por negocio o plataforma (`business_id` NULL), con secuencia y referencias de hash. Un trigger rechaza actualizaciones y borrados. Se conserva tras la baja; su metadata puede contener datos personales. `append_runtime_audit` ofrece un conjunto acotado de eventos para roles runtime, no escritura arbitraria de auditoría global.
 
 ### `technical_events`
-Diagnóstico por negocio (`component`, `code`, `severity`, `safe_details`). Cada inserción proyecta la fecha en `businesses.last_technical_activity_at`.
+
+Diagnóstico por negocio con componente, código, severidad y `safe_details`. Insertar actualiza la última actividad técnica de la raíz. El JSON no filtra secretos automáticamente; no debe recibir cuerpos de cliente o errores crudos.
 
 ### `outbox_events`
-Outbox transaccional. `(business_id, stable_key)` es único. Los tópicos incluyen `ai.generate` y `whatsapp.link_requested`. Las columnas `claim_token`, `claimed_at`, `publish_attempts` y `next_attempt_at` sostienen el reclamo y el reintento.
+
+Intención de trabajo guardada transaccionalmente: tópico, payload y clave estable única por negocio. Reclamo, intentos y próxima ejecución permiten publicar después del commit. `published_at` indica cierre de publicación; también se usa para descartar generación superada, no acredita entrega a WhatsApp.
 
 ### `inbox_events`
-Deduplicación de entradas por `(business_id, source, stable_key)`. No guarda el cuerpo del mensaje.
+
+Deduplicación por negocio, origen y clave estable de entrada. No es el cuerpo del mensaje: ese historial vive en `messages`.
 
 ### `operational_controls`
-Fila única (`singleton`). `automation_disabled` es el interruptor global; `incident_reference` documenta la interrupción; los tres delays regulan el ritmo de respuesta. `additional_instructions` fue eliminado por `0001`.
+
+Fila singleton: interruptor global de automatización, referencia de incidente y tiempos de respuesta inicial, activa y reinicio por inactividad. La columna `additional_instructions` ya no existe desde 0001; las instrucciones del negocio están en `agent_configs`.
 
 ### `login_throttle_global`
-Fila única. Presupuesto global de 120 intentos por minuto. `admit_login` lo actualiza de forma atómica.
+
+Presupuesto global compartido de 120 intentos por minuto, admitidos atómicamente antes del hash de contraseña. No es una tabla tenant ni una lista de sesiones.
 
 ### `login_throttle_accounts`
-Presupuesto por cuenta (hash del correo normalizado): 20 intentos cada 15 minutos. Se limpia por vencimiento.
+
+Presupuesto por hash del correo normalizado: 20 intentos cada 15 minutos. La admisión limpia entradas vencidas en lotes; no almacena el correo original ni garantiza limpieza inmediata al vencer.
 
 ### `registration_throttle`
-Fila única con presupuesto de 30 solicitudes de registro por minuto, independiente de los límites de login.
+
+Presupuesto singleton de 30 solicitudes por minuto, independiente de login. Limita admisión pública antes de crear solicitudes pendientes.
 
 ## WhatsApp
 
+DDL: [0000 · Canal e historial](../../packages/db/migrations/0000_base.sql#L144-L260), [remitentes y agenda conversacional](../../packages/db/migrations/0000_base.sql#L419-L460) y [0002 · Silencio](../../packages/db/migrations/0002_agent_silent_completion.sql).
+
 ### `whatsapp_connections`
-Una por negocio. `state` es `LINK_REQUIRED`, `LINKING`, `CONNECTED`, `RECONNECTING`, `DISCONNECTED` o `ERROR`. Guarda la DEK envuelta, `owner_id`, `heartbeat_at`, `ownership_token` y el estado de vinculación.
+
+Una conexión por negocio. Estados: `LINK_REQUIRED`, `LINKING`, `CONNECTED`, `RECONNECTING`, `DISCONNECTED`, `ERROR`. Identifica la sesión pública, la clave de datos envuelta y su propietario mediante heartbeat y token de ownership. Estar conectado no significa que el agente esté activo.
 
 ### `whatsapp_auth_records`
-Credenciales de Baileys cifradas por registro. PK `(business_id, connection_id, record_name)`; solo el rol del manager tiene acceso.
+
+Material Baileys cifrado y versionado por negocio, conexión y nombre de registro (PK compuesta). El rol manager accede al material; el worker no necesita las credenciales para conversar.
 
 ### `whatsapp_link_codes`
-Código temporario de vinculación, uno por conexión. `token` es único; `ciphertext`, `nonce` y `auth_tag` son el secreto sellado; `expires_at` define la vigencia.
+
+Secreto temporal cifrado, uno por conexión, con token único y vencimiento. La FK a conexión tiene `ON DELETE CASCADE`; no generalices esa cascada al resto del esquema.
 
 ### `conversations`
-Una por `(business_id, connection_id, remote_jid)`. `next_sequence` ordena los mensajes; `reply_due_at`, `latest_inbound_id`, `last_exchange_at` y `last_reply_at` gobiernan el ritmo y la supersesión de respuestas.
+
+Una conversación por negocio, conexión y `remote_jid`. Ordena mensajes con `next_sequence`; `latest_inbound_id`, `reply_due_at` y fechas de intercambio coordinan ritmo y vigencia de respuestas. No es el registro de un cliente.
 
 ### `messages`
-Historial de entrada y salida. `direction` es `inbound` u `outbound`; `sequence` ordena por conversación; `provider_message_id` deduplica contra WhatsApp. `processing_state` registra el avance del agente (incluye `silent_completed`). Tiene índice de búsqueda de texto.
+
+Historial de entradas y salidas, ordenado por secuencia en la conversación y deduplicado por identificador del proveedor en la conexión. `processing_state` sigue el procesamiento; incluye `superseded`, `ai_failed` y `silent_completed`. `raw_text` es legible en la base y tiene índice de búsqueda.
 
 ### `conversation_summaries`
-Versiones del contexto resumido por conversación. `covered_through` indica hasta qué secuencia cubre; `structured_summary` es JSON. No reemplaza el historial.
+
+Versiones de contexto resumido, con `covered_through` y JSON estructurado. Ayudan al agente a acotar contexto; no sustituyen el historial ni son evidencia nueva de aceptación o titularidad.
 
 ### `outbound_commands`
-Órdenes de envío. `state` es `pending`, `processing`, `generated`, `sending`, `sent`, `failed` o `delivery_unknown`. `source_message_id` vincula la respuesta con el mensaje que la originó; `claimed_by`, `ownership_token` y `provider_message_id` sostienen el envío y su confirmación. `delivery_unknown` no autoriza reenviar por sí solo.
+
+Órdenes de envío con texto y estados `pending`, `processing`, `generated`, `sending`, `sent`, `failed`, `delivery_unknown`. El flujo nativo guarda `generated`, reclama a `sending` y cierra según el resultado. Ownership y provider ID vinculan reclamo y cierre; `source_message_id` tiene unicidad pero no FK. `sent` refleja ACK del gateway, no lectura; `delivery_unknown` no autoriza reenviar.
 
 ### `whatsapp_sender_bindings`
-Relaciona un teléfono con sus JID (`pn_jid`, `lid_jid`) dentro de una conexión. Es la identidad estable del interlocutor.
+
+Identidad estable por teléfono dentro del negocio y conexión, vinculada a JID de número (`pn_jid`) y opcionalmente LID (`lid_jid`). Proviene de evidencia validada del canal, no de texto libre ni de un teléfono elegido por la IA.
 
 ### `whatsapp_received_senders`
-Une cada mensaje recibido con el teléfono vinculado que lo envió. PK `message_id`.
+
+Une un mensaje entrante con el teléfono vinculado y su conexión. PK `message_id`; permite volver a verificar al remitente real al operar la agenda.
 
 ### `whatsapp_agenda_dialogues`
-Estado conversacional del agente por `(business_id, connection_id, phone)` en JSON. Permite continuar un flujo de turno entre mensajes.
+
+Estado JSON por negocio, conexión y teléfono: propuesta, datos pendientes y, cuando corresponde, aceptación retenida. Persiste entre mensajes; no bloquea un horario ni equivale a `appointments`.
 
 ### `whatsapp_agenda_receipts`
-Comprobante de una operación de agenda disparada desde WhatsApp. `outbound_id` puede ser NULL solo cuando `operation = 'silent'` (migración `0002`).
+
+Comprobante por mensaje procesado para la agenda. Relaciona operación y orden de salida; desde 0002, `outbound_id` es NULL **solo** para `silent`. Una respuesta de información también puede dejar comprobante: su presencia no demuestra que se creó un turno.
 
 ## Catálogo
 
+DDL: [0000 · Catálogo y calendario](../../packages/db/migrations/0000_base.sql#L262-L367), [0005 · Duración](../../packages/db/migrations/0005_service_duration_five_minutes.sql) y [0006 · Categorías](../../packages/db/migrations/0006_service_categories.sql).
+
 ### `services`
-Servicio ofrecido. `duration_minutes` debe ser un múltiplo positivo de 5; `price_ars` no puede ser negativo. `deleted_at` es borrado lógico; el nombre normalizado es único por negocio entre los no borrados.
+
+Oferta con descripción, duración positiva múltiplo de 5 y precio ARS no negativo y finito. Nombre normalizado único por negocio entre filas sin borrado lógico. Puede estar suspendido, tener `deleted_at` y pertenecer a una categoría opcional. No contiene las condiciones históricas de turnos ya acordados.
+
+### `service_categories`
+
+Agrupación de servicios del mismo negocio, añadida en 0006 y protegida por RLS forzada. La FK compuesta de `services` impide categorías ajenas. El [repositorio](../../packages/db/src/repositories/catalog.ts#L123-L129) desvincula servicios antes de borrar una categoría; no borra los servicios.
 
 ### `clients`
-Cliente del negocio. `phone` en formato E.164 (`+` y hasta 15 dígitos); único por negocio. El agente puede crear clientes.
+
+Nombre, apellido y teléfono E.164, único por negocio. El worker puede crear un cliente al reservar. No es una identidad de login; al leer turnos se usa su teléfono actual para verificar titularidad del remitente.
 
 ### `resources`
-Profesional, sala o equipo. Tiene `weekly_schedule` en JSON validado, `status`, borrado lógico y nombre normalizado único por negocio.
+
+Capacidad asignable: persona, sala o equipo, con horario semanal JSON validado, estado y borrado lógico. Nombre normalizado único entre no borrados del negocio. La [baja lógica de catálogo](../../packages/db/src/repositories/catalog.ts#L162-L180) comprueba turnos con inicio futuro, en cualquier estado, antes de retirar servicios o recursos; no es la purga administrativa del negocio.
 
 ### `resource_services`
-Relación muchos-a-muchos entre recursos y servicios. PK `(business_id, resource_id, service_id)`.
+
+Habilitación muchos-a-muchos; PK `(business_id, resource_id, service_id)` y FK compuestas a recurso y servicio. La asociación no concede disponibilidad fuera de horarios ni sobre turnos ocupados.
 
 ## Agenda
 
+DDL: [0000 · Calendario](../../packages/db/migrations/0000_base.sql#L318-L342), [turnos y comprobantes](../../packages/db/migrations/0000_base.sql#L368-L418) y [0005 · Duración](../../packages/db/migrations/0005_service_duration_five_minutes.sql).
+
 ### `business_calendars`
-Horario semanal del negocio en `weekly_schedule` (JSON validado por `valid_business_weekly_schedule`). Uno por negocio.
+
+Horario semanal JSON, uno por negocio, validado estructuralmente por `valid_business_weekly_schedule`. La zona del motor es fija (`America/Argentina/Buenos_Aires`); no es una columna seleccionable por el agente.
 
 ### `business_calendar_closures`
-Cierres por fecha (`kind = 'date'`) o por intervalo (`kind = 'interval'`). Los intervalos guardan `start_raw`/`end_raw` y milisegundos para evitar ambigüedad de zona horaria.
+
+Cierres de fecha completa (`date`) o intervalo (`interval`). Los intervalos conservan entrada textual y milisegundos de inicio y fin; la fecha completa usa `closed_date`. No representan ocupación por reservas.
 
 ### `appointments`
-Turno. Congela `service_label`, `resource_label`, `price_ars` y `duration_minutes` (múltiplo positivo de 5) para que un cambio de catálogo no altere el historial. Los inicios de turnos siguen una grilla de 15 minutos. `state` es `confirmed`, `done`, `cancelled` o `no_show`; `origin` es `manual` o `ai`. Una exclusión GiST impide dos turnos `confirmed` superpuestos para el mismo recurso. `customer_resource_preference_id` registra una preferencia opcional.
+
+Turno con cliente, servicio, recurso asignado y preferencia opcional separada. Conserva etiquetas, precio y duración acordados. `start_raw`, `start_ms` y `end_ms` representan el intervalo; un `CHECK` exige coherencia entre duración y final numérico. La grilla de inicios de 15 minutos se valida fuera del DDL.
+
+Estados: `confirmed`, `done`, `cancelled`, `no_show`; origen: `manual` o `ai`. GiST excluye superposición de confirmados por recurso e intervalo semiabierto. Las [reglas del dominio](../../packages/domain/src/appointments) gobiernan cambios y transiciones; no hay trigger que complete automáticamente un turno al pasar la hora.
 
 ### `appointment_operation_receipts`
-Idempotencia de operaciones de turno. PK `(business_id, actor_id, operation_key)`; `kind` es `create`, `change`, `notes` o `state`; `state` es `completed`, `failed` o `cancelled`. El resultado se guarda en `result`.
+
+Resultado idempotente del protocolo de operaciones del panel; PK `(business_id, actor_id, operation_key)`. Distingue `create`, `change`, `notes`, `state` y resultados `completed`, `failed`, `cancelled`. Fingerprint y resultado permiten recuperar la respuesta de una operación sin repetir sus efectos. `cancelled` cancela la solicitud, no el turno. La FK de actor es global, excepción relevante para la baja de identidades.
 
 ## Fuera del diccionario
 
-- `admin_business_status` es una vista, no una tabla.
-- `agendia_production_migrations` es el registro del migrador.
-- Las tablas del esquema `pgboss` las crea la biblioteca de colas.
+- **`admin_business_status`:** vista administrativa, no tabla. Desde 0007 oculta negocios con baja.
+- **`agendia_production_migrations`:** registro del migrador (archivo, checksum, fecha), creado por el [runner](../../scripts/db/db-migrate.ts), no una entidad del producto.
+- **Esquema `pgboss`:** almacenamiento interno de colas mantenido por la biblioteca, no inventariado acá.
+
+---
+
+**Volvé → [Garantías de datos](../DATABASE.md#garantías-al-guardar)** o seguí [una reserva](../booking-journey.md) para ver cómo se usan estas tablas. [Volver al mapa](../README.md).

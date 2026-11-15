@@ -25,6 +25,8 @@ Coordinar turnos por chat exige responder consultas, cruzar horarios y registrar
 
 **¿Qué representa cada cosa?** Leé [el modelo del producto](docs/understanding.md): negocio, servicio, recurso, cliente y turno, con un ejemplo y los límites del agente.
 
+**¿Cómo llega el chat a una reserva?** Seguí [el recorrido de una reserva](docs/booking-journey.md): propuesta, entrega, aceptación, guardado y confirmación.
+
 **¿Cómo está construido?** Seguí [Arquitectura](docs/ARCHITECTURE.md) y [Base de datos](docs/DATABASE.md). El sistema separa panel, API, procesamiento de IA y conexión con WhatsApp; los datos de cada negocio se aíslan con `business_id` y RLS en PostgreSQL.
 
 **¿Cómo contribuyo?** Prepará el entorno con [Desarrollo](docs/DEVELOPMENT.md), usando Bun 1.4.0 y Docker. Ahí están el arranque del panel y los workers, las variables y [las suites de pruebas](docs/DEVELOPMENT.md#tests). Para desplegar, consultá [Operaciones](docs/OPERATIONS.md).

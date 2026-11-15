@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="878" viewBox="0 0 680 878" role="img" aria-labelledby="title desc">
+  <title id="title">Reservar y comunicar son dos resultados distintos</title>
+  <desc id="desc">Seis pasos ordenados: preparar propuesta sin reservar, enviarla y registrar sent, recibir aceptación posterior, revalidar condiciones y capacidad, confirmar la transacción con turno y salida pendiente, y enviar la confirmación por WhatsApp. Desde el quinto paso existe un turno, aunque falle el sexto.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path d="M1 1 8 5 1 9" fill="none" stroke="#46544A" stroke-width="1.5"/>
+    </marker>
+  </defs>
+  <rect width="680" height="878" rx="20" fill="#F5F2EB"/>
+  <g font-family="Arial, Helvetica, sans-serif" fill="#1C2620">
+    <text x="32" y="43" font-size="16" font-weight="700" letter-spacing="2">RECORRIDO DE UNA RESERVA</text>
+    <text x="32" y="87" font-size="30" font-weight="700">Guardar no es enviar</text>
+    <g fill="#FFFFFF" stroke="#CAD1C7">
+      <rect x="32" y="118" width="616" height="92" rx="12"/>
+      <rect x="32" y="232" width="616" height="92" rx="12"/>
+      <rect x="32" y="346" width="616" height="92" rx="12"/>
+      <rect x="32" y="460" width="616" height="92" rx="12"/>
+      <rect x="32" y="710" width="616" height="92" rx="12"/>
+    </g>
+    <g fill="none" stroke="#46544A" stroke-width="2" marker-end="url(#arrow)">
+      <path d="M340 210V226"/>
+      <path d="M340 324V340"/>
+      <path d="M340 438V454"/>
+      <path d="M340 552V568"/>
+      <path d="M340 688V704"/>
+    </g>
+    <g fill="#E7EDE6">
+      <rect x="48" y="140" width="44" height="44" rx="10"/>
+      <rect x="48" y="254" width="44" height="44" rx="10"/>
+      <rect x="48" y="368" width="44" height="44" rx="10"/>
+      <rect x="48" y="482" width="44" height="44" rx="10"/>
+      <rect x="48" y="732" width="44" height="44" rx="10"/>
+    </g>
+    <g text-anchor="middle" font-size="19" font-weight="700">
+      <text x="70" y="169">01</text>
+      <text x="70" y="283">02</text>
+      <text x="70" y="397">03</text>
+      <text x="70" y="511">04</text>
+      <text x="70" y="761">06</text>
+    </g>
+    <g font-size="26" font-weight="700">
+      <text x="112" y="155">Preparar propuesta</text>
+      <text x="112" y="269">Entregar propuesta</text>
+      <text x="112" y="383">Recibir aceptación</text>
+      <text x="112" y="497">Revalidar</text>
+      <text x="112" y="747">Enviar confirmación</text>
+    </g>
+    <g font-size="20" fill="#46544A">
+      <text x="112" y="188">Condiciones reales; sin bloquear horario.</text>
+      <text x="112" y="302">Referencia exacta + salida en sent.</text>
+      <text x="112" y="416">Mensaje posterior, del mismo remitente.</text>
+      <text x="112" y="530">Condiciones, datos y capacidad actual.</text>
+      <text x="112" y="780">El fallo de envío no deshace el turno.</text>
+    </g>
+    <rect x="32" y="574" width="616" height="114" rx="12" fill="#1C2620"/>
+    <rect x="48" y="600" width="44" height="44" rx="10" fill="#FF6B49"/>
+    <text x="70" y="629" text-anchor="middle" font-size="19" font-weight="700">05</text>
+    <g fill="#F5F2EB">
+      <text x="112" y="613" font-size="26" font-weight="700">Confirmar transacción</text>
+      <text x="112" y="645" font-size="20">Turno guardado + respuesta pendiente.</text>
+      <text x="112" y="672" font-size="18">Solo aquí la acción pasa a ser durable.</text>
+    </g>
+    <circle cx="38" cy="840" r="4" fill="#FF6B49"/>
+    <text x="52" y="846" font-size="19">El commit acredita la reserva, no su entrega.</text>
+  </g>
+</svg>
