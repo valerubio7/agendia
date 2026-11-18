@@ -88,7 +88,7 @@ Las escrituras de negocio que pasan por la unidad de trabajo confirman juntas **
 
 El trabajo pendiente y la cola de pg-boss conectan recepción y procesamiento **sin una llamada HTTP directa entre manager y worker**. Si un mensaje nuevo vuelve obsoleto el trabajo anterior, no es obligatorio responder a ambos.
 
-**Guardar no es entregar:** un turno permanece aunque falle el envío de su confirmación. La entrega puede quedar incierta, y los reintentos no garantizan «exactamente una vez»; para propuesta y aceptación, seguí el [recorrido de una reserva](booking-journey.md).
+**Guardar no es entregar:** un turno permanece aunque falle el envío de su confirmación. La entrega puede quedar incierta, y los reintentos no garantizan «exactamente una vez».
 
 ## Dentro del agente
 

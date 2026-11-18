@@ -18,7 +18,7 @@ La disponibilidad combina esa configuración con los turnos ya ocupados. Que el 
 
 **Ejemplo ficticio:** un negocio abre de 09:00 a 18:00. Un recurso atiende de 10:00 a 16:00 y presta un servicio de 40 minutos. Tiene un turno confirmado de 11:00 a 11:40. No hay lugar a las 09:30 (el recurso todavía no atiende), a las 11:30 (ya tiene un turno) ni a las 15:30 (el servicio terminaría fuera de su horario). Las 12:00 son una opción, no una promesa: también importan los cierres, la vigencia del servicio y la asociación con el recurso, y que falte al menos una hora para un inicio nuevo.
 
-El calendario usa `America/Argentina/Buenos_Aires`. Los inicios siguen una grilla de 15 minutos, pero la duración del servicio es positiva y múltiplo de 5 minutos. El [recorrido de una reserva](booking-journey.md#01--elegir-una-opción) sigue este ejemplo.
+El calendario usa `America/Argentina/Buenos_Aires`. Los inicios siguen una grilla de 15 minutos, pero la duración del servicio es positiva y múltiplo de 5 minutos.
 
 ## Qué hace el agente por WhatsApp
 
@@ -38,4 +38,4 @@ Ahí configurás su estilo de atención y las indicaciones del negocio, y podés
 
 ---
 
-[Volver al índice](README.md) · [Recorrido de una reserva](booking-journey.md)
+[Volver al índice](README.md) · [Cómo se procesa un mensaje de WhatsApp](architecture.md#el-camino-de-un-mensaje)

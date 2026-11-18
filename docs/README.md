@@ -14,10 +14,6 @@ Qué configura el negocio, cómo atiende el agente de WhatsApp y qué permite ha
 
 ## 02 · Seguir el sistema
 
-### [Recorrido de una reserva](booking-journey.md)
-
-Un ejemplo concreto desde la propuesta hasta el turno guardado y su confirmación por WhatsApp. Distingue entrega, aceptación, revalidación y commit, con enlaces al código y sus pruebas.
-
 ### [Arquitectura](architecture.md)
 
 Los cuatro procesos y sus límites. Seguí una petición del panel o un mensaje de WhatsApp y ubicá dónde viven la autorización, las herramientas del agente y la persistencia.
