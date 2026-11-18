@@ -13,7 +13,7 @@
 
 <p align="center">
   <a href="#qué-podés-hacer">Qué podés hacer</a> ·
-  <a href="#para-profundizar">Documentación</a>
+  <a href="#para-profundizar">Por dónde empezar</a>
 </p>
 
 agendIA es un agente de inteligencia artificial que atiende a tus clientes por WhatsApp: consulta disponibilidad, agenda, reprograma y cancela turnos. Se complementa con un panel web donde podés visualizar la agenda y administrar los servicios, horarios y clientes del negocio.
@@ -26,14 +26,8 @@ agendIA es un agente de inteligencia artificial que atiende a tus clientes por W
 
 ## Para profundizar
 
-- [Cómo funciona](docs/overview.md) — empezá por la agenda del negocio, el panel y el agente de WhatsApp.
-- [Mapa de documentación](docs/README.md) — qué cubre cada guía.
-- [Recorrido de una reserva](docs/booking-journey.md) — de la propuesta al turno guardado y su confirmación por WhatsApp.
-- [Arquitectura](docs/architecture.md) — cómo se conectan el panel, la IA y WhatsApp.
-- [Base de datos](docs/database.md) — relaciones, aislamiento y garantías al guardar.
-- [Diccionario de tablas](docs/database/tables.md) — referencia de las tablas del sistema.
-- [Desarrollo local](docs/development.md) — cómo poner el proyecto en marcha.
-- [Operaciones](docs/operations.md) — despliegue, diagnóstico y recuperación en Dokploy.
+- **Primera guía:** [Cómo funciona agendIA](docs/overview.md) — entendé la agenda del negocio, el panel y el agente de WhatsApp.
+- [Índice de documentación](docs/README.md) — encontrá todas las guías, tareas y referencias.
 
 ---
 

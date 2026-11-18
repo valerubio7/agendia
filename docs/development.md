@@ -1,4 +1,4 @@
-[agendIA](../README.md) / [Cómo funciona](overview.md) / Desarrollo
+[Portada](../README.md) / [Índice de documentación](README.md) / Desarrollo local
 
 # Desarrollar agendIA en local
 
@@ -126,3 +126,7 @@ Agregá el siguiente archivo numerado en [`packages/db/migrations`](../packages/
 ## CI
 
 [El workflow](../.github/workflows/ci.yml) corre en PR a `main`: primero typecheck, unitarios y contratos. Después, integración y tres shards de Playwright corren en paralelo; el job final de Playwright exige el éxito de todos los shards. CI no despliega; la [publicación por tag](operations.md#release) es otro workflow.
+
+---
+
+[Volver al índice](README.md) · [Despliegue en Dokploy](operations.md#despliegue)

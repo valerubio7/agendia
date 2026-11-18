@@ -1,4 +1,4 @@
-[agendIA](../README.md) / Base de datos
+[Portada](../README.md) / [Índice de documentación](README.md) / Base de datos
 
 # Base de datos
 
@@ -74,4 +74,4 @@ No copies textos reales, tokens, códigos ni credenciales a ejemplos, logs o cap
 
 ---
 
-Para consultar una tabla puntual, mirá el [diccionario de tablas](database/tables.md). Para ver cómo se conectan estos datos en un caso realista, seguí el [recorrido de una reserva](booking-journey.md).
+[Volver al índice](README.md) · [Diccionario de tablas](database/tables.md)

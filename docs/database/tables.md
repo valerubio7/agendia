@@ -1,4 +1,4 @@
-[agendIA](../../README.md) / [Documentación](../README.md) / [Base de datos](../database.md) / Diccionario
+[Portada](../../README.md) / [Índice de documentación](../README.md) / [Base de datos](../database.md) / Diccionario de tablas
 
 # Diccionario de tablas
 
@@ -182,4 +182,4 @@ Resultado idempotente del protocolo de operaciones del panel; PK `(business_id, 
 
 ---
 
-**Volvé → [Garantías de datos](../database.md#garantías-al-guardar)** o seguí [una reserva](../booking-journey.md) para ver cómo se usan estas tablas. [Volver al mapa](../README.md).
+[Volver al índice](../README.md) · [Garantías al guardar](../database.md#garantías-al-guardar)

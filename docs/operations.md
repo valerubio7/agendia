@@ -1,4 +1,4 @@
-[agendIA](../README.md) / Operaciones
+[Portada](../README.md) / [Índice de documentación](README.md) / Operaciones
 
 # Desplegar y operar agendIA en Dokploy
 
@@ -126,3 +126,7 @@ No otorgues el rol privado `agendia_business_purge` a logins runtime, no invoque
 ## Release
 
 [`.github/workflows/publish.yml`](../.github/workflows/publish.yml) se activa al publicar un tag `v*`, exige que su versión coincida con [`package.json`](../package.json) y crea un GitHub Release con notas generadas. **No corre las suites, no publica imágenes y no despliega.** La [CI de PR a `main`](development.md#ci) es independiente; el operador debe comprobar sus resultados para la revisión elegida.
+
+---
+
+[Volver al índice](README.md) · [Desarrollo local](development.md)

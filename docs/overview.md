@@ -1,4 +1,4 @@
-[agendIA](../README.md) / Cómo funciona
+[Portada](../README.md) / [Índice de documentación](README.md) / Cómo funciona
 
 # Cómo funciona agendIA
 
@@ -38,4 +38,4 @@ Ahí configurás su estilo de atención y las indicaciones del negocio, y podés
 
 ---
 
-[Recorrido de una reserva](booking-journey.md) · [Arquitectura](architecture.md) · [Mapa de documentación](README.md) · [Volver a la portada](../README.md)
+[Volver al índice](README.md) · [Recorrido de una reserva](booking-journey.md)

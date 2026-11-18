@@ -1,4 +1,4 @@
-[agendIA](../README.md) / [Cómo funciona](overview.md) / Arquitectura
+[Portada](../README.md) / [Índice de documentación](README.md) / Arquitectura
 
 # Una agenda, dos formas de usarla
 
@@ -184,4 +184,4 @@ Los puntos de entrada siguen el mapa: [web](../apps/web), [API](../apps/api/src/
 
 ---
 
-[Cómo funciona](overview.md) · [Garantías al guardar](database.md#garantías-al-guardar) · [Desarrollo local](development.md) · [Mapa de documentación](README.md)
+[Volver al índice](README.md)

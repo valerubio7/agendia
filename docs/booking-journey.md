@@ -1,4 +1,4 @@
-[agendIA](../README.md) / [Documentación](README.md) / Recorrido de una reserva
+[Portada](../README.md) / [Índice de documentación](README.md) / Recorrido de una reserva
 
 # De una propuesta a un turno guardado
 
@@ -85,4 +85,4 @@ Leé en este orden; las pruebas son referencias de comportamiento, no una afirma
 
 ---
 
-**Continuá → [Arquitectura](architecture.md)** para ubicar las responsabilidades, o [Base de datos](database.md) para entender qué conserva cada paso. [Volver al mapa](README.md).
+[Volver al índice](README.md) · Para ubicar las responsabilidades: [Arquitectura](architecture.md)

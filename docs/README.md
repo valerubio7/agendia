@@ -1,10 +1,8 @@
-[agendIA](../README.md) / Documentación
+[Portada](../README.md) / Índice de documentación
 
 # Entender primero. Construir después.
 
-Documentación para **desarrolladores y colaboradores**. Elegí un recorrido según lo que necesitás resolver: conocer el producto, seguir el código o trabajar con el sistema.
-
-**Primera visita:** [Cómo funciona](overview.md) → [Recorrido de una reserva](booking-journey.md) → [Arquitectura](architecture.md) → [Desarrollo local](development.md).
+Documentación para **desarrolladores y colaboradores**. Si es tu primera visita, empezá por «Cómo funciona agendIA». Si ya conocés el producto, andá directo a la guía o referencia que necesitás.
 
 ## 01 · Comprender el producto
 
@@ -24,10 +22,6 @@ Un ejemplo concreto desde la propuesta hasta el turno guardado y su confirmació
 
 Los cuatro procesos y sus límites. Seguí una petición del panel o un mensaje de WhatsApp y ubicá dónde viven la autorización, las herramientas del agente y la persistencia.
 
-### [Base de datos](database.md)
-
-Relaciones, garantías al guardar y aislamiento por negocio. Para consultar una entidad concreta, abrí el [diccionario de tablas](database/tables.md).
-
 **Al terminar:** sabés qué componente cambiar y qué frontera de seguridad no podés saltarte.
 
 ## 03 · Trabajar con el proyecto
@@ -41,6 +35,16 @@ Requisitos, primera puesta en marcha, servicios, pruebas y depuración local. Em
 Despliegue y comprobaciones en Dokploy, diagnóstico por proceso y [recuperación de PostgreSQL](operations.md#recuperación-de-postgresql). Leé las advertencias antes de ejecutar comandos que afecten datos; desarrollo local no equivale a producción.
 
 **Al terminar:** tenés una ruta para preparar el entorno, comprobar un cambio y entender su despliegue.
+
+## Referencias de datos
+
+### [Base de datos](database.md)
+
+Relaciones, garantías al guardar y aislamiento por negocio.
+
+### [Diccionario de tablas](database/tables.md)
+
+Propósito, relaciones y límites de cada tabla.
 
 ## Buscá por el cambio que vas a hacer
 
@@ -65,4 +69,4 @@ En el mismo cambio que modifica el comportamiento, revisá la explicación y sus
 
 ---
 
-**Siguiente paso → [Cómo funciona agendIA](overview.md)** · [Volver a la portada](../README.md)
+[Volver a la portada](../README.md)
