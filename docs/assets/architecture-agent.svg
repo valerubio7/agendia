@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="1280" viewBox="0 0 1100 1280" role="img" aria-labelledby="title desc">
+  <title id="title">El agente: contexto, herramientas y autoridad limitada</title>
+  <desc id="desc">El worker prepara contexto con información del negocio, historial, resumen y diálogo pendiente. DeepSeek intercambia texto y pedidos de herramientas con la sesión del backend. Las herramientas comprueban permisos, datos y reglas de agenda; dominio y repositorios aplican esas reglas. PostgreSQL guarda los cambios y la respuesta pendiente, o una finalización sin respuesta y sin cambios de agenda. El manager entrega después de guardar. DeepSeek no escribe directamente en la base y guardar no garantiza la entrega por WhatsApp.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1 1 8 5 1 9" fill="none" stroke="#355B49" stroke-width="1.7"/>
+    </marker>
+    <marker id="external-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1 1 8 5 1 9" fill="none" stroke="#AD402A" stroke-width="1.7"/>
+    </marker>
+    <style>
+      text { font-family: Arial, Helvetica, sans-serif; fill: #1C2620; }
+      .name { font-size: 30px; font-weight: 700; }
+      .detail { font-size: 25px; fill: #3D5346; }
+      .label { font-size: 24px; fill: #355B49; paint-order: stroke; stroke: #F5F2EB; stroke-width: 7px; stroke-linejoin: round; }
+      .stored { fill: #F5F2EB; }
+    </style>
+  </defs>
+  <rect width="1100" height="1280" rx="24" fill="#F5F2EB"/>
+  <text x="40" y="54" font-size="38" font-weight="700">El agente por dentro</text>
+  <text x="40" y="96" class="detail">Contexto acotado. Autoridad local, no acceso del modelo a la base.</text>
+
+  <rect x="30" y="130" width="720" height="965" rx="20" fill="none" stroke="#889D8C" stroke-width="2" stroke-dasharray="9 7"/>
+  <text x="55" y="171" font-size="26" font-weight="700">Sesión del worker · una transacción</text>
+  <text x="810" y="418" font-size="23">Proveedor externo</text>
+
+  <g fill="none" stroke="#355B49" stroke-width="3" marker-end="url(#arrow)">
+    <path d="M390 372V453"/>
+    <path d="M390 592V693" marker-start="url(#arrow)"/>
+    <path d="M390 837V923"/>
+    <path d="M717 995H818"/>
+  </g>
+  <path d="M717 510H818" fill="none" stroke="#AD402A" stroke-width="3" marker-start="url(#external-arrow)" marker-end="url(#external-arrow)"/>
+  <g class="label">
+    <text x="416" y="418">Contexto acotado</text>
+    <text x="416" y="651">Pedidos ↕ resultados</text>
+    <text x="416" y="889">Salida final validada</text>
+    <text x="768" y="978" text-anchor="middle">Lee</text>
+  </g>
+  <text x="768" y="491" text-anchor="middle" font-size="23" style="fill:#943823;paint-order:stroke;stroke:#F5F2EB;stroke-width:7px;stroke-linejoin:round">HTTPS</text>
+
+  <rect x="65" y="200" width="650" height="170" rx="16" fill="#FFFFFF" stroke="#8A958B" stroke-width="2"/>
+  <text x="90" y="242" class="name">01 · Construir contexto</text>
+  <text x="90" y="281" class="detail">Perfil + indicaciones + estilo del negocio</text>
+  <text x="90" y="317" class="detail">Resumen + historial reciente + grupo actual</text>
+  <text x="90" y="352" class="detail">Diálogo pendiente + hora + referencias verificables</text>
+
+  <g fill="#E4EDE4" stroke="#355B49" stroke-width="2">
+    <rect x="65" y="455" width="650" height="135" rx="16"/>
+    <rect x="65" y="695" width="650" height="140" rx="16"/>
+    <rect x="820" y="925" width="240" height="140" rx="16"/>
+  </g>
+  <text x="90" y="497" class="name">02 · Conversar con el modelo</text>
+  <text x="90" y="537" class="detail">Intercambia pedidos y resultados.</text>
+  <text x="90" y="573" font-size="24">Acota la conversación y cierra la sesión.</text>
+  <text x="90" y="738" class="name">03 · Herramientas validadas</text>
+  <text x="90" y="778" class="detail">Permisos + datos + reglas de agenda</text>
+  <text x="90" y="814" font-size="24">Dominio y repositorios aplican las reglas actuales.</text>
+
+  <rect x="820" y="455" width="240" height="135" rx="16" fill="#FFF0E9" stroke="#AD402A" stroke-width="2"/>
+  <g text-anchor="middle">
+    <text x="940" y="498" font-size="32" font-weight="700">DeepSeek</text>
+    <text x="940" y="538" font-size="24">Texto y pedidos</text>
+    <text x="940" y="573" font-size="24">Sin acceso directo</text>
+    <text x="940" y="969" font-size="32" font-weight="700">Manager</text>
+    <text x="940" y="1008" class="detail">Envía después</text>
+    <text x="940" y="1043" class="detail">de guardar</text>
+  </g>
+
+  <rect x="65" y="925" width="650" height="140" rx="16" fill="#1C2620"/>
+  <rect x="65" y="945" width="6" height="100" rx="3" fill="#FF6B49"/>
+  <text x="90" y="969" class="name stored">04 · Guardar en PostgreSQL</text>
+  <text x="90" y="1008" font-size="26" class="stored">Cambios + respuesta pendiente</text>
+  <text x="90" y="1043" font-size="24" class="stored">O silencio válido, sin cambios de agenda.</text>
+
+  <text x="40" y="1149" font-size="25" font-weight="700">Guardar datos no garantiza la entrega por WhatsApp.</text>
+  <g font-size="23">
+    <rect x="40" y="1192" width="20" height="20" rx="4" fill="#E4EDE4" stroke="#355B49"/>
+    <text x="70" y="1210">Backend</text>
+    <rect x="260" y="1192" width="20" height="20" rx="4" fill="#1C2620"/>
+    <text x="290" y="1210">Estado durable</text>
+    <rect x="525" y="1192" width="20" height="20" rx="4" fill="#FFF0E9" stroke="#AD402A"/>
+    <text x="555" y="1210">Proveedor externo</text>
+  </g>
+  <text x="40" y="1255" font-size="23">El modelo propone; el backend valida y guarda.</text>
+</svg>

@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1180" viewBox="0 0 960 1180" role="img" aria-labelledby="title desc">
+  <title id="title">WhatsApp: vincular, conectar y recuperar la sesión</title>
+  <desc id="desc">El panel solicita la vinculación y el manager prepara un QR. Cuando WhatsApp confirma la apertura, la conexión queda disponible. Ante un corte temporal, el manager intenta recuperar la sesión; al lograrlo vuelve a estar conectada. Un cierre de sesión exige volver a vincular y un fallo puede requerir diagnóstico o revinculación. El estado del canal es distinto del estado del negocio y de la activación del agente. El manager coordina quién puede usar la conexión y enviar.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M1 1 8 5 1 9" fill="none" stroke="#355B49" stroke-width="1.7"/>
+    </marker>
+    <style>
+      text { font-family: Arial, Helvetica, sans-serif; fill: #1C2620; }
+      .state { font-size: 32px; font-weight: 700; }
+      .detail { font-size: 25px; fill: #3D5346; }
+      .event { font-size: 24px; fill: #355B49; }
+    </style>
+  </defs>
+  <rect width="960" height="1180" rx="24" fill="#F5F2EB"/>
+  <text x="40" y="54" font-size="36" font-weight="700">La conexión tiene su propio ciclo</text>
+  <text x="40" y="96" class="detail">No es el estado del negocio ni el interruptor del agente.</text>
+
+  <g fill="none" stroke="#355B49" stroke-width="3" marker-end="url(#arrow)">
+    <path d="M140 272V348"/>
+    <path d="M140 462V538"/>
+    <path d="M140 652V748"/>
+    <path d="M882 805H920V595H882"/>
+  </g>
+  <g class="event">
+    <text x="175" y="317">El panel solicita la vinculación</text>
+    <text x="175" y="508">WhatsApp confirma la conexión</text>
+    <text x="175" y="699">El canal sufre un corte temporal</text>
+  </g>
+
+  <g fill="#E4EDE4" stroke="#355B49" stroke-width="2">
+    <rect x="80" y="160" width="800" height="110" rx="16"/>
+    <rect x="80" y="350" width="800" height="110" rx="16"/>
+    <rect x="80" y="540" width="800" height="110" rx="16"/>
+    <rect x="80" y="750" width="800" height="110" rx="16"/>
+  </g>
+  <text x="110" y="203" class="state">Requiere vinculación</text>
+  <text x="110" y="242" class="detail">Hace falta vincular desde el panel.</text>
+  <text x="110" y="393" class="state">Vinculando</text>
+  <text x="110" y="432" class="detail">Puede haber QR; todavía no acredita conexión.</text>
+  <text x="110" y="583" class="state">Conectada</text>
+  <text x="110" y="622" class="detail">El canal abrió la sesión del negocio.</text>
+  <text x="110" y="793" class="state">Reconectando</text>
+  <text x="110" y="832" class="detail">El manager intenta recuperar la sesión. ↗</text>
+
+  <text x="80" y="922" font-size="27" font-weight="700">Cuando no alcanza con reconectar</text>
+  <g fill="#FFF0E9" stroke="#AD402A" stroke-width="2">
+    <rect x="80" y="950" width="360" height="130" rx="16"/>
+    <rect x="520" y="950" width="360" height="130" rx="16"/>
+  </g>
+  <text x="105" y="990" font-size="28" font-weight="700">Cierre de sesión</text>
+  <text x="105" y="1032" font-size="27">Volver a vincular</text>
+  <text x="105" y="1063" font-size="23">Desde el panel del negocio.</text>
+  <text x="545" y="990" font-size="26" font-weight="700">Fallo de conexión</text>
+  <text x="545" y="1032" font-size="27">Revisar el acceso</text>
+  <text x="545" y="1063" font-size="23">Puede requerir revinculación.</text>
+
+  <path d="M40 1115H920" stroke="#CAD1C7" stroke-width="2"/>
+  <text x="40" y="1150" font-size="23">El manager coordina quién puede usar la conexión y enviar.</text>
+</svg>

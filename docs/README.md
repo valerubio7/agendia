@@ -1,27 +1,68 @@
-# Documentación de agendIA
+[Portada](../README.md) / Índice de documentación
 
-Este directorio es el mapa de la documentación. Cada documento responde una pregunta concreta y enlaza a la fuente de verdad; no la copia.
+# Entender primero. Construir después.
 
-## Mapa
+Documentación para **desarrolladores y colaboradores**. Si es tu primera visita, empezá por «Cómo funciona agendIA». Si ya conocés el producto, andá directo a la guía o referencia que necesitás.
 
-| Documento | Pregunta que responde | Fuente de verdad | Actualizar cuando |
-| --- | --- | --- | --- |
-| [`../README.md`](../README.md) | Qué es agendIA y cómo arrancarlo. | `package.json`, `docker-compose.yml` | Cambia el arranque o el mapa del repositorio. |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Cómo se mueve el sistema y por qué está partido así. | `apps/`, `packages/` | Cambia un límite entre componentes o un flujo. |
-| [`DATABASE.md`](DATABASE.md) | Qué datos existen, cómo se relacionan y cómo se aíslan. | `packages/db/migrations/` | Nueva migración o cambio de roles/RLS. |
-| [`database/tables.md`](database/tables.md) | Qué hace cada tabla y cómo se conecta. | `0000_base.sql` | Nueva tabla o cambio de relaciones. |
-| [`DEVELOPMENT.md`](DEVELOPMENT.md) | Cómo trabajar, probar y depurar localmente. | `package.json`, `.env.example` | Cambia el setup, un runner o CI. |
-| [`OPERATIONS.md`](OPERATIONS.md) | Cómo se despliega, se configura y se recupera. | `Dockerfile*`, `compose.production.yml`, `.github/workflows/` | Cambia infraestructura, secretos o release. |
+## 01 · Comprender el producto
 
-## Reglas
+### [Cómo funciona agendIA](overview.md)
 
-1. **Un hecho vive en un solo lugar.** El hub enlaza, no repite. Si un dato aparece dos veces, una de las copias va a quedar vieja.
-2. **La referencia no se escribe a mano.** Variables en `.env.example`, comandos en `package.json`, esquema en las migraciones. Los documentos explican el porqué y el flujo.
-3. **Cada documento declara su fuente de verdad y su trigger** en la tabla de arriba. El PR que cambia el comportamiento actualiza el documento en el mismo commit.
-4. **Se divide por pregunta, no por tamaño.** Un documento se parte cuando supera las ~200 líneas o cuando aparece un segundo lector con otro trigger. El diccionario de tablas es referencia y nace separado.
-5. **Enlaces relativos al archivo, nunca a la línea.** Las líneas se mueven; el archivo queda.
-6. **Un solo nivel de profundidad.** `docs/README.md` enlaza a los hubs; cada hub enlaza a sus hojas. Nunca hub → hub → hoja.
+Qué configura el negocio, cómo atiende el agente de WhatsApp y qué permite hacer el panel sobre la misma agenda.
 
-## Alcance
+**Al terminar:** podés explicar qué decide el negocio, qué interpreta el agente y qué valida el backend.
 
-Esta base cubre el proyecto: arquitectura, datos, desarrollo y operaciones. La guía para el dueño del negocio y un documento de producto se agregan cuando exista ese lector; hoy no forman parte.
+## 02 · Seguir el sistema
+
+### [Arquitectura](architecture.md)
+
+Los cuatro procesos y sus límites. Seguí una petición del panel o un mensaje de WhatsApp y ubicá dónde viven la autorización, las herramientas del agente y la persistencia.
+
+**Al terminar:** sabés qué componente cambiar y qué frontera de seguridad no podés saltarte.
+
+## 03 · Trabajar con el proyecto
+
+### [Desarrollo](development.md)
+
+Requisitos, primera puesta en marcha, servicios, pruebas y depuración local. Empezá por acá si ya conocés el producto y querés levantarlo.
+
+### [Operaciones](operations.md)
+
+Despliegue y comprobaciones en Dokploy, diagnóstico por proceso y [recuperación de PostgreSQL](operations.md#recuperación-de-postgresql). Leé las advertencias antes de ejecutar comandos que afecten datos; desarrollo local no equivale a producción.
+
+**Al terminar:** tenés una ruta para preparar el entorno, comprobar un cambio y entender su despliegue.
+
+## Referencias de datos
+
+### [Base de datos](database.md)
+
+Relaciones, garantías al guardar y aislamiento por negocio.
+
+### [Diccionario de tablas](database/tables.md)
+
+Propósito, relaciones y límites de cada tabla.
+
+## Buscá por el cambio que vas a hacer
+
+- **Interfaz o contratos HTTP:** [El camino del panel](architecture.md#el-camino-del-panel) → [`apps/web`](../apps/web), [`apps/api`](../apps/api) y [`packages/contracts`](../packages/contracts).
+- **Reglas de agenda:** [Disponibilidad](overview.md#abierto-no-significa-disponible) → [`packages/domain`](../packages/domain) y [`repositorios de turnos`](../packages/db/src/repositories/appointments.ts).
+- **Comportamiento del agente:** [Dentro del agente](architecture.md#dentro-del-agente) → [`message-worker`](../apps/message-worker/src/agent) y [`prompt del sistema`](../packages/domain/src/agent/system-prompt.ts).
+- **Datos o aislamiento:** [Base de datos](database.md#aislamiento-y-roles) → [diccionario](database/tables.md) y [`migraciones SQL`](../packages/db/migrations).
+- **Recepción o entrega de mensajes:** [El camino de un mensaje](architecture.md#el-camino-de-un-mensaje) → [`whatsapp-manager`](../apps/whatsapp-manager).
+
+## Mantener este mapa útil
+
+**Una pregunta, una página.** La portada presenta; este índice orienta; las guías explican. Evitá copiar listas de comandos o reglas de negocio en varios lugares.
+
+La fuente de verdad depende de la pregunta:
+
+- **Producto y políticas:** [`packages/domain/src`](../packages/domain/src), las [rutas HTTP](../apps/api/src/routes) y las [herramientas del agente](../apps/message-worker/src/agent/tools.ts). Actualizá el modelo cuando cambie el significado de una entidad o una regla visible.
+- **Arquitectura:** [`apps`](../apps) y [`packages`](../packages). Actualizá la guía al mover responsabilidades o cambiar un flujo.
+- **Datos:** el historial de [`migraciones`](../packages/db/migrations), no solo la migración inicial ni el esquema parcial de Drizzle. Actualizá la visión de datos y el diccionario al cambiar tablas, relaciones o roles.
+- **Desarrollo y despliegue:** [`package.json`](../package.json), [`scripts`](../scripts), [`docker-compose.yml`](../docker-compose.yml), [`compose.production.yml`](../compose.production.yml) y [workflows](../.github/workflows). Actualizá la guía correspondiente al cambiar un comando o el entorno.
+
+En el mismo cambio que modifica el comportamiento, revisá la explicación y sus enlaces. Usá rutas relativas al documento, texto alternativo en imágenes y ejemplos ficticios; nunca datos de clientes ni credenciales.
+
+---
+
+[Volver a la portada](../README.md)

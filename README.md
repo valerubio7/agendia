@@ -1,73 +1,38 @@
-# agendIA
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="apps/web/public/brand/logo-inverse-outlined.svg">
+    <img src="apps/web/public/brand/logo-primary-outlined.svg" alt="agendIA — logo oficial" width="320">
+  </picture>
+</p>
 
-Panel web para administrar un agente de IA que atiende y agenda turnos por WhatsApp. Cada negocio configura su perfil, servicios, recursos, calendario, clientes y el comportamiento de su agente; el agente conversa con los clientes, consulta disponibilidad y crea o modifica turnos.
+<h1 align="center">De la conversación al turno</h1>
 
-## Qué incluye
+<p align="center">
+  <strong>Atención por WhatsApp. Tu agenda en un panel web.</strong>
+</p>
 
-- **Panel del negocio**: perfil, servicios, recursos, calendario y cierres, clientes, turnos y configuración del agente.
-- **Panel de administración**: solicitudes, estado de negocios, tiempos de respuesta y estado de WhatsApp.
-- **Agente de WhatsApp**: recibe mensajes, consulta la agenda y opera turnos con confirmaciones idempotentes.
-- **Multi-tenant**: aislamiento por `business_id` con Row-Level Security en PostgreSQL.
+<p align="center">
+  <a href="#qué-podés-hacer">Qué podés hacer</a> ·
+  <a href="#para-profundizar">Por dónde empezar</a>
+</p>
 
-## Stack
+agendIA es un agente de inteligencia artificial que atiende a tus clientes por WhatsApp: consulta disponibilidad, agenda, reprograma y cancela turnos. Se complementa con un panel web donde podés visualizar la agenda y administrar los servicios, horarios y clientes del negocio.
 
-Bun 1.4 · TypeScript · Fastify · Next.js 16 · PostgreSQL 16 · Drizzle + SQL · pg-boss · Baileys · DeepSeek
+## Qué podés hacer
 
-## Mapa del repositorio
+- **Organizar la atención.** Configurar servicios, precios, duración, personas o puestos que atienden, horarios y cierres.
+- **Gestionar la agenda.** Mantener clientes y turnos desde el panel, crear reservas manuales y reprogramar o cancelar cuando corresponda.
+- **Atender por WhatsApp.** Responder consultas sobre el negocio, consultar disponibilidad y ayudar a cada cliente a reservar, cambiar o cancelar sus propios turnos.
 
-| Ruta | Qué es |
-| --- | --- |
-| `apps/api` | API HTTP (Fastify), autenticación y unit of work por negocio. |
-| `apps/web` | Panel Next.js: negocio, administración y login. |
-| `apps/message-worker` | Consumidor de la cola de IA: turnos de conversación y resúmenes. |
-| `apps/whatsapp-manager` | Sesiones Baileys, ingesta de mensajes y envío de respuestas. |
-| `packages/db` | Migraciones SQL, roles, unit of work y repositorios. |
-| `packages/domain` | Reglas puras: agenda, disponibilidad, catálogo y agente. |
-| `packages/contracts` | Esquemas Zod compartidos entre API y web. |
-| `packages/auth` | Hash de contraseñas, sesiones y CSRF. |
-| `packages/ai-deepseek` | Adaptador de DeepSeek. |
-| `packages/whatsapp-baileys` | Gateway de Baileys y almacenamiento cifrado de credenciales. |
+## Para profundizar
 
-## Arranque local
+- **Primera guía:** [Cómo funciona agendIA](docs/overview.md) — entendé la agenda del negocio, el panel y el agente de WhatsApp.
+- [Índice de documentación](docs/README.md) — encontrá todas las guías, tareas y referencias.
 
-Requisitos: Bun 1.4.0, Docker y Docker Compose.
+---
 
-```bash
-bun install
-docker compose up -d postgres
-cp .env.example .env
-bun run db:migrate:dev
-bun scripts/db/bootstrap-admin.ts
-```
+<a href="https://github.com/Gentleman-Programming/gentle-ai">
+  <img src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/built-with-gentle-ai.png" alt="Built with Gentle-AI" width="220">
+</a>
 
-En dos terminales:
-
-```bash
-# API en http://127.0.0.1:3001
-bun apps/api/src/index.ts
-
-# Web en http://127.0.0.1:3000
-AGENDIA_API_ORIGIN=http://127.0.0.1:3001 bun run --cwd apps/web dev
-```
-
-El panel queda en `http://127.0.0.1:3000` y el acceso de administración en `/admin/login`. Un negocio solicita acceso en `/register` y espera la aprobación antes de iniciar sesión; no se verifica el correo. Administración puede aprobar o rechazar solicitudes y suspender negocios, pero ya no crearlos manualmente. Rechazar libera el correo para otra solicitud; la eliminación completa queda postergada. Los workers de WhatsApp y de IA se levantan aparte; el detalle de variables y comandos está en [Desarrollo](docs/DEVELOPMENT.md).
-
-## Tests
-
-```bash
-bun run typecheck
-bun run test:unit
-bun run test:integration
-bun run test:contracts
-bun run test:e2e
-```
-
-Cada suite cubre una capa distinta y se explica en [Desarrollo](docs/DEVELOPMENT.md).
-
-## Documentación
-
-- [Mapa y reglas de la documentación](docs/README.md)
-- [Arquitectura](docs/ARCHITECTURE.md)
-- [Base de datos](docs/DATABASE.md)
-- [Desarrollo](docs/DEVELOPMENT.md)
-- [Operaciones](docs/OPERATIONS.md)
+[Desarrollado con Gentle Shell](https://github.com/Gentleman-Programming/gentle-shell)
