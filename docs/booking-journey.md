@@ -4,7 +4,7 @@
 
 **La reserva y su confirmación por WhatsApp son dos resultados distintos.** Primero se entrega una propuesta, el cliente la acepta y el backend vuelve a validarla. Después se guarda el turno junto con la respuesta pendiente; otro proceso intenta enviar esa respuesta.
 
-Esta guía sigue una reserva nueva por el agente. Si necesitás el vocabulario, empezá por [el modelo del producto](understanding.md); para ubicar procesos, seguí con [Arquitectura](ARCHITECTURE.md).
+Esta guía sigue una reserva nueva por el agente. Si necesitás el vocabulario, empezá por [Cómo funciona](overview.md); para ubicar procesos, seguí con [Arquitectura](architecture.md).
 
 [Ejemplo](#01--elegir-una-opción) · [Entrega](#02--entregar-la-propuesta) · [Aceptación](#03--aceptar-lo-que-se-entregó) · [Guardado](#05--confirmar-la-transacción) · [Código y pruebas](#para-seguirlo-en-el-código)
 
@@ -65,7 +65,7 @@ En el ejemplo exitoso, el turno conserva los nombres del servicio y recurso, ARS
 
 El manager procesa esa orden por separado. El envío exitoso se registra como `sent`; un rechazo inequívoco, como `failed`; una excepción ambigua, como `delivery_unknown`.
 
-**Si falla este envío, el turno ya guardado no se deshace.** Tampoco hay que reservar de nuevo para «reintentar la confirmación». `delivery_unknown` puede significar que el proveedor recibió el mensaje: no autoriza un reenvío ciego. Ver [Operaciones](OPERATIONS.md#runbook).
+**Si falla este envío, el turno ya guardado no se deshace.** Tampoco hay que reservar de nuevo para «reintentar la confirmación». `delivery_unknown` puede significar que el proveedor recibió el mensaje: no autoriza un reenvío ciego. Ver [Diagnóstico de envíos](operations.md#diagnóstico).
 
 El contexto vigente importa: una entrada más nueva o una respuesta manual del negocio puede dejar obsoleta una respuesta generada antes de su reclamo. Los locks y comprobantes evitan efectos duplicados en los reintentos cubiertos, no prometen entrega externa exactamente una vez.
 
@@ -85,4 +85,4 @@ Leé en este orden; las pruebas son referencias de comportamiento, no una afirma
 
 ---
 
-**Continuá → [Arquitectura](ARCHITECTURE.md)** para ubicar las responsabilidades, o [Base de datos](DATABASE.md) para entender qué conserva cada paso. [Volver al mapa](README.md).
+**Continuá → [Arquitectura](architecture.md)** para ubicar las responsabilidades, o [Base de datos](database.md) para entender qué conserva cada paso. [Volver al mapa](README.md).

@@ -4,13 +4,13 @@
 
 Documentación para **desarrolladores y colaboradores**. Elegí un recorrido según lo que necesitás resolver: conocer el producto, seguir el código o trabajar con el sistema.
 
-**Primera visita:** [Modelo del producto](understanding.md) → [Recorrido de una reserva](booking-journey.md) → [Arquitectura](ARCHITECTURE.md) → [Desarrollo local](DEVELOPMENT.md).
+**Primera visita:** [Cómo funciona](overview.md) → [Recorrido de una reserva](booking-journey.md) → [Arquitectura](architecture.md) → [Desarrollo local](development.md).
 
 ## 01 · Comprender el producto
 
-### [Qué agenda agendIA](understanding.md)
+### [Cómo funciona agendIA](overview.md)
 
-El vocabulario compartido: negocio, servicios, recursos, calendario, clientes y turnos. Incluye un ejemplo de disponibilidad y explica por qué conversar, proponer y guardar son cosas distintas.
+Qué configura el negocio, cómo atiende el agente de WhatsApp y qué permite hacer el panel sobre la misma agenda.
 
 **Al terminar:** podés explicar qué decide el negocio, qué interpreta el agente y qué valida el backend.
 
@@ -20,35 +20,35 @@ El vocabulario compartido: negocio, servicios, recursos, calendario, clientes y 
 
 Un ejemplo concreto desde la propuesta hasta el turno guardado y su confirmación por WhatsApp. Distingue entrega, aceptación, revalidación y commit, con enlaces al código y sus pruebas.
 
-### [Arquitectura](ARCHITECTURE.md)
+### [Arquitectura](architecture.md)
 
 Los cuatro procesos y sus límites. Seguí una petición del panel o un mensaje de WhatsApp y ubicá dónde viven la autorización, las herramientas del agente y la persistencia.
 
-### [Base de datos](DATABASE.md)
+### [Base de datos](database.md)
 
-Relaciones, aislamiento por negocio, roles y migraciones. Para consultar una entidad concreta, abrí el [diccionario de tablas](database/tables.md).
+Relaciones, garantías al guardar y aislamiento por negocio. Para consultar una entidad concreta, abrí el [diccionario de tablas](database/tables.md).
 
 **Al terminar:** sabés qué componente cambiar y qué frontera de seguridad no podés saltarte.
 
 ## 03 · Trabajar con el proyecto
 
-### [Desarrollo](DEVELOPMENT.md)
+### [Desarrollo](development.md)
 
 Requisitos, primera puesta en marcha, servicios, pruebas y depuración local. Empezá por acá si ya conocés el producto y querés levantarlo.
 
-### [Operaciones](OPERATIONS.md)
+### [Operaciones](operations.md)
 
-Topología de despliegue, configuración, release y runbook. Leé las advertencias antes de ejecutar comandos que afecten datos; desarrollo local no equivale a producción.
+Despliegue y comprobaciones en Dokploy, diagnóstico por proceso y [recuperación de PostgreSQL](operations.md#recuperación-de-postgresql). Leé las advertencias antes de ejecutar comandos que afecten datos; desarrollo local no equivale a producción.
 
 **Al terminar:** tenés una ruta para preparar el entorno, comprobar un cambio y entender su despliegue.
 
 ## Buscá por el cambio que vas a hacer
 
-- **Interfaz o contratos HTTP:** [Arquitectura](ARCHITECTURE.md) → [`apps/web`](../apps/web), [`apps/api`](../apps/api) y [`packages/contracts`](../packages/contracts).
-- **Reglas de agenda:** [Modelo del producto](understanding.md) → [`packages/domain`](../packages/domain) y [`repositorios de turnos`](../packages/db/src/repositories/appointments.ts).
-- **Comportamiento del agente:** [Sus límites](understanding.md#el-agente-conversa-el-backend-valida) → [`message-worker`](../apps/message-worker/src/agent) y [`prompt del sistema`](../packages/domain/src/agent/system-prompt.ts).
-- **Datos o aislamiento:** [Base de datos](DATABASE.md) → [diccionario](database/tables.md) y [`migraciones SQL`](../packages/db/migrations).
-- **Recepción o entrega de mensajes:** [Arquitectura](ARCHITECTURE.md#flujo-de-un-mensaje-de-whatsapp) → [`whatsapp-manager`](../apps/whatsapp-manager).
+- **Interfaz o contratos HTTP:** [El camino del panel](architecture.md#el-camino-del-panel) → [`apps/web`](../apps/web), [`apps/api`](../apps/api) y [`packages/contracts`](../packages/contracts).
+- **Reglas de agenda:** [Disponibilidad](overview.md#abierto-no-significa-disponible) → [`packages/domain`](../packages/domain) y [`repositorios de turnos`](../packages/db/src/repositories/appointments.ts).
+- **Comportamiento del agente:** [Dentro del agente](architecture.md#dentro-del-agente) → [`message-worker`](../apps/message-worker/src/agent) y [`prompt del sistema`](../packages/domain/src/agent/system-prompt.ts).
+- **Datos o aislamiento:** [Base de datos](database.md#aislamiento-y-roles) → [diccionario](database/tables.md) y [`migraciones SQL`](../packages/db/migrations).
+- **Recepción o entrega de mensajes:** [El camino de un mensaje](architecture.md#el-camino-de-un-mensaje) → [`whatsapp-manager`](../apps/whatsapp-manager).
 
 ## Mantener este mapa útil
 
@@ -65,4 +65,4 @@ En el mismo cambio que modifica el comportamiento, revisá la explicación y sus
 
 ---
 
-**Siguiente paso → [Entender el producto](understanding.md)** · [Volver a la portada](../README.md)
+**Siguiente paso → [Cómo funciona agendIA](overview.md)** · [Volver a la portada](../README.md)

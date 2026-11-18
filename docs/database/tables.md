@@ -1,4 +1,4 @@
-[agendIA](../../README.md) / [Documentación](../README.md) / [Base de datos](../DATABASE.md) / Diccionario
+[agendIA](../../README.md) / [Documentación](../README.md) / [Base de datos](../database.md) / Diccionario
 
 # Diccionario de tablas
 
@@ -6,7 +6,7 @@
 
 [Acceso](#identidad-y-acceso) · [Configuración](#configuración) · [Eventos](#eventos-y-control) · [WhatsApp](#whatsapp) · [Catálogo](#catálogo) · [Agenda](#agenda)
 
-**Convenciones:** `business_id` delimita el negocio donde corresponde; no implica que toda tabla tenga la misma política RLS. Los identificadores de entidades son UUID, pero hay PK compuestas y filas singleton. Las fechas de eventos usan `timestamptz`; la agenda también conserva entrada textual y milisegundos exactos. Ver [relaciones y excepciones](../DATABASE.md#relaciones).
+**Convenciones:** `business_id` delimita el negocio donde corresponde; no implica que toda tabla tenga la misma política RLS. Los identificadores de entidades son UUID, pero hay PK compuestas y filas singleton. Las fechas de eventos usan `timestamptz`; la agenda también conserva entrada textual y milisegundos exactos. Ver [relaciones y excepciones](../database.md#relaciones-y-excepciones).
 
 ## Identidad y acceso
 
@@ -182,4 +182,4 @@ Resultado idempotente del protocolo de operaciones del panel; PK `(business_id, 
 
 ---
 
-**Volvé → [Garantías de datos](../DATABASE.md#garantías-al-guardar)** o seguí [una reserva](../booking-journey.md) para ver cómo se usan estas tablas. [Volver al mapa](../README.md).
+**Volvé → [Garantías de datos](../database.md#garantías-al-guardar)** o seguí [una reserva](../booking-journey.md) para ver cómo se usan estas tablas. [Volver al mapa](../README.md).

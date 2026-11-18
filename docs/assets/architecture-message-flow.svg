@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1050" viewBox="0 0 960 1050" role="img" aria-labelledby="title desc">
+  <title id="title">Recibir, Procesar, Guardar y Enviar</title>
+  <desc id="desc">Cuatro fases para un texto aceptado con respuesta. Recibir: el manager registra la entrada y deja trabajo pendiente. La cola de pg-boss conecta esa entrada con el procesamiento. Procesar: el worker conversa con DeepSeek y ejecuta herramientas validadas por el backend. Guardar: PostgreSQL confirma los cambios de agenda que correspondan y la respuesta pendiente. Enviar: el manager intenta entregar la respuesta por WhatsApp. El modelo no escribe directamente en la base y no hay una llamada HTTP directa entre manager y worker. Guardar es distinto de entregar: un turno guardado permanece si falla el envío y reintentar no garantiza entrega exactamente una vez.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M1 1 8 5 1 9" fill="none" stroke="#355B49" stroke-width="1.7"/>
+    </marker>
+    <marker id="delivery-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M1 1 8 5 1 9" fill="none" stroke="#AD402A" stroke-width="1.7"/>
+    </marker>
+    <style>
+      text { font-family: Arial, Helvetica, sans-serif; fill: #1C2620; }
+      .phase { font-size: 32px; font-weight: 700; }
+      .detail { font-size: 25px; fill: #3D5346; }
+      .label { font-size: 24px; fill: #355B49; }
+      .stored { fill: #F5F2EB; }
+    </style>
+  </defs>
+  <rect width="960" height="1050" rx="24" fill="#F5F2EB"/>
+  <text x="40" y="54" font-size="36" font-weight="700">Del mensaje a la respuesta</text>
+  <text x="40" y="96" font-size="26">El backend guarda; el canal entrega.</text>
+
+  <g fill="none" stroke="#355B49" stroke-width="3" marker-end="url(#arrow)">
+    <path d="M170 262V338"/>
+    <path d="M170 472V548"/>
+  </g>
+  <path d="M170 682V808" fill="none" stroke="#AD402A" stroke-width="3" marker-end="url(#delivery-arrow)"/>
+  <text x="200" y="310" class="label">Trabajo pendiente · pg-boss</text>
+  <text x="200" y="520" class="label">Resultado validado</text>
+
+  <g fill="#E4EDE4" stroke="#355B49" stroke-width="2">
+    <rect x="130" y="140" width="780" height="120" rx="16"/>
+    <rect x="130" y="340" width="780" height="130" rx="16"/>
+  </g>
+  <rect x="130" y="550" width="780" height="130" rx="16" fill="#1C2620"/>
+  <rect x="130" y="570" width="6" height="90" rx="3" fill="#FF6B49"/>
+  <rect x="130" y="810" width="780" height="120" rx="16" fill="#FFF0E9" stroke="#AD402A" stroke-width="2"/>
+
+  <text x="160" y="185" class="phase">01 · Recibir</text>
+  <text x="160" y="226" class="detail">Manager · registra la entrada y deja trabajo pendiente.</text>
+  <text x="160" y="383" class="phase">02 · Procesar</text>
+  <text x="160" y="422" class="detail">Worker + DeepSeek · conversación y herramientas.</text>
+  <text x="160" y="454" font-size="24">El backend valida cada acción.</text>
+  <text x="160" y="593" class="phase stored">03 · Guardar</text>
+  <text x="160" y="632" font-size="25" class="stored">PostgreSQL · cambios y respuesta pendiente.</text>
+  <text x="160" y="664" font-size="24" class="stored">Se confirman antes de intentar el envío.</text>
+
+  <path d="M40 750H920" stroke="#AD402A" stroke-width="2" stroke-dasharray="9 7"/>
+  <text x="205" y="732" font-size="26" font-weight="700" style="fill:#943823">Guardar no es enviar</text>
+  <text x="205" y="789" font-size="24" style="fill:#943823">El siguiente paso depende de WhatsApp.</text>
+  <text x="160" y="855" class="phase">04 · Enviar</text>
+  <text x="160" y="896" font-size="25">Manager → WhatsApp · intento de entrega.</text>
+
+  <text x="40" y="985" font-size="25" font-weight="700">Un turno guardado permanece aunque falle el envío.</text>
+  <text x="40" y="1024" font-size="24">Reintentar no garantiza entrega «exactamente una vez».</text>
+</svg>

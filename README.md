@@ -1,54 +1,44 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="apps/web/public/brand/logo-inverse-outlined.svg">
-  <img src="apps/web/public/brand/logo-primary-outlined.svg" alt="agendIA — logo oficial" width="280">
-</picture>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="apps/web/public/brand/logo-inverse-outlined.svg">
+    <img src="apps/web/public/brand/logo-primary-outlined.svg" alt="agendIA — logo oficial" width="320">
+  </picture>
+</p>
 
-# De la conversación al turno
+<h1 align="center">De la conversación al turno</h1>
 
-**Atención por WhatsApp, con la agenda del negocio como fuente de verdad.**
+<p align="center">
+  <strong>Atención por WhatsApp. Tu agenda en un panel web.</strong>
+</p>
 
-Coordinar turnos por chat exige responder consultas, cruzar horarios y registrar lo acordado. agendIA reúne un panel de gestión y un agente de IA: el negocio define qué ofrece y cuándo atiende; el agente consulta esos datos y ayuda a reservar, cambiar o cancelar turnos.
+<p align="center">
+  <a href="#qué-podés-hacer">Qué podés hacer</a> ·
+  <a href="#para-profundizar">Documentación</a>
+</p>
 
-[Entender el producto](docs/understanding.md) · [Documentación](docs/README.md) · [Desarrollo local](docs/DEVELOPMENT.md) · [Operaciones](docs/OPERATIONS.md)
+agendIA es un agente de inteligencia artificial que atiende a tus clientes por WhatsApp: consulta disponibilidad, agenda, reprograma y cancela turnos. Se complementa con un panel web donde podés visualizar la agenda y administrar los servicios, horarios y clientes del negocio.
 
-![El negocio configura las reglas; el cliente conversa por WhatsApp; una reserva confirmada queda en la agenda.](docs/assets/product-overview.svg)
+## Qué podés hacer
 
-## Un negocio, dos formas de operar su agenda
+- **Organizar la atención.** Configurar servicios, precios, duración, personas o puestos que atienden, horarios y cierres.
+- **Gestionar la agenda.** Mantener clientes y turnos desde el panel, crear reservas manuales y reprogramar o cancelar cuando corresponda.
+- **Atender por WhatsApp.** Responder consultas sobre el negocio, consultar disponibilidad y ayudar a cada cliente a reservar, cambiar o cancelar sus propios turnos.
 
-- **Desde el panel:** gestionar perfil, servicios, recursos, horarios y cierres, clientes y turnos; configurar el agente y vincular WhatsApp.
-- **Desde la conversación:** consultar información y disponibilidad, preparar propuestas y operar los turnos propios del cliente mediante herramientas de agenda.
-- **Desde administración:** resolver solicitudes de acceso, suspender o reactivar negocios, consultar el estado de WhatsApp y gestionar la baja.
+## Para profundizar
 
-> **Una propuesta no es una reserva.** Consultar un horario no lo bloquea. El guardado vuelve a validar condiciones y disponibilidad; la conversación necesita la aceptación de la propuesta entregada.
-
-## Empezá por una pregunta
-
-**¿Qué representa cada cosa?** Leé [el modelo del producto](docs/understanding.md): negocio, servicio, recurso, cliente y turno, con un ejemplo y los límites del agente.
-
-**¿Cómo llega el chat a una reserva?** Seguí [el recorrido de una reserva](docs/booking-journey.md): propuesta, entrega, aceptación, guardado y confirmación.
-
-**¿Cómo está construido?** Seguí [Arquitectura](docs/ARCHITECTURE.md) y [Base de datos](docs/DATABASE.md). El sistema separa panel, API, procesamiento de IA y conexión con WhatsApp; los datos de cada negocio se aíslan con `business_id` y RLS en PostgreSQL.
-
-**¿Cómo contribuyo?** Prepará el entorno con [Desarrollo](docs/DEVELOPMENT.md), usando Bun 1.4.0 y Docker. Ahí están el arranque del panel y los workers, las variables y [las suites de pruebas](docs/DEVELOPMENT.md#tests). Para desplegar, consultá [Operaciones](docs/OPERATIONS.md).
-
-## Ubicate en el repositorio
-
-- [`apps/web`](apps/web) — panel de negocio y administración, con Next.js.
-- [`apps/api`](apps/api) — API HTTP con Fastify, sesiones y operaciones del panel.
-- [`apps/message-worker`](apps/message-worker) — agente de IA y resúmenes de conversación.
-- [`apps/whatsapp-manager`](apps/whatsapp-manager) — sesiones de WhatsApp, recepción y envío con Baileys.
-- [`packages`](packages) — dominio, persistencia, contratos, autenticación y adaptadores de proveedores.
-
-**Base técnica:** Bun · TypeScript · Next.js · Fastify · PostgreSQL · Drizzle + SQL · pg-boss · DeepSeek · Baileys.
-
-La [guía de documentación](docs/README.md) conecta las explicaciones con el código y el [diccionario de tablas](docs/database/tables.md).
+- [Cómo funciona](docs/overview.md) — empezá por la agenda del negocio, el panel y el agente de WhatsApp.
+- [Mapa de documentación](docs/README.md) — qué cubre cada guía.
+- [Recorrido de una reserva](docs/booking-journey.md) — de la propuesta al turno guardado y su confirmación por WhatsApp.
+- [Arquitectura](docs/architecture.md) — cómo se conectan el panel, la IA y WhatsApp.
+- [Base de datos](docs/database.md) — relaciones, aislamiento y garantías al guardar.
+- [Diccionario de tablas](docs/database/tables.md) — referencia de las tablas del sistema.
+- [Desarrollo local](docs/development.md) — cómo poner el proyecto en marcha.
+- [Operaciones](docs/operations.md) — despliegue, diagnóstico y recuperación en Dokploy.
 
 ---
-
-### Herramientas de desarrollo
 
 <a href="https://github.com/Gentleman-Programming/gentle-ai">
   <img src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/built-with-gentle-ai.png" alt="Built with Gentle-AI" width="220">
 </a>
 
-[Desarrollado con Gentle Shell](https://github.com/Gentleman-Programming/gentle-shell). Atribución a las herramientas utilizadas; no implica certificación ni respaldo de sus autores.
+[Desarrollado con Gentle Shell](https://github.com/Gentleman-Programming/gentle-shell)

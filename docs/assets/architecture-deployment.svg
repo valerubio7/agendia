@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1280" viewBox="0 0 960 1280" role="img" aria-labelledby="title desc">
+  <title id="title">Producción: cuatro runtimes, un setup temporal y PostgreSQL externo</title>
+  <desc id="desc">La web escucha en 3000 y la API en 3001. Ambas comparten la red interna app; el rewrite de Next construido con la imagen usa el alias agendia-api:3001. Web, API, worker de mensajes, manager de WhatsApp y setup temporal se conectan a la red externa dokploy-network. API y workers acceden según sus capacidades a PostgreSQL provisionado aparte de Compose; web no accede a la base. El setup db-setup usa el login migrador para migrar y reparar cuando detecta un restore. API y workers esperan su éxito antes del arranque nuevo; web no. El ingreso HTTPS se configura fuera de Compose, que no publica puertos al host ni crea PostgreSQL. Las líneas verdes muestran acceso a datos y HTTP, no dependencias de arranque.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1 1 8 5 1 9" fill="none" stroke="#355B49" stroke-width="1.7"/>
+    </marker>
+    <marker id="setup-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M1 1 8 5 1 9" fill="none" stroke="#AD402A" stroke-width="1.7"/>
+    </marker>
+    <style>
+      text { font-family: Arial, Helvetica, sans-serif; fill: #1C2620; }
+      .name { font-size: 28px; font-weight: 700; }
+      .detail { font-size: 24px; fill: #3D5346; }
+      .stored { fill: #F5F2EB; }
+      .connector-label { paint-order: stroke; stroke: #F5F2EB; stroke-width: 9px; stroke-linejoin: round; }
+    </style>
+  </defs>
+  <rect width="960" height="1280" rx="24" fill="#F5F2EB"/>
+  <text x="40" y="54" font-size="36" font-weight="700">Del proceso al contenedor</text>
+  <text x="40" y="96" font-size="25">Topología declarada en compose.production.yml, no estado de un servidor.</text>
+
+  <rect x="40" y="130" width="880" height="90" rx="14" fill="#FFFFFF" stroke="#8A958B" stroke-width="2"/>
+  <text x="65" y="166" font-size="27" font-weight="700">Ingreso HTTPS configurado en Dokploy → web :3000</text>
+  <text x="65" y="201" class="detail">Compose no publica puertos al host ni declara el proxy/TLS.</text>
+
+  <rect x="24" y="270" width="912" height="940" rx="20" fill="none" stroke="#889D8C" stroke-width="2" stroke-dasharray="9 7"/>
+  <text x="50" y="314" font-size="27" font-weight="700">dokploy-network · red externa</text>
+  <rect x="50" y="350" width="860" height="230" rx="16" fill="none" stroke="#355B49" stroke-width="2" stroke-dasharray="6 6"/>
+  <text x="80" y="385" font-size="24" font-weight="700">app · red interna, compartida por web y API</text>
+
+  <!-- Green links are access paths, not startup dependencies. -->
+  <g fill="none" stroke="#355B49" stroke-width="3" marker-end="url(#arrow)">
+    <path d="M412 458H548"/>
+    <path d="M715 512V610H900V950H882"/>
+    <path d="M245 762V898"/>
+    <path d="M715 762V898"/>
+  </g>
+  <path d="M480 1078V1012" fill="none" stroke="#AD402A" stroke-width="3" marker-end="url(#setup-arrow)"/>
+  <text x="480" y="439" text-anchor="middle" font-size="24">/api</text>
+  <text x="245" y="812" text-anchor="middle" class="detail connector-label">SQL · worker</text>
+  <text x="715" y="812" text-anchor="middle" class="detail connector-label">SQL · canal y colas</text>
+  <text x="520" y="1054" font-size="24" style="fill:#943823">Migra / repara</text>
+
+  <g fill="#E4EDE4" stroke="#355B49" stroke-width="2">
+    <rect x="80" y="405" width="330" height="105" rx="14"/>
+    <rect x="550" y="405" width="330" height="105" rx="14"/>
+    <rect x="80" y="650" width="330" height="110" rx="14"/>
+    <rect x="550" y="650" width="330" height="110" rx="14"/>
+  </g>
+  <g text-anchor="middle">
+    <text x="245" y="447" class="name">agendia-web</text>
+    <text x="245" y="485" class="detail">Next.js · 3000</text>
+    <text x="715" y="447" class="name">agendia-api-runtime</text>
+    <text x="715" y="485" class="detail">Alias agendia-api · 3001</text>
+    <text x="245" y="694" class="name">message-worker</text>
+    <text x="245" y="732" class="detail">Sin puerto HTTP</text>
+    <text x="715" y="694" class="name">whatsapp-manager</text>
+    <text x="715" y="732" class="detail">Sin puerto HTTP</text>
+  </g>
+  <text x="80" y="551" font-size="24">Destino del rewrite incorporado al build de Next.</text>
+  <rect id="database-annotation-mask" x="70" y="842" width="810" height="42" fill="#F5F2EB"/>
+  <text x="80" y="871" font-size="24" font-weight="700" class="connector-label">Recurso provisionado aparte: no lo crea este Compose</text>
+
+  <rect x="80" y="900" width="800" height="110" rx="16" fill="#1C2620"/>
+  <rect x="80" y="920" width="6" height="70" rx="3" fill="#FF6B49"/>
+  <text x="110" y="945" class="name stored">PostgreSQL externo</text>
+  <text x="110" y="983" font-size="24" class="stored">Datos + pg-boss · permisos separados por capacidad</text>
+
+  <rect x="80" y="1080" width="800" height="105" rx="16" fill="#FFF0E9" stroke="#AD402A" stroke-width="2"/>
+  <text x="110" y="1121" class="name">db-setup · servicio temporal y privilegiado</text>
+  <text x="110" y="1160" font-size="24">Su éxito habilita el arranque nuevo de API y workers, no de web.</text>
+
+  <text x="40" y="1252" font-size="23">Líneas: acceso HTTP/SQL. El setup no acredita salud ni detiene versiones viejas.</text>
+</svg>

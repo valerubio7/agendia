@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="420" viewBox="0 0 800 420" role="img" aria-labelledby="title desc">
+  <title id="title">Relaciones principales de agenda y mensajería</title>
+  <desc id="desc">El negocio tiene turnos y puede tener una conexión de WhatsApp. Cada turno referencia un cliente, un servicio y un recurso. La conexión agrupa conversaciones, y cada conversación reúne mensajes y órdenes de envío. Las líneas muestran referencias entre tablas, no el orden de una operación.</desc>
+  <style>
+    text { font-family: Arial, Helvetica, sans-serif; fill: #1C2620; }
+    .area { font-size: 20px; font-weight: 700; }
+    .name { font-size: 22px; font-weight: 700; text-anchor: middle; }
+    .table { font: 17px monospace; text-anchor: middle; fill: #344B3E; }
+    .root { fill: #F5F2EB; }
+  </style>
+
+  <rect width="800" height="420" rx="20" fill="#F5F2EB"/>
+  <rect x="16" y="110" width="376" height="294" rx="14" fill="#E4EDE4"/>
+  <rect x="408" y="110" width="376" height="294" rx="14" fill="#FFF0E9"/>
+  <text x="32" y="143" class="area">Agenda</text>
+  <text x="424" y="143" class="area">Mensajería</text>
+
+  <g fill="none" stroke="#526459" stroke-width="2.5">
+    <path d="M400 86V97M204 164V97H596V164"/>
+    <path d="M204 224V274M84 330V274H324V330M204 274V330"/>
+    <path d="M596 224V244M596 304V317M500 330V317H674V330"/>
+  </g>
+
+  <rect x="278" y="18" width="244" height="68" rx="12" fill="#1C2620"/>
+  <g fill="#F8FAF6" stroke="#526459" stroke-width="1.5">
+    <rect x="82" y="164" width="244" height="60" rx="10"/>
+    <rect x="28" y="330" width="112" height="60" rx="10"/>
+    <rect x="148" y="330" width="112" height="60" rx="10"/>
+    <rect x="268" y="330" width="112" height="60" rx="10"/>
+  </g>
+  <g fill="#FFFAF7" stroke="#946451" stroke-width="1.5">
+    <rect x="434" y="164" width="324" height="60" rx="10"/>
+    <rect x="434" y="244" width="324" height="60" rx="10"/>
+    <rect x="434" y="330" width="132" height="60" rx="10"/>
+    <rect x="578" y="330" width="192" height="60" rx="10"/>
+  </g>
+
+  <text x="400" y="46" class="name root">Negocio</text>
+  <text x="400" y="69" class="table root">businesses</text>
+  <text x="204" y="190" class="name">Turno</text>
+  <text x="204" y="212" class="table">appointments</text>
+  <text x="84" y="356" class="name">Cliente</text>
+  <text x="84" y="378" class="table">clients</text>
+  <text x="204" y="356" class="name">Servicio</text>
+  <text x="204" y="378" class="table">services</text>
+  <text x="324" y="356" class="name">Recurso</text>
+  <text x="324" y="378" class="table">resources</text>
+  <text x="596" y="190" class="name">Conexión de WhatsApp</text>
+  <text x="596" y="212" class="table">whatsapp_connections</text>
+  <text x="596" y="270" class="name">Conversación</text>
+  <text x="596" y="292" class="table">conversations</text>
+  <text x="500" y="356" class="name">Mensajes</text>
+  <text x="500" y="378" class="table">messages</text>
+  <text x="674" y="356" class="name">Órdenes de envío</text>
+  <text x="674" y="378" class="table">outbound_commands</text>
+</svg>
