@@ -38,10 +38,11 @@ test("response instructions advertise selective prose without granting operation
 });
 
 test("native names policy distinguishes own-name interpretation from authenticated provenance", () => {
-  for (const boundary of ["collect_booking_names", "namesReference", "campos literales autenticados de nameSources",
-    "miembros anteriores autenticados del grupo actual", "historial ni resúmenes", "Conservá los campos omitidos", "ninguna frase mágica",
+  expect(AGENT_RESPONSE_INSTRUCTIONS).not.toMatch(/firstName|lastName|nombre y apellido/u);
+  for (const boundary of ["collect_booking_names", "namesReference", "nameSources",
+    "miembros anteriores autenticados del grupo actual", "historial ni resúmenes", "un solo nombre", "ninguna frase mágica",
     "nombres de terceros", "cliente registrado", "no demuestra la titularidad semántica del nombre", "entrega nueva",
-    "Los nombres por sí solos no son consentimiento.", "Si la misma respuesta acepta y da nombres, confirmá primero y luego recogé los nombres con la namesReference fresca del resultado",
+    "El nombre por sí solo no es consentimiento.", "Si la misma respuesta acepta y da el nombre, confirmá primero y luego recogé el nombre con la namesReference fresca del resultado",
     "Consultar o elegir un horario no es aceptación",
     "aceptación distinta y posterior", "El DNI, la cobertura médica y los nombres visibles de perfil"])
     expect(AGENT_RESPONSE_INSTRUCTIONS).toContain(boundary);

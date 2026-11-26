@@ -58,7 +58,7 @@ export interface AgendaQuote {
   preference: string | null;
   /** A change quote binds the inspected appointment, not merely its identifier. */
   previous: string | null;
-  names: { firstName: string; lastName: string } | null;
+  name: string | null;
   sourceMessageId: string;
   outboundId: string | null;
 }
@@ -69,13 +69,11 @@ export interface AgendaDialogue {
   awaiting?: readonly string[];
   requestedDate?: string;
   requestedTime?: string;
-  /** Pending booking only: explicit customer preference and verified names survive offers. */
+  /** Pending booking only: explicit customer preference and verified name survive offers. */
   bookingPreference?: string | null;
   bookingUnresolvedPreference?: boolean;
-  bookingNames?: AgendaQuote["names"];
-  /** Draft-local literal fields; omitted patches retain previously supplied values. */
-  bookingNameFields?: { firstName?: string; lastName?: string };
-  /** Exact delivered booking quote accepted before its missing names were supplied. */
+  bookingName?: string | null;
+  /** Exact delivered booking quote accepted before its missing name was supplied. */
   acceptedBookingQuote?: string;
   /** Missing service/resource choices are scoped to an inspected owned appointment. */
   change?: { appointmentId: string; previous: string; kind: "service" | "resource" };
@@ -97,12 +95,9 @@ const plain = (text: string) => text.trim().normalize("NFC").toLocaleLowerCase("
 export function explicitQuoteConfirmation(text: string): boolean {
   return /^(sí|si|confirmo|sí, confirmo|si, confirmo|confirmar|acepto)[.!]?$/u.test(plain(text));
 }
-export function explicitCustomerNames(text: string): { firstName: string; lastName: string } | null {
-  const answer = /^(?:mi nombre es|me llamo)\s+([\p{L}][\p{L}'’ -]{0,99})$/iu.exec(text.trim());
-  if (!answer) return null;
-  const parts = answer[1]!.trim().split(/\s+/u);
-  if (parts.length < 2) return null;
-  return { firstName: parts[0]!, lastName: parts.slice(1).join(" ") };
+export function explicitCustomerNames(text: string): string | null {
+  const name = /^(?:mi nombre es|me llamo)\s+([\p{L}][\p{L}\p{M}'’ -]*)$/iu.exec(text.trim())?.[1];
+  return name && name.length <= 100 ? name : null;
 }
 export function explicitCancel(text: string): boolean {
   return /^(?:(?:quiero|necesito|por favor)\s+)?(?:cancelar|cancela|cancelá|cancelo|anular|anulá)(?:\s|[.!]|$)/iu.test(text.trim());
@@ -199,7 +194,7 @@ export function isAgendaDialogueFollowup(text: string, dialogue: AgendaDialogue)
     if (explicitCustomerNames(text)) return true;
     // Keep malformed short name answers in the deterministic name prompt. Questions,
     // phones and arbitrary prose are not name authority and need not capture the chat.
-    if (/^[\p{L}'’-]+(?:\s+[\p{L}'’-]+){1,5}[.!]?$/u.test(text.trim())) return true;
+    if (/^[\p{L}\p{M}'’-]+(?:\s+[\p{L}\p{M}'’-]+){0,5}[.!]?$/u.test(text.trim())) return true;
   }
   const awaiting = dialogue.awaiting ?? [];
   if (!awaiting.length && !dialogue.quote) return false;
@@ -223,8 +218,7 @@ export function missingFieldText(fields: readonly string[]): string {
   const prompts: Record<string, string> = {
     service: "¿Qué servicio querés?", date: "¿Para qué día?", time: "¿A qué hora?",
     resource: "No reconocí el recurso solicitado. ¿Cuál querés?",
-    appointment: "¿Qué turno querés modificar?", names: "Decime tu nombre y apellido.",
-    firstName: "Decime tu nombre.", lastName: "Decime tu apellido.",
+    appointment: "¿Qué turno querés modificar?", name: "Decime tu nombre.",
   };
   return fields.map(field => prompts[field]).filter(Boolean).join(" ");
 }

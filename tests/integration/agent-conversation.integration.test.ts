@@ -35,7 +35,7 @@ async function fixture() {
   await db.sql`insert into services(id,business_id,name,duration_minutes,price_ars) values(${service},${business},'Corte',30,1500)`;
   await db.sql`insert into resources(id,business_id,name,weekly_schedule) values(${resource},${business},'Ana',${db.sql.json(schedule)})`;
   await db.sql`insert into resource_services(business_id,resource_id,service_id) values(${business},${resource},${service})`;
-  await db.sql`insert into clients(business_id,first_name,last_name,phone) values(${business},'María','Pérez','+5491123456789')`;
+  await db.sql`insert into clients(business_id,name,phone) values(${business},'María Pérez','+5491123456789')`;
   async function receive(text: string, trusted = true) {
     const providerId = randomUUID();
     const event = normalizeBaileysMessage(session, { key: { id: providerId, remoteJid: "5491123456789@s.whatsapp.net" }, message: { conversation: text } }, trusted)!;
@@ -70,10 +70,10 @@ describe("production inbound native conversation with transactional tools", () =
     const patient = await h.receive("Quiero un turno para mi hermano Thiago Ojeda");
     const askName = h.worker(async request => {
       expect(JSON.stringify(request.messages)).toContain(instructions);
-      return finish('{"text":"¿Cuál es tu nombre y apellido?"}');
+      return finish('{"text":"¿Cuál es tu nombre?"}');
     });
     await askName.processor.process(patient);
-    expect((await h.outputs()).at(-1)!.text).toContain("tu nombre y apellido");
+    expect((await h.outputs()).at(-1)!.text).toBe("¿Cuál es tu nombre?");
     expect(await h.appointments()).toHaveLength(0);
     await markSent();
     let round = 0;
@@ -128,8 +128,8 @@ describe("production inbound native conversation with transactional tools", () =
     expect(appointment!.notes).toContain("Thiago Ojeda");
     expect(appointment!.notes).toContain(detailsText);
     expect(await h.appointments()).toHaveLength(1);
-    const [client] = await db.sql`select first_name,last_name,phone from clients where id=${appointment!.client_id}`;
-    expect(client).toMatchObject({ first_name: "Tomi", last_name: "Ojeda", phone: "+5491123456789" });
+    const [client] = await db.sql`select name,phone from clients where id=${appointment!.client_id}`;
+    expect(client).toMatchObject({ name: "Tomi Ojeda", phone: "+5491123456789" });
   });
   test("informal grouped input reaches model with grounded facts, then complete factual/availability batch", async () => {
     const h = await fixture();

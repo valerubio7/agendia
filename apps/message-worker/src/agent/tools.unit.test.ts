@@ -66,7 +66,7 @@ describe("agent tool boundary", () => {
   test("booking notes require bounded literal source spans on booking tools", () => {
     const notes = [{ messageId: id, value: "Paciente: Thiago", start: 0 }];
     const confirmation = { evidence: "sí", evidenceReference: "a".repeat(64), quoteFingerprint: "b".repeat(64) };
-    const names = { namesReference: "c".repeat(64), firstName: { messageId: id, value: "Tomi", start: 0 } };
+    const names = { namesReference: "c".repeat(64), name: { messageId: id, value: "Sol", start: 0 } };
     for (const [name, args] of [["confirm_quote", {}], ["confirm_quote_naturally", confirmation],
       ["finish_accepted_booking", confirmation], ["collect_booking_names", names]] as const) {
       expect(parseAgentTool(name, args)?.name).toBe(name);
@@ -88,13 +88,14 @@ describe("agent tool boundary", () => {
     expect(parseAgentTool("cancel", { appointmentId: id, binding, confirmed: true })).toBeNull();
   });
   test("booking name patches require a draft reference and strict literal field provenance", () => {
-    const field = { value: "María", messageId: id, start: 0 };
-    const args = { namesReference: "a".repeat(64), firstName: field };
-    expect(parseAgentTool("collect_booking_names", args)?.name).toBe("collect_booking_names");
-    for (const invalid of [{}, { firstName: field }, { namesReference: args.namesReference },
+    const field = { value: "Sol", messageId: id, start: 0 };
+    const args = { namesReference: "a".repeat(64), name: field };
+    expect(parseAgentTool("collect_booking_names", args)).toEqual({ name: "collect_booking_names", arguments: args });
+    for (const invalid of [{}, { name: field }, { namesReference: args.namesReference },
+      { namesReference: args.namesReference, firstName: field, lastName: field }, { ...args, lastName: field },
       { ...args, namesReference: "forged" }, { ...args, confirmed: true },
       ...[{}, { ...field, start: -1 }, { ...field, start: 0.5 }, { ...field, value: " " },
-        { ...field, value: "x".repeat(101) }, { ...field, proof: true }].map(firstName => ({ ...args, firstName }))])
+        { ...field, value: "a\0b" }, { ...field, value: "x".repeat(101) }, { ...field, proof: true }].map(name => ({ ...args, name }))])
       expect(parseAgentTool("collect_booking_names", invalid)).toBeNull();
     expect(agentToolDefinitions).toHaveLength(17);
   });

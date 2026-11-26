@@ -17,7 +17,7 @@ const appointmentId = "33333333-3333-4333-8333-333333333333";
 const terms = { serviceId, resourceId, serviceName: "Corte", resourceName: "Ana", durationMinutes: 30, priceArs: 1500 };
 const quote: AgendaQuote = {
   kind: "book", appointmentId: null, startsAt: "2030-04-01T10:15:00-03:00", terms,
-  names: null, previous: null, preference: null, sourceMessageId: "received", outboundId: null,
+  name: null, previous: null, preference: null, sourceMessageId: "received", outboundId: null,
 };
 
 test("received provider alternate address is preserved as technical sender evidence", () => {
@@ -85,8 +85,9 @@ describe("only explicit customer answers confer conversational authority", () =>
       expect(explicitQuoteConfirmation(answer)).toBe(false);
   });
   test("names come from the requested explicit answer, not a display name or provider arguments", () => {
-    expect(explicitCustomerNames("Mi nombre es María del Valle")).toEqual({ firstName: "María", lastName: "del Valle" });
-    expect(explicitCustomerNames("me llamo Juan Pérez")).toEqual({ firstName: "Juan", lastName: "Pérez" });
+    expect(explicitCustomerNames("Me llamo Sol")).toBe("Sol");
+    expect(explicitCustomerNames("Mi nombre es María  del Valle")).toBe("María  del Valle");
+    expect(explicitCustomerNames("me llamo Juan Pérez")).toBe("Juan Pérez");
     for (const value of ["Juan", "Juan Pérez", "El cliente se llama Juan Pérez", "mi nombre es Juan 123", "mi nombre es Juan Pérez +14155552671"])
       expect(explicitCustomerNames(value)).toBeNull();
   });
@@ -146,10 +147,7 @@ describe("native commands and guarded customer responses", () => {
     expect(agendaTime("2030-04-02T01:00:00Z")).toBe("22:00");
     expect(nearbyDate("2030-04-01", -1)).toBe("2030-03-31");
     expect(missingFieldText(["date"])).toBe("¿Para qué día?");
-    expect(missingFieldText(["names"])).not.toContain("teléfono");
-    expect(missingFieldText(["names"])).toBe("Decime tu nombre y apellido.");
-    expect(missingFieldText(["firstName"])).toBe("Decime tu nombre.");
-    expect(missingFieldText(["lastName"])).toBe("Decime tu apellido.");
+    expect(missingFieldText(["name"])).toBe("Decime tu nombre.");
   });
   test("requested dates and times come from customer text rather than model-selected arguments", () => {
     const now = "2035-04-01T08:00:00-03:00";

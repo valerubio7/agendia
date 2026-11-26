@@ -29,8 +29,7 @@ export function scriptedAgentReply(results: AgentToolResult[], toolName?: string
       : `No hay horarios disponibles${scope}${slots.date ? ` para ${slots.date}` : " en ese día ni en los días cercanos consultados"}. ¿Qué otro día te sirve?`;
     if (r.alternatives) text = "El horario ya no está disponible. " + text;
   } else if (r?.reason === "MISSING_NAMES") {
-    text = r.missingFields.length === 2 ? "Decime tu nombre y apellido."
-      : r.missingFields.includes("lastName") ? "Decime tu apellido." : "Decime tu nombre.";
+    text = "Decime tu nombre.";
   } else if (r?.reason === "UNKNOWN_RESOURCE" || r?.code === "UNKNOWN_RESOURCE") text = "No reconocí el recurso solicitado. ¿Cuál querés?";
   else if (r?.reason === "APPOINTMENT_CHANGED") text = "El turno cambió desde la propuesta. Pedí el cambio nuevamente; no se guardó nada.";
   else if (r?.reason === "CANCELLATION_REQUIRED") text = "Indicá explícitamente si querés cancelar tu turno.";

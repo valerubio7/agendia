@@ -44,7 +44,7 @@ async function fixture(profile = true, knownClient = true, now = "2035-04-01T08:
   await db.sql`insert into services(id,business_id,name,duration_minutes,price_ars) values(${service},${business},'Corte',30,1500)`;
   await db.sql`insert into resources(id,business_id,name,weekly_schedule) values(${resource},${business},'Ana',${db.sql.json(schedule)})`;
   await db.sql`insert into resource_services(business_id,resource_id,service_id) values(${business},${resource},${service})`;
-  if (knownClient) await db.sql`insert into clients(business_id,first_name,last_name,phone) values(${business},'María','Pérez',${phone})`;
+  if (knownClient) await db.sql`insert into clients(business_id,name,phone) values(${business},'María Pérez',${phone})`;
   const agenda = new PostgresWhatsAppAgenda(pools, () => now);
   const withSession = agenda.withAgentSession.bind(agenda);
   agenda.withAgentSession = (job, callback) => withSession(job, async tools => {
@@ -116,7 +116,7 @@ describe("S4 model-authored atomic output", () => {
           const outcome = await tools.execute("prepare_booking", { serviceId: scenario === "rejection" ? randomUUID() : h.service, startsAt: start });
           expect(outcome.status).toBe(scenario === "rejection" ? "rejected" : scenario === "names" ? "clarification" : "prepared_quote");
           expect(outcome).not.toHaveProperty("message");
-          if (scenario === "names") expect(outcome).toMatchObject({ missingFields: ["firstName", "lastName"] });
+          if (scenario === "names") expect(outcome).toMatchObject({ missingFields: ["name"] });
         }
         return JSON.stringify({ text }); // Omission deliberately does not attest presentation.
       } catch (error) { assertionFailure = error; throw error; }
@@ -436,7 +436,7 @@ describe("offer/action response coherence", () => {
       const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
       expect(pending!.dialogue.quote).toBeNull();
       expect(pending!.dialogue.awaitingNames).toBe(false);
-      expect(pending!.dialogue.bookingNames).toEqual({ firstName: "María", lastName: "Pérez" });
+      expect(pending!.dialogue.bookingName).toBe("María Pérez");
       await h.run("confirmo", async tools => {
         expect(tools.context.naturalConfirmation).toBeNull();
         expect((await tools.execute("confirm_quote", {})).status).not.toBe("staged_action");
@@ -462,24 +462,19 @@ describe("offer/action response coherence", () => {
   });
   test("valid nameless replacement stays collectable after a rejected proposal", async () => {
     const h = await fixture(true, false);
-    await h.run("María", async tools => {
-      const draft = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start });
-      const member = tools.context.nameSources!.at(-1)!;
-      await tools.execute("collect_booking_names", { namesReference: draft.namesReference,
-        firstName: { value: "María", messageId: member.messageId, start: 0 } });
+    await h.run("11:00", async tools => {
+      await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start });
       await tools.execute("prepare_booking", { serviceId: randomUUID(), startsAt: start });
       const b = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T11:00:00-03:00" });
-      expect(b.status).toBe("clarification");
-      expect(b).toMatchObject({ missingFields: ["lastName"] });
+      expect(b).toMatchObject({ status: "clarification", missingFields: ["name"] });
       expect(b.namesReference).toBeString();
       return final(tools);
     });
-    await h.run("Pérez", async tools => {
+    await h.run("Sol", async tools => {
       const member = tools.context.nameSources!.at(-1)!;
       const b = await tools.execute("collect_booking_names", { namesReference: tools.context.namesReference,
-        lastName: { value: "Pérez", messageId: member.messageId, start: 0 } });
-      expect(b.status).toBe("prepared_quote");
-      expect((b as any).quote.names).toEqual({ firstName: "María", lastName: "Pérez" });
+        name: nameField(member.messageId, "Sol") });
+      expect(b).toMatchObject({ status: "prepared_quote", quote: { name: "Sol" } });
       expect(Date.parse((b as any).quote.startsAt)).toBe(Date.parse("2035-04-02T11:00:00-03:00"));
       return final(tools);
     });
@@ -792,24 +787,24 @@ describe("native booking/query selections are not preference or consent evidence
     await h.run(text, async tools => { await tools.execute("prepare_change", { appointmentId: ap.id, startsAt: "2035-04-04T11:00:00-03:00" }); return final(tools); });
     await h.run("Mi nombre es Elena García", async tools => {
       const result = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: "2035-04-05T12:00:00-03:00" });
-      expect(result.status).toBe("prepared_quote"); expect((result as any).quote).toMatchObject({ names: null, preference: null }); return final(tools); });
+      expect(result.status).toBe("prepared_quote"); expect((result as any).quote).toMatchObject({ name: null, preference: null }); return final(tools); });
     await h.run("¿qué quedó?", async tools => { const pending = tools.context.pending as any;
-      expect(pending.reschedule).toBeUndefined(); expect(pending.bookingNameFields).toBeUndefined();
+      expect(pending.reschedule).toBeUndefined(); expect(pending.bookingName).toBeNull();
       expect(pending.bookingUnresolvedPreference).toBe(false); return final(tools); });
     expect(await h.appointments()).toEqual([ap]);
   });
-  test("partial names survive complete booking selections without manufacturing temporal evidence", async () => {
+  test("a name survives complete booking selections without manufacturing temporal evidence", async () => {
     const h = await fixture(true, false), args = { serviceId: h.service, startsAt: "2035-04-04T11:00:00-03:00" };
     await h.run("María", async tools => {
       const draft = await tools.execute("prepare_booking", args), member = tools.context.nameSources!.at(-1)!;
-      expect((await tools.execute("collect_booking_names", { namesReference: draft.namesReference, firstName: nameField(member.messageId, "María") })).status).toBe("clarification"); return final(tools);
+      expect((await tools.execute("collect_booking_names", { namesReference: draft.namesReference, name: nameField(member.messageId, "María") })).status).toBe("prepared_quote"); return final(tools);
     });
     await h.run("No mañana; el miércoles a las 11", async tools => {
       const result = await tools.execute("prepare_booking", args);
-      expect(result).toMatchObject({ status: "clarification", missingFields: ["lastName"] }); return final(tools);
+      expect(result).toMatchObject({ status: "data", data: { pending: "retained" } }); return final(tools);
     });
     await h.run("¿qué quedó?", async tools => {
-      const draft = tools.context.pending as any; expect(draft.bookingNameFields).toEqual({ firstName: "María" });
+      const draft = tools.context.pending as any; expect(draft.bookingName).toBe("María");
       expect(draft.requestedDate).toBeUndefined(); expect(draft.requestedTime).toBeUndefined(); return final(tools);
     });
     expect(await h.appointments()).toHaveLength(0);
@@ -1062,7 +1057,7 @@ async function savedAppointment(h: Awaited<ReturnType<typeof fixture>>, startsAt
   return pools.api.run(h.context, async repo => {
     const client = await repo.findClientByCanonicalPhone(phone);
     return repo.createAppointment(h.business, { serviceId: h.service, resourceId: h.resource, startRaw: startsAt,
-      ...(client ? { clientId: client.id } : { newClient: { firstName: "María", lastName: "Pérez", phone } }) },
+      ...(client ? { clientId: client.id } : { newClient: { name: "María Pérez", phone } }) },
       { now: "2035-04-01T08:00:00-03:00", origin: "manual" });
   });
 }
@@ -1255,13 +1250,13 @@ describe("native booking notes from business instructions", () => {
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${offer.outboundId}`;
     await h.run("sí", async tools => {
       expect((await tools.execute("confirm_quote_naturally", { ...naturalArguments(tools), deferForBusinessRequirements: true })).status).toBe("clarification");
-      return final(tools, knownClient ? "¿Qué cobertura tenés?" : "¿Cuál es tu nombre y apellido?");
+      return final(tools, knownClient ? "¿Qué cobertura tenés?" : "¿Cuál es tu nombre?");
     });
     expect(await h.appointments()).toHaveLength(0);
     if (!knownClient) await h.run("Tomi Ojeda", async tools => {
       const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
       expect((await tools.execute("collect_booking_names", { namesReference: runtime.namesReference,
-        firstName: nameField(current.messageId, "Tomi"), lastName: nameField(current.messageId, "Ojeda", 5),
+        name: nameField(current.messageId, "Tomi Ojeda"),
         deferForBusinessRequirements: true })).status).toBe("clarification");
       return final(tools, "¿Qué cobertura tenés?");
     });
@@ -1278,7 +1273,7 @@ describe("native booking notes from business instructions", () => {
     expect(result.actions).toHaveLength(1);
     const [appointment] = await h.appointments();
     expect(appointment!.notes).toBe("cooperativa");
-    if (!knownClient) expect(appointment!.client).toMatchObject({ firstName: "Tomi", lastName: "Ojeda", phone });
+    if (!knownClient) expect(appointment!.client).toMatchObject({ name: "Tomi Ojeda", phone });
   });
   for (const previouslyDeferred of [false, true]) test(`notes cannot reuse details from a previous completed booking, deferred=${previouslyDeferred}`, async () => {
     const h = await fixture();
@@ -1474,7 +1469,7 @@ describe("native booking notes from business instructions", () => {
     await h.run("Tomi Ojeda", async tools => {
       const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
       expect((await tools.execute("collect_booking_names", { namesReference: runtime.namesReference,
-        firstName: nameField(current.messageId, "Tomi"), lastName: nameField(current.messageId, "Ojeda", 5) })).status).toBe("prepared_quote");
+        name: nameField(current.messageId, "Tomi Ojeda") })).status).toBe("prepared_quote");
       return final(tools);
     });
     expect(await h.appointments()).toHaveLength(0);
@@ -1531,7 +1526,7 @@ describe("native booking notes from business instructions", () => {
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${offer.outboundId}`;
     await h.run("sí, cooperativa", async tools => {
       expect((await tools.execute("confirm_quote_naturally", naturalArguments(tools))).status).toBe("clarification");
-      return final(tools, "¿Cuál es tu nombre y apellido?");
+      return final(tools, "¿Cuál es tu nombre?");
     });
     await h.run("Tomi Ojeda", async tools => {
       const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
@@ -1539,13 +1534,13 @@ describe("native booking notes from business instructions", () => {
       const prior = notes.find(item => item.messageId === patient.messageId)!;
       const payment = notes.find(item => item.text === "sí, cooperativa")!;
       expect((await tools.execute("collect_booking_names", { namesReference: runtime.namesReference,
-        firstName: nameField(current.messageId, "Tomi"), lastName: nameField(current.messageId, "Ojeda", 5),
+        name: nameField(current.messageId, "Tomi Ojeda"),
         bookingNotes: [{ messageId: prior.messageId, value: prior.text, start: 0 },
           { messageId: payment.messageId, value: "cooperativa", start: 4 }] })).status).toBe("staged_action");
       return final(tools, "Quedó reservado.");
     });
     const [appointment] = await h.appointments();
-    expect(appointment!.client).toMatchObject({ firstName: "Tomi", lastName: "Ojeda", phone });
+    expect(appointment!.client).toMatchObject({ name: "Tomi Ojeda", phone });
     expect(appointment!.notes).toContain("Thiago Ojeda");
     expect(appointment!.notes).toContain("cooperativa");
   });
@@ -1572,7 +1567,7 @@ describe("native booking notes from business instructions", () => {
       return final(tools, "Quedó reservado.");
     });
     const [appointment] = await h.appointments();
-    expect(appointment!.client).toMatchObject({ firstName: "Tomi", lastName: "Ojeda", phone });
+    expect(appointment!.client).toMatchObject({ name: "Tomi Ojeda", phone });
     expect(appointment!.notes).toContain("Thiago Ojeda");
     expect(appointment!.notes).toContain("cooperativa");
   });
@@ -1587,10 +1582,10 @@ describe("native booking names: provenance enforcement, not semantic name owners
     });
     if (offer.status !== "committed") throw new Error("Missing offer");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${offer.outboundId}`;
-    const result = await h.run("sí, dale, soy María Pérez", async tools => {
+    const result = await h.run("sí, dale 👍, soy María  Pérez", async tools => {
       const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!, consent = naturalArguments(tools);
       const names = (reference: string | null) => tools.execute("collect_booking_names", { namesReference: reference,
-        firstName: nameField(current.messageId, "María", 14), lastName: nameField(current.messageId, "Pérez", 20) });
+        name: nameField(current.messageId, "María  Pérez", 17) });
       if (namesFirst) {
         expect((await names(runtime.namesReference)).status).toBe("prepared_quote");
         expect((await tools.execute("confirm_quote_naturally", consent)).status).toBe("staged_action");
@@ -1604,7 +1599,7 @@ describe("native booking names: provenance enforcement, not semantic name owners
     if (result.status !== "committed") throw new Error("Missing booking");
     expect(result.actions).toHaveLength(1);
     expect(await h.appointments()).toHaveLength(1);
-    expect((await h.appointments())[0]!.client).toMatchObject({ firstName: "María", lastName: "Pérez", phone });
+    expect((await h.appointments())[0]!.client).toMatchObject({ name: "María  Pérez", phone });
   });
   for (const intervention of ["correct names", "prepare again"] as const) test(`new-name consent binding rejects ${intervention}`, async () => {
     const h = await fixture(true, false);
@@ -1617,12 +1612,11 @@ describe("native booking names: provenance enforcement, not semantic name owners
     const outcome = await h.run("sí, soy María Pérez, no Gómez", async tools => {
       const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!, consent = naturalArguments(tools);
       const collected = await tools.execute("collect_booking_names", { namesReference: runtime.namesReference,
-        firstName: nameField(current.messageId, "María", current.text.indexOf("María")),
-        lastName: nameField(current.messageId, "Pérez", current.text.indexOf("Pérez")) });
+        name: nameField(current.messageId, "María Pérez", current.text.indexOf("María")) });
       expect(collected.status).toBe("prepared_quote");
       if (intervention === "correct names") {
         expect((await tools.execute("collect_booking_names", { namesReference: collected.namesReference,
-          lastName: nameField(current.messageId, "Gómez", current.text.indexOf("Gómez")) })).status).toBe("prepared_quote");
+          name: nameField(current.messageId, "Gómez", current.text.indexOf("Gómez")) })).status).toBe("prepared_quote");
       } else {
         expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start })).status).toBe("data");
       }
@@ -1651,7 +1645,7 @@ describe("native booking names: provenance enforcement, not semantic name owners
       const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
       const consent = tools.context.naturalConfirmation;
       expect((await tools.execute("collect_booking_names", { namesReference: runtime.namesReference,
-        firstName: nameField(current.messageId, "María", 14), lastName: nameField(current.messageId, "Pérez", 20) })).status).toBe("prepared_quote");
+        name: nameField(current.messageId, "María Pérez", 14) })).status).toBe("prepared_quote");
       if (consent) expect(await tools.execute("confirm_quote_naturally", { ...consent, evidence: tools.context.message }))
         .toMatchObject({ status: "prepared_quote", reason: "TERMS_CHANGED" });
       else expect(changed).toBe("undelivered");
@@ -1671,20 +1665,20 @@ describe("native booking names: provenance enforcement, not semantic name owners
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${offered.outboundId}`;
     await h.run("si dale", async tools => {
       expect((await tools.execute("confirm_quote_naturally", naturalArguments(tools))).status).toBe("clarification");
-      return final(tools, "¿Me pasás tu nombre y apellido?");
+      return final(tools, "¿Me pasás tu nombre?");
     });
     expect(await h.appointments()).toHaveLength(0);
-    const job = await h.receive("Ojeda Tomas");
+    const job = await h.receive("Sol");
     const callback = async (tools: AgentToolSession) => {
       const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
       expect((await tools.execute("collect_booking_names", { namesReference: runtime.namesReference,
-        firstName: nameField(current.messageId, "Ojeda"), lastName: nameField(current.messageId, "Tomas", 6) })).status).toBe("staged_action");
+        name: nameField(current.messageId, "Sol") })).status).toBe("staged_action");
       return final(tools, "Quedó reservado.");
     };
     expect((await h.agenda.withAgentSession(job, callback)).status).toBe("committed");
     expect((await h.agenda.withAgentSession(job, callback)).status).toBe("not_current");
     expect(await h.appointments()).toHaveLength(1);
-    expect((await h.appointments())[0]).toMatchObject({ client: { firstName: "Ojeda", lastName: "Tomas", phone } });
+    expect((await h.appointments())[0]).toMatchObject({ client: { name: "Sol", phone } });
   });
   for (const text of ["no, 12:15 no", "¿12:15?"]) test(`no interpreted acceptance for ${text} cannot authorize names`, async () => {
     const h = await fixture(true, false);
@@ -1698,7 +1692,7 @@ describe("native booking names: provenance enforcement, not semantic name owners
     await h.run("Ojeda Tomas", async tools => {
       const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
       expect((await tools.execute("collect_booking_names", { namesReference: runtime.namesReference,
-        firstName: nameField(current.messageId, "Ojeda"), lastName: nameField(current.messageId, "Tomas", 6) })).status).toBe("prepared_quote");
+        name: nameField(current.messageId, "Ojeda Tomas") })).status).toBe("prepared_quote");
       return final(tools);
     });
     expect(await h.appointments()).toHaveLength(0);
@@ -1722,7 +1716,7 @@ describe("native booking names: provenance enforcement, not semantic name owners
     await h.run("Ojeda Tomas", async tools => {
       const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
       expect((await tools.execute("collect_booking_names", { namesReference: runtime.namesReference,
-        firstName: nameField(current.messageId, "Ojeda"), lastName: nameField(current.messageId, "Tomas", 6) })).status).toBe("prepared_quote");
+        name: nameField(current.messageId, "Ojeda Tomas") })).status).toBe("prepared_quote");
       return final(tools);
     });
     expect(await h.appointments()).toHaveLength(0);
@@ -1760,10 +1754,10 @@ describe("native booking names: provenance enforcement, not semantic name owners
     const result = await owner.agenda.withAgentSession(job, async tools => {
       const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
       oldReference = runtime.namesReference; oldMessage = current.messageId;
-      const args = { namesReference: runtime.namesReference, firstName: nameField(current.messageId, "Ojeda"), lastName: nameField(current.messageId, "Tomas", 6) };
+      const args = { namesReference: runtime.namesReference, name: nameField(current.messageId, "Ojeda Tomas") };
       for (const invalid of [{ ...args, namesReference: "f".repeat(64) },
-        { ...args, firstName: nameField(current.messageId, "Ojeda", 1) },
-        { ...args, lastName: nameField(randomUUID(), "Tomas", 6) }])
+        { ...args, name: nameField(current.messageId, "Ojeda Tomas", 1) },
+        { ...args, name: nameField(randomUUID(), "Ojeda Tomas") }])
         expect(await tools.execute("collect_booking_names", invalid)).toMatchObject({ status: "rejected" });
       return final(tools, "No pude verificar esos datos.");
     });
@@ -1782,23 +1776,23 @@ describe("native booking names: provenance enforcement, not semantic name owners
     expect((await owner.agenda.withAgentSession(foreignJob, async tools => {
       const current = nameRuntime(tools).nameSources.at(-1)!;
       expect(await tools.execute("collect_booking_names", { namesReference: oldReference,
-        firstName: nameField(current.messageId, "Ojeda"), lastName: nameField(current.messageId, "Tomas", 6) })).toMatchObject({ status: "rejected" });
+        name: nameField(current.messageId, "Ojeda Tomas") })).toMatchObject({ status: "rejected" });
       return final(tools);
     })).status).toBe("committed");
     expect(await snapshot(owner)).toEqual(beforeOwner);
     await other.run("Ojeda Tomas", async tools => {
       const current = nameRuntime(tools).nameSources.at(-1)!;
       expect(await tools.execute("collect_booking_names", { namesReference: oldReference,
-        firstName: nameField(current.messageId, "Ojeda"), lastName: nameField(current.messageId, "Tomas", 6) })).toMatchObject({ status: "rejected" });
+        name: nameField(current.messageId, "Ojeda Tomas") })).toMatchObject({ status: "rejected" });
       return final(tools);
     });
     expect(await snapshot(other)).toEqual(beforeOther);
     await owner.run("Ojeda Tomas", async tools => {
       const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
       expect(runtime.nameSources.some(member => member.messageId === oldMessage), "historical message excluded after send boundary").toBe(false);
-      const stale = await tools.execute("collect_booking_names", { namesReference: oldReference, firstName: nameField(current.messageId, "Ojeda") });
+      const stale = await tools.execute("collect_booking_names", { namesReference: oldReference, name: nameField(current.messageId, "Ojeda Tomas") });
       expect(stale.status, "stale names reference").toBe("rejected");
-      const historical = await tools.execute("collect_booking_names", { namesReference: runtime.namesReference, firstName: nameField(oldMessage, "Ojeda") });
+      const historical = await tools.execute("collect_booking_names", { namesReference: runtime.namesReference, name: nameField(oldMessage, "Ojeda Tomas") });
       expect(historical.status, "historical name source").toBe("rejected");
       return final(tools);
     });
@@ -1820,7 +1814,7 @@ describe("native booking names: provenance enforcement, not semantic name owners
     await h.run("Ojeda Tomas", async tools => {
       const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
       expect((await tools.execute("collect_booking_names", { namesReference: runtime.namesReference,
-        firstName: nameField(current.messageId, "Ojeda", 1), lastName: nameField(current.messageId, "Tomas", 6) })).status).toBe("rejected");
+        name: nameField(current.messageId, "Ojeda Tomas", 1) })).status).toBe("rejected");
       return final(tools);
     });
     expect(await h.appointments()).toHaveLength(0);
@@ -1829,20 +1823,20 @@ describe("native booking names: provenance enforcement, not semantic name owners
     await h.run("Ojeda Tomas", async tools => {
       const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
       const result = await tools.execute("collect_booking_names", { namesReference: runtime.namesReference,
-        firstName: nameField(current.messageId, "Ojeda"), lastName: nameField(current.messageId, "Tomas", 6) });
+        name: nameField(current.messageId, "Ojeda Tomas") });
       expect(result).toMatchObject({ status: "prepared_quote", reason: "TERMS_CHANGED" });
       return final(tools);
     });
     expect(await h.appointments()).toHaveLength(0);
     expect((await db.sql`select count(*)::int count from clients where business_id=${h.business}`)[0]!.count).toBe(0);
   });
-  test("bare full names prepare only; delivered later acceptance creates the literal client", async () => {
+  test("bare Sol prepares only; delivered later acceptance creates the literal client", async () => {
     const h = await fixture(true, false);
     await pendingNames(h);
-    const quote = await h.run("María Pérez", async tools => {
+    const quote = await h.run("Sol", async tools => {
       const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
       const result = await tools.execute("collect_booking_names", { namesReference: runtime.namesReference,
-        firstName: nameField(current.messageId, "María"), lastName: nameField(current.messageId, "Pérez", 6) });
+        name: nameField(current.messageId, "Sol") });
       expect(result.status).toBe("prepared_quote");
       expect((await tools.execute("confirm_quote", {})).status).not.toBe("staged_action");
       return final(tools);
@@ -1853,7 +1847,47 @@ describe("native booking names: provenance enforcement, not semantic name owners
     if (quote.status !== "committed") throw new Error("Missing quote");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${quote.outboundId}`;
     await h.run("confirmo", async tools => { expect((await tools.execute("confirm_quote", {})).status).toBe("staged_action"); return final(tools); });
-    expect((await h.appointments())[0]!.client).toMatchObject({ firstName: "María", lastName: "Pérez", phone });
+    expect((await h.appointments())[0]!.client).toMatchObject({ name: "Sol", phone });
+  });
+  test("legacy partial dialogue keeps the selected slot but cannot reuse delivery or consent", async () => {
+    const h = await fixture(true, false);
+    const original = await pendingNames(h);
+    if (original.status !== "committed") throw new Error("Missing draft");
+    await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${original.outboundId}`;
+    const [row] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
+    const legacy = row!.dialogue;
+    delete legacy.quote.name;
+    legacy.quote.names = null;
+    legacy.quote.outboundId = original.outboundId;
+    delete legacy.bookingName;
+    legacy.bookingNames = null;
+    legacy.bookingNameFields = { firstName: "María" };
+    legacy.awaiting = ["names"];
+    legacy.acceptedBookingQuote = JSON.stringify(legacy.quote);
+    await db.sql`update whatsapp_agenda_dialogues set dialogue=${db.sql.json(legacy)} where business_id=${h.business}`;
+    const proposal = await h.run("Sol", async tools => {
+      expect(tools.context.naturalConfirmation).toBeNull();
+      expect(tools.context.retainedBookingConfirmation).toBeNull();
+      expect(tools.context.pending).toMatchObject({ awaiting: ["name"], quote: { name: null, startsAt: legacy.quote.startsAt, outboundId: null } });
+      expect(tools.context.pending).not.toHaveProperty("bookingNameFields");
+      const runtime = nameRuntime(tools), member = runtime.nameSources.at(-1)!;
+      expect(await tools.execute("collect_booking_names", { namesReference: runtime.namesReference, name: nameField(member.messageId, "Sol") }))
+        .toMatchObject({ status: "prepared_quote", quote: { name: "Sol", startsAt: legacy.quote.startsAt } });
+      return final(tools, "Te propongo el mismo horario. ¿Confirmás?");
+    });
+    if (proposal.status !== "committed") throw new Error("Missing updated proposal");
+    expect(proposal.actions).toEqual([]);
+    expect(await h.appointments()).toHaveLength(0);
+    const [before] = await db.sql`select count(*)::int count from clients where business_id=${h.business}`;
+    expect(before!.count).toBe(0);
+    const [output] = await db.sql`select text from outbound_commands where outbound_id=${proposal.outboundId}`;
+    expect(output!.text).toBe("Te propongo el mismo horario. ¿Confirmás?");
+    await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${proposal.outboundId}`;
+    await h.run("confirmo", async tools => {
+      expect((await tools.execute("confirm_quote", {})).status).toBe("staged_action");
+      return final(tools, "Guardado.");
+    });
+    expect(await h.appointments()).toMatchObject([{ client: { name: "Sol", phone } }]);
   });
   test("authenticated earlier group names are available when the latest fragment asks availability", async () => {
     const h = await fixture(true, false);
@@ -1864,33 +1898,25 @@ describe("native booking names: provenance enforcement, not semantic name owners
       expect(JSON.stringify(tools.context.messages)).toContain(earlier.messageId);
       const draft = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start });
       expect((await tools.execute("collect_booking_names", { namesReference: (draft as any).namesReference,
-        firstName: nameField(earlier.messageId, "María"), lastName: nameField(earlier.messageId, "Pérez", 6) })).status).toBe("prepared_quote");
+        name: nameField(earlier.messageId, "María Pérez") })).status).toBe("prepared_quote");
       return final(tools);
     });
     expect(await h.appointments()).toHaveLength(0);
   });
-  test("partial fields survive reload and alternatives; surname correction retains the given name", async () => {
+  test("the collected name survives an unavailable selection and reload", async () => {
     const h = await fixture(true, false);
     await pendingNames(h);
-    for (const [value, field, expected] of [["María", "firstName", "Decime tu apellido."],
-      ["Pérez", "lastName", null], ["Gómez", "lastName", null]] as const) {
-      await h.run(value, async tools => {
-        const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
-        if (field === "lastName") expect((tools.context.pending as any).bookingNameFields.firstName).toBe("María");
-        const reference = value === "Pérez"
-          ? (await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start })).namesReference : runtime.namesReference;
-        const result = await tools.execute("collect_booking_names", { namesReference: reference, [field]: nameField(current.messageId, value) });
-        expect(result.status).toBe(expected ? "clarification" : "prepared_quote");
-        if (expected) expect(result).toMatchObject({ missingFields: ["lastName"] });
-        else expect((result as any).quote.names).toEqual({ firstName: "María", lastName: value });
-        // An unavailable selection returns alternatives without losing the partial name.
-        if (value === "María") expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T23:00:00-03:00" })).status).toBe("clarification");
-        return final(tools);
-      });
-    }
+    await h.run("María Gómez", async tools => {
+      const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
+      const result = await tools.execute("collect_booking_names", { namesReference: runtime.namesReference,
+        name: nameField(current.messageId, "María Gómez") });
+      expect(result).toMatchObject({ status: "prepared_quote", quote: { name: "María Gómez" } });
+      expect((await tools.execute("prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T23:00:00-03:00" })).status).toBe("clarification");
+      return final(tools);
+    });
     await h.run("otro horario", async tools => {
       const result = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: "2035-04-02T11:00:00-03:00" });
-      expect((result as any).quote.names).toEqual({ firstName: "María", lastName: "Gómez" });
+      expect(result).toMatchObject({ status: "prepared_quote", quote: { name: "María Gómez" } });
       await tools.execute("clear_pending", {});
       return final(tools);
     });
@@ -1909,11 +1935,11 @@ describe("native booking names: provenance enforcement, not semantic name owners
       previousQuote = structuredClone((tools.context.pending as any).quote);
       const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!, consent = naturalArguments(tools);
       const result = await tools.execute("collect_booking_names", { namesReference: runtime.namesReference,
-        firstName: nameField(current.messageId, "María"), lastName: nameField(current.messageId, "Pérez", 6) });
+        name: nameField(current.messageId, "María Pérez") });
       // This double supplies interpretation; repeated names themselves are never consent.
       if (accepts) expect(await tools.execute("confirm_quote_naturally", consent)).toMatchObject({ status: "staged_action" });
       expect(result.status).toBe("data");
-      return JSON.stringify({ text: "Gracias, ya tengo tu nombre y apellido." });
+      return JSON.stringify({ text: "Gracias, ya tengo tu nombre." });
     });
     if (repeated.status !== "committed") throw new Error("Missing repeat reply");
     expect(repeated.actions).toHaveLength(accepts ? 1 : 0);
@@ -1922,51 +1948,23 @@ describe("native booking names: provenance enforcement, not semantic name owners
     expect(clientCount!.count).toBe(accepts ? 1 : 0);
     const [output] = await db.sql`select text from outbound_commands where outbound_id=${repeated.outboundId}`;
     expect(output!.text).not.toContain("Reserva propuesta");
-    if (accepts) expect(output!.text).toBe("Gracias, ya tengo tu nombre y apellido.");
-    else {
+    expect(output!.text).toBe("Gracias, ya tengo tu nombre.");
+    if (!accepts) {
       const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
       expect(pending!.dialogue.quote).toEqual(previousQuote);
       expect(pending!.dialogue.quote.outboundId).toBe(original.outboundId);
-      expect(output!.text).toBe("Gracias, ya tengo tu nombre y apellido.");
     }
-  });
-  for (const [field, value, prompt] of [["firstName", "María", "Decime tu apellido."],
-    ["lastName", "Pérez", "Decime tu nombre."]] as const) test(`unchanged partial ${field} asks only for the missing field and clears cleanly`, async () => {
-    const h = await fixture(true, false);
-    await pendingNames(h);
-    await h.run(value, async tools => {
-      const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
-      expect(await tools.execute("collect_booking_names", { namesReference: runtime.namesReference, [field]: nameField(current.messageId, value) }))
-        .toMatchObject({ status: "clarification", missingFields: [field === "firstName" ? "lastName" : "firstName"] });
-      return final(tools);
-    });
-    let previous: unknown;
-    const repeated = await h.run(value, async tools => {
-      previous = structuredClone(tools.context.pending);
-      const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
-      expect(await tools.execute("collect_booking_names", { namesReference: runtime.namesReference, [field]: nameField(current.messageId, value) }))
-        .toMatchObject({ status: "clarification", missingFields: [field === "firstName" ? "lastName" : "firstName"] });
-      return final(tools);
-    });
-    if (repeated.status !== "committed") throw new Error("Missing partial repeat");
-    const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
-    const [output] = await db.sql`select text from outbound_commands where outbound_id=${repeated.outboundId}`;
-    expect(pending!.dialogue).toEqual(previous);
-    expect(output!.text).toBe("Respuesta redactada por el modelo.");
-    expect(await h.appointments()).toHaveLength(0);
-    await h.run("dejalo", async tools => { await tools.execute("clear_pending", {}); return final(tools); });
-    await h.run("¿qué quedó?", async tools => { expect(tools.context.pending).toEqual({ quote: null, awaitingNames: false }); return final(tools); });
   });
   test("corrected delivered names invalidate old references, quote consent and delivery", async () => {
     const h = await fixture(true, false);
     const original = await h.run("mi nombre es María Pérez", async tools => { await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start }); return final(tools); });
     if (original.status !== "committed") throw new Error("Missing original");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${original.outboundId}`;
-    const corrected = await h.run("Gómez", async tools => {
+    const corrected = await h.run("María Gómez", async tools => {
       const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!, consent = naturalArguments(tools);
-      const args = { namesReference: runtime.namesReference, lastName: nameField(current.messageId, "Gómez") };
+      const args = { namesReference: runtime.namesReference, name: nameField(current.messageId, "María Gómez") };
       const result = await tools.execute("collect_booking_names", args);
-      expect((result as any).quote).toMatchObject({ names: { firstName: "María", lastName: "Gómez" }, outboundId: null, sourceMessageId: current.messageId });
+      expect((result as any).quote).toMatchObject({ name: "María Gómez", outboundId: null, sourceMessageId: current.messageId });
       expect((result as any).namesReference).not.toBe(args.namesReference);
       expect((await tools.execute("collect_booking_names", args)).status).toBe("rejected");
       expect((await tools.execute("confirm_quote_naturally", consent)).status).toBe("rejected");
@@ -1978,7 +1976,7 @@ describe("native booking names: provenance enforcement, not semantic name owners
     if (corrected.status !== "committed" || refreshed.status !== "committed") throw new Error("Missing correction");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${refreshed.outboundId}`;
     await h.run("confirmo", async tools => { expect((await tools.execute("confirm_quote", {})).status).toBe("staged_action"); return final(tools); });
-    expect((await h.appointments())[0]!.client.lastName).toBe("Gómez");
+    expect((await h.appointments())[0]!.client.name).toBe("María Gómez");
   });
   test("invalid draft references, spans and untrusted group members cannot modify fields", async () => {
     const h = await fixture(true, false), other = await fixture(true, false);
@@ -1992,11 +1990,11 @@ describe("native booking names: provenance enforcement, not semantic name owners
     await h.run("María", async tools => {
       const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
       expect(runtime.nameSources.some(row => row.messageId === untrusted.messageId)).toBe(false);
-      const patch = { namesReference: runtime.namesReference, firstName: nameField(current.messageId, "María") };
-      for (const invalid of [{ firstName: patch.firstName }, { ...patch, namesReference: "f".repeat(64) },
-        { ...patch, namesReference: foreignReference }, { ...patch, lastName: nameField(foreign.messageId, "María") },
-        { ...patch, firstName: nameField(untrusted.messageId, "María") }, { ...patch, firstName: nameField(foreign.messageId, "María") },
-        { ...patch, firstName: nameField(current.messageId, "Inventada") }, { ...patch, firstName: nameField(current.messageId, "María", 1) }])
+      const patch = { namesReference: runtime.namesReference, name: nameField(current.messageId, "María") };
+      for (const invalid of [{ name: patch.name }, { ...patch, namesReference: "f".repeat(64) },
+        { ...patch, namesReference: foreignReference }, { ...patch, name: nameField(foreign.messageId, "María") },
+        { ...patch, name: nameField(untrusted.messageId, "María") },
+        { ...patch, name: nameField(current.messageId, "Inventada") }, { ...patch, name: nameField(current.messageId, "María", 1) }])
         expect((await tools.execute("collect_booking_names", invalid)).status).toBe("rejected");
       await tools.execute("clear_pending", {});
       expect((await tools.execute("collect_booking_names", patch)).status).toBe("rejected");
@@ -2007,7 +2005,7 @@ describe("native booking names: provenance enforcement, not semantic name owners
     const job = await h.receive("María", false);
     expect((await h.agenda.withAgentSession(job, async tools => {
       expect(nameRuntime(tools).namesReference).toBeNull();
-      expect((await tools.execute("collect_booking_names", { namesReference: "a".repeat(64), firstName: nameField(job.messageId, "María") })).status).toBe("rejected");
+      expect((await tools.execute("collect_booking_names", { namesReference: "a".repeat(64), name: nameField(job.messageId, "María") })).status).toBe("rejected");
       return final(tools);
     })).status).toBe("committed");
   });
@@ -2022,27 +2020,27 @@ describe("native booking names: provenance enforcement, not semantic name owners
     await h.run("María", async tools => {
       const runtime = nameRuntime(tools), current = runtime.nameSources.at(-1)!;
       expect(runtime.nameSources.some(row => row.messageId === historical.messageId)).toBe(false);
-      const args = { namesReference: runtime.namesReference, firstName: nameField(current.messageId, "María") };
-      expect((await tools.execute("collect_booking_names", { ...args, firstName: nameField(historical.messageId, "María") })).status).toBe("rejected");
+      const args = { namesReference: runtime.namesReference, name: nameField(current.messageId, "María") };
+      expect((await tools.execute("collect_booking_names", { ...args, name: nameField(historical.messageId, "María") })).status).toBe("rejected");
       expect((await tools.execute("collect_booking_names", { ...args, namesReference: oldReference })).status).toBe("rejected");
       const replaced = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start });
       expect(replaced.namesReference).not.toBe(args.namesReference);
       expect((await tools.execute("collect_booking_names", args)).status).toBe("rejected");
       return final(tools);
     });
-    await h.run("sin nombres", async tools => { expect((tools.context.pending as any).bookingNameFields).toBeUndefined(); return final(tools); });
+    await h.run("sin nombre", async tools => { expect((tools.context.pending as any).bookingName).toBeNull(); return final(tools); });
     expect(await h.appointments()).toHaveLength(0);
   });
   test("each published member's sender is revalidated when applying its field", async () => {
     const h = await fixture(true, false), earlier = await h.receive("María");
     await pendingNames(h);
     await h.receive("Otro mensaje", true, "14155552671"); // Establish a real fixture binding before reassigning the earlier row.
-    await h.run("mi apellido es Pérez", async tools => {
+    await h.run("¿Hay lugar?", async tools => {
       const runtime = nameRuntime(tools);
       expect(runtime.nameSources.some(row => row.messageId === earlier.messageId)).toBe(true);
       await db.sql`update whatsapp_received_senders set phone='+14155552671' where message_id=${earlier.messageId}`;
       expect((await tools.execute("collect_booking_names", { namesReference: runtime.namesReference,
-        firstName: nameField(earlier.messageId, "María") })).status).toBe("rejected");
+        name: nameField(earlier.messageId, "María") })).status).toBe("rejected");
       return final(tools);
     });
   });
@@ -2051,11 +2049,11 @@ describe("native booking names: provenance enforcement, not semantic name owners
     await h.run("Otro Nombre", async tools => {
       const result = await tools.execute("prepare_booking", { serviceId: h.service, startsAt: start });
       expect((result as any).namesReference).toBeNull();
-      expect((await tools.execute("collect_booking_names", { namesReference: "a".repeat(64), firstName: nameField(randomUUID(), "Otro") })).status).toBe("rejected");
+      expect((await tools.execute("collect_booking_names", { namesReference: "a".repeat(64), name: nameField(randomUUID(), "Otro") })).status).toBe("rejected");
       return final(tools);
     });
-    const [client] = await db.sql`select first_name,last_name from clients where business_id=${h.business}`;
-    expect(client).toEqual({ first_name: "María", last_name: "Pérez" });
+    const [client] = await db.sql`select name from clients where business_id=${h.business}`;
+    expect(client).toEqual({ name: "María Pérez" });
   });
 });
 async function metadataArguments(tools: AgentToolSession, appointmentId: string, operation: "notes" | "preference", value: string | null,
