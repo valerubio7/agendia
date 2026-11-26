@@ -516,15 +516,15 @@ test("contains hostile access and provider failures while preserving isolated re
   expect(activityAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   await page.context().clearCookies();
   await loginInUi(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
-  await expect(page).toHaveURL(/businesses$/);
+  await expect(page).toHaveURL(/\/solicitudes$/);
+  await page.goto(`${system.webUrl}/businesses`);
   const businessRow = page.locator('[data-ui="admin-inventory"]').getByRole("listitem")
     .filter({ has: page.getByText(activeBusiness!.name, { exact: true }) });
-  await businessRow.locator("summary").click();
-  await expect(
-    businessRow.locator(".admin-technical-details dt")
-      .filter({ hasText: /^Última actividad técnica · UTC$/ }).locator("+ dd"),
-  ).toHaveText(formatActivityTimestamp(activityAt!));
-  await expect(businessRow.locator(".admin-technical-details")).toBeVisible();
+  await businessRow.getByRole("button", { name: `Información del negocio: ${activeBusiness!.name}` }).click();
+  const details = page.getByRole("dialog", { name: "Información del negocio" }).locator("dl");
+  await expect(details.locator("dt").filter({ hasText: /^Última actividad técnica · UTC$/ }).locator("+ dd"))
+    .toHaveText(formatActivityTimestamp(activityAt!));
+  await expect(details).toBeVisible();
   await expect(page.getByText(activityAt!, { exact: true })).toHaveCount(0);
   const exposed = systemExposure(
     await page.locator("body").innerText(),

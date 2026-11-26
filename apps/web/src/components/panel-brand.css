@@ -1,0 +1,36 @@
+.panel-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--panel-brand-gap, 10px);
+  color: #f3eee1;
+  white-space: nowrap;
+}
+
+.panel-brand__mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: var(--panel-brand-mark, 34px);
+  height: var(--panel-brand-mark, 34px);
+}
+
+.panel-brand .panel-brand__mark svg { display: block; width: 100%; height: 100%; }
+.panel-brand__wordmark { display: block; flex: none; width: calc(var(--panel-brand-word, 24px) * 3.6); height: auto; }
+
+/* Keep the existing registration and signed-out recovery treatment. */
+.panel-brand__word {
+  font: 800 var(--panel-brand-word, 24px)/1 "Segoe UI", system-ui, -apple-system, sans-serif;
+  letter-spacing: -.045em;
+}
+.panel-brand__word > span { color: #ff6b49; }
+.panel-brand[data-compact] { gap: 0; }
+.panel-brand[data-compact] :is(.panel-brand__word, .panel-brand__wordmark) { display: none; }
+
+.panel-brand[data-tone="dark"] { --panel-brand-gap: 11px; --panel-brand-mark: 33px; --panel-brand-word: 26px; color: #1c2620; }
+.panel-brand[data-tone="dark"] .panel-brand__word { font-weight: 860; letter-spacing: -.04em; }
+@media (max-width: 640px) {
+  .panel-brand[data-tone="dark"] { --panel-brand-mark: 28px; --panel-brand-word: 22px; }
+}
+
+.register-screen > .panel-brand { margin-bottom: 20px; }
+.authenticated-terminal > .panel-brand { align-self: flex-start; }

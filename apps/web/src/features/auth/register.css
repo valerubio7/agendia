@@ -1,0 +1,22 @@
+.register-screen { box-sizing: border-box; max-width: 500px; min-height: 100dvh; margin: auto; padding: 36px 14px 48px; color: #17382a; }
+.register-screen .brand { --brand-height: 35px; padding: 0; margin-bottom: 20px; }
+.register-screen section { padding: 27px 30px 22px; border: 1px solid #e1e8df; border-radius: 22px; background: #fffefa; }
+.register-screen h1 { margin: 0; font-size: 34px; font-weight: 800; line-height: 1.05; letter-spacing: -.04em; }
+.register-screen header p { margin: 8px 0 21px; color: #526b57; font-size: 14px; line-height: 1.45; }
+.register-screen form, .register-screen label { display: grid; gap: 13px; min-width: 0; }
+.register-screen label { gap: 6px; color: #1a412d; font-size: 14px; font-weight: 700; }
+.register-screen input { box-sizing: border-box; width: 100%; min-height: 46px; padding: 10px 13px; border: 1px solid #c1cfc2; border-radius: 12px; background: #fffefa; color: #173c28; }
+.register-screen #register-password-help { margin: -8px 0 0; color: #526b57; font-size: 12px; }
+.register-screen button { margin-top: 4px; min-height: 46px; padding: 9px 14px; border: 1px solid #12372a; border-radius: 12px; background: #12372a; color: #fffaee; font-weight: 770; cursor: pointer; }
+.register-screen button:hover:not(:disabled) { background: #22563d; }
+.register-screen button:disabled { opacity: .6; cursor: not-allowed; }
+.register-screen [role="alert"] { border: 1px solid #efd4cd; padding: 9px 12px; border-radius: 11px; background: #fff1ed; color: #8a3524; }
+.register-screen footer { margin-top: 18px; padding-top: 15px; border-top: 1px solid #e9eee7; font-size: 14px; }
+.register-screen a { color: #22563d; font-weight: 700; text-underline-offset: 3px; }
+.register-screen :focus-visible { outline: 2px solid #d55638; outline-offset: 3px; }
+@media (max-width: 570px) {
+  .register-screen { padding-top: 22px; }
+  .register-screen section { padding: 22px 17px 19px; }
+  .register-screen h1 { font-size: 29px; }
+  .register-screen input { font-size: 16px; }
+}

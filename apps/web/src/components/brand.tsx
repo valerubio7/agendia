@@ -1,3 +1,5 @@
+import { PanelBrand } from "./panel-brand";
+
 type BrandProps = {
   className?: string;
   inverse?: boolean;
@@ -8,21 +10,8 @@ type BrandedNameProps = {
   className?: string;
 };
 
-export function BrandedName({
-  ariaHidden = false,
-  className = "",
-}: BrandedNameProps) {
-  return (
-    <span
-      className={["branded-name", className].filter(Boolean).join(" ")}
-      role="img"
-      aria-label="agendIA"
-      aria-hidden={ariaHidden || undefined}
-    >
-      <img className="branded-name__wordmark" src="/brand/logo-wordmark-outlined.svg" alt="" />
-      <img className="branded-name__compact" src="/brand/logo-mono-outlined.svg" alt="" />
-    </span>
-  );
+export function BrandedName(props: BrandedNameProps) {
+  return <PanelBrand {...props} dark />;
 }
 
 export function Brand({ className = "", inverse = false }: BrandProps) {

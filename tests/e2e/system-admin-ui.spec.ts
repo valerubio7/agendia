@@ -1,451 +1,431 @@
 import { expect, type Locator, type Page, type Route } from "@playwright/test";
 import { login, test } from "./support/fixtures.ts";
 
-const tenant = {
-  name: "Estudio Administración Horizonte",
-  email: "system-admin-ui@example.test",
-  initialPassword: "tenant admin ui password safe",
-};
+const admin = (page: Page) => page.locator('[data-ui="admin-screen"]');
+const feedback = (page: Page) => admin(page).locator(".admin-feedback");
+const confirmation = (page: Page) => page.getByRole("alertdialog");
+const directory = (page: Page) => page.locator(".admin-directory");
+const business = (page: Page, name: string) => directory(page).getByRole("button", { name: `Información del negocio: ${name}`, exact: true });
+const details = (page: Page) => page.getByRole("dialog", { name: "Información del negocio", exact: true });
+const requests = (page: Page) => page.getByRole("region", { name: "Solicitudes pendientes", exact: true });
+const timing = (page: Page) => page.getByRole("spinbutton", { name: "Espera activa (s)", exact: true });
+const save = (page: Page) => page.getByRole("button", { name: "Guardar cambios", exact: true });
 
+async function navigate(page: Page, name: "Inicio" | "Negocios" | "Ajustes") {
+  const menu = page.getByRole("button", { name: "Abrir navegación" });
+  if (await menu.isVisible()) await menu.click();
+  await page.getByRole("link", { name, exact: true }).click({ timeout: 5000 });
+}
 async function expectNoHorizontalOverflow(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 }
-
-function businessRow(page: Page, directory: Locator, name: string) {
-  return directory.getByRole("listitem").filter({ has: page.getByText(name, { exact: true }) });
-}
-
-async function registerPending(page: Page, name: string, email: string, password: string) {
+async function registerPending(page: Page, name: string, email: string) {
   const response = await page.request.post(new URL("/api/auth/register", page.url()).href, {
-    headers: { origin: new URL(page.url()).origin }, data: { name, email, password },
+    headers: { origin: new URL(page.url()).origin }, data: { name, email, password: "disposable admin fixture password" },
   });
   expect(response.status()).toBe(202);
-  await page.reload();
-  const approve = page.getByRole("button", { name: `Aprobar ${name}`, exact: true });
+  if (new URL(page.url()).pathname === "/solicitudes") await page.reload();
+  else await navigate(page, "Inicio");
+  const approve = requests(page).getByRole("button", { name: `Aprobar ${name}`, exact: true });
   await expect(approve).toBeVisible();
   return approve;
 }
-
-async function openAiConfiguration(page: Page) {
-  const tab = page.getByRole("tab", { name: "Configuración de IA", exact: true });
-  await tab.click();
-  await expect(tab).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("tabpanel", { name: "Configuración de IA", exact: true })).toBeVisible();
+async function approve(page: Page, trigger: Locator) {
+  await trigger.click();
+  await confirmation(page).getByRole("button", { name: "Aprobar solicitud", exact: true }).click();
+}
+async function confirmStatus(page: Page, name: string, label = "Suspender negocio") {
+  await business(page, name).click();
+  await details(page).getByRole("button", { name: label, exact: true }).click();
+  await confirmation(page).getByRole("button", { name: label, exact: true }).click();
+}
+async function editTiming(page: Page) {
+  await page.getByRole("button", { name: "Editar", exact: true }).click();
+  return page.getByRole("dialog", { name: "Tiempos de respuesta", exact: true });
 }
 
-async function openManagement(row: Locator) {
-  const details = row.locator("details");
-  const summary = details.locator("summary");
-  await expect(details).toHaveCount(1);
-  await expect(summary.locator(".admin-manage-label")).toHaveText("Gestionar");
-  expect(await details.evaluate(element => element.tagName)).toBe("DETAILS");
-  expect(await summary.evaluate(element => element.tagName)).toBe("SUMMARY");
-  if (!(await details.evaluate(element => (element as HTMLDetailsElement).open))) await summary.click();
-  await expect(details).toHaveAttribute("open", "");
-  return details;
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>(done => { resolve = done; });
+  return { promise, resolve };
 }
 
-async function expectReachable(locator: Locator) {
-  await locator.scrollIntoViewIfNeeded();
-  await expect(locator).toBeVisible();
-}
-
-async function keyboardFocus(page: Page, locator: Locator) {
-  for (let step = 0; step < 40; step++) {
-    await page.keyboard.press("Tab");
-    if (await locator.evaluate(element => element === document.activeElement)) break;
+test("admin destinations are addressable and the active destination survives reload", async ({ page, system }) => {
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
+  await expect(page).toHaveURL(/\/solicitudes$/);
+  await expect(admin(page)).toBeVisible();
+  for (const [width, name, path, heading] of [
+    [360, "Ajustes", "/ajustes", "Ajustes"],
+    [360, "Negocios", "/businesses", "Negocios"],
+    [1280, "Inicio", "/solicitudes", "Solicitudes pendientes"],
+  ] as const) {
+    await page.setViewportSize({ width, height: 900 });
+    await navigate(page, name);
+    await expect(page).toHaveURL(`${system.webUrl}${path}`);
+    await page.reload();
+    await expect(page.getByRole("heading", { level: 1, name: heading, exact: true })).toBeVisible();
+    if (width === 360) await page.getByRole("button", { name: "Abrir navegación" }).click();
+    await expect(page.getByRole("link", { name, exact: true })).toHaveAttribute("aria-current", "page");
+    if (width === 360) await page.getByRole("button", { name: "Cerrar navegación" }).click();
+    await expectNoHorizontalOverflow(page);
   }
-  await expect(locator).toBeFocused();
-  expect(await locator.evaluate(element => element.matches(":focus-visible"))).toBe(true);
-  await page.keyboard.press("Shift+Tab");
-  await page.keyboard.press("Tab");
-  await expect(locator).toBeFocused();
-  expect(await locator.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return (style.outlineStyle !== "none" && parseFloat(style.outlineWidth) > 0) || style.boxShadow !== "none";
-  })).toBe(true);
-}
+});
 
 test("delete requires confirmation and distinguishes failed deletion from failed refresh", async ({ page, system }) => {
   await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
-  const approve = await registerPending(page, "Negocio a eliminar", "delete-admin@example.test", "delete initial password");
-  await approve.click();
-  const row = businessRow(page, page.locator(".admin-directory"), "Negocio a eliminar");
-  const management = await openManagement(row);
-  const remove = management.getByRole("button", { name: "Eliminar Negocio a eliminar" });
+  await expect(admin(page)).toBeVisible();
+  const name = "Negocio a eliminar";
+  await approve(page, await registerPending(page, name, "delete-admin@example.test"));
+  await expect(feedback(page).getByRole("status")).toHaveText("Solicitud aprobada");
+  await navigate(page, "Negocios");
+  const row = business(page, name);
+  await row.click();
+  const remove = details(page).getByRole("button", { name: `Eliminar ${name}`, exact: true });
+  const accept = confirmation(page).getByRole("button", { name: "Eliminar definitivamente", exact: true });
   let writes = 0, failed = true, failRefresh = false;
-  let release!: () => void, observed!: () => void;
-  const held = new Promise<void>(resolve => { release = resolve; });
-  const requested = new Promise<void>(resolve => { observed = resolve; });
+  const held = deferred(), observed = deferred();
   await page.route("**/admin/businesses/**", async route => {
     if (route.request().method() !== "DELETE") return route.continue();
     writes++;
     if (failed) return route.fulfill({ status: 500, json: { code: "INTERNAL_ERROR" } });
     failRefresh = true;
-    observed();
-    await held;
+    observed.resolve();
+    await held.promise;
     return route.fulfill({ status: 200, json: { deleted: true } });
   });
-  await page.route("**/admin/businesses", async route => {
-    if (failRefresh) return route.fulfill({ status: 500, json: { code: "INTERNAL_ERROR" } });
-    return route.continue();
-  });
-  page.once("dialog", async dialog => {
-    expect(dialog.message()).toContain("irreversible");
-    expect(dialog.message()).toContain("copias");
-    expect(dialog.message()).toContain("historial");
-    expect(dialog.message()).toContain("mensajes");
-    await dialog.dismiss();
-  });
+  await page.route("**/admin/businesses", route => failRefresh ? route.fulfill({ status: 500, json: { code: "INTERNAL_ERROR" } }) : route.continue());
   await remove.click();
+  for (const word of ["irreversible", "copias", "historial", "mensajes"]) await expect(confirmation(page)).toContainText(word);
+  await confirmation(page).getByRole("button", { name: "Cancelar", exact: true }).click();
   expect(writes).toBe(0);
-  page.once("dialog", dialog => dialog.accept());
   await remove.click();
-  await expect(management.getByRole("alert")).toContainText("No se pudo eliminar");
-  await expect(row).toBeVisible();
+  await accept.click();
+  await expect(confirmation(page).getByRole("alert")).toBeVisible();
+  await expect(row).toHaveCount(1);
   expect(writes).toBe(1);
   failed = false;
-  page.once("dialog", dialog => dialog.accept());
-  await remove.click();
+  await accept.click();
   try {
-    await requested;
-    await expect(remove).toBeDisabled();
+    await observed.promise;
+    await expect(confirmation(page).getByRole("button", { name: "Procesando…", exact: true })).toBeDisabled();
     expect(writes).toBe(2);
-  } finally { release(); }
+  } finally { held.resolve(); }
   await expect(row).toHaveCount(0);
-  await expect(page.locator(".admin-feedback").getByRole("status")).toHaveText("Negocio eliminado");
-  await expect(page.locator(".admin-feedback").getByRole("alert")).toBeVisible();
+  await expect(feedback(page).getByRole("status")).toHaveText("Negocio eliminado");
+  await expect(feedback(page).getByRole("alert")).toBeVisible();
   await page.getByRole("button", { name: "Reintentar consulta" }).click();
   expect(writes).toBe(2);
 });
 
 test("initial registration read failure leaves admin controls available and retries reads only", async ({ page, system }) => {
   await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
-  const approve = await registerPending(page, "Negocio existente", "existing-retry@example.test", "existing initial password");
-  await approve.click();
-  await expect(page.locator(".admin-feedback").getByRole("status")).toHaveText("Solicitud aprobada");
-  await registerPending(page, "Solicitud recuperada", "pending-retry@example.test", "pending initial password");
-  let registrationReads = 0;
-  let writes = 0;
-  let registrationsUnavailable = true;
+  await expect(admin(page)).toBeVisible();
+  await approve(page, await registerPending(page, "Negocio existente", "existing-retry@example.test"));
+  await expect(feedback(page).getByRole("status")).toHaveText("Solicitud aprobada");
+  await registerPending(page, "Solicitud recuperada", "pending-retry@example.test");
+  let registrationReads = 0, writes = 0, unavailable = true;
   await page.route("**/admin/**", async route => {
     const request = route.request();
     if (request.method() !== "GET") writes++;
     if (request.method() === "GET" && new URL(request.url()).pathname.endsWith("/admin/registrations")) {
       registrationReads++;
-      if (registrationsUnavailable) return route.fulfill({ status: 500, json: { code: "INTERNAL_ERROR" } });
+      if (unavailable) return route.fulfill({ status: 500, json: { code: "INTERNAL_ERROR" } });
     }
     await route.continue();
   });
   await page.reload();
-  const requests = page.getByRole("region", { name: "Solicitudes pendientes" });
-  await expect(requests.getByText("No se pudieron cargar las solicitudes pendientes.")).toBeVisible();
-  await expect(requests.getByText("No hay solicitudes pendientes.")).toHaveCount(0);
-  const management = await openManagement(businessRow(page, page.locator(".admin-directory"), "Negocio existente"));
-  await management.getByRole("button", { name: "Suspender" }).click();
-  await expect(page.locator(".admin-feedback").getByRole("status")).toHaveText("Negocio actualizado");
-  await expect(businessRow(page, page.locator(".admin-directory"), "Negocio existente").getByText("Suspendido", { exact: true })).toBeVisible();
-  await openAiConfiguration(page);
-  const timing = page.getByRole("spinbutton", { name: /^Espera activa \(segundos\)/ });
-  await expect(timing).toHaveValue("90");
-  await timing.fill("23");
-  await page.getByRole("button", { name: "Guardar configuración" }).click();
-  await expect(page.locator(".admin-feedback").getByRole("status")).toHaveText("Tiempos guardados");
-  await expect(timing).toHaveValue("23");
-  await expect(page.locator(".admin-feedback").getByRole("alert")).toBeVisible();
+  await expect(requests(page).getByText("No se pudieron cargar las solicitudes pendientes.")).toBeVisible();
+  await expect(requests(page).getByText("No hay solicitudes pendientes")).toHaveCount(0);
+  await navigate(page, "Negocios");
+  await confirmStatus(page, "Negocio existente");
+  await expect(feedback(page).getByRole("status")).toHaveText("Negocio actualizado");
+  await expect(business(page, "Negocio existente")).toContainText("Suspendido");
+  await navigate(page, "Ajustes");
+  await editTiming(page);
+  await expect(timing(page)).toHaveValue("90");
+  await timing(page).fill("23");
+  await save(page).click();
+  await expect(feedback(page).getByRole("status")).toHaveText("Tiempos guardados");
+  await expect(page.getByText("23 s", { exact: true })).toBeVisible();
+  await expect(feedback(page).getByRole("alert")).toBeVisible();
   expect(writes).toBe(2);
-  registrationsUnavailable = false;
+  const before = registrationReads;
+  unavailable = false;
   await page.getByRole("button", { name: "Reintentar consulta" }).click();
-  await expect(page.locator(".admin-feedback").getByRole("alert")).toHaveCount(0);
-  await page.getByRole("tab", { name: "Negocios", exact: true }).click();
-  await expect(requests.getByRole("button", { name: "Aprobar Solicitud recuperada" })).toBeVisible();
-  expect(registrationReads).toBe(4);
+  await expect(feedback(page).getByRole("alert")).toHaveCount(0);
+  expect(registrationReads).toBe(before + 1);
+  await navigate(page, "Inicio");
+  await expect(requests(page).getByRole("button", { name: "Aprobar Solicitud recuperada" })).toBeVisible();
   expect(writes).toBe(2);
 });
 
 for (const failedRead of ["businesses", "response-timing"]) {
   test(`confirmed admin writes survive failed ${failedRead} refresh with GET-only recovery`, async ({ page, system }) => {
     await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
-    await expect(page.locator('[data-ui="admin-screen"]')).toBeVisible();
-    const approve = await registerPending(page, "Negocio confirmado", "confirmed-admin@example.test", "confirmed initial password");
-    const directory = page.locator(".admin-directory");
-    const feedback = page.locator(".admin-feedback");
-    const currentName = "Negocio confirmado";
-    let mutationCount = 0;
-    let failRefresh = false;
-    let readCount = 0;
-    let release!: () => void;
-    let observed!: () => void;
-    let held = Promise.resolve();
-    let mutationObserved = Promise.resolve();
+    await expect(admin(page)).toBeVisible();
+    const name = "Negocio confirmado";
+    const trigger = await registerPending(page, name, "confirmed-admin@example.test");
+    let mutationCount = 0, readCount = 0, failRefresh = false;
     await page.route("**/admin/**", async route => {
       const request = route.request();
       if (request.method() !== "GET") {
         mutationCount++;
         const response = await route.fetch();
         expect(response.ok()).toBe(true);
-        observed();
-        await held;
-        await route.fulfill({ response });
-      } else {
+        failRefresh = true;
+        return route.fulfill({ response });
+      }
+      if (new URL(request.url()).pathname.endsWith(`/admin/${failedRead}`)) {
         readCount++;
-        if (failRefresh && new URL(request.url()).pathname.endsWith(`/admin/${failedRead}`)) {
-          await route.fulfill({ status: 500, json: { code: "INTERNAL_ERROR" } });
-        } else await route.continue();
+        if (failRefresh) return route.fulfill({ status: 500, json: { code: "INTERNAL_ERROR" } });
       }
+      await route.continue();
     });
-    for (const action of ["create", "status", "instructions"] as const) {
-      failRefresh = true;
-      held = new Promise<void>(resolve => { release = resolve; });
-      mutationObserved = new Promise<void>(resolve => { observed = resolve; });
-      if (action === "create") {
-        await approve.click();
-      } else if (action === "instructions") {
-        await openAiConfiguration(page);
-        await page.getByRole("spinbutton", { name: /^Espera activa \(segundos\)/ }).fill("23");
-        await page.getByRole("button", { name: "Guardar configuración", exact: true }).click();
-      } else {
-        const management = await openManagement(businessRow(page, directory, currentName));
-        await management.getByRole("button", { name: "Suspender", exact: true }).click();
-      }
-      await mutationObserved;
-      release();
-      await expect(feedback.getByRole("status")).toHaveText(action === "create" ? "Solicitud aprobada" : action === "instructions" ? "Tiempos guardados" : "Negocio actualizado");
-      const warning = feedback.getByRole("alert");
+    for (const action of ["create", "status", "timing"] as const) {
+      if (action === "create") await approve(page, trigger);
+      if (action === "status") { await navigate(page, "Negocios"); await confirmStatus(page, name); }
+      if (action === "timing") { await navigate(page, "Ajustes"); await editTiming(page); await timing(page).fill("23"); await save(page).click(); }
+      await expect(feedback(page).getByRole("status")).toHaveText(action === "create" ? "Solicitud aprobada" : action === "timing" ? "Tiempos guardados" : "Negocio actualizado");
+      const warning = feedback(page).getByRole("alert");
       await expect(warning).toHaveText("No se pudo actualizar la información. Reintentá solo la consulta.");
-      if (action === "instructions") await page.getByRole("tab", { name: "Negocios", exact: true }).click();
-      if (action !== "create" || failedRead !== "businesses") await expect(businessRow(page, directory, currentName)).toHaveCount(1);
-      if (action === "status") await expect(businessRow(page, directory, currentName).getByText("Suspendido", { exact: true })).toBeVisible();
-      const writes = mutationCount;
-      const reads = readCount;
+      if (action === "create") await expect(trigger).toHaveCount(0);
+      if (action === "status") await expect(business(page, name)).toContainText("Suspendido");
+      if (action === "timing") await expect(page.getByText("23 s", { exact: true })).toBeVisible();
+      const writes = mutationCount, reads = readCount;
       failRefresh = false;
       await page.getByRole("button", { name: "Reintentar consulta", exact: true }).click();
       await expect(warning).toHaveCount(0);
       expect(readCount).toBeGreaterThan(reads);
       expect(mutationCount).toBe(writes);
-      await expect(businessRow(page, directory, currentName)).toHaveCount(1);
     }
     expect(mutationCount).toBe(3);
     await page.reload();
-    await expect(businessRow(page, directory, currentName).getByText("Suspendido", { exact: true })).toBeVisible();
-    await openAiConfiguration(page);
-    await expect(page.getByRole("spinbutton", { name: /^Espera activa \(segundos\)/ })).toHaveValue("23");
-    await page.getByRole("tab", { name: "Negocios", exact: true }).click();
+    await editTiming(page);
+    await expect(timing(page)).toHaveValue("23");
+    await page.keyboard.press("Escape");
+    await navigate(page, "Negocios");
+    await expect(business(page, name)).toContainText("Suspendido");
     await page.route("**/admin/businesses/*/status", route => route.fulfill({ status: 500, json: { code: "INTERNAL_ERROR" } }));
-    const management = await openManagement(businessRow(page, directory, currentName));
-    await management.getByRole("button", { name: "Reactivar", exact: true }).click();
-    await expect(management.getByRole("alert")).toContainText("No se pudo actualizar el estado");
-    await expect(feedback.getByRole("status")).toHaveCount(0);
+    await confirmStatus(page, name, "Reactivar negocio");
+    await expect(confirmation(page).getByRole("alert")).toBeVisible();
+    await expect(feedback(page).getByRole("status")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Reintentar consulta", exact: true })).toHaveCount(0);
   });
 }
 
 test("late admin mutation and refresh responses cannot overwrite a newer session action", async ({ page, system }) => {
-  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
-  const directory = page.locator(".admin-directory");
-  const notice = page.locator(".admin-feedback").getByRole("status");
+  const adminLogin = () => login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
+  await adminLogin();
   for (const phase of ["mutation", "refresh"] as const) {
-    await expect(page.locator('[data-ui="admin-screen"]')).toBeVisible();
+    await expect(admin(page)).toBeVisible();
     const name = `Negocio sesión ${phase}`;
-    const approve = await registerPending(page, name, `session-${phase}@example.test`, "late session initial password");
-    let release!: () => void;
-    let observed!: () => void;
-    let delivered!: () => void;
-    const held = new Promise<void>(resolve => { release = resolve; });
-    const intercepted = new Promise<void>(resolve => { observed = resolve; });
-    const delivery = new Promise<void>(resolve => { delivered = resolve; });
+    const trigger = await registerPending(page, name, `session-${phase}@example.test`);
+    const held = deferred(), intercepted = deferred(), delivered = deferred();
     let captured = false;
     const lateRoute = async (route: Route) => {
       if (captured || route.request().method() !== (phase === "mutation" ? "POST" : "GET")) return route.continue();
       captured = true;
       const response = await route.fetch();
       expect(response.ok()).toBe(true);
-      observed();
-      await held;
+      intercepted.resolve();
+      await held.promise;
       await route.fulfill({ response });
-      delivered();
+      delivered.resolve();
     };
     const routePattern = phase === "mutation" ? "**/admin/registrations/*/approve" : "**/admin/businesses";
     await page.route(routePattern, lateRoute);
-    await approve.click();
-    await intercepted;
+    await approve(page, trigger);
+    await intercepted.promise;
     try {
+      await page.keyboard.press("Escape");
       await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
       await expect(page).toHaveURL(/\/admin\/login$/);
-      await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
-      await expect(page.locator('[data-ui="admin-screen"]')).toBeVisible({ timeout: 30_000 });
-      const management = await openManagement(businessRow(page, directory, name));
-      await management.getByRole("button", { name: "Suspender", exact: true }).click();
-      await expect(notice).toHaveText("Negocio actualizado");
-    } finally { release(); }
-    await delivery;
-    // Drain browser frames after delivery before checking the newer session.
+      await adminLogin();
+      await navigate(page, "Negocios");
+      await confirmStatus(page, name);
+      await expect(feedback(page).getByRole("status")).toHaveText("Negocio actualizado");
+    } finally { held.resolve(); }
+    await delivered.promise;
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-    await expect(notice).toHaveText("Negocio actualizado");
-    await expect(businessRow(page, directory, name).getByText("Suspendido", { exact: true })).toBeVisible();
+    await expect(feedback(page).getByRole("status")).toHaveText("Negocio actualizado");
+    await expect(business(page, name)).toContainText("Suspendido");
     await page.unroute(routePattern, lateRoute);
   }
 });
 
 test("platform admin saves and reloads global reply waits without guidance controls", async ({ page, system }) => {
   await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
-  await openAiConfiguration(page);
-  const panel = page.getByRole("tabpanel", { name: "Configuración de IA", exact: true });
+  await expect(admin(page)).toBeVisible();
+  await navigate(page, "Ajustes");
+  const panel = await editTiming(page);
   await expect(panel.locator("textarea")).toHaveCount(0);
   await expect(panel.getByText(/indicaciones administrativas|instrucciones base/i)).toHaveCount(0);
-  const initialWait = page.getByRole("spinbutton", { name: /^Espera inicial \(segundos\)/ });
-  const activeWait = page.getByRole("spinbutton", { name: /^Espera activa \(segundos\)/ });
-  const reset = page.getByRole("spinbutton", { name: /^Reinicio por inactividad \(segundos\)/ });
-  for (const [control, id] of [[initialWait, "platform-initial-help"], [activeWait, "platform-active-help"], [reset, "platform-inactivity-help"]] as const)
+  const initial = page.getByRole("spinbutton", { name: "Espera inicial (s)", exact: true });
+  const reset = page.getByRole("spinbutton", { name: "Reinicio por inactividad (s)", exact: true });
+  for (const [control, id] of [[initial, "initialDelaySeconds-help"], [timing(page), "activeDelaySeconds-help"], [reset, "inactivityResetSeconds-help"]] as const)
     await expect(control).toHaveAttribute("aria-describedby", id);
-  await expect(initialWait).toHaveValue("600");
-  await expect(activeWait).toHaveValue("90");
+  await expect(initial).toHaveValue("600");
+  await expect(timing(page)).toHaveValue("90");
   await expect(reset).toHaveValue("3600");
-  for (const size of [{ width: 1280, height: 900 }, { width: 900, height: 900 }, { width: 360, height: 800 }]) {
-    await page.setViewportSize(size);
-    await expectNoHorizontalOverflow(page);
-  }
-  await initialWait.fill("0");
-  await activeWait.fill("23");
+  for (const width of [1280, 900, 360]) { await page.setViewportSize({ width, height: 900 }); await expectNoHorizontalOverflow(page); }
+  await initial.fill("0");
+  await timing(page).fill("23");
   await reset.fill("75");
-  await page.getByRole("button", { name: "Guardar configuración", exact: true }).click();
-  await expect(page.locator(".admin-feedback").getByRole("status")).toHaveText("Tiempos guardados");
+  await save(page).click();
+  await expect(feedback(page).getByRole("status")).toHaveText("Tiempos guardados");
   await page.reload();
-  await openAiConfiguration(page);
-  await expect(initialWait).toHaveValue("0");
-  await expect(activeWait).toHaveValue("23");
+  await editTiming(page);
+  await expect(initial).toHaveValue("0");
+  await expect(timing(page)).toHaveValue("23");
   await expect(reset).toHaveValue("75");
   await reset.fill("0");
-  await page.getByRole("button", { name: "Guardar configuración", exact: true }).click();
+  await save(page).click();
   expect(await reset.evaluate(input => (input as HTMLInputElement).validity.rangeUnderflow)).toBe(true);
   await page.reload();
-  await openAiConfiguration(page);
+  await editTiming(page);
   await expect(reset).toHaveValue("75");
 });
+
+// Effective reference at 1280/360 × 900; page coordinates exclude its 49 px demo banner.
+const panelBounds = {
+  requests: [[274, 99.89, 954, 85], [14, 176.83, 332, 131]],
+  businesses: [[274, 244.97, 954, 132.94], [14, 304.06, 332, 85]],
+  settings: [[274, 103.89, 680, 263.33], [14, 135.59, 332, 230.66]],
+  requestDialog: [[355, 198.98, 570, 502.03], [10, 391.42, 340, 498.58]],
+  businessDialog: [[355, 90.86, 570, 718.28], [10, 111.75, 340, 778.25]],
+} as const;
+
+async function box(locator: Locator) {
+  return locator.evaluate(element => {
+    const { x, y, width, height } = element.getBoundingClientRect();
+    return [x, y, width, height] as const;
+  });
+}
+
+async function settleDialog(dialog: Locator) {
+  await dialog.evaluate(async element => {
+    const finite = element.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime));
+    await Promise.allSettled(finite.map(animation => animation.finished));
+  });
+}
+
+async function expectReferenceBounds(locator: Locator, surface: keyof typeof panelBounds, width: number, tolerance: number) {
+  const actual = await box(locator);
+  const expected = panelBounds[surface][width === 1280 ? 0 : 1];
+  expect.soft(Math.max(...actual.map((value, i) => Math.abs(value - expected[i]!))),
+    `${surface} at ${width}: ${actual.join(", ")}`).toBeLessThanOrEqual(tolerance);
+  return actual;
+}
 
 test("the redesigned administration screen preserves the real business workflow responsively", async ({ page, system }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
-  await expect(page).toHaveURL(/\/businesses$/);
-  const shell = page.locator('[data-ui="authenticated-shell"][data-variant="admin"]');
-  await expect(shell).toHaveCount(1);
-  await expect(shell.getByRole("img", { name: "agendIA", exact: true })).toBeVisible();
-  const screen = shell.locator('[data-ui="admin-screen"]');
-  const heading = screen.getByRole("heading", { level: 1, name: "Administración", exact: true });
-  const requests = screen.getByRole("region", { name: "Solicitudes pendientes" });
-  const inventory = screen.locator('[data-ui="admin-inventory"]');
-  const notice = screen.locator(".admin-feedback").getByRole("status");
-  await expect(screen).toHaveCount(1);
-  await expect(heading).toBeVisible();
-
-  const tabs = screen.getByRole("tablist", { name: "Espacios de administración", exact: true });
-  const businessesTab = tabs.getByRole("tab", { name: "Negocios", exact: true });
-  const aiTab = tabs.getByRole("tab", { name: "Configuración de IA", exact: true });
-  await expect(tabs.getByRole("tab")).toHaveText(["Negocios", "Configuración de IA"]);
-  await expect(businessesTab).toHaveAttribute("aria-selected", "true");
-  await expect(businessesTab).toHaveAttribute("aria-controls", "admin-businesses-panel");
-  await expect(aiTab).toHaveAttribute("aria-controls", "admin-ai-panel");
-  await businessesTab.focus();
-  for (const key of ["ArrowRight", "Home", "End", "ArrowLeft"]) {
-    await page.keyboard.press(key);
-    const aiSelected = key === "ArrowRight" || key === "End";
-    await expect(aiSelected ? aiTab : businessesTab).toBeFocused();
-    await expect(aiSelected ? aiTab : businessesTab).toHaveAttribute("aria-selected", "true");
-    await expect(screen.getByRole("tabpanel", { name: aiSelected ? "Configuración de IA" : "Negocios", exact: true })).toBeVisible();
-    await expect(screen.locator(aiSelected ? "#admin-businesses-panel" : "#admin-ai-panel")).toBeHidden();
+  await expect(admin(page)).toBeVisible();
+  await navigate(page, "Negocios");
+  await expect(directory(page)).toBeEmpty();
+  await expect(page.getByText("Aún no hay negocios", { exact: true })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Estado operativo" }).getByRole("button")).toHaveText(["Todos (0)", "Activos (0)", "Suspendidos (0)"]);
+  const name = "Estudio Horizonte", email = "visual-admin@example.test";
+  const trigger = await registerPending(page, name, email);
+  await expect(requests(page).getByText(email, { exact: true })).toBeVisible();
+  const when = await requests(page).locator("time").innerText();
+  const measured: Record<string, number | readonly number[]> = {};
+  for (const width of [1280, 360]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expectNoHorizontalOverflow(page);
+    measured[`requests-${width}`] = await expectReferenceBounds(requests(page), "requests", width, 1);
+    const headingTextWidth = await page.getByRole("heading", { level: 1 }).evaluate(element => {
+      const content = document.createRange();
+      content.selectNodeContents(element);
+      return content.getBoundingClientRect().width;
+    });
+    measured[`headingTextWidth-${width}`] = headingTextWidth;
+    expect.soft(Math.abs(headingTextWidth - (width === 1280 ? 367.89 : 280.77)), `request heading at ${width}: ${headingTextWidth}`).toBeLessThanOrEqual(1);
+    await page.screenshot({ path: testInfo.outputPath(`requests-${width}.png`) });
+    const request = requests(page).getByRole("button", { name: `Ver solicitud de ${name}`, exact: true });
+    await request.click();
+    const detail = page.getByRole("dialog", { name: "Solicitud de alta", exact: true });
+    await expect(detail.getByText(email)).toBeVisible();
+    await settleDialog(detail);
+    measured[`request-dialog-${width}`] = await expectReferenceBounds(detail, "requestDialog", width, 2);
+    expect.soft((await box(detail.locator("header button svg")))[2]).toBe(16);
+    await page.screenshot({ path: testInfo.outputPath(`request-dialog-${width}.png`) });
+    await page.keyboard.press("Escape");
+    await expect(request).toBeFocused();
+    await trigger.click();
+    const approval = confirmation(page);
+    await expect(approval).toBeVisible();
+    await settleDialog(approval);
+    measured[`approval-dialog-${width}`] = await box(approval);
+    await page.screenshot({ path: testInfo.outputPath(`approval-dialog-${width}.png`) });
+    await approval.getByRole("button", { name: "Cancelar", exact: true }).click();
   }
-  await expect(page).toHaveURL(/\/businesses$/);
-  await expect(screen.locator('[data-ui="admin-create"]')).toHaveCount(0);
-  await expect(screen.getByRole("button", { name: /Nuevo negocio|Crear negocio/ })).toHaveCount(0);
-  await expect(requests).toBeVisible();
-  await expect(requests.getByText("No hay solicitudes pendientes.")).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath("admin-desktop.png"), fullPage: true });
-
-  const directory = inventory.getByRole("list");
-  const emptyDirectory = inventory.getByRole("heading", { name: "Tu primer negocio empieza acá", exact: true });
-  await expect(inventory).toBeVisible();
-  await expect(directory).toBeEmpty();
-  await expect(emptyDirectory).toBeVisible();
-  await expect(inventory.getByRole("heading", { name: "Directorio de negocios", exact: true })).toHaveCount(1);
-  await expect(inventory.getByLabel("Buscar negocio", { exact: true })).toBeVisible();
-  const statusFilter = inventory.getByRole("combobox", { name: "Estado operativo", exact: true });
-  await expect(statusFilter).toBeVisible();
-  await expect(statusFilter).toHaveValue("all");
-  await expect(statusFilter.getByRole("option")).toHaveText(["Todos (0)", "Activos (0)", "Suspendidos (0)"]);
-  await expect(screen.locator("a")).toHaveCount(0);
-  await expect(screen.getByRole("button", { name: /Eliminar|Ver detalle|Conversaciones?|Métricas?|Dashboard/i })).toHaveCount(0);
-  await expect(screen.locator("summary").filter({ hasText: /Eliminar|Ver detalle|Conversaciones?|Métricas?|Dashboard/i })).toHaveCount(0);
-  await expect(screen.getByRole("heading", { name: /Métricas?|Dashboard|Total de negocios|Negocios activos|Negocios suspendidos/i })).toHaveCount(0);
-  await expect(screen.locator('[data-ui*="metric"], [data-ui*="dashboard"], [data-ui*="total"]')).toHaveCount(0);
-
-  let createRequestCount = 0;
-  let observeCreateRequest!: () => void;
-  const createRequestObserved = new Promise<void>(resolve => { observeCreateRequest = resolve; });
-  let releaseCreateRequest!: () => void;
-  const createRequestReleased = new Promise<void>(resolve => { releaseCreateRequest = resolve; });
-  const approve = await registerPending(page, tenant.name, tenant.email, tenant.initialPassword);
-  await expect(requests.getByText(tenant.email, { exact: false })).toBeVisible();
-  await keyboardFocus(page, approve);
-  await page.route("**/admin/registrations/*/approve", async route => {
-    createRequestCount++;
-    observeCreateRequest();
-    await createRequestReleased;
-    await route.continue();
-  });
-  await Promise.all([createRequestObserved, approve.click()]);
-  try {
-    await expect(approve).toBeDisabled();
-    await page.screenshot({ path: testInfo.outputPath("admin-pending.png"), fullPage: true });
-  } finally { releaseCreateRequest(); }
-  await expect(notice).toHaveText("Solicitud aprobada");
-  expect(createRequestCount).toBe(1);
-  await expect(directory).toBeVisible();
-  await expect(emptyDirectory).toBeHidden();
-  await expect(inventory.locator(".admin-directory-heading > span")).toHaveText(["Negocio", "Operación", "Agente", "WhatsApp", "Gestión"]);
-  const createdRow = businessRow(page, directory, tenant.name);
-  await expect(createdRow).toHaveCount(1);
-  await expect(createdRow.getByText(tenant.name, { exact: true })).toBeVisible();
-  for (const text of ["Activo", "Inactivo", "Requiere vinculación"])
-    await expect(createdRow.getByText(text, { exact: true })).toBeVisible();
-  await expect(createdRow.locator(".admin-directory-state")).toHaveCount(3);
-  await page.unroute("**/admin/registrations/*/approve");
-  await keyboardFocus(page, createdRow.locator("summary"));
-  let management = await openManagement(createdRow);
-  await expect(management.locator(".admin-technical-details dt")).toHaveText(["Alta · UTC", "Última actividad técnica · UTC"]);
-  await expect(management.locator(".admin-technical-details dd")).toHaveCount(2);
-  await expect(management.locator(".admin-technical-details dd").first()).not.toHaveText(/Fecha no disponible|^$/);
-  await expect(management.getByText("Sin actividad", { exact: true })).toBeVisible();
-  await expect(management.getByRole("button", { name: "Renombrar" })).toHaveCount(0);
-  await expect(management.getByRole("button", { name: "Cambiar contraseña" })).toHaveCount(0);
-  await expect(management.locator('input[name="name"], input[name="password"]')).toHaveCount(0);
-  const managedRow = businessRow(page, directory, tenant.name);
-  await management.getByRole("button", { name: "Suspender", exact: true }).click();
-  await expect(notice).toHaveText("Negocio actualizado");
-  await expect(managedRow.getByText("Suspendido", { exact: true })).toBeVisible();
-  management = await openManagement(managedRow);
-  await expect(management.getByRole("button", { name: "Reactivar", exact: true })).toBeVisible();
-  await expect(management.getByRole("button", { name: "Suspender", exact: true })).toHaveCount(0);
-  await expect(screen.locator("a")).toHaveCount(0);
-  await expect(management.getByRole("button", { name: `Eliminar ${tenant.name}` })).toBeVisible();
-  await expect(screen.getByRole("button", { name: /Ver detalle|Conversaciones?|Métricas?|Dashboard|Duplicar|Editar/i })).toHaveCount(0);
-  await expect(screen.locator('a[href*="conversation"], a[href*="conversacion"]')).toHaveCount(0);
-  for (const locator of [heading, requests, inventory, managedRow, management]) await expectReachable(locator);
-  await expectNoHorizontalOverflow(page);
-  await page.setViewportSize({ width: 360, height: 800 });
-  const mobileRow = businessRow(page, directory, tenant.name);
-  const mobileManagement = await openManagement(mobileRow);
-  const mobileReactivate = mobileManagement.getByRole("button", { name: "Reactivar", exact: true });
-  for (const locator of [heading, requests, inventory, directory, mobileRow, mobileManagement, mobileReactivate]) await expectReachable(locator);
-  await expect(directory).toHaveCount(1);
-  await expect(mobileRow).toHaveCount(1);
-  await expect(mobileRow.locator(".admin-directory-state")).toHaveCount(3);
-  await expect(mobileManagement.locator(".admin-technical-details dt")).toHaveText(["Alta · UTC", "Última actividad técnica · UTC"]);
-  await expect(mobileManagement.getByText("Sin actividad", { exact: true })).toBeVisible();
-  await expectNoHorizontalOverflow(page);
-  await page.screenshot({ path: testInfo.outputPath("admin-mobile.png"), fullPage: true });
-  await mobileReactivate.click();
-  await expect(notice).toHaveText("Negocio actualizado");
-  await expect(mobileRow.locator(".admin-status--business-active")).toHaveText("Activo");
+  const observed = deferred(), release = deferred();
+  let writes = 0;
+  await page.route("**/admin/registrations/*/approve", async route => { writes++; observed.resolve(); await release.promise; await route.continue(); });
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+  await expect(confirmation(page).getByRole("button", { name: "Cancelar", exact: true })).toBeFocused();
+  const accept = confirmation(page).getByRole("button", { name: "Aprobar solicitud", exact: true });
+  await accept.click();
+  try { await observed.promise; await expect(confirmation(page).getByRole("button", { name: "Procesando…", exact: true })).toBeDisabled(); } finally { release.resolve(); }
+  await expect(feedback(page).getByRole("status")).toHaveText("Solicitud aprobada");
+  expect(writes).toBe(1);
+  await navigate(page, "Negocios");
+  const row = business(page, name);
+  await expect(row).toContainText("Activo");
+  const search = page.getByRole("searchbox", { name: "Buscar negocio" });
+  await search.fill("sin coincidencias");
+  await expect(row).toHaveCount(0);
+  await page.getByRole("button", { name: "Limpiar filtros" }).click();
+  await expect(row).toBeVisible();
+  await page.getByRole("button", { name: "Suspendidos (0)", exact: true }).click();
+  await expect(row).toHaveCount(0);
+  await page.getByRole("button", { name: "Todos (1)", exact: true }).click();
+  let created = "";
+  for (const width of [1280, 360]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expectNoHorizontalOverflow(page);
+    measured[`businesses-${width}`] = await expectReferenceBounds(page.locator(".adm-table"), "businesses", width, 1);
+    expect.soft(await row.locator(":scope > svg path").getAttribute("d")).toBe("M5 12h14m-6-6 6 6-6 6");
+    await page.screenshot({ path: testInfo.outputPath(`businesses-${width}.png`) });
+    await row.click();
+    await expect(details(page).getByText("Sin vincular", { exact: true })).toBeVisible();
+    await expect(details(page).getByText("Inactivo", { exact: true })).toBeVisible();
+    await expect(details(page).getByText("Sin actividad", { exact: true })).toBeVisible();
+    await expect(details(page).getByRole("button", { name: /Renombrar|Cambiar contraseña/ })).toHaveCount(0);
+    created = await details(page).locator('dt').filter({ hasText: /^Alta · UTC$/ }).locator('+ dd').innerText();
+    await settleDialog(details(page));
+    measured[`business-dialog-${width}`] = await expectReferenceBounds(details(page), "businessDialog", width, 6);
+    await page.screenshot({ path: testInfo.outputPath(`business-dialog-${width}.png`) });
+    await page.keyboard.press("Escape");
+    await expect(row).toBeFocused();
+  }
+  await confirmStatus(page, name);
+  await expect(feedback(page).getByRole("status")).toHaveText("Negocio actualizado");
+  await expect(row).toContainText("Suspendido");
+  await confirmStatus(page, name, "Reactivar negocio");
+  await expect(feedback(page).getByRole("status")).toHaveText("Negocio actualizado");
+  await expect(row).toContainText("Activo");
   await page.reload();
-  await expect(businessRow(page, directory, tenant.name).locator(".admin-status--business-active")).toHaveText("Activo");
+  await expect(row).toContainText("Activo");
+  await navigate(page, "Ajustes");
+  await expect(page.getByRole("heading", { level: 1, name: "Ajustes" })).toBeVisible();
+  for (const width of [1280, 360]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expectNoHorizontalOverflow(page);
+    measured[`settings-${width}`] = await expectReferenceBounds(page.locator(".adm-settings-compact"), "settings", width, 1);
+    await page.screenshot({ path: testInfo.outputPath(`settings-${width}.png`) });
+    const timingDialog = await editTiming(page);
+    await expect(timing(page)).toHaveAccessibleDescription(/Entre 0 y 86400 segundos/);
+    await settleDialog(timingDialog);
+    const bounds = await box(timingDialog);
+    measured[`timing-dialog-${width}`] = bounds;
+    const [x, y, w, h] = bounds;
+    expect.soft([x, w]).toEqual(width === 1280 ? [355, 570] : [10, 340]);
+    expect.soft(Math.abs(width === 1280 ? y * 2 + h - 900 : y + h - 890)).toBeLessThanOrEqual(0.25);
+    await page.screenshot({ path: testInfo.outputPath(`timing-dialog-${width}.png`) });
+    await page.keyboard.press("Escape");
+  }
+  await testInfo.attach("visual-fixture", { body: JSON.stringify({ name, email, when, created, measured }), contentType: "application/json" });
 });

@@ -16,8 +16,13 @@ export async function createBusinessInAdminUi(page: Page, business: {
 }) {
   const screen = page.locator('[data-ui="admin-screen"]');
   await expect(screen).toBeVisible();
-  const tab = screen.getByRole("tab", { name: "Negocios", exact: true });
-  if (await tab.getAttribute("aria-selected") !== "true") await tab.click();
+  const navigate = async (name: "Inicio" | "Negocios") => {
+    const menu = page.getByRole("button", { name: "Abrir navegación" });
+    if (await menu.isVisible()) await menu.click();
+    await page.getByRole("link", { name, exact: true }).click();
+  };
+  if (new URL(page.url()).pathname !== "/solicitudes") await navigate("Inicio");
+  await expect(page).toHaveURL(/\/solicitudes$/);
   const response = await page.request.post(new URL("/api/auth/register", page.url()).href, {
     headers: { origin: new URL(page.url()).origin }, data: business,
   });
@@ -25,7 +30,9 @@ export async function createBusinessInAdminUi(page: Page, business: {
   await page.reload();
   await expect(screen.getByRole("button", { name: `Aprobar ${business.name}`, exact: true })).toBeVisible();
   await screen.getByRole("button", { name: `Aprobar ${business.name}`, exact: true }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Aprobar solicitud", exact: true }).click();
   await expect(screen.locator(".admin-feedback").getByRole("status")).toHaveText("Solicitud aprobada");
+  await navigate("Negocios");
   const row = screen.locator('[data-ui="admin-inventory"]').getByRole("listitem")
     .filter({ has: page.getByText(business.name, { exact: true }) });
   await expect(row).toBeVisible();
