@@ -71,23 +71,27 @@ describe("panel login recovery", () => {
     },
   );
 
-  test("keeps loading free of recovery actions", () => {
+  test("identifies the login entrance while checking the session without a loader or premature actions", () => {
     const html = renderToStaticMarkup(createElement(TerminalAuthenticatedState, { state: "loading" }));
-    expect(html).toContain('role="status"');
-    expect(html).toContain("Cargando panel…");
-    expect(html).not.toContain("href=");
+    expect(html).toMatch(/<main[^>]*aria-busy="true"/);
+    expect(html).toMatch(/<h1[^>]*>Iniciar sesión<\/h1>/);
+    expect(html).not.toContain("Cargando panel…");
+    expect(html).not.toMatch(/href=|<button|<form/);
   });
 });
 
 describe("entrance routing", () => {
-  test("sends each role to its own panel", () => {
-    expect(entryPathFor({ role: "platform_admin" })).toBe("/businesses");
-    expect(entryPathFor({ role: "business_user" })).toBe("/profile");
+  test("lands a business at Inicio after login or at an already authenticated entrance", () => {
+    expect(entryPathFor({ role: "business_user" })).toBe("/inicio");
+    expect(entryRedirectFor({ role: "business_user" }, false)).toBe("/inicio");
   });
-  test("only bounces an administrator session from the administration entrance", () => {
-    expect(entryRedirectFor({ role: "platform_admin" }, true)).toBe("/businesses");
+  test("lands an admin at Solicitudes after login", () => {
+    expect(entryPathFor({ role: "platform_admin" })).toBe("/solicitudes");
+  });
+  test.each([true, false])("returns an authenticated admin to Solicitudes (admin entrance: %s)", (adminEntrance) => {
+    expect(entryRedirectFor({ role: "platform_admin" }, adminEntrance)).toBe("/solicitudes");
+  });
+  test("keeps the admin login form available to a business session", () => {
     expect(entryRedirectFor({ role: "business_user" }, true)).toBeNull();
-    expect(entryRedirectFor({ role: "platform_admin" }, false)).toBe("/businesses");
-    expect(entryRedirectFor({ role: "business_user" }, false)).toBe("/profile");
   });
 });

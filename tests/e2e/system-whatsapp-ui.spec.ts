@@ -7,6 +7,39 @@ const tenant = {
   password: "tenant whatsapp password safe",
 };
 
+test("the WhatsApp deep link opens a modal with read-only entry and restores focus on dismissal", async ({ page, system }) => {
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
+  await createBusinessInAdminUi(page, tenant);
+  await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
+  await expect(page).toHaveURL(/\/admin\/login$/);
+  await login(page, system.webUrl, tenant.email, tenant.password);
+  await expect(page).toHaveURL(/\/inicio$/);
+  const writes: string[] = [];
+  page.on("request", request => {
+    if (request.url().includes("/api/me/whatsapp/") && request.method() !== "GET") writes.push(request.method());
+  });
+  await page.setViewportSize({ width: 360, height: 800 });
+  await page.goto(`${system.webUrl}/whatsapp`);
+  const panel = page.getByRole("dialog", { name: "WhatsApp", exact: true });
+  const close = panel.getByRole("button", { name: "Cerrar panel", exact: true });
+  await expect(panel, "the deep link opens the WhatsApp modal").toBeVisible({ timeout: 5_000 });
+  await expect(close).toBeFocused();
+  await expect(page.getByRole("button", { name: "Nuevo turno", exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(page).toHaveURL(/\/profile$/);
+  const card = page.getByRole("link", { name: "WhatsApp", exact: true });
+  await expect(card).toBeFocused();
+  await card.press("Enter");
+  await expect(close).toBeFocused();
+  await close.click();
+  const booking = page.getByRole("button", { name: "Nuevo turno", exact: true });
+  await booking.click();
+  await expect(page.getByRole("dialog", { name: "Nuevo turno", exact: true }).getByRole("heading")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(booking).toBeFocused();
+  expect(writes).toEqual([]);
+});
+
 const metadataLabels = [
   "Número vinculado",
   "Vinculado desde",
@@ -45,7 +78,7 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
 }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
-  await expect(page).toHaveURL(/\/businesses$/);
+  await expect(page).toHaveURL(/\/solicitudes$/);
 
   await createBusinessInAdminUi(page, tenant);
 
@@ -83,7 +116,7 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
     expect(agentResponse.status).toBe(200);
 
     await login(tenantPage, system.webUrl, tenant.email, tenant.password);
-    await expect(tenantPage).toHaveURL(/\/profile$/);
+    await expect(tenantPage).toHaveURL(/\/inicio$/);
     await tenantPage.goto(`${system.webUrl}/whatsapp`);
     await expect(tenantPage).toHaveURL(/\/whatsapp$/);
 
@@ -92,7 +125,7 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
     );
     await expect(shell).toHaveCount(1);
     await expect(
-      shell.getByRole("img", { name: "agendIA", exact: true }),
+      shell.getByTitle("agendIA", { exact: true }).locator('img[src="/brand/logo-symbol-inverse.svg"]'),
     ).toBeVisible();
     await expect(
       shell.getByRole("navigation", {
@@ -102,7 +135,6 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
     ).toBeVisible();
 
     const screen = shell.locator('[data-ui="whatsapp-screen"]');
-    const hero = screen.locator('[data-ui="whatsapp-hero"]');
     const statusPanel = screen.locator('[data-ui="whatsapp-status"]');
     const currentStatus = statusPanel.getByRole("status");
     const metadata = screen.locator('[data-ui="whatsapp-metadata"]');
@@ -112,42 +144,16 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
       exact: true,
     });
 
-    await expect(screen).toHaveCount(1);
-    await expect(hero).toBeVisible();
-    await expect(
-      hero.getByRole("heading", { level: 1, name: "WhatsApp", exact: true }),
-    ).toBeVisible();
-    await expect(statusPanel.getByRole("heading", { name: "Conexión del canal", exact: true })).toBeVisible();
-    await expect(screen.getByRole("heading", { name: "Información del vínculo", exact: true })).toBeVisible();
-    await expect(linkPanel.getByRole("heading", { name: "Conectá con un código temporal", exact: true })).toBeVisible();
+    await expect(tenantPage.getByRole("dialog", { name: "WhatsApp", exact: true })).toBeVisible();
+    await expect(statusPanel.getByText("Sin conexión", { exact: true })).toBeVisible();
     await expect(linkPanel.getByRole("list", { name: "Pasos para vincular", exact: true }).getByRole("listitem")).toHaveCount(3);
-    await expect(linkPanel.getByText("QR aún no solicitado", { exact: true })).toBeVisible();
-    await expect(statusPanel).toBeVisible();
-    await expect(currentStatus).toHaveText(
-      /^(Requiere vinculación|Desconectado)$/,
-    );
-    await expect(metadata).toBeVisible();
-    await expectMetadata(metadata);
-    await expect(linkPanel).toBeVisible();
+    await expect(currentStatus).toHaveText(/^(Requiere vinculación|Desconectado)$/);
     await expect(qrImage).toBeHidden();
     await expectNoHorizontalOverflow(tenantPage);
-
-    await expect(screen.locator(".whatsapp-security-note")).toHaveText("El QR es temporal y no expone credenciales persistentes.");
-
-    await expect(screen.locator("input, select, textarea, form")).toHaveCount(
-      0,
-    );
-    await expect(screen.getByRole("button")).toHaveCount(1);
+    await expect(screen.getByText("El QR es temporal y no expone credenciales persistentes.", { exact: true })).toBeVisible();
     const action = linkPanel.getByRole("button");
-    await expect(action).toHaveCount(1);
     await expect(action).toHaveText("Vincular WhatsApp");
     await expect(action).toBeEnabled();
-    await expect(screen.getByRole("link")).toHaveCount(0);
-    await expect(
-      screen.getByText(
-        /Desvincular|Cambiar número|Número de teléfono|Restablecer|Chats? recientes?|Métricas|Historial/i,
-      ),
-    ).toHaveCount(0);
 
     // Real keyboard modality, never programmatic focus or forced DOM state.
     for (let attempt = 0; attempt < 12 && !(await action.evaluate((el) => el === document.activeElement)); attempt++) {
@@ -163,7 +169,45 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
       const style = getComputedStyle(element);
       return (style.outlineStyle !== "none" && parseFloat(style.outlineWidth) > 0) || style.boxShadow !== "none";
     })).toBe(true);
-    await tenantPage.screenshot({ path: testInfo.outputPath("whatsapp-desktop.png"), fullPage: true });
+    async function capture(state: "offline" | "qr" | "connected", width: number) {
+      await tenantPage.evaluate(() => document.fonts.ready.then(() => undefined));
+      const geometry = await screen.evaluate(dialog => {
+        const selectors = {
+          dialog: "", header: ".integration-head", title: "h2", card: ".wa-panel-status",
+          summary: ".wa-panel-summary", badge: ".wa-panel-indicator", lower: ".wa-panel-lower", action: ".wa-panel-lower button",
+          steps: ".wa-panel-steps", note: ".wa-panel-note", plate: ".wa-panel-qr", qr: ".wa-panel-qr img", caption: "figcaption",
+        };
+        return Object.fromEntries(Object.entries(selectors).flatMap(([key, selector]) => {
+          const element = selector ? dialog.querySelector(selector) : dialog;
+          if (!element) return [];
+          const { x, y, width, height } = element.getBoundingClientRect();
+          const css = getComputedStyle(element);
+          return [[key, { x, y, width, height, text: element.childElementCount ? undefined : element.textContent?.trim(),
+            background: css.backgroundColor, marginLeft: css.marginLeft, fontFamily: css.fontFamily }]];
+        }));
+      });
+      await testInfo.attach(`whatsapp-${state}-${width}-geometry.json`, { contentType: "application/json", body: JSON.stringify(geometry) });
+      await tenantPage.screenshot({ path: testInfo.outputPath(`whatsapp-${state}-${width}.png`) });
+      expect.soft(geometry.dialog!.width, `${state} panel width`).toBe(width === 360 ? 340 : 578);
+      expect.soft(geometry.badge!.marginLeft, `${state} mobile status badge spacing`).toBe(width === 360 ? "52px" : "0px");
+      if (state === "qr") {
+        expect.soft(geometry.qr?.width, "real QR plate width").toBe(width === 360 ? 112 : 140);
+        await expect.soft(screen.locator(".wa-panel-lower").getByText("Vinculación solicitada. Escaneá el QR desde WhatsApp.", { exact: true })).toBeVisible({ timeout: 750 });
+      }
+      if (state === "connected") {
+        expect.soft(geometry.action!.background, "connected confirmation uses the outlined treatment").toBe("rgba(0, 0, 0, 0)");
+        if (width === 360) {
+          const lines = await statusPanel.getByText("WhatsApp conectado", { exact: true }).evaluate(title =>
+            title.getBoundingClientRect().height / parseFloat(getComputedStyle(title).lineHeight));
+          expect.soft(lines, "connected title wraps at word boundaries").toBeCloseTo(2, 1);
+        }
+      }
+      await expectNoHorizontalOverflow(tenantPage);
+    }
+    await capture("offline", 1280);
+    await tenantPage.setViewportSize({ width: 360, height: 800 });
+    await capture("offline", 360);
+    await tenantPage.setViewportSize({ width: 1280, height: 900 });
 
     // Schema-correct mocked UI-state coverage; not a real provider failure.
     const statusUrl = "**/api/me/whatsapp/status";
@@ -225,7 +269,10 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
 
     await expect(qrImage).toBeVisible();
     await expect(qrImage).toHaveAttribute("src", /^data:image\/png;base64,/);
-    await tenantPage.screenshot({ path: testInfo.outputPath("whatsapp-qr.png"), fullPage: true });
+    await capture("qr", 1280);
+    await tenantPage.setViewportSize({ width: 360, height: 800 });
+    await capture("qr", 360);
+    await tenantPage.setViewportSize({ width: 1280, height: 900 });
 
     await expect(currentStatus).toHaveText("Conectado", { timeout: 15_000 });
     await expect(
@@ -235,12 +282,13 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
     await expect(action).toHaveText("WhatsApp vinculado");
     await expect(action).toBeDisabled();
 
-    await expect(linkPanel.getByRole("heading", { name: "Canal vinculado", exact: true })).toBeVisible();
-    await expect(linkPanel.getByText("Verificación completa", { exact: true })).toBeVisible();
-    await tenantPage.screenshot({ path: testInfo.outputPath("whatsapp-connected.png"), fullPage: true });
+    await expect(statusPanel.getByText("WhatsApp conectado", { exact: true })).toBeVisible();
+    await capture("connected", 1280);
 
     await tenantPage.setViewportSize({ width: 360, height: 800 });
-    await expectReachable(hero);
+    await capture("connected", 360);
+    await linkPanel.getByText("Información del vínculo", { exact: true }).click();
+    await expectMetadata(metadata);
     await expectReachable(statusPanel);
     await expect(currentStatus).toHaveText("Conectado");
     for (const label of metadataLabels) {

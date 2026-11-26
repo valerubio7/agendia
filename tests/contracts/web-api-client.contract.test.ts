@@ -497,8 +497,8 @@ describe("Next web client against Fastify contracts", () => {
     ]);
     expect(panel).toContain('import { useRouter } from "next/navigation"');
     expect(panel).toContain("router.replace(entryPathFor(session))");
-    expect(entryPath).toContain('"/businesses"');
-    expect(entryPath).toContain('"/profile"');
+    expect(entryPath).toContain('"/solicitudes"');
+    expect(entryPath).toContain('"/inicio"');
     expect(panel).not.toContain("location.href");
     expect(entryPath).not.toContain("location.href");
   });

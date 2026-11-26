@@ -1,11 +1,27 @@
-import { expect, type Request } from "@playwright/test";
+import { pathToFileURL } from "node:url";
+import { expect, type Locator, type Request } from "@playwright/test";
 import { createBusinessInAdminUi, login, test } from "./support/fixtures.ts";
+
+async function settledBox(surface: Locator) {
+  await expect(surface).toBeVisible();
+  return surface.evaluate(async element => {
+    // The dialog scales on open; the reference shell also animates its inset on resize.
+    element.getBoundingClientRect();
+    const animations: Animation[] = [];
+    for (let node: Element | null = element; node; node = node.parentElement) {
+      animations.push(...node.getAnimations().filter(animation => animation.effect?.getComputedTiming().endTime !== Infinity));
+    }
+    await Promise.all(animations.map(animation => animation.finished));
+    const { x, y, width, height } = element.getBoundingClientRect();
+    return { x, y, width, height };
+  });
+}
 
 test("Clientes searches and edits owned identities with complete appointment history and safe recovery", async ({ browser, page, system }, testInfo) => {
   test.setTimeout(180_000);
   const password = "clients UI tenant password", email = "clients-ui@example.test";
   await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
-  await expect(page).toHaveURL(/\/businesses$/);
+  await expect(page).toHaveURL(/\/solicitudes$/);
   await createBusinessInAdminUi(page, { name: "Estudio Clientes", email, password });
   await createBusinessInAdminUi(page, { name: "Otro negocio clientes", email: "other-clients@example.test", password });
   await page.goto(`${system.webUrl}/clients`);
@@ -14,13 +30,32 @@ test("Clientes searches and edits owned identities with complete appointment his
   const business = await context.newPage();
   try {
     await login(business, system.webUrl, email, password);
-    await expect(business).toHaveURL(/\/profile$/);
-    const navigation = business.getByRole("navigation", { name: "Navegación del negocio", exact: true });
-    await expect(navigation.getByRole("link", { name: "Clientes", exact: true })).toBeVisible();
-    await navigation.getByRole("link", { name: "Clientes", exact: true }).click();
+    await expect(business).toHaveURL(/\/inicio$/);
+    await business.goto(`${system.webUrl}/profile`);
+    const hub = business.getByRole("navigation", { name: "Gestión del negocio", exact: true });
     const screen = business.getByRole("main");
-    await expect(screen.getByRole("heading", { name: "Clientes", exact: true })).toBeVisible();
-    await expect(screen.getByText("Todavía no hay clientes.", { exact: true })).toBeVisible();
+    for (const entry of ["warm", "cold"]) {
+      let observeList!: () => void, releaseList!: () => void;
+      const listRequested = new Promise<void>(resolve => { observeList = resolve; });
+      const listHeld = new Promise<void>(resolve => { releaseList = resolve; });
+      await business.route("**/api/me/clients", async route => {
+        observeList();
+        await listHeld;
+        await route.continue();
+      }, { times: 1 });
+      try {
+        if (entry === "warm") await hub.getByRole("link", { name: "Clientes", exact: true }).click();
+        else await business.reload();
+        await expect(business).toHaveURL(/\/clients$/);
+        await listRequested;
+        await expect(screen.getByRole("heading", { name: "Clientes", exact: true })).toBeVisible();
+        const directory = screen.getByRole("region", { name: "Directorio de clientes" });
+        await expect(directory.getByRole("form", { name: "Buscar clientes" })).toBeVisible();
+        await expect(directory).toHaveAttribute("aria-busy", "true", { timeout: 2_000 });
+        await expect(business.getByText(/Cargando (panel|sección|clientes)…|Todavía no hay clientes\./)).toHaveCount(0);
+      } finally { releaseList(); }
+      await expect(screen.getByText("Todavía no hay clientes.", { exact: true })).toBeVisible();
+    }
     const csrf = await business.evaluate(() => sessionStorage.getItem("agendia.csrf"));
     expect(csrf).toBeTruthy();
     const headers = { Origin: system.webUrl, "x-csrf-token": csrf! };
@@ -64,10 +99,32 @@ test("Clientes searches and edits owned identities with complete appointment his
     await business.reload();
     const list = screen.getByRole("list", { name: "Clientes del negocio", exact: true });
     await expect(list.getByRole("listitem")).toHaveCount(2);
+    // Prototype coordinates minus its 49 px demo banner.
+    for (const [width, inset, top, rowHeight] of [[1280, 274, 79.4, 74], [360, 14, 117.4, 103]] as const) {
+      await business.setViewportSize({ width, height: 900 });
+      const directory = screen.getByRole("region", { name: "Directorio de clientes" });
+      await expect(directory).toBeVisible();
+      const box = (await directory.boundingBox())!;
+      expect(box.x).toBe(inset);
+      expect(Math.abs(box.y - top)).toBeLessThan(1);
+      expect(box.width).toBe(width - inset - (width === 1280 ? 52 : 14));
+      expect((await list.getByRole("button").first().boundingBox())?.height).toBe(rowHeight);
+    }
+    await business.setViewportSize({ width: 1280, height: 900 });
     const search = screen.getByRole("form", { name: "Buscar clientes", exact: true });
+    const panel = screen.getByRole("dialog");
+    const closePanel = async () => {
+      if (await panel.isVisible()) await panel.getByRole("button", { name: "Cerrar panel" }).click();
+    };
+    const openClient = async (name: RegExp) => {
+      await closePanel();
+      await list.getByRole("button", { name }).click();
+    };
     const runSearch = async (value: string, count: number) => {
+      await closePanel();
       await search.getByLabel("Nombre o teléfono").fill(value);
       await search.getByRole("button", { name: "Buscar", exact: true }).click();
+      await expect(screen.getByRole("region", { name: "Directorio de clientes" })).not.toHaveAttribute("aria-busy", "true");
       await expect(screen.getByText("Cargando clientes…", { exact: true })).toHaveCount(0);
       await expect(list.getByRole("listitem")).toHaveCount(count);
     };
@@ -76,16 +133,57 @@ test("Clientes searches and edits owned identities with complete appointment his
     await runSearch("no existe", 0);
     await expect(screen.getByText("No hay clientes que coincidan.", { exact: true })).toBeVisible();
     await runSearch("", 2);
-    await list.getByRole("button", { name: /Ana/ }).click();
+    await openClient(/Ana/);
     const detail = screen.getByRole("region", { name: "Cliente seleccionado", exact: true });
     const upcoming = detail.getByRole("list", { name: "Próximos turnos", exact: true });
     const history = detail.getByRole("list", { name: "Historial completo", exact: true });
     await expect(upcoming.getByRole("listitem")).toHaveCount(1);
     await expect(history.getByRole("listitem")).toHaveCount(2);
     await expect(history.getByText("Consulta original", { exact: true })).toHaveCount(2);
-    await expect(history.getByText("Profesional original · Cancelado", { exact: true })).toBeVisible();
+    const cancelledRow = history.getByRole("listitem").filter({ hasText: "Cancelado" });
+    await expect(cancelledRow).toContainText("Profesional original");
     await expect(history.getByText(/30 min/)).toHaveCount(2);
     await expect(detail.getByText("Consulta actual", { exact: true })).toHaveCount(0);
+    // Keep real stored records and move only the browser's date beyond their range.
+    await business.clock.setFixedTime(new Date(appointments[1].endMs + 2 * 86400000));
+    await business.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect(upcoming).toHaveCount(0);
+    const handoffRequests: string[] = [];
+    const record = (request: Request) => {
+      const path = new URL(request.url()).pathname;
+      if (path.startsWith("/api/me/") && (!/^(GET|HEAD)$/.test(request.method()) || /^\/api\/me\/appointments\//.test(path)))
+        handoffRequests.push(`${request.method()} ${path}`);
+    };
+    business.on("request", record);
+    const savedDialog = business.getByRole("dialog", { name: "Detalle del turno", exact: true });
+    for (const [width, index] of [[1280, 1], [360, 0]] as const) {
+      await business.setViewportSize({ width, height: 900 });
+      const appointment = appointments[index];
+      const trigger = history.getByRole("button", { name: index ? /Cancelado/ : /Confirmado/ });
+      await expect(trigger).toBeEnabled();
+      await trigger.focus();
+      await business.keyboard.press("Enter");
+      const saved = savedDialog.getByRole("region", { name: "Detalle del turno", exact: true });
+      await expect(saved.getByRole("heading", { name: /Ana/ })).toBeFocused();
+      await expect(saved.locator("time")).toHaveAttribute("datetime", appointment.startsAt);
+      await expect(saved.getByText(index ? "Cancelado" : "Confirmado", { exact: true })).toBeVisible();
+      await expect(saved).toContainText("Consulta original");
+      await expect(saved).not.toContainText("Consulta actual");
+      await expect(saved.getByRole("button", { name: "Modificar turno" })).toHaveCount(0);
+      expect(await business.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await business.screenshot({ path: testInfo.outputPath(`client-history-detail-${width}.png`) });
+      if (index) await savedDialog.getByRole("button", { name: "Cerrar ventana de turno" }).click();
+      else await business.keyboard.press("Escape");
+      await expect(savedDialog).toBeHidden();
+      await expect(trigger).toBeFocused();
+      await expect(detail).toBeVisible();
+      await expect(business).toHaveURL(`${system.webUrl}/clients`);
+    }
+    expect(handoffRequests).toEqual([appointments[1], appointments[0]].map(row => `GET /api/me/appointments/${row.id}`));
+    business.off("request", record);
+    await business.clock.setFixedTime(new Date());
+    await business.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await business.setViewportSize({ width: 1280, height: 900 });
     const counts = { PUT: 0, GET: 0 };
     business.on("request", request => {
       if (new URL(request.url()).pathname.startsWith("/api/me/clients")) {
@@ -96,7 +194,7 @@ test("Clientes searches and edits owned identities with complete appointment his
     const edit = detail.getByRole("button", { name: "Editar cliente", exact: true });
     await edit.click();
     const form = detail.getByRole("form", { name: "Editar cliente", exact: true });
-    const save = form.getByRole("button", { name: "Guardar cambios", exact: true });
+    const save = form.getByRole("button", { name: "Guardar cliente", exact: true });
     await expect(form.getByLabel("Nombre", { exact: true })).toBeFocused();
     await form.getByRole("button", { name: "Cancelar", exact: true }).click();
     await expect(edit).toBeEnabled();
@@ -148,7 +246,7 @@ test("Clientes searches and edits owned identities with complete appointment his
     expect(afterHistory).toEqual(appointments.map(row => ({ ...row, client: persisted })));
     await business.reload();
     await runSearch("Alicia", 1);
-    await list.getByRole("button", { name: /Alicia/ }).click();
+    await openClient(/Alicia/);
     await expect(history.getByRole("listitem")).toHaveCount(2);
 
     // UI-only projection fixture: all states, strict future boundary and uncapped history.
@@ -160,16 +258,16 @@ test("Clientes searches and edits owned identities with complete appointment his
     await business.route("**/api/me/appointments?*", route => route.fulfill({
       status: 200, contentType: "application/json", body: JSON.stringify(projection),
     }));
-    await list.getByRole("button", { name: /Alicia/ }).click();
+    await openClient(/Alicia/);
     await expect(history.getByRole("listitem")).toHaveCount(105);
     await expect(upcoming.getByRole("listitem")).toHaveCount(projection.filter(row => row.state === "confirmed" && row.startMs > afterHistory[0].startMs).length);
     for (const state of ["Confirmado", "Completado", "Cancelado", "Ausente"]) await expect(history.getByText(new RegExp(state)).first()).toBeVisible();
     await business.screenshot({ path: testInfo.outputPath("clients-history-all-states.png"), fullPage: true });
     await business.unroute("**/api/me/appointments?*");
     await business.route("**/api/me/appointments?*", route => route.fulfill({ status: 500, contentType: "application/json", body: '{"code":"INTERNAL_ERROR"}' }));
-    await list.getByRole("button", { name: /Alicia/ }).click();
+    await openClient(/Alicia/);
     await expect(detail.getByRole("alert")).toHaveText("No se pudo completar la operación.");
-    await expect(list.getByRole("listitem")).toHaveCount(1);
+    await expect(list.getByRole("listitem", { includeHidden: true })).toHaveCount(1);
     await business.unroute("**/api/me/appointments?*");
     await detail.getByRole("button", { name: "Actualizar turnos", exact: true }).click();
     await expect(history.getByRole("listitem")).toHaveCount(2);
@@ -178,29 +276,37 @@ test("Clientes searches and edits owned identities with complete appointment his
     let releaseDetail!: () => void;
     const staleDetail = new Promise<void>(resolve => { releaseDetail = resolve; });
     await business.route(`**/api/me/appointments?clientId=${client.id}`, async route => { await staleDetail; await route.continue(); });
-    await list.getByRole("button", { name: /Alicia/ }).click();
-    await expect(detail.getByText("Cargando turnos…", { exact: true })).toBeVisible();
-    await list.getByRole("button", { name: /Bruno/ }).click();
-    await expect(detail.getByRole("heading", { name: "Bruno Díaz", exact: true })).toBeVisible();
-    releaseDetail();
+    try {
+      await openClient(/Alicia/);
+      const historySection = detail.getByRole("region", { name: "Historial completo" });
+      await expect(historySection).toHaveAttribute("aria-busy", "true", { timeout: 2_000 });
+      await expect(historySection.getByRole("heading", { name: "Historial completo" })).toBeVisible();
+      await expect(detail.getByText(/Cargando turnos…|todavía no tiene turnos/)).toHaveCount(0);
+      await openClient(/Bruno/);
+      await expect(detail.getByRole("heading", { name: "Bruno Díaz", exact: true })).toBeVisible();
+    } finally { releaseDetail(); }
+    await expect(detail.getByRole("region", { name: "Historial completo" })).not.toHaveAttribute("aria-busy", "true");
     await expect(detail.getByText("Cargando turnos…", { exact: true })).toHaveCount(0);
     await expect(detail.getByRole("list")).toHaveCount(0);
     await business.unroute(`**/api/me/appointments?clientId=${client.id}`);
     await runSearch("", 2);
-    await list.getByRole("button", { name: /Alicia/ }).click();
+    await openClient(/Alicia/);
     await expect(history.getByRole("listitem")).toHaveCount(2);
     for (const width of [1280, 360]) {
       await business.setViewportSize({ width, height: 900 });
       expect(await business.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await business.screenshot({ path: testInfo.outputPath(`clients-ready-${width}.png`), fullPage: true });
     }
+    await closePanel();
     await business.locator('[data-ui="mobile-navigation"] summary').click();
-    await expect(business.getByRole("navigation", { name: "Navegación móvil del negocio", exact: true }).getByRole("link", { name: "Clientes", exact: true })).toHaveAttribute("aria-current", "page");
+    await expect(business.getByRole("navigation", { name: "Navegación móvil del negocio", exact: true }).getByRole("link", { name: "Negocio", exact: true })).toHaveAttribute("aria-current", "location");
+    await business.locator('[data-ui="mobile-navigation"] summary').press("Escape");
+    await expect(business.getByRole("navigation", { name: "Ruta de navegación", exact: true }).locator('[aria-current="page"]')).toHaveText("Clientes");
     const otherContext = await browser.newContext();
     try {
       const other = await otherContext.newPage();
       await login(other, system.webUrl, "other-clients@example.test", password);
-      await expect(other).toHaveURL(/\/profile$/);
+      await expect(other).toHaveURL(/\/inicio$/);
       await other.goto(`${system.webUrl}/clients`);
       await expect(other.getByText("Todavía no hay clientes.", { exact: true })).toBeVisible();
       const otherCsrf = await other.evaluate(() => sessionStorage.getItem("agendia.csrf"));
@@ -216,11 +322,93 @@ test("Clientes searches and edits owned identities with complete appointment his
   }
 });
 
+test("Clientes refreshes history on booking close despite a held pre-save read", async ({ browser, page: admin, system }) => {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(10_000);
+  let release: (() => void) | undefined;
+  try {
+    const email = "client-history-refresh@example.test", password = "client history fixture password";
+    await login(admin, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
+    await expect(admin).toHaveURL(/\/solicitudes$/);
+    await createBusinessInAdminUi(admin, { name: "Historial de clientes", email, password });
+    await login(page, system.webUrl, email, password);
+    await expect(page).toHaveURL(/\/inicio$/);
+    const csrf = await page.evaluate(() => sessionStorage.getItem("agendia.csrf"));
+    expect(csrf).toBeTruthy();
+    const headers = { Origin: system.webUrl, "x-csrf-token": csrf! };
+    const endpoint = `${system.webUrl}/api/me`;
+    const create = async (path: string, data: object) => {
+      const response = await page.request.post(`${endpoint}/${path}`, { headers, data });
+      expect(response.status()).toBe(201);
+      return response.json();
+    };
+    const client = await create("clients", { firstName: "Clara", lastName: "López", phone: "+5491123456777" });
+    const service = await create("services", { name: "Consulta nueva", durationMinutes: 30, priceArs: 1000 });
+    const weeklySchedule = Object.fromEntries(Array.from({ length: 7 }, (_, day) => [day, [{ startMinute: 0, endMinute: 1440 }]]));
+    const calendar = await page.request.put(`${endpoint}/business-calendar`, { headers, data: { weeklySchedule } });
+    expect(calendar.status()).toBe(200);
+    const resource = await create("resources", { name: "Profesional", serviceIds: [service.id], weeklySchedule });
+    const date = new Date(Date.now() + 2 * 86400000 - 3 * 3600000).toISOString().slice(0, 10);
+    const historyUrl = `${endpoint}/appointments?clientId=${client.id}`;
+    const writes: string[] = [];
+    page.on("request", request => {
+      if (request.url().startsWith(`${endpoint}/`) && !/^(GET|HEAD)$/.test(request.method()))
+        writes.push(`${request.method()} ${new URL(request.url()).pathname}`);
+    });
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let delivered = false;
+    let snapshot: unknown;
+    await page.route(historyUrl, async route => {
+      const response = await route.fetch();
+      expect(response.status()).toBe(200);
+      snapshot = await response.json();
+      await held;
+      try { await route.fulfill({ response }); } finally { delivered = true; }
+    }, { times: 1 });
+    await page.goto(`${system.webUrl}/clients`);
+    await page.getByRole("list", { name: "Clientes del negocio" }).getByRole("button", { name: /Clara López/ }).click();
+    await expect.poll(() => snapshot).toEqual([]);
+    const card = page.getByRole("dialog", { name: "Cliente", exact: true });
+    await expect(card.getByRole("region", { name: "Historial completo" })).toHaveAttribute("aria-busy", "true", { timeout: 2_000 });
+    await expect(card.getByText(/Cargando turnos…|todavía no tiene turnos/)).toHaveCount(0);
+    const start = card.getByRole("button", { name: "Nuevo turno", exact: true });
+    await start.click();
+    const form = page.getByRole("form", { name: "Crear turno", exact: true });
+    await form.getByRole("radio", { name: /Consulta nueva/ }).check();
+    await form.getByLabel("Recurso", { exact: true }).selectOption(resource.id);
+    await form.getByLabel("Fecha", { exact: true }).fill(date);
+    await form.getByRole("button", { name: "Consultar horarios", exact: true }).click();
+    await form.getByRole("group", { name: "Horarios disponibles" }).getByRole("radio", { name: "10:00", exact: true }).check();
+    await form.getByRole("button", { name: "Revisar turno", exact: true }).click();
+    expect(writes).toEqual([]);
+    const response = page.waitForResponse(r => r.url() === `${endpoint}/appointments` && r.request().method() === "POST");
+    await form.getByRole("button", { name: "Confirmar turno", exact: true }).click();
+    const savedResponse = await response;
+    expect(savedResponse.status()).toBe(201);
+    const saved = await savedResponse.json();
+    expect(saved).toMatchObject({ client, state: "confirmed" });
+    const detail = page.getByRole("dialog", { name: "Detalle del turno" });
+    await expect(detail.getByRole("heading", { name: "Clara López" })).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(start).toBeFocused();
+    release!();
+    await expect.poll(() => delivered).toBe(true);
+    await expect(card.getByText("Cargando turnos…")).toHaveCount(0);
+    const history = card.getByRole("list", { name: "Historial completo" });
+    await expect(history.getByRole("listitem")).toHaveCount(1);
+    const exactDetail = page.waitForResponse(r => r.url() === `${endpoint}/appointments/${saved.id}` && r.request().method() === "GET");
+    await history.getByRole("button", { name: /Consulta nueva/ }).click();
+    expect(await (await exactDetail).json()).toEqual(saved);
+    await expect(detail.locator("time")).toHaveAttribute("datetime", saved.startsAt);
+    expect(writes).toEqual(["POST /api/me/appointments"]);
+  } finally { release?.(); await page.close(); }
+});
+
 test("Clientes fences an uncertain standalone POST across reload until GET confirms the exact identity", async ({ browser, page, system }) => {
   test.setTimeout(180_000);
   const password = "uncertain clients tenant password";
   await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
-  await page.waitForURL(/\/businesses$/);
+  await page.waitForURL(/\/solicitudes$/);
   for (const [name, email] of [["Cliente incierto", "uncertain@example.test"], ["Cliente separado", "separate@example.test"]] as const) {
     await createBusinessInAdminUi(page, { name, email, password });
   }
@@ -228,7 +416,7 @@ test("Clientes fences an uncertain standalone POST across reload until GET confi
   const business = await context.newPage();
   try {
     await login(business, system.webUrl, "uncertain@example.test", password);
-    await business.waitForURL(/\/profile$/);
+    await business.waitForURL(/\/inicio$/);
     await business.goto(`${system.webUrl}/clients`);
     const screen = business.getByRole("main");
     const csrf = await business.evaluate(() => sessionStorage.getItem("agendia.csrf"));
@@ -239,7 +427,7 @@ test("Clientes fences an uncertain standalone POST across reload until GET confi
     expect(seed.status()).toBe(201);
     await business.reload();
     await screen.getByRole("list", { name: "Clientes del negocio", exact: true }).getByRole("listitem").waitFor();
-    const create = screen.locator(".clients-heading").getByRole("button", { name: "Crear cliente", exact: true });
+    const create = screen.getByRole("button", { name: "Nuevo cliente", exact: true, includeHidden: true });
     await create.click();
     const form = screen.getByRole("form", { name: "Crear cliente", exact: true });
     const draft = { Nombre: " Alicia ", Apellido: " Gómez ", Teléfono: "11 2345-6789" };
@@ -275,11 +463,19 @@ test("Clientes fences an uncertain standalone POST across reload until GET confi
       await expect(screen.getByRole("list", { name: "Clientes del negocio", exact: true }).getByRole("button").first()).toBeDisabled();
       expect(posts).toBe(1);
     }
-    // Switch identities in the same browser storage, then restore the original fence.
-    await business.getByRole("button", { name: "Cerrar sesión", exact: true }).first().click();
+    // Leaving the dialog cannot clear the journal, and logout remains reachable.
+    await business.keyboard.press("Escape");
+    await expect(form).toHaveCount(0);
+    const resume = screen.getByRole("button", { name: "Volver a la comprobación" });
+    await expect(resume).toBeFocused();
+    await resume.click();
+    await expect(form.getByLabel("Teléfono", { exact: true })).toHaveValue(draft.Teléfono);
+    await expect(form.locator('button[type="submit"]')).toBeDisabled();
+    await screen.getByRole("button", { name: "Cerrar panel" }).click();
+    await business.getByRole("button", { name: "Cerrar sesión", exact: true }).first().click({ timeout: 5_000 });
     await business.getByLabel("Correo", { exact: true }).waitFor();
     await login(business, system.webUrl, "separate@example.test", password);
-    await business.waitForURL(/\/profile$/);
+    await business.waitForURL(/\/inicio$/);
     await business.goto(`${system.webUrl}/clients`);
     await expect(create).toBeEnabled();
     await expect(form).toHaveCount(0);
@@ -289,7 +485,7 @@ test("Clientes fences an uncertain standalone POST across reload until GET confi
     await business.getByRole("button", { name: "Cerrar sesión", exact: true }).first().click();
     await business.getByLabel("Correo", { exact: true }).waitFor();
     await login(business, system.webUrl, "uncertain@example.test", password);
-    await business.waitForURL(/\/profile$/);
+    await business.waitForURL(/\/inicio$/);
     await business.goto(`${system.webUrl}/clients`);
     await expect(form.getByLabel("Teléfono", { exact: true })).toHaveValue(draft.Teléfono);
     await expect(form.locator('button[type="submit"]')).toBeDisabled();
@@ -333,6 +529,7 @@ test("Clientes fences an uncertain standalone POST across reload until GET confi
     await expect(detail.getByRole("button", { name: "Editar cliente", exact: true })).toBeFocused();
     expect(posts).toBe(1);
     await expect(business).toHaveURL(`${system.webUrl}/clients`);
+    await screen.getByRole("button", { name: "Cerrar panel" }).click();
     await business.evaluate(() => {
       const original = Storage.prototype.setItem;
       Storage.prototype.setItem = function (key, value) {
@@ -357,7 +554,7 @@ test("Clientes creates standalone owned identities with canonical detail and GET
   const email = "standalone-clients@example.test";
   const otherEmail = "standalone-other@example.test";
   await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
-  await page.waitForURL(/\/businesses$/);
+  await page.waitForURL(/\/solicitudes$/);
   for (const [name, userEmail] of [["Clientes independientes", email], ["Otros clientes independientes", otherEmail]] as const) {
     await createBusinessInAdminUi(page, { name, email: userEmail, password });
   }
@@ -374,10 +571,10 @@ test("Clientes creates standalone owned identities with canonical detail and GET
   let releasePost: (() => void) | undefined;
   try {
     await login(business, system.webUrl, email, password);
-    await business.waitForURL(/\/profile$/);
+    await business.waitForURL(/\/inicio$/);
     await business.goto(`${system.webUrl}/clients`);
     const screen = business.getByRole("main");
-    const create = screen.locator(".clients-heading").getByRole("button", { name: "Crear cliente", exact: true });
+    const create = screen.getByRole("button", { name: "Nuevo cliente", exact: true, includeHidden: true });
     await expect(create).toBeVisible();
     await expect(business).toHaveURL(`${system.webUrl}/clients`);
     await expect(screen.getByText("Todavía no hay clientes.", { exact: true })).toBeVisible();
@@ -411,6 +608,7 @@ test("Clientes creates standalone owned identities with canonical detail and GET
     const phone = form.getByLabel("Teléfono", { exact: true });
     const submit = form.locator('button[type="submit"]');
     const cancel = form.getByRole("button", { name: "Cancelar", exact: true });
+    await expect(screen.getByRole("dialog")).toBeVisible();
     await expect(firstName).toBeFocused();
     await firstName.fill("Borrador cancelado");
     await cancel.click();
@@ -488,6 +686,8 @@ test("Clientes creates standalone owned identities with canonical detail and GET
       new URL(response.url()).pathname === "/api/me/clients");
     await submit.click();
     await expect(form).toHaveAttribute("aria-busy", "true");
+    await business.keyboard.press("Escape");
+    await expect(form).toBeVisible();
     for (const control of [firstName, lastName, phone, submit, cancel]) await expect(control).toBeDisabled();
     await expect(screen.getByRole("form", { name: "Buscar clientes", exact: true }).getByRole("button")).toBeDisabled();
     await form.evaluate(element => { element.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
@@ -544,9 +744,8 @@ test("Clientes creates standalone owned identities with canonical detail and GET
     expect(historyIds).toEqual([saved.id, saved.id, saved.id]);
     await expect(list.getByRole("listitem")).toHaveCount(2);
     await expect(list.getByRole("button", { name: /Alicia Gómez/ })).toHaveAttribute("aria-pressed", "true");
-    for (const title of ["Próximos turnos", "Historial completo"]) {
-      await expect(detail.getByRole("region", { name: title, exact: true }).getByText("No hay turnos en esta sección.", { exact: true })).toBeVisible();
-    }
+    await expect(detail.getByRole("region", { name: "Historial completo", exact: true })
+      .getByText("Este cliente todavía no tiene turnos registrados.", { exact: true })).toBeVisible();
     const persistedResponse = await business.request.get(`${system.webUrl}/api/me/clients`);
     expect(persistedResponse.status()).toBe(200);
     expect(await persistedResponse.json()).toEqual(expect.arrayContaining([seed, saved]));
@@ -556,26 +755,68 @@ test("Clientes creates standalone owned identities with canonical detail and GET
     await business.reload();
     await expect(business).toHaveURL(`${system.webUrl}/clients`);
     await expect(list.getByRole("listitem")).toHaveCount(2);
-    await list.getByRole("button", { name: /Alicia Gómez/ }).click();
-    await expect(detail.getByRole("heading", { name: "Alicia Gómez", exact: true })).toBeVisible();
-    await expect(detail.getByText(saved.phone, { exact: true })).toBeVisible();
-    await expect(detail.getByText("Cargando turnos…", { exact: true })).toHaveCount(0);
+    const panel = screen.getByRole("dialog");
+    const referencePath = process.env.AGENDIA_CLIENTS_REFERENCE;
+    const reference = referencePath ? await context.newPage() : null;
+    if (reference) {
+      reference.setDefaultTimeout(5_000);
+      await reference.route(/^https?:/, route => route.abort());
+      await reference.goto(pathToFileURL(referencePath!).href);
+      // Match the isolated tenant's real fixture records, in prototype memory only.
+      const rows = [saved, seed].map(({ id, firstName, lastName, phone }) => ({ id, first: firstName, last: lastName, phone }));
+      await reference.evaluate(`state.role = 'business'; state.page = 'clientes'; clients = ${JSON.stringify(rows)}; appointments = []; render();`);
+    }
     for (const width of [1280, 360]) {
       await business.setViewportSize({ width, height: 900 });
+      await reference?.setViewportSize({ width, height: 900 });
+      const checkGeometry = async (mode: string, surface: Locator, referenceSelector: string) => {
+        const actual = await settledBox(surface);
+        if (mode !== "directory") {
+          expect(actual.width).toBe(width === 1280 ? 578 : 340);
+          expect(actual.x).toBe(width === 1280 ? 351 : 10);
+          expect(actual.y + actual.height / (width === 1280 ? 2 : 1)).toBeCloseTo(width === 1280 ? 450 : 890, 1);
+        }
+        await business.screenshot({ path: testInfo.outputPath(`clients-matched-${mode}-${width}.png`) });
+        if (!reference) return;
+        const expected = await settledBox(reference.locator(referenceSelector));
+        if (mode === "directory") expected.y -= (await settledBox(reference.locator(".demo-bar"))).height;
+        console.log(`Clientes ${width} ${mode} (reference/app):`, { expected, actual });
+        expect.soft(actual.width).toBe(expected.width);
+        expect.soft(actual.x).toBe(expected.x);
+        if (mode === "directory") expect.soft(Math.abs(actual.y - expected.y)).toBeLessThan(1);
+        await reference.screenshot({ path: testInfo.outputPath(`clients-reference-${mode}-${width}.png`) });
+      };
+      await checkGeometry("directory", screen.getByRole("region", { name: "Directorio de clientes" }), ".clients-pane");
+      await create.click();
+      await reference?.getByRole("button", { name: "Nuevo cliente", exact: true }).click();
+      await checkGeometry("create", panel, ".client-float-dialog");
+      await cancel.click();
+      await reference?.getByRole("button", { name: "Cancelar", exact: true }).click();
+      await list.getByRole("button", { name: /Alicia Gómez/ }).click();
+      await reference?.getByRole("button", { name: /Alicia Gómez/ }).click();
+      await expect(detail.getByRole("heading", { name: "Alicia Gómez", exact: true })).toBeVisible();
+      await expect(detail.getByText(saved.phone, { exact: true })).toBeVisible();
+      await expect(detail.getByText("Este cliente todavía no tiene turnos registrados.")).toBeVisible();
+      await checkGeometry("detail", panel, ".client-float-dialog");
       await edit.click();
+      await reference?.getByRole("button", { name: "Editar", exact: true }).click();
       const editForm = detail.getByRole("form", { name: "Editar cliente", exact: true });
       await expect(editForm.getByLabel("Nombre", { exact: true })).toBeFocused();
+      await checkGeometry("edit", panel, ".client-float-dialog");
       await editForm.getByRole("button", { name: "Cancelar", exact: true }).click();
       await expect(edit).toBeFocused();
       expect(await business.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await business.screenshot({ path: testInfo.outputPath(`clients-created-persisted-${width}.png`), fullPage: true });
+      await detail.getByRole("button", { name: "Cerrar", exact: true }).click();
+      await reference?.getByRole("button", { name: "Cerrar panel", exact: true }).click();
     }
+    await reference?.close();
     await login(other, system.webUrl, otherEmail, password);
-    await other.waitForURL(/\/profile$/);
+    await other.waitForURL(/\/inicio$/);
     await other.goto(`${system.webUrl}/clients`);
     await expect(other.getByText("Todavía no hay clientes.", { exact: true })).toBeVisible();
     await expect(other.getByRole("list", { name: "Clientes del negocio", exact: true }).getByRole("listitem")).toHaveCount(0);
-    await other.getByRole("button", { name: "Crear cliente", exact: true }).click();
+    await other.getByRole("button", { name: "Nuevo cliente", exact: true }).click();
     const otherForm = other.getByRole("form", { name: "Crear cliente", exact: true });
     await otherForm.getByLabel("Nombre", { exact: true }).fill("Otra");
     await otherForm.getByLabel("Apellido", { exact: true }).fill("Identidad");
