@@ -5,6 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { buildApi } from "../../apps/api/src/app.ts";
 import postgres from "postgres";
 import { createRuntimePools, tenantContext, withTenantTransaction } from "@agendia/db";
+import type { Client } from "@agendia/domain/client-registry";
 import { applyPostgresMigrations, createRoleLogin, startTestPostgres, type TestPostgres } from "../support/index.ts";
 
 const ORIGIN = "https://panel.agendia.test";
@@ -13,6 +14,7 @@ let database: TestPostgres;
 let pools: ReturnType<typeof createRuntimePools>;
 let app: ReturnType<typeof buildApi>;
 type Auth = { cookie: string; csrf: string; businessId: string; actorId: string };
+type ValidationError = { code: string; message: string; requestId: string };
 let a: Auth, b: Auth, admin: Auth;
 const input = { name: " Ada Lovelace ", phone: "11 2345 6789" };
 const request = (method: "GET" | "POST" | "PUT" | "DELETE", url = "/me/clients", auth?: Auth, body?: object, origin = ORIGIN, csrf = auth?.csrf) =>
@@ -52,7 +54,7 @@ test("empty registry, server-derived tenant, trimmed full name and canonical pho
   expect(empty.json<unknown>()).toEqual([]);
   const created = await request("POST", undefined, a, { ...input, businessId: b.businessId });
   expect(created.statusCode).toBe(201);
-  expect(created.json()).toEqual({ id: expect.any(String), name: "Ada Lovelace", phone: "+5491123456789" });
+  expect(created.json<Client>()).toEqual({ id: expect.any(String), name: "Ada Lovelace", phone: "+5491123456789" });
   expect((await request("GET", undefined, a)).json<unknown>()).toEqual([created.json()]);
   expect((await request("GET", undefined, b)).json<unknown>()).toEqual([]);
   expect(await effects()).toEqual({ clients: 1, audit: 1, outbox: 1, replies: 0 });
@@ -73,7 +75,7 @@ test("requires business session and Origin/CSRF on mutations; no delete API", as
 test("safe validation and foreign/missing IDs leave no effects", async () => {
   const foreign = await request("POST", undefined, b, input);
   expect(foreign.statusCode).toBe(201);
-  const id = foreign.json().id;
+  const id = foreign.json<Client>().id;
   const before = await effects();
   const invalid = [{}, { name: input.name }, { phone: input.phone }, { firstName: "Ada", lastName: "Lovelace", phone: input.phone },
     ...[{ name: " \t" }, { name: 4 }, { name: null }, { phone: 4 }, { phone: "not a phone" }, { phone: "+123" }, { name: "nul\u0000name" }]
@@ -82,14 +84,35 @@ test("safe validation and foreign/missing IDs leave no effects", async () => {
     for (const [method, url] of [["POST", "/me/clients"], ["PUT", `/me/clients/${id}`]] as const) {
       const result = await request(method, url, b, body);
       expect(result.statusCode).toBe(400);
-      expect(result.json()).toEqual({ code: "VALIDATION_FAILED", message: "Invalid client fields", requestId: expect.any(String) });
+      expect(result.json<ValidationError>()).toEqual({ code: "VALIDATION_FAILED", message: "Invalid client fields", requestId: expect.any(String) });
     }
   }
-  expect((await request("GET", undefined, b)).json()).toEqual([foreign.json()]);
+  expect((await request("GET", undefined, b)).json<Client[]>()).toEqual([foreign.json<Client>()]);
   for (const target of [id, randomUUID()]) expect((await request("PUT", `/me/clients/${target}`, a, input)).statusCode).toBe(404);
   expect((await request("PUT", "/me/clients/not-uuid", a, input)).statusCode).toBe(400);
   expect((await request("GET", "/me/clients?q=x&q=y", a)).statusCode).toBe(400);
   expect(await effects()).toEqual(before);
+});
+
+test("mixed legacy name keys are rejected on registry POST and PUT without effects", async () => {
+  const created = await request("POST", undefined, a, { ...input, phone: "+5491189012310" });
+  expect(created.statusCode).toBe(201);
+  const { id } = created.json<Client>();
+  const clientsBefore = (await request("GET", undefined, a)).json<Client[]>();
+  const effectsBefore = await effects();
+  const results = [];
+  for (const [key, suffix] of [["firstName", 0], ["lastName", 1]] as const) {
+    const body = { name: "Changed Name", [key]: "Legacy" };
+    results.push(await request("POST", undefined, a, { ...body, phone: `+549118901232${suffix}` }));
+    results.push(await request("PUT", `/me/clients/${id}`, a, { ...body, phone: `+549118901233${suffix}` }));
+  }
+  expect(results.map(result => result.statusCode)).toEqual([400, 400, 400, 400]);
+  for (const result of results)
+    expect(result.json<ValidationError>()).toEqual({ code: "VALIDATION_FAILED", message: "Invalid client fields", requestId: expect.any(String) });
+  const clientsAfter = await request("GET", undefined, a);
+  expect(clientsAfter.statusCode).toBe(200);
+  expect(clientsAfter.json<Client[]>()).toEqual(clientsBefore);
+  expect(await effects()).toEqual(effectsBefore);
 });
 
 test("canonical duplicates are race-safe, tenant-local, and fixed/mobile remain distinct", async () => {
@@ -112,13 +135,13 @@ test("canonical duplicates are race-safe, tenant-local, and fixed/mobile remain 
 });
 
 test("edits preserve ID, own unchanged phone is valid, exact lookup revokes old phone", async () => {
-  const original = (await request("POST", undefined, a, { ...input, phone: "+5491145678901" })).json();
-  const unchanged = await request("PUT", `/me/clients/${original.id}`, a, { name: "Sol", phone: original.phone });
+  const original = (await request("POST", undefined, a, { ...input, phone: "+5491145678901" })).json<Client>();
+  const unchanged = await request("PUT", `/me/clients/${original.id}`, a, { name: "Sol", phone: original.phone, businessId: b.businessId });
   expect(unchanged.statusCode).toBe(200);
-  expect(unchanged.json()).toEqual({ id: original.id, name: "Sol", phone: original.phone });
+  expect(unchanged.json<Client>()).toEqual({ id: original.id, name: "Sol", phone: original.phone });
   const changed = await request("PUT", `/me/clients/${original.id}`, a, { name: " Edited again Last ", phone: "+5491156789012" });
   expect(changed.statusCode).toBe(200);
-  expect(changed.json()).toEqual({ id: original.id, name: "Edited again Last", phone: "+5491156789012" });
+  expect(changed.json<Client>()).toEqual({ id: original.id, name: "Edited again Last", phone: "+5491156789012" });
   expect(await pools.api.run(ctx(a), repo => repo.findClientByCanonicalPhone(original.phone))).toBeNull();
   expect(await pools.api.run(ctx(a), repo => repo.findClientByCanonicalPhone(changed.json().phone))).toEqual(changed.json());
   expect(await pools.api.run(ctx(a), repo => repo.findClientByCanonicalPhone("11 5678 9012"))).toBeNull();

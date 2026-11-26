@@ -95,9 +95,24 @@ describe("agent tool boundary", () => {
       { namesReference: args.namesReference, firstName: field, lastName: field }, { ...args, lastName: field },
       { ...args, namesReference: "forged" }, { ...args, confirmed: true },
       ...[{}, { ...field, start: -1 }, { ...field, start: 0.5 }, { ...field, value: " " },
-        { ...field, value: "a\0b" }, { ...field, value: "x".repeat(101) }, { ...field, proof: true }].map(name => ({ ...args, name }))])
+        { ...field, value: " Sol " }, { ...field, value: "a\0b" }, { ...field, proof: true }].map(name => ({ ...args, name }))])
       expect(parseAgentTool("collect_booking_names", invalid)).toBeNull();
     expect(agentToolDefinitions).toHaveLength(17);
+  });
+  test("booking name accepts a 107-unit compound and caps the literal span at 201 UTF-16 units", async () => {
+    const compound = `${"A".repeat(53)} ${"B".repeat(53)}`;
+    const limit = `${"𐐀".repeat(50)} ${"𐐨".repeat(50)}`;
+    const args = (value: string) => ({ namesReference: "a".repeat(64), name: { value, messageId: id, start: 3 } });
+    const session = new AgentToolSession(async command => ({ status: "data", data: command }));
+    for (const value of [compound, limit]) {
+      expect(await session.execute("collect_booking_names", args(value))).toEqual({
+        status: "data", data: { name: "collect_booking_names", arguments: args(value) },
+      });
+    }
+    expect(await session.execute("collect_booking_names", args(limit + "a"))).toEqual({ status: "rejected", code: "INVALID_TOOL" });
+    expect(agentToolDefinitions.find(tool => tool.name === "collect_booking_names")?.parameters).toMatchObject({
+      properties: { name: { properties: { value: { maxLength: 201 } } } },
+    });
   });
   test("native metadata bindings require complete member evidence and operation-specific selection fields", () => {
     const binding = { evidenceReference: "a".repeat(64), messageId: id, evidence: "Anotá: café ☕" };

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readdir, rmdir } from "node:fs/promises";
 import { hash as passwordHash, Algorithm } from "@node-rs/argon2";
 import { createRuntimePools } from "@agendia/db";
+import type { AppointmentOperationReceipt, AppointmentRecord } from "@agendia/contracts";
 import { buildApi } from "../../apps/api/src/app.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -139,7 +140,7 @@ test("client-name upgrade preserves archived rows, appointment relations, and ke
     const existing = { key: crypto.randomUUID(), fingerprint: hash(JSON.stringify({ kind: "create", payload: { clientId: client, ...payload }, target: null })) };
     const archivedKey = crypto.randomUUID();
     const body = { id: appointmentId, client: { id: client, ...newClient }, startsAt: startRaw, startMs, endMs, terms,
-      state: "confirmed", origin: "manual", notes: null, customerResourcePreference: null };
+      state: "confirmed" as const, origin: "manual" as const, notes: null, customerResourcePreference: null };
     for (const [tenant, owner, key, fingerprint] of [
       [business, actor, keyed.key, keyed.fingerprint], [business, actor, existing.key, existing.fingerprint],
       [archived, archivedActor, archivedKey, keyed.fingerprint],
@@ -178,7 +179,7 @@ test("client-name upgrade preserves archived rows, appointment relations, and ke
     const headers = { cookie, origin, "x-csrf-token": login.json().csrfToken };
     const receipt = await app.inject({ method: "GET", url: `/me/appointment-operations/${keyed.key}`, headers });
     expect(receipt.statusCode).toBe(200);
-    expect(receipt.json()).toEqual({ key: keyed.key, businessId: business, identityId: actor, state: "completed", kind: "create", target: null,
+    expect(receipt.json<AppointmentOperationReceipt>()).toEqual({ key: keyed.key, businessId: business, identityId: actor, state: "completed", kind: "create", target: null,
       httpStatus: 201, appointment: migrated, error: null });
     const counts = () => f.sql`select (select count(*) from clients) clients, (select count(*) from appointments) appointments,
       (select count(*) from audit_events where event_type like 'appointment.%') audit,
@@ -188,10 +189,10 @@ test("client-name upgrade preserves archived rows, appointment relations, and ke
       headers: { ...headers, "x-appointment-operation-key": key }, payload: { ...payload, ...fields } });
     const unchanged = await replay(existing.key, { clientId: client });
     expect(unchanged.statusCode).toBe(201);
-    expect(unchanged.json()).toEqual(migrated);
+    expect(unchanged.json<AppointmentRecord>()).toEqual(migrated);
     const conflict = await replay(keyed.key, { newClient: { name: "Snapshot de Peña", phone } });
     expect(conflict.statusCode).toBe(409);
-    expect(conflict.json()).toEqual({ code: "CONFLICT", message: "Operation key payload differs" });
+    expect(conflict.json<{ code: string; message: string }>()).toEqual({ code: "CONFLICT", message: "Operation key payload differs" });
     expect(await counts()).toEqual(before);
     expect(await receiptRows()).toEqual(rows);
   } finally { await app.close(); await pools.end(); await f.sql.end(); }

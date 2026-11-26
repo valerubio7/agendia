@@ -83,7 +83,7 @@ test("same operation concurrently commits exactly once and canonical replay reje
   for (const changed of [{ ...payload, notes: "different" }, { ...payload, newClient: { ...payload.newClient, name: "Different Name" } }]) {
     const conflict = await keyedPost(o, key, changed);
     expect(conflict.statusCode).toBe(409);
-    expect(conflict.json()).toEqual({ code: "CONFLICT", message: "Operation key payload differs" });
+    expect(conflict.json<{ code: string; message: string }>()).toEqual({ code: "CONFLICT", message: "Operation key payload differs" });
   }
   expect(await effects(o)).toEqual(after);
   expect((await fenced(o, key)).json()).toMatchObject({ state: "completed", appointment: saved });

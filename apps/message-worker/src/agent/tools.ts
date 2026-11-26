@@ -33,7 +33,8 @@ export function canonicalAgentDate(instant: unknown, timeZone: unknown): AgentDa
 
 const id = z.uuid();
 const selection = { serviceId: id, resourceId: id.optional(), startsAt: InstantSchema };
-const nameField = z.object({ value: z.string().min(1).max(100).refine(value => value.trim() === value && !value.includes("\0")),
+// Preserve the two former 100-unit parts plus their separating space.
+const nameField = z.object({ value: z.string().min(1).max(201).refine(value => value.trim() === value && !value.includes("\0")),
   messageId: id, start: z.number().int().nonnegative() }).strict();
 const memberBinding = { evidenceReference: z.string().regex(/^[a-f0-9]{64}$/u),
   messageId: id, evidence: z.string().min(1).max(12000) };
