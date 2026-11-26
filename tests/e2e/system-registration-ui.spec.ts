@@ -9,32 +9,43 @@ test("shared setup approves a registration without ending the admin session", as
   await expect(page.locator('[data-ui="admin-screen"]')).toBeVisible();
   await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
   await login(page, system.webUrl, business.email, business.password);
-  await expect(page).toHaveURL(/\/profile$/);
+  await expect(page).toHaveURL(/\/inicio$/);
 });
 
-test("registration shares the login layout on desktop and mobile", async ({ page, system }) => {
-  for (const width of [1280, 390]) {
+test("registration is a branded, responsive form separate from unchanged login", async ({ page, system }, testInfo) => {
+  for (const width of [1280, 360]) {
     await page.setViewportSize({ width, height: 900 });
-    const layout = async () => page.evaluate(() => {
-      const frame = document.querySelector<HTMLElement>('[data-ui="login-frame"]')!;
-      const story = document.querySelector<HTMLElement>('[data-ui="login-story"]')!;
-      const input = document.querySelector<HTMLInputElement>('.login-field input')!;
-      return {
-        areas: getComputedStyle(frame).gridTemplateAreas,
-        storyBackground: getComputedStyle(story).backgroundColor,
-        inputFont: getComputedStyle(input).fontFamily,
-        overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-      };
-    });
     await page.goto(`${system.webUrl}/login`);
-    await page.locator('[data-ui="login-frame"]').waitFor({ state: "visible" });
-    const loginLayout = await layout();
-    await page.goto(`${system.webUrl}/register`);
-    await page.locator('[data-ui="login-frame"]').waitFor({ state: "visible" });
-    expect(await layout()).toEqual(loginLayout);
-    expect(loginLayout.overflow).toBe(false);
     await expect(page.locator('[data-ui="login-story"]')).toBeVisible();
+    await page.goto(`${system.webUrl}/register`);
+    const registration = page.locator('[data-ui="register-screen"]');
+    await expect(registration.getByRole("img", { name: "agendIA" })).toBeVisible();
+    await expect(registration.getByLabel("Contraseña", { exact: true })).toHaveAccessibleDescription("Al menos 16 caracteres.");
+    await expect(registration.getByRole("link", { name: "Volver a iniciar sesión" })).toHaveAttribute("href", "/login");
+    await expect(page.locator('[data-ui="login-story"]')).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`register-${width}.png`), fullPage: true });
   }
+});
+
+test("rejecting a request requires confirmation and cancellation leaves it pending", async ({ page, system }) => {
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
+  expect((await page.request.post(`${system.webUrl}/api/auth/register`, {
+    headers: { origin: system.webUrl }, data: { name: "Solicitud cancelable", email: "cancel@example.test", password: "registration password safe" },
+  })).status()).toBe(202);
+  await expect(page).toHaveURL(/\/solicitudes$/);
+  await page.reload();
+  let writes = 0;
+  await page.route("**/api/admin/registrations/*/reject", async route => { writes++; await route.continue(); });
+  const reject = page.getByRole("button", { name: "Rechazar Solicitud cancelable", exact: true });
+  await reject.click();
+  const confirmation = page.getByRole("alertdialog", { name: "¿Rechazar solicitud?" });
+  await expect(confirmation).toBeVisible({ timeout: 3000 });
+  expect(writes).toBe(0);
+  await confirmation.getByRole("button", { name: "Cancelar", exact: true }).click();
+  await expect(reject).toBeFocused();
+  expect(writes).toBe(0);
+  await expect(page.getByText("cancel@example.test")).toBeVisible();
 });
 
 test("registration rejects mismatched passwords without sending a request", async ({ page, system }) => {
@@ -64,6 +75,7 @@ test("registration success and admin decisions handle an error without losing th
     await expect(page.getByRole("button", { name: "Ingresar" })).toBeVisible();
   }
   await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
+  await expect(page).toHaveURL(/\/solicitudes$/);
   await expect(page.getByRole("heading", { name: "Solicitudes pendientes" })).toBeVisible();
   let failed = false;
   await page.route("**/api/admin/registrations/*/approve", async route => {
@@ -73,11 +85,15 @@ test("registration success and admin decisions handle an error without losing th
     } else await route.continue();
   });
   await page.getByRole("button", { name: "Aprobar Primer negocio" }).click();
-  await expect(page.getByRole("region", { name: "Solicitudes pendientes" }).getByRole("alert")).toContainText("No se pudo completar la operación.");
-  await expect(page.getByText("first-registration@example.test")).toBeVisible();
-  await page.getByRole("button", { name: "Aprobar Primer negocio" }).click();
+  const confirmation = page.getByRole("alertdialog");
+  const approve = confirmation.getByRole("button", { name: "Aprobar solicitud", exact: true });
+  await approve.click();
+  await expect(confirmation.getByRole("alert")).toHaveText("No se pudo completar la operación.");
+  await expect(page.getByText("first-registration@example.test")).toHaveCount(1);
+  await approve.click();
   await expect(page.getByText("first-registration@example.test")).toHaveCount(0);
   await page.getByRole("button", { name: "Rechazar Segundo negocio" }).click();
+  await confirmation.getByRole("button", { name: "Rechazar solicitud", exact: true }).click();
   await expect(page.getByText("second-registration@example.test")).toHaveCount(0);
   await expect(page.getByRole("status").filter({ hasText: "Solicitud rechazada" })).toBeVisible();
 });

@@ -30,6 +30,7 @@ test("registration shows neutral feedback when admission is unavailable", async 
 for (const status of [401, 403]) {
   test(`registration ${status} preserves healthy admin controls`, async ({ page, system }) => {
     await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
+    await expect(page).toHaveURL(/\/solicitudes$/);
     const response = await page.request.post(new URL("/api/auth/register", page.url()).href, {
       headers: { origin: new URL(page.url()).origin },
       data: { name: "Negocio seguro", email: `auth-${status}@example.test`, password: "secure initial password" },
@@ -37,22 +38,25 @@ for (const status of [401, 403]) {
     expect(response.status()).toBe(202);
     await page.reload();
     await page.getByRole("button", { name: "Aprobar Negocio seguro" }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Aprobar solicitud", exact: true }).click();
     await expect(page.locator(".admin-feedback").getByRole("status")).toHaveText("Solicitud aprobada");
     await page.route("**/admin/registrations", route => route.fulfill({ status, json: { code: status === 401 ? "UNAUTHENTICATED" : "FORBIDDEN" } }));
     await page.reload();
     const requests = page.getByRole("region", { name: "Solicitudes pendientes" });
     await expect(requests.getByText("No se pudieron cargar las solicitudes pendientes.")).toBeVisible();
-    await expect(requests.getByText("No hay solicitudes pendientes.")).toHaveCount(0);
-    const row = page.locator(".admin-directory").getByRole("listitem").filter({ hasText: "Negocio seguro" });
-    await row.locator("summary").click();
-    await row.getByRole("button", { name: "Suspender" }).click();
+    await expect(requests.getByText("No hay solicitudes pendientes")).toHaveCount(0);
+    await page.getByRole("link", { name: "Negocios", exact: true }).click();
+    await page.getByRole("button", { name: "Información del negocio: Negocio seguro", exact: true }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Suspender negocio", exact: true }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Suspender negocio", exact: true }).click();
     await expect(page.locator(".admin-feedback").getByRole("status")).toHaveText("Negocio actualizado");
-    await page.getByRole("tab", { name: "Configuración de IA" }).click();
-    const timing = page.getByRole("spinbutton", { name: /^Espera activa \(segundos\)/ });
+    await page.getByRole("link", { name: "Ajustes", exact: true }).click();
+    await page.getByRole("button", { name: "Editar", exact: true }).click();
+    const timing = page.getByRole("spinbutton", { name: /^Espera activa \(s\)/ });
     await timing.fill("23");
-    await page.getByRole("button", { name: "Guardar configuración" }).click();
+    await page.getByRole("button", { name: "Guardar cambios" }).click();
     await expect(page.locator(".admin-feedback").getByRole("status")).toHaveText("Tiempos guardados");
-    await expect(timing).toHaveValue("23");
+    await expect(page.getByText("23 s", { exact: true })).toBeVisible();
   });
 }
 
@@ -128,6 +132,6 @@ for (const validation of ["failure", "identity", "role", "business"] as const) {
     await expect.poll(() => sessions).toBe(2);
     await expect(page.locator('p[role="alert"]')).toBeVisible();
     await expect(page.locator('[data-ui="admin-screen"]')).toHaveCount(0);
-    await expect(page.getByRole("tab", { name: "Configuración de IA" })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Ajustes", exact: true })).toHaveCount(0);
   });
 }
