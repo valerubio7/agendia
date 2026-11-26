@@ -40,7 +40,7 @@ beforeAll(async () => {
     const cookies = login.headers["set-cookie"]!;
     owner.cookie = (Array.isArray(cookies) ? cookies[0]! : cookies).split(";")[0]!;
     if (platform) return owner;
-    await database.sql`insert into clients(id,business_id,first_name,last_name,phone) values(${owner.client},${owner.businessId},'Same','Name','+5491123456789')`;
+    await database.sql`insert into clients(id,business_id,name,phone) values(${owner.client},${owner.businessId},'Same Name','+5491123456789')`;
     await database.sql`insert into services(id,business_id,name,duration_minutes,price_ars) values(${owner.service},${owner.businessId},'Original service',15,0)`;
     await database.sql`insert into resources(id,business_id,name,weekly_schedule) values(${owner.resource},${owner.businessId},'Original resource','{}'::jsonb)`;
     for (const [i, state] of ["done", "cancelled", "confirmed", "no_show", "done", "done"].entries()) {
@@ -50,7 +50,7 @@ beforeAll(async () => {
       await database.sql`insert into appointments(id,business_id,client_id,service_id,resource_id,service_label,resource_label,duration_minutes,price_ars,start_raw,start_ms,end_ms,state,origin,notes,customer_resource_preference_id)
         values(${id},${owner.businessId},${owner.client},${owner.service},${owner.resource},'Frozen service','Frozen resource',15,${i ? 12.34567 : 0},${raw},${ms},${ms + 900000},${state},${i % 2 ? "ai" : "manual"},${i % 2 ? "History note" : null},${i % 2 ? owner.resource : null})`;
     }
-    await database.sql`update clients set first_name='Renamed',phone='+5491198765432' where id=${owner.client}`;
+    await database.sql`update clients set name='Renamed Name',phone='+5491198765432' where id=${owner.client}`;
     await database.sql`update services set name='Renamed service',price_ars=999,duration_minutes=30,deleted_at=now() where id=${owner.service}`;
     await database.sql`update resources set name='Renamed resource',deleted_at=now() where id=${owner.resource}`;
     return owner;
@@ -61,7 +61,7 @@ afterAll(async () => { await app?.close(); await pools?.end(); await database?.s
 
 test("business reads return all history, current client and frozen terms without effects or Origin/CSRF", async () => {
   const otherClient = randomUUID();
-  await database.sql`insert into clients(id,business_id,first_name,last_name,phone) values(${otherClient},${a.businessId},'Renamed','Name','+5491111111111')`;
+  await database.sql`insert into clients(id,business_id,name,phone) values(${otherClient},${a.businessId},'Renamed Name','+5491111111111')`;
   const before = await effects();
   const [sessionBefore] = await database.sql`select last_seen_at, idle_expires_at from web_sessions where identity_id=${a.actorId}`;
   const expected = await pools.api.run(context(a), repo => repo.listAppointments(a.businessId));
@@ -73,7 +73,7 @@ test("business reads return all history, current client and frozen terms without
   expect(new Set(expected.map(row => row.origin))).toEqual(new Set(["manual", "ai"]));
   for (const row of expected) {
     expect(AppointmentRecordSchema.parse(row)).toEqual(row);
-    expect(row.client).toEqual({ id: a.client, firstName: "Renamed", lastName: "Name", phone: "+5491198765432" });
+    expect(row.client).toEqual({ id: a.client, name: "Renamed Name", phone: "+5491198765432" });
     expect(row.terms).toEqual({ serviceId: a.service, resourceId: a.resource, serviceName: "Frozen service", resourceName: "Frozen resource", durationMinutes: 15, priceArs: row.id === a.ids[0] ? 0 : 12.34567 });
     const detail = await get(`/me/appointments/${row.id.toUpperCase()}`, a);
     expect(detail.statusCode).toBe(200); expect(detail.json<AppointmentRecord>()).toEqual(row);

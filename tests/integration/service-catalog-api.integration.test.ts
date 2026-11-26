@@ -276,7 +276,7 @@ const retirementFixture = async (future = false) => {
   const resource = (await request("POST", "/me/resources", a, { name, serviceIds: [service.id], weeklySchedule: full })).json();
   const saved = await pools.api.run(ctx(a), repo => repo.createAppointment(a.businessId,
     { serviceId: service.id, resourceId: resource.id, startRaw: future ? "2099-06-01T10:00:00-03:00" : "2020-06-01T10:00:00-03:00",
-      newClient: { firstName: "Retirement", lastName: "Client", phone: `+54911${retirementPhone++}` } },
+      newClient: { name: "Retirement Client", phone: `+54911${retirementPhone++}` } },
     { origin: "manual", now: future ? "2099-01-01T00:00:00Z" : "2019-01-01T00:00:00Z", customerResourceExpression: { kind: "chosen", resourceId: resource.id } }));
   return { service, resource, saved };
 };
@@ -301,9 +301,9 @@ test("service DELETE acknowledges retirement, hides old IDs and preserves curren
   const replacement = await request("POST", undefined, a, { ...input, name: service.name });
   expect(replacement.statusCode).toBe(201); expect(replacement.json().id).not.toBe(service.id);
   expect((await request("GET", "/me/resources", a)).json()).toContainEqual({ ...resource, serviceIds: [] });
-  await pools.api.run(ctx(a), repo => repo.updateClient(a.businessId, saved.client.id, { ...saved.client, firstName: "Current" }));
+  await pools.api.run(ctx(a), repo => repo.updateClient(a.businessId, saved.client.id, { ...saved.client, name: "Current Client" }));
   const history = await pools.api.run(ctx(a), repo => repo.getAppointment(a.businessId, saved.id));
-  expect(history).toMatchObject({ terms: saved.terms, client: { firstName: "Current" }, customerResourcePreference: resource.id });
+  expect(history).toMatchObject({ terms: saved.terms, client: { name: "Current Client" }, customerResourcePreference: resource.id });
   expect([...(await database.sql`select * from appointments where id=${saved.id}`)]).toEqual([...physical]);
   expect((await effects())!.audit - before!.audit).toBe(2);
   expect((await effects())!.outbox - before!.outbox).toBe(2);

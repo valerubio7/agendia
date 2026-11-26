@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtemp, rmdir } from "node:fs/promises";
+import { mkdtemp, readdir, rmdir } from "node:fs/promises";
+import { hash as passwordHash, Algorithm } from "@node-rs/argon2";
+import { createRuntimePools } from "@agendia/db";
+import { buildApi } from "../../apps/api/src/app.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,7 +34,7 @@ async function fixture(files: Record<string, string>) {
     history: (await sql`select to_regclass('public.agendia_production_migrations') ledger`)[0]!.ledger
       ? await sql`select * from public.agendia_production_migrations order by name` : null,
   });
-  return { sql, run, snapshot };
+  return { sql, run, snapshot, url: url.toString() };
 }
 const base = "create table businesses(id integer primary key, counter integer not null); insert into businesses values(1,0)";
 
@@ -98,6 +101,101 @@ test("duration upgrade preserves legacy rows and widens both constraints", async
     await f.run();
   } finally { await f.sql.end(); }
 });
+
+test("client-name upgrade preserves archived rows, appointment relations, and keyed history", async () => {
+  const directory = new URL("../../packages/db/migrations/", import.meta.url);
+  const migrations = (await readdir(directory)).filter(name => name.endsWith(".sql")).sort();
+  const files: Record<string, string> = {};
+  for (const name of migrations.filter(name => name < "0009"))
+    files[name] = await Bun.file(new URL(name, directory)).text();
+  const f = await fixture(files);
+  const pools = createRuntimePools(f.url);
+  const origin = "https://panel.agendia.test", app = buildApi({ pools, expectedOrigin: origin });
+  try {
+    await f.run();
+    const [business, archived, actor, archivedActor, client, archivedClient, serviceId, resourceId, appointmentId] =
+      Array.from({ length: 9 }, () => crypto.randomUUID()) as [string, string, string, string, string, string, string, string, string];
+    const email = "name-upgrade@example.test", password = "isolated fixture password";
+    const phc = await passwordHash(password, { algorithm: Algorithm.Argon2id });
+    await f.sql`insert into businesses(id,name,status) values (${business},'Unchanged Business','active'),(${archived},'Archived Business','suspended')`;
+    await f.sql`insert into auth_identities(id,normalized_email,password_phc,role,business_id) values
+      (${actor},${email},${phc},'business_user',${business}),(${archivedActor},'archived@example.test',${phc},'business_user',${archived})`;
+    const phone = "+5491123456789";
+    await f.sql`insert into clients(id,business_id,first_name,last_name,phone) values
+      (${client},${business},${" \tMaría\u00a0 José  "},${"\ufeffde\u2003  la Peña\n"},${phone}),
+      (${archivedClient},${archived},' Archived  ',' Client ',${phone})`;
+    await f.sql`insert into resources(id,business_id,name,weekly_schedule) values(${resourceId},${business},'Room','{}')`;
+    await f.sql`insert into services(id,business_id,name,duration_minutes,price_ars) values(${serviceId},${business},'Service',15,0)`;
+    const startRaw = "2099-06-01T10:00:00-03:00", startMs = Date.parse(startRaw), endMs = startMs + 15 * 60000;
+    await f.sql`insert into appointments(id,business_id,client_id,service_id,resource_id,service_label,resource_label,price_ars,duration_minutes,start_raw,start_ms,end_ms,state,origin)
+      values(${appointmentId},${business},${client},${serviceId},${resourceId},'Service','Room',0,15,${startRaw},${startMs},${endMs},'confirmed','manual')`;
+    // Seed the original canonical fingerprints, including a create without newClient that remains replayable.
+    const terms = { durationMinutes: 15, priceArs: 0, resourceId, resourceName: "Room", serviceId, serviceName: "Service" };
+    const payload = { confirmed: true, date: "2099-06-01", expectedTerms: terms, resourceId, serviceId, startRaw };
+    const newClient = { firstName: "Snapshot", lastName: "de  Peña", phone };
+    const keyed = { key: crypto.randomUUID(), fingerprint: hash(JSON.stringify({ kind: "create", payload: {
+      confirmed: payload.confirmed, date: payload.date, expectedTerms: terms, newClient, resourceId, serviceId, startRaw,
+    }, target: null })) };
+    const existing = { key: crypto.randomUUID(), fingerprint: hash(JSON.stringify({ kind: "create", payload: { clientId: client, ...payload }, target: null })) };
+    const archivedKey = crypto.randomUUID();
+    const body = { id: appointmentId, client: { id: client, ...newClient }, startsAt: startRaw, startMs, endMs, terms,
+      state: "confirmed", origin: "manual", notes: null, customerResourcePreference: null };
+    for (const [tenant, owner, key, fingerprint] of [
+      [business, actor, keyed.key, keyed.fingerprint], [business, actor, existing.key, existing.fingerprint],
+      [archived, archivedActor, archivedKey, keyed.fingerprint],
+    ] as const) {
+      await f.sql`insert into appointment_operation_receipts(business_id,actor_id,operation_key,kind,fingerprint,state,result)
+        values (${tenant},${owner},${key},'create',${fingerprint},'completed',${f.sql.json({ status: 201, body })})`;
+    }
+    // Retained legacy rows under a tombstone must migrate even though normal writes are blocked.
+    await f.sql.begin(async tx => {
+      await tx`set local role agendia_business_purge`;
+      await tx`update businesses set deleted_at=now() where id=${archived}`;
+    });
+    const businessRows = [...await f.sql`select * from businesses order by id`];
+    const appointments = [...await f.sql`select * from appointments`];
+    for (const name of migrations.filter(name => name.startsWith("0009")))
+      files[name] = await Bun.file(new URL(name, directory)).text();
+    await f.run();
+    await f.run(); // Repeating the upgrade cannot normalize or rewrite the new schema again.
+    const clientRows = await f.sql`select * from clients`;
+    expect(clientRows).toHaveLength(2);
+    expect(clientRows.find(row => row.id === client)).toEqual({ id: client, business_id: business, name: "María José de la Peña", phone });
+    expect(clientRows.find(row => row.id === archivedClient)).toEqual({ id: archivedClient, business_id: archived, name: "Archived Client", phone });
+    expect([...await f.sql`select * from appointments`]).toEqual(appointments);
+    expect([...await f.sql`select * from businesses order by id`]).toEqual(businessRows);
+    const receiptRows = () => f.sql`select operation_key,fingerprint,result from appointment_operation_receipts order by operation_key`;
+    const rows = await receiptRows();
+    const migrated = { ...body, client: { id: client, name: "Snapshot de Peña", phone } };
+    for (const [key, fingerprint] of [[keyed.key, keyed.fingerprint], [existing.key, existing.fingerprint], [archivedKey, keyed.fingerprint]]) {
+      expect(rows.find(row => row.operation_key === key)).toEqual({ operation_key: key, fingerprint, result: { status: 201, body: migrated } });
+    }
+    await expect(f.sql`update clients set name='blocked' where id=${archivedClient}`.execute()).rejects.toThrow("business is deleted");
+    await expect(f.sql`update appointment_operation_receipts set result=result where operation_key=${archivedKey}`.execute()).rejects.toThrow("business is deleted");
+    const login = await app.inject({ method: "POST", url: "/auth/login", headers: { origin }, payload: { email, password } });
+    expect(login.statusCode).toBe(200);
+    const cookie = ([login.headers["set-cookie"]].flat()[0] as string).split(";")[0]!;
+    const headers = { cookie, origin, "x-csrf-token": login.json().csrfToken };
+    const receipt = await app.inject({ method: "GET", url: `/me/appointment-operations/${keyed.key}`, headers });
+    expect(receipt.statusCode).toBe(200);
+    expect(receipt.json()).toEqual({ key: keyed.key, businessId: business, identityId: actor, state: "completed", kind: "create", target: null,
+      httpStatus: 201, appointment: migrated, error: null });
+    const counts = () => f.sql`select (select count(*) from clients) clients, (select count(*) from appointments) appointments,
+      (select count(*) from audit_events where event_type like 'appointment.%') audit,
+      (select count(*) from outbox_events where topic like 'appointment.%') outbox`;
+    const before = await counts();
+    const replay = (key: string, fields: object) => app.inject({ method: "POST", url: "/me/appointments",
+      headers: { ...headers, "x-appointment-operation-key": key }, payload: { ...payload, ...fields } });
+    const unchanged = await replay(existing.key, { clientId: client });
+    expect(unchanged.statusCode).toBe(201);
+    expect(unchanged.json()).toEqual(migrated);
+    const conflict = await replay(keyed.key, { newClient: { name: "Snapshot de Peña", phone } });
+    expect(conflict.statusCode).toBe(409);
+    expect(conflict.json()).toEqual({ code: "CONFLICT", message: "Operation key payload differs" });
+    expect(await counts()).toEqual(before);
+    expect(await receiptRows()).toEqual(rows);
+  } finally { await app.close(); await pools.end(); await f.sql.end(); }
+}, 30_000);
 
 // Exercise both real CLI entrypoints and module-relative SQL discovery in isolation.
 test("production CLI migrates from another cwd and development CLI repeats without mutation", async () => {

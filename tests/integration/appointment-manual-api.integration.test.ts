@@ -20,7 +20,7 @@ const offer = async (o: Owner) => {
   expect(response.statusCode).toBe(200);
   return response.json<AvailabilitySlot[]>()[40]!;
 };
-const body = (o: Owner, slot: AvailabilitySlot) => ({ serviceId: o.service, resourceId: o.resource, date, startRaw: slot.start, expectedTerms: slot.terms, confirmed: true, newClient: { firstName: " New ", lastName: " Client ", phone: "11 2345 6790" }, notes: "Manual note" });
+const body = (o: Owner, slot: AvailabilitySlot) => ({ serviceId: o.service, resourceId: o.resource, date, startRaw: slot.start, expectedTerms: slot.terms, confirmed: true, newClient: { name: " New Client ", phone: "11 2345 6790" }, notes: "Manual note" });
 const effects = async (o: Owner) => {
   const result: Record<string, unknown> = {};
   for (const table of ["appointments", "clients", "audit_events", "outbox_events", "outbound_commands", "messages"])
@@ -38,7 +38,7 @@ const fixture = async (platform = false): Promise<Owner> => {
   o.cookie = (Array.isArray(cookies) ? cookies[0]! : cookies).split(";")[0]!;
   o.csrf = login.json().csrfToken;
   if (platform) return o;
-  await database.sql`insert into clients(id,business_id,first_name,last_name,phone) values(${o.client},${o.business},'Current','Identity','+5491123456789')`;
+  await database.sql`insert into clients(id,business_id,name,phone) values(${o.client},${o.business},'Current Identity','+5491123456789')`;
   await database.sql`insert into services(id,business_id,name,duration_minutes,price_ars) values(${o.service},${o.business},'Service',30,12.34567)`;
   await database.sql`insert into business_calendars values(${o.business},${database.sql.json(full)})`;
   await database.sql`insert into resources(id,business_id,name,weekly_schedule) values(${o.resource},${o.business},'Resource',${database.sql.json(full)})`;
@@ -80,7 +80,11 @@ test("same operation concurrently commits exactly once and canonical replay reje
   expect((await receipt(o, key)).json()).toMatchObject({ state: "completed", httpStatus: 201, appointment: saved });
   const replay = await keyedPost(o, key, { ...payload, serviceId: o.service.toUpperCase() });
   expect(replay.statusCode).toBe(201); expect(replay.json()).toEqual(saved);
-  expect((await keyedPost(o, key, { ...payload, notes: "different" })).statusCode).toBe(409);
+  for (const changed of [{ ...payload, notes: "different" }, { ...payload, newClient: { ...payload.newClient, name: "Different Name" } }]) {
+    const conflict = await keyedPost(o, key, changed);
+    expect(conflict.statusCode).toBe(409);
+    expect(conflict.json()).toEqual({ code: "CONFLICT", message: "Operation key payload differs" });
+  }
   expect(await effects(o)).toEqual(after);
   expect((await fenced(o, key)).json()).toMatchObject({ state: "completed", appointment: saved });
 });
@@ -199,7 +203,8 @@ test("POST commits server terms, normalized new identity, manual Confirmed and g
   const response = await post(o, { ...payload, serviceId: o.service.toUpperCase(), resourceId: o.resource.toUpperCase(), startRaw: "2099-06-01T10:00:00-03:00", expectedTerms: { ...slot.terms, serviceId: o.service.toUpperCase(), resourceId: o.resource.toUpperCase() } });
   expect(response.statusCode).toBe(201);
   const saved = response.json();
-  expect(saved).toMatchObject({ terms: slot.terms, startMs: slot.startMs, state: "confirmed", origin: "manual", notes: "Manual note", customerResourcePreference: null, client: { firstName: "New", lastName: "Client", phone: "+5491123456790" } });
+  expect(saved).toMatchObject({ terms: slot.terms, startMs: slot.startMs, state: "confirmed", origin: "manual", notes: "Manual note", customerResourcePreference: null, client: { name: "New Client", phone: "+5491123456790" } });
+  expect(saved.client).toEqual({ id: expect.any(String), name: "New Client", phone: "+5491123456790" });
   expect(saved.client.id).not.toBe(o.client);
   const detail = await app.inject({ method: "GET", url: `/me/appointments/${saved.id}`, headers: { cookie: o.cookie } });
   expect(detail.json()).toEqual(saved);
@@ -218,7 +223,7 @@ test("existing client uses current identity, zero price and no preference transf
   const before = (await effects(o)).clients;
   const response = await post(o, { ...existing, clientId: o.client.toUpperCase() });
   expect(response.statusCode).toBe(201);
-  expect(response.json()).toMatchObject({ client: { id: o.client, firstName: "Current", lastName: "Identity", phone: "+5491123456789" }, terms: { priceArs: 0 }, customerResourcePreference: null });
+  expect(response.json()).toMatchObject({ client: { id: o.client, name: "Current Identity", phone: "+5491123456789" }, terms: { priceArs: 0 }, customerResourcePreference: null });
   expect((await effects(o)).clients).toEqual(before);
 });
 
@@ -228,7 +233,8 @@ test("strict body rejects draft, XOR, nested authority, invalid values and all a
   const invalid = [neither, { ...payload, clientId: o.client }, ...[false, undefined, "true"].map(confirmed => ({ ...payload, confirmed })),
     { ...payload, serviceId: "bad" }, { ...payload, resourceId: "bad" }, { ...neither, clientId: "bad" },
     { ...payload, date: "0000-01-01" }, { ...payload, date: "2099-02-30" }, { ...payload, startRaw: "2099-06-01T10:00:00" },
-    { ...payload, notes: "bad\u0000" }, { ...payload, newClient: { ...newClient, firstName: "bad\u0000" } },
+    { ...payload, notes: "bad\u0000" }, { ...payload, newClient: { ...newClient, name: "bad\u0000" } },
+    { ...payload, newClient: { firstName: "New", lastName: "Client", phone: newClient.phone } },
     { ...payload, newClient: { ...newClient, phone: "invalid" } },
     ...["id", "businessId", "force"].map(key => ({ ...payload, newClient: { ...newClient, [key]: o.business } })),
     ...["actor", "role", "channel", "now", "clock", "businessId", "origin", "state", "preferredResourceId", "customerResourceExpression", "priceArs", "durationMinutes", "force"].map(key => ({ ...payload, [key]: "hostile" })),
@@ -478,7 +484,7 @@ test("PATCH strict authority, auth, ownership and unavailable guards are atomic 
 
 test("PATCH and POST race for one new slot; loser retains old record without orphan effects", async () => {
   const o = await fixture(), saved = await booking(o), payload = editBody(o, await editOffer(o, saved.id)), before = await effects(o);
-  const create = { ...body(o, await offer(o)), ...payload, newClient: { firstName: "Race", lastName: "Client", phone: "1123456791" } };
+  const create = { ...body(o, await offer(o)), ...payload, newClient: { name: "Race Client", phone: "1123456791" } };
   const [edit, made] = await Promise.all([patch(o, saved.id, payload), post(o, create)]);
   expect([edit.statusCode, made.statusCode].sort()).toEqual(edit.statusCode === 200 ? [200, 409] : [201, 409]);
   const after = await effects(o);
@@ -537,12 +543,12 @@ for (const suffix of ["notes", "state"] as const) test(`${suffix} suffix authent
 test("notes preserve every saved field, clear null, retain empty string and work after start despite retired catalogs", async () => {
   const o = await fixture(), saved = await booking(o);
   await database.sql`update appointments set origin='ai',customer_resource_preference_id=${o.resource} where id=${saved.id}`;
-  await database.sql`update clients set first_name='Latest' where id=${saved.client.id}`;
+  await database.sql`update clients set name='Latest' where id=${saved.client.id}`;
   for (const notes of ["Changed", "", null, "x".repeat(10000)]) {
     const before = await physical(saved.id), response = await action(o, saved.id.toUpperCase(), "notes", { notes });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ ...await detail(o, saved.id), notes });
-    expect(response.json().client.firstName).toBe("Latest");
+    expect(response.json().client.name).toBe("Latest");
     const after = await physical(saved.id);
     expect(after).toEqual({ ...before, notes, updated_at: after.updated_at });
   }

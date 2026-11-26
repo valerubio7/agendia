@@ -14,7 +14,7 @@ let pools: ReturnType<typeof createRuntimePools>;
 let app: ReturnType<typeof buildApi>;
 type Auth = { cookie: string; csrf: string; businessId: string; actorId: string };
 let a: Auth, b: Auth, admin: Auth;
-const input = { firstName: " Ada ", lastName: " Lovelace ", phone: "11 2345 6789" };
+const input = { name: " Ada Lovelace ", phone: "11 2345 6789" };
 const request = (method: "GET" | "POST" | "PUT" | "DELETE", url = "/me/clients", auth?: Auth, body?: object, origin = ORIGIN, csrf = auth?.csrf) =>
   app.inject({ method, url, ...(body ? { payload: body } : {}), headers: {
     origin, ...(auth ? { cookie: auth.cookie } : {}), ...(csrf ? { "x-csrf-token": csrf } : {}),
@@ -46,13 +46,13 @@ beforeAll(async () => {
 }, 120_000);
 afterAll(async () => { await app?.close(); await pools?.end(); await database?.stop(); });
 
-test("empty registry, server-derived tenant, trimmed names and canonical phone", async () => {
+test("empty registry, server-derived tenant, trimmed full name and canonical phone", async () => {
   const empty = await request("GET", undefined, a);
   expect(empty.statusCode).toBe(200);
   expect(empty.json<unknown>()).toEqual([]);
   const created = await request("POST", undefined, a, { ...input, businessId: b.businessId });
   expect(created.statusCode).toBe(201);
-  expect(created.json()).toMatchObject({ firstName: "Ada", lastName: "Lovelace", phone: "+5491123456789" });
+  expect(created.json()).toEqual({ id: expect.any(String), name: "Ada Lovelace", phone: "+5491123456789" });
   expect((await request("GET", undefined, a)).json<unknown>()).toEqual([created.json()]);
   expect((await request("GET", undefined, b)).json<unknown>()).toEqual([]);
   expect(await effects()).toEqual({ clients: 1, audit: 1, outbox: 1, replies: 0 });
@@ -75,16 +75,17 @@ test("safe validation and foreign/missing IDs leave no effects", async () => {
   expect(foreign.statusCode).toBe(201);
   const id = foreign.json().id;
   const before = await effects();
-  for (const invalid of [{ firstName: " " }, { lastName: "\t" }, { firstName: 4 }, { lastName: null }, { phone: 4 }, { phone: "not a phone" }, { phone: "+123" }, { firstName: "nul\u0000name" }, { lastName: "nul\u0000name" }]) {
+  const invalid = [{}, { name: input.name }, { phone: input.phone }, { firstName: "Ada", lastName: "Lovelace", phone: input.phone },
+    ...[{ name: " \t" }, { name: 4 }, { name: null }, { phone: 4 }, { phone: "not a phone" }, { phone: "+123" }, { name: "nul\u0000name" }]
+      .map(fields => ({ ...input, ...fields }))];
+  for (const body of invalid) {
     for (const [method, url] of [["POST", "/me/clients"], ["PUT", `/me/clients/${id}`]] as const) {
-      const result = await request(method, url, b, { ...input, ...invalid });
+      const result = await request(method, url, b, body);
       expect(result.statusCode).toBe(400);
-      expect(result.json()).toMatchObject({ code: "VALIDATION_FAILED" });
-      expect(result.body).not.toMatch(/postgres|235|220|clients_|sql/i);
+      expect(result.json()).toEqual({ code: "VALIDATION_FAILED", message: "Invalid client fields", requestId: expect.any(String) });
     }
   }
-  for (const body of [{}, { firstName: "Ada", phone: input.phone }, { lastName: "Lovelace", phone: input.phone }, { firstName: "Ada", lastName: "Lovelace" }])
-    expect((await request("POST", undefined, a, body)).statusCode).toBe(400);
+  expect((await request("GET", undefined, b)).json()).toEqual([foreign.json()]);
   for (const target of [id, randomUUID()]) expect((await request("PUT", `/me/clients/${target}`, a, input)).statusCode).toBe(404);
   expect((await request("PUT", "/me/clients/not-uuid", a, input)).statusCode).toBe(400);
   expect((await request("GET", "/me/clients?q=x&q=y", a)).statusCode).toBe(400);
@@ -112,11 +113,12 @@ test("canonical duplicates are race-safe, tenant-local, and fixed/mobile remain 
 
 test("edits preserve ID, own unchanged phone is valid, exact lookup revokes old phone", async () => {
   const original = (await request("POST", undefined, a, { ...input, phone: "+5491145678901" })).json();
-  const unchanged = await request("PUT", `/me/clients/${original.id}`, a, { ...input, firstName: "Edited", phone: original.phone });
+  const unchanged = await request("PUT", `/me/clients/${original.id}`, a, { name: "Sol", phone: original.phone });
   expect(unchanged.statusCode).toBe(200);
-  const changed = await request("PUT", `/me/clients/${original.id}`, a, { firstName: "Edited again", lastName: "Last", phone: "+5491156789012" });
+  expect(unchanged.json()).toEqual({ id: original.id, name: "Sol", phone: original.phone });
+  const changed = await request("PUT", `/me/clients/${original.id}`, a, { name: " Edited again Last ", phone: "+5491156789012" });
   expect(changed.statusCode).toBe(200);
-  expect(changed.json().id).toBe(original.id);
+  expect(changed.json()).toEqual({ id: original.id, name: "Edited again Last", phone: "+5491156789012" });
   expect(await pools.api.run(ctx(a), repo => repo.findClientByCanonicalPhone(original.phone))).toBeNull();
   expect(await pools.api.run(ctx(a), repo => repo.findClientByCanonicalPhone(changed.json().phone))).toEqual(changed.json());
   expect(await pools.api.run(ctx(a), repo => repo.findClientByCanonicalPhone("11 5678 9012"))).toBeNull();
@@ -132,10 +134,10 @@ test("edits preserve ID, own unchanged phone is valid, exact lookup revokes old 
   expect(races.map(r => r.statusCode).sort()).toEqual([200, 409]);
 });
 
-test("literal case-insensitive first/last/phone search and deterministic ordering", async () => {
-  const res = await request("POST", undefined, a, { firstName: "Literal%_\\É", lastName: "SearchLAST", phone: "+5491189012345" });
+test("literal case-insensitive full-name/phone search and deterministic ordering", async () => {
+  const res = await request("POST", undefined, a, { name: "Literal%_\\É SearchLAST", phone: "+5491189012345" });
   expect(res.statusCode).toBe(201);
-  for (const q of ["literal%_\\é", "%_\\", "searchlast", "89012345", "+5491189012345"]) {
+  for (const q of ["literal%_\\é searchlast", "é searchlast", "%_\\", "searchlast", "89012345", "+5491189012345"]) {
     const found = await request("GET", `/me/clients?q=${encodeURIComponent(q)}`, a);
     expect(found.statusCode).toBe(200);
     expect(found.json<unknown>()).toEqual([res.json()]);
@@ -143,23 +145,23 @@ test("literal case-insensitive first/last/phone search and deterministic orderin
   expect((await request("GET", "/me/clients?q=%25", a)).json<unknown>()).toEqual([res.json()]);
   expect((await request("GET", "/me/clients?q=nonexistent", a)).json<unknown>()).toEqual([]);
   const ordered = [];
-  for (const [firstName, lastName, phone] of [["Zulu", "OrderProbe", "+5491123456790"], ["Alpha", "OrderProbeZ", "+5491123456791"], ["alpha", "OrderProbeA", "+5491123456792"]]) {
-    const created = await request("POST", undefined, a, { firstName, lastName, phone });
+  for (const [name, phone] of [["Zulu OrderProbe", "+5491123456790"], ["Alpha OrderProbeZ", "+5491123456791"], ["alpha OrderProbeA", "+5491123456792"], ["ALPHA ORDERPROBEA", "+5491123456787"]]) {
+    const created = await request("POST", undefined, a, { name, phone });
     expect(created.statusCode).toBe(201);
     ordered.push(created.json());
   }
-  expect((await request("GET", "/me/clients?q=orderprobe", a)).json<unknown>()).toEqual([ordered[2], ordered[1], ordered[0]]);
+  expect((await request("GET", "/me/clients?q=orderprobe", a)).json<unknown>()).toEqual([ordered[3], ordered[2], ordered[1], ordered[0]]);
 });
 
 test("unbounded Unicode names have no name uniqueness or Btree-size limit", async () => {
-  const firstName = Array.from({ length: 120 }, (_, i) => "漢é" + createHash("sha256").update(String(i)).digest("hex")).join("");
-  const created = await request("POST", undefined, a, { firstName, lastName: firstName, phone: "+5491123456796" });
+  const name = Array.from({ length: 120 }, (_, i) => "漢é" + createHash("sha256").update(String(i)).digest("hex")).join("");
+  const created = await request("POST", undefined, a, { name, phone: "+5491123456796" });
   expect(created.statusCode).toBe(201);
-  expect(created.json().firstName).toBe(firstName);
-  const edited = await request("PUT", `/me/clients/${created.json().id}`, a, { firstName: firstName + "尾", lastName: firstName, phone: created.json().phone });
+  expect(created.json().name).toBe(name);
+  const edited = await request("PUT", `/me/clients/${created.json().id}`, a, { name: name + "尾", phone: created.json().phone });
   expect(edited.statusCode).toBe(200);
-  expect(edited.json().firstName).toBe(firstName + "尾");
-  expect((await request("POST", undefined, a, { firstName, lastName: firstName, phone: "+5491123456780" })).statusCode).toBe(201);
+  expect(edited.json().name).toBe(name + "尾");
+  expect((await request("POST", undefined, a, { name: name + "尾", phone: "+5491123456780" })).statusCode).toBe(201);
 });
 
 test("RLS fails closed and runtime cannot delete or insert another business", async () => {
@@ -173,19 +175,19 @@ test("RLS fails closed and runtime cannot delete or insert another business", as
   const raw = postgres(await createRoleLogin(database, "client_rls_probe", "agendia_runtime"));
   try {
     // Bypass DAO guards: runtime role + tenant A directly attacks business B.
-    await expect(withTenantTransaction(raw, ctx(a), tx => tx`insert into clients(business_id,first_name,last_name,phone)
-      values(${b.businessId},'Valid','Client','+5491123456781')`)).rejects.toMatchObject({ code: "42501" });
+    await expect(withTenantTransaction(raw, ctx(a), tx => tx`insert into clients(business_id,name,phone)
+      values(${b.businessId},'Valid Client','+5491123456781')`)).rejects.toMatchObject({ code: "42501" });
   } finally { await raw.end(); }
   expect((await database.sql`select count(*)::int count from clients where business_id=${b.businessId} and phone='+5491123456781'`)[0]!.count).toBe(0);
   expect(await pools.api.run(ctx(a), repo => repo.listClients())).toEqual(ownedBefore);
   expect(await effects()).toEqual(before);
   const [permissions] = await database.sql`select has_table_privilege('agendia_runtime','clients','DELETE') deletion, relrowsecurity enabled, relforcerowsecurity forced from pg_class where oid='clients'::regclass`;
   expect(permissions).toEqual({ deletion: false, enabled: true, forced: true });
-  for (const [firstName, lastName] of [["\t\ufeff", "Last"], ["First", "\u00a0 "]]) {
-    await expect(database.sql`insert into clients(business_id,first_name,last_name,phone) values(${a.businessId},${firstName!},${lastName!},'+5491123456799')`.execute()).rejects.toMatchObject({ code: "23514" });
+  for (const name of ["\t\ufeff", "\u00a0 "]) {
+    await expect(database.sql`insert into clients(business_id,name,phone) values(${a.businessId},${name},'+5491123456799')`.execute()).rejects.toMatchObject({ code: "23514" });
   }
   for (const phone of ["1123456789", "+0123456789", "+54911 23456789", "+1234567890123456"]) {
-    await expect(database.sql`insert into clients(business_id,first_name,last_name,phone) values(${a.businessId},'A','B',${phone})`.execute()).rejects.toMatchObject({ code: "23514" });
+    await expect(database.sql`insert into clients(business_id,name,phone) values(${a.businessId},'A B',${phone})`.execute()).rejects.toMatchObject({ code: "23514" });
   }
 });
 
@@ -200,7 +202,7 @@ test("audit and outbox failures roll back create/update without orphans or reply
     const created = await request("POST", undefined, a, { ...input, phone: "+5491123456783" });
     expect(created.statusCode).toBe(500);
     expect(created.body).not.toMatch(/forced effect|postgres|sql/i);
-    const updated = await request("PUT", `/me/clients/${own.id}`, a, { ...input, firstName: "Not saved", phone: "+5491123456784" });
+    const updated = await request("PUT", `/me/clients/${own.id}`, a, { ...input, name: "Not saved", phone: "+5491123456784" });
     expect(updated.statusCode).toBe(500);
     expect(await pools.api.run(ctx(a), repo => repo.getClientById(own.id))).toEqual(own);
     expect(await pools.api.run(ctx(a), repo => repo.findClientByCanonicalPhone("+5491123456783"))).toBeNull();

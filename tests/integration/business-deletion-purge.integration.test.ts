@@ -41,7 +41,7 @@ async function seed(id: string) {
   await sql`insert into whatsapp_agenda_receipts(business_id,message_id,outbound_id,operation) values (${id},${msg},${outbound!.outbound_id},'create')`;
   const [category] = await sql`insert into service_categories(business_id,name) values (${id},'category') returning id`;
   const [service] = await sql`insert into services(business_id,name,duration_minutes,price_ars,category_id) values (${id},'service',15,1,${category!.id}) returning id`;
-  const [client] = await sql`insert into clients(business_id,first_name,last_name,phone) values (${id},'first','last','+12345678') returning id`;
+  const [client] = await sql`insert into clients(business_id,name,phone) values (${id},'first last','+12345678') returning id`;
   await sql`insert into business_calendars(business_id,weekly_schedule) values (${id},'{}')`;
   await sql`insert into business_calendar_closures(business_id,kind,closed_date) values (${id},'date','2026-01-01')`;
   const [resource] = await sql`insert into resources(business_id,name,weekly_schedule) values (${id},'resource','{}') returning id`;

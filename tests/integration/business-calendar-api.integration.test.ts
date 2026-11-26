@@ -290,7 +290,7 @@ test("future calendar/closure conflicts are safe 409, ignore body clocks and kee
     headers: { cookie: a.cookie, origin: ORIGIN, "x-csrf-token": a.csrf },
     payload: { date, serviceId: service, resourceId: resource, startRaw: slot!.start,
       expectedTerms: slot!.terms, confirmed: true,
-      newClient: { firstName: "Future", lastName: "Client", phone: "+5491123456785" } } });
+      newClient: { name: "Future Client", phone: "+5491123456785" } } });
   expect(booked.statusCode).toBe(201);
   const saved = booked.json<AppointmentRecord>();
   expect(saved).toMatchObject({ state: "confirmed", origin: "manual", startMs: slot!.startMs,

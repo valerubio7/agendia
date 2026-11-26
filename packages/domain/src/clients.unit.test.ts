@@ -7,8 +7,7 @@ import {
 } from "./index.ts";
 
 const valid: ClientInput = {
-  firstName: "María",
-  lastName: "Pérez",
+  name: "María Pérez",
   phone: "+5491123456789",
 };
 
@@ -101,16 +100,16 @@ describe("manual client phone normalization", () => {
 });
 
 describe("client input", () => {
-  test("trims required names without changing case, accents or internal whitespace", () => {
-    expect(ClientInputSchema.parse({
-      firstName: " \tMaría  José\n",
-      lastName: "  de la  Peña  ",
-      phone: "011 2345 6789",
-    })).toEqual({ firstName: "María  José", lastName: "de la  Peña", phone: valid.phone });
+  test("accepts one name, trims it and preserves case, accents and internal whitespace", () => {
+    expect(ClientInputSchema.parse({ name: " \tMaría  José de la  Peña\n", phone: "011 2345 6789" }))
+      .toEqual({ name: "María  José de la  Peña", phone: valid.phone });
+    expect(ClientInputSchema.parse({ ...valid, name: "Sol" })).toEqual({ ...valid, name: "Sol" });
+    expect(ClientInputSchema.safeParse({ firstName: "María", lastName: "Pérez", phone: valid.phone }).success).toBe(false);
+    expect(ClientInputSchema.safeParse({ ...valid, name: "nul\0name" }).success).toBe(false);
   });
 
   test("rejects missing, null, blank and nonstring required fields safely", () => {
-    for (const field of ["firstName", "lastName", "phone"] as const) {
+    for (const field of ["name", "phone"] as const) {
       const { [field]: _omitted, ...missing } = valid;
       expect(ClientInputSchema.safeParse(missing).success).toBe(false);
       for (const value of [undefined, null, "", " \t\n", 123, false, {}, []]) {
@@ -123,10 +122,7 @@ describe("client input", () => {
   });
 
   test("accepts long Unicode names without arbitrary caps", () => {
-    const firstName = "María 愛🌺".repeat(2_000);
-    const lastName = "Peña Ñ田".repeat(2_000);
-    expect(ClientInputSchema.parse({ ...valid, firstName, lastName })).toEqual({
-      ...valid, firstName, lastName,
-    });
+    const name = "María 愛🌺 Peña Ñ田".repeat(2_000);
+    expect(ClientInputSchema.parse({ ...valid, name })).toEqual({ ...valid, name });
   });
 });

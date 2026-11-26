@@ -41,10 +41,13 @@ test("public HTTP creation retains client normalization and exclusive client sou
     serviceId: id, resourceId: id, startRaw: "2028-02-29T09:00:00-03:00", date: "2028-02-29",
     expectedTerms: { serviceId: id, resourceId: id, serviceName: "Service", resourceName: "Resource",
       durationMinutes: 30, priceArs: 100 },
-    confirmed: true, newClient: { firstName: " Ada ", lastName: " Lovelace ", phone: "+5491112345678" },
+    confirmed: true, newClient: { name: " Ada Lovelace ", phone: "+5491112345678" },
   };
   expect(ManualAppointmentCreateSchema.parse(request).newClient)
-    .toEqual({ firstName: "Ada", lastName: "Lovelace", phone: "+5491112345678" });
+    .toEqual({ name: "Ada Lovelace", phone: "+5491112345678" });
+  expect(ManualAppointmentCreateSchema.safeParse({ ...request,
+    newClient: { firstName: "Ada", lastName: "Lovelace", phone: request.newClient.phone },
+  }).success).toBe(false);
   expect(ManualAppointmentCreateSchema.safeParse({ ...request, clientId: id }).success).toBe(false);
   expect(ManualAppointmentCreateSchema.safeParse({ ...request, confirmed: "true" }).success).toBe(false);
   expect(ManualAppointmentCreateSchema.safeParse({ ...request, extra: true }).success).toBe(false);

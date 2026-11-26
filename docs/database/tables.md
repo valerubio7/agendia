@@ -16,14 +16,14 @@
 | Tabla · DDL | Qué guarda | Relación o límite |
 | --- | --- | --- |
 | <a name="appointments"></a>[`appointments`](../../packages/db/migrations/0000_base.sql#L369-L403) | Turno con cliente, servicio, recurso asignado y preferencia opcional. Conserva los nombres, el precio y la duración acordados. | Solo los `confirmed` bloquean solapamientos por negocio y recurso. El intervalo incluye el inicio, no el final. |
-| <a name="clients"></a>[`clients`](../../packages/db/migrations/0000_base.sql#L307-L317) | Ficha de cliente: nombre, apellido y teléfono E.164 único por negocio. | No es una [cuenta del panel](#auth_identities). Para verificar titularidad se usa el teléfono actual. |
+| <a name="clients"></a>[`clients`](../../packages/db/migrations/0000_base.sql#L307-L317) | Ficha de cliente: nombre completo (`name`) y teléfono E.164 único por negocio. | No es una [cuenta del panel](#auth_identities). Para verificar titularidad se usa el teléfono actual. |
 | <a name="business_calendars"></a>[`business_calendars`](../../packages/db/migrations/0000_base.sql#L318-L321) | Horario semanal del negocio, un JSON validado por SQL. | La zona del motor es fija (`America/Argentina/Buenos_Aires`); no se guarda en esta tabla. |
 | <a name="business_calendar_closures"></a>[`business_calendar_closures`](../../packages/db/migrations/0000_base.sql#L323-L342) | Cierre de día completo (`closed_date`) o intervalo con texto original y milisegundos exactos. | Un cierre bloquea disponibilidad sin ser un turno. |
 | <a name="appointment_operation_receipts"></a>[`appointment_operation_receipts`](../../packages/db/migrations/0000_base.sql#L404-L418) | Huella y resultado para reintentar operaciones del panel (`create`, `change`, `notes`, `state`) sin repetir efectos. PK `(business_id, actor_id, operation_key)`. | `completed`, `failed` y `cancelled` describen la operación, no el turno. `actor_id` es una FK global a [identidades](#auth_identities); `target_id` no es una FK. |
 
 **Reglas del turno:** los estados son `confirmed`, `done`, `cancelled` y `no_show`; el origen es `manual` o `ai`. SQL comprueba que `end_ms` coincida con `start_ms` más la duración; `start_raw` conserva el texto de entrada. La [lógica de agenda](../../packages/domain/src/appointments) valida la grilla de inicio de 15 minutos y las transiciones. No hay un trigger que complete turnos al pasar la hora.
 
-**Cambio de esquema:** [0005 · Duraciones en múltiplos de 5 min](../../packages/db/migrations/0005_service_duration_five_minutes.sql), tanto en turnos como en servicios.
+**Cambios de esquema:** [0005 · Duraciones en múltiplos de 5 min](../../packages/db/migrations/0005_service_duration_five_minutes.sql), tanto en turnos como en servicios; [0009 · Nombre completo del cliente](../../packages/db/migrations/0009_client_name.sql), que une nombre y apellido, elimina espacios repetidos de los datos migrados y conserva identificadores, teléfonos y relaciones.
 
 ## Catálogo
 
