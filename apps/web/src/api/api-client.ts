@@ -351,10 +351,11 @@ export class ApiClient {
   clientAppointments = (clientId: string, signal?: AbortSignal) =>
     this.call<AppointmentRecord[]>("/me/appointments", "GET", undefined, undefined, signal,
       new URLSearchParams({ clientId }));
-  appointments = (filters: { from?: string; to?: string } = {}, signal?: AbortSignal) => {
+  appointments = (filters: { from?: string; to?: string; overlap?: true } = {}, signal?: AbortSignal) => {
     const query = new URLSearchParams();
     if (filters.from !== undefined) query.set("from", filters.from);
     if (filters.to !== undefined) query.set("to", filters.to);
+    if (filters.overlap) query.set("overlap", "true");
     return this.call<AppointmentRecord[]>("/me/appointments", "GET", undefined, undefined, signal, query);
   };
   appointment = (id: string, signal?: AbortSignal) =>
