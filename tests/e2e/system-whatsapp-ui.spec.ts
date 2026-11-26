@@ -171,7 +171,11 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
     })).toBe(true);
     async function capture(state: "offline" | "qr" | "connected", width: number) {
       await tenantPage.evaluate(() => document.fonts.ready.then(() => undefined));
-      const geometry = await screen.evaluate(dialog => {
+      const geometry = await screen.evaluate(async dialog => {
+        const entrance = dialog.closest("dialog")!;
+        await Promise.all(entrance.getAnimations()
+          .filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime))
+          .map(animation => animation.finished));
         const selectors = {
           dialog: "", header: ".integration-head", title: "h2", card: ".wa-panel-status",
           summary: ".wa-panel-summary", badge: ".wa-panel-indicator", lower: ".wa-panel-lower", action: ".wa-panel-lower button",
