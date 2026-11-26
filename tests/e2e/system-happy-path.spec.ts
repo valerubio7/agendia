@@ -160,17 +160,16 @@ test("real services complete the deterministic multi-tenant happy path", async (
       (ack, index) => ack.jid === accepted[index]?.remoteJid,
     ),
   });
-  const evidence = await system.deliveryEvidence();
-  expect(evidence).toEqual(
-    expect.arrayContaining(
-      accepted.map((item) =>
-        expect.objectContaining({
-          connection_id: item.connectionId,
-          state: "sent",
-        }),
-      ),
-    ),
-  );
+  // The provider records the ACK before the dispatcher commits the delivery row.
+  const expectedDeliveries = accepted.map((item, index) => ({
+    connection_id: item.connectionId,
+    state: "sent",
+    provider_message_id: system.providers.baileys.acks[index]!.providerMessageId,
+  }));
+  const byConnection = (a: { connection_id: string }, b: { connection_id: string }) =>
+    a.connection_id.localeCompare(b.connection_id);
+  await expect.poll(async () => (await system.deliveryEvidence()).sort(byConnection))
+    .toEqual(expectedDeliveries.sort(byConnection));
   expect(system.providers.baileys.acks.map(ack => ack.text)).toEqual(
     accepted.map(() => "No se guardó ningún cambio de agenda."),
   );
@@ -318,10 +317,16 @@ test("real services complete the deterministic multi-tenant happy path", async (
   });
   system.providers.deepSeek.nativeCalls = [{ name: "confirm_quote", arguments: {} }];
   const quoted = await sendNative("Mi nombre es Clara López");
-  expect(system.providers.baileys.acks.at(-1)!.text).toContain("30 minutos, ARS 1000");
+  const quoteAck = system.providers.baileys.acks.at(-1)!;
+  expect(quoteAck.text).toContain("30 minutos, ARS 1000");
   expect(await system.agendaEvidence(tenants[0]!.email, quoted.providerMessageId)).toMatchObject({ appointments: 0, effects: 0 });
-  const delivery = await system.deliveryEvidence();
-  expect(delivery.at(-1)).toMatchObject({ state: "sent" });
+  await expect.poll(async () => (await system.deliveryEvidence())
+    .filter((row) => row.provider_message_id === quoteAck.providerMessageId))
+    .toEqual([{
+      connection_id: quoted.connectionId,
+      state: "sent",
+      provider_message_id: quoteAck.providerMessageId,
+    }]);
   let interpretedAcceptances = 0;
   system.providers.deepSeek.nativeCalls = messages => {
     const runtime = JSON.parse(messages[1]!.content!).runtime;

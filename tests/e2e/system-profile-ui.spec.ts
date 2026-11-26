@@ -71,9 +71,9 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
       '[data-ui="authenticated-shell"][data-variant="business"]',
     );
     await expect(shell).toHaveCount(1);
-    await expect(
-      shell.getByTitle("agendIA", { exact: true }).locator('img[src="/brand/logo-symbol-inverse.svg"]'),
-    ).toBeVisible();
+    const brand = shell.getByTitle("agendIA", { exact: true });
+    await expect(brand.locator(".panel-brand__mark svg")).toBeVisible();
+    await expect(brand.locator('img[src="/brand/logo-wordmark-panel.svg"]')).toBeVisible();
     await expect(
       shell.getByRole("navigation", {
         name: "Navegación del negocio",

@@ -276,12 +276,21 @@ for (const width of [1280, 360]) {
       expect(await business.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       const create = business.getByRole("button", { name: "Nuevo turno", exact: true });
       await expect(create).toBeEnabled();
-      const fab = await create.boundingBox();
+      const fab = await create.getByText("Nuevo turno", { exact: true }).evaluate(async label => {
+        await document.fonts.ready;
+        const text = document.createRange();
+        text.selectNodeContents(label);
+        const { width, height, right, bottom } = label.closest("button")!.getBoundingClientRect();
+        return { width, height, right, bottom, labelWidth: text.getBoundingClientRect().width, lines: text.getClientRects().length };
+      });
       const mobile = width === 360;
-      expect(fab!.width).toBeCloseTo(mobile ? 142.5625 : 149.5625, 1);
-      expect(fab!.height).toBe(mobile ? 52 : 56);
-      expect(width - fab!.x - fab!.width).toBe(mobile ? 14 : 24);
-      expect(900 - fab!.y - fab!.height).toBe(mobile ? 14 : 24);
+      // The label follows the installed font; the padding, icon and gap do not.
+      const chromeWidth = mobile ? 7 + 34 + 11 + 14 : 9 + 35 + 11 + 18;
+      expect(fab.lines).toBe(1);
+      expect(fab.width).toBeCloseTo(fab.labelWidth + chromeWidth, 1);
+      expect(fab.height).toBe(mobile ? 52 : 56);
+      expect(width - fab.right).toBe(mobile ? 14 : 24);
+      expect(900 - fab.bottom).toBe(mobile ? 14 : 24);
       await expect(create).toHaveCSS("background-color", "rgb(255, 107, 73)");
       await create.screenshot({ path: testInfo.outputPath(`floating-button-${width}.png`) });
       await create.click();
@@ -372,14 +381,22 @@ test("Clientes hands off an existing client to review and confirm a real booking
     const card = business.getByRole("dialog", { name: "Cliente", exact: true });
     await row.click();
     const start = card.getByRole("button", { name: "Nuevo turno", exact: true });
+    const close = card.getByRole("button", { name: "Cerrar", exact: true });
     const booking = business.getByRole("dialog", { name: "Nuevo turno", exact: true });
     const form = booking.getByRole("form", { name: "Crear turno", exact: true });
     for (const width of [1280, 360]) {
       await business.setViewportSize({ width, height: 900 });
       await expect(start).toBeEnabled();
-      const close = (await card.getByRole("button", { name: "Cerrar", exact: true }).boundingBox())!;
-      const book = (await start.boundingBox())!;
-      expect(close.y + close.height / 2).toBeCloseTo(book.y + book.height / 2, 0);
+      await card.evaluate(async dialog => {
+        const finite = dialog.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime));
+        await Promise.allSettled(finite.map(animation => animation.finished));
+      });
+      const centers = await close.or(start).evaluateAll(buttons => buttons.map(button => {
+        const { y, height } = button.getBoundingClientRect();
+        return y + height / 2;
+      }));
+      expect(centers).toHaveLength(2);
+      expect(centers[0]!).toBeCloseTo(centers[1]!, 0);
       await business.screenshot({ path: testInfo.outputPath(`client-booking-footer-${width}.png`) });
       await start.click();
       await expect(booking.getByRole("heading", { name: "Nuevo turno", exact: true })).toBeFocused();
@@ -416,7 +433,7 @@ test("Clientes hands off an existing client to review and confirm a real booking
     await business.keyboard.press("Escape");
     await expect(start).toBeFocused();
     await expect(card.getByRole("list", { name: "Próximos turnos" }).getByRole("listitem")).toHaveCount(1);
-    await card.getByRole("button", { name: "Cerrar", exact: true }).click();
+    await close.click();
     await expect(row).toBeFocused();
     expect(writes).toHaveLength(1);
   } finally { await context.close(); }
@@ -1039,12 +1056,13 @@ test("Turnos uncapped all-state calendars and clock locks with UI-mocked attenda
     const week = screen.getByRole("region", { name: "Vista semanal" });
     const weekToday = week.getByRole("group", { name: `Turnos ${today}`, exact: true });
     await expect(week.getByRole("group", { name: /^Turnos \d/ })).toHaveCount(7);
-    await expect(weekToday.getByRole("button")).toHaveCount(5);
-    await expect(weekToday.getByText("+74 turnos", { exact: true })).toBeVisible();
+    const weekBookings = weekToday.getByRole("button");
+    await expect(weekBookings).toHaveCount(79);
+    await expect(weekToday.getByText(/^\+\d+ turnos?$/)).toHaveCount(0);
     await screen.getByRole("button", { name: "Anterior", exact: true }).click();
     await expect(weekToday).toHaveCount(0);
     await screen.getByRole("button", { name: "Esta semana", exact: true }).click();
-    await expect(weekToday.getByText("+74 turnos", { exact: true })).toBeVisible();
+    await expect(weekBookings).toHaveCount(79);
     await screen.getByRole("button", { name: "Mes", exact: true }).click();
     const month = screen.getByRole("group", { name: "Días del mes", exact: true });
     await expect(month.getByRole("button", { pressed: true })).toHaveAccessibleName(/: 79 turnos$/);

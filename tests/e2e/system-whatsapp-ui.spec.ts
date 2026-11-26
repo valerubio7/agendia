@@ -124,9 +124,9 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
       '[data-ui="authenticated-shell"][data-variant="business"]',
     );
     await expect(shell).toHaveCount(1);
-    await expect(
-      shell.getByTitle("agendIA", { exact: true }).locator('img[src="/brand/logo-symbol-inverse.svg"]'),
-    ).toBeVisible();
+    const brand = shell.getByTitle("agendIA", { exact: true });
+    await expect(brand.locator(".panel-brand__mark svg")).toBeVisible();
+    await expect(brand.locator('img[src="/brand/logo-wordmark-panel.svg"]')).toBeVisible();
     await expect(
       shell.getByRole("navigation", {
         name: "Navegación del negocio",
@@ -262,7 +262,8 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
     await expect(currentStatus).toHaveText(/^(Requiere vinculación|Desconectado)$/);
     await expect(screen.getByRole("alert")).toHaveCount(0);
 
-    // Original real API/database lifecycle uses deterministic provider doubles.
+    // Keep the provider awaiting a scan until both real QR layouts are checked.
+    system.providers.baileys.holdSocket(1);
     await action.click();
     await expect(action).toHaveText("Esperando conexión…");
     await expect(action).toBeDisabled();
@@ -273,6 +274,7 @@ test("the redesigned WhatsApp screen completes the real linking lifecycle respon
     await tenantPage.setViewportSize({ width: 360, height: 800 });
     await capture("qr", 360);
     await tenantPage.setViewportSize({ width: 1280, height: 900 });
+    await system.providers.baileys.openSocket(1);
 
     await expect(currentStatus).toHaveText("Conectado", { timeout: 15_000 });
     await expect(

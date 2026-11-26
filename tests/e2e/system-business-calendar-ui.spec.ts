@@ -1635,7 +1635,9 @@ test("Closures edit and delete retain identity and recover committed mutations",
     await save.click();
     await expect.poll(() => counts.PUT).toBe(beforeStale.PUT + 1);
     // Invoke the real shell logout handler while the native modal makes the background inert.
-    await business.locator('.business-shell__drawer > button').dispatchEvent("click");
+    await business.locator('[data-ui="mobile-navigation"]')
+      .getByRole("button", { name: "Cerrar sesión", exact: true, includeHidden: true })
+      .dispatchEvent("click", {}, { timeout: 5_000 });
     await expect(business.getByLabel("Correo", { exact: true })).toBeVisible();
     await login(business, system.webUrl, email, password);
     await expect(business).toHaveURL(/\/inicio$/);

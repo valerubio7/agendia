@@ -286,15 +286,6 @@ test("platform admin saves and reloads global reply waits without guidance contr
   await expect(reset).toHaveValue("75");
 });
 
-// Effective reference at 1280/360 × 900; page coordinates exclude its 49 px demo banner.
-const panelBounds = {
-  requests: [[274, 99.89, 954, 85], [14, 176.83, 332, 131]],
-  businesses: [[274, 244.97, 954, 132.94], [14, 304.06, 332, 85]],
-  settings: [[274, 103.89, 680, 263.33], [14, 135.59, 332, 230.66]],
-  requestDialog: [[355, 198.98, 570, 502.03], [10, 391.42, 340, 498.58]],
-  businessDialog: [[355, 90.86, 570, 718.28], [10, 111.75, 340, 778.25]],
-} as const;
-
 async function box(locator: Locator) {
   return locator.evaluate(element => {
     const { x, y, width, height } = element.getBoundingClientRect();
@@ -309,12 +300,37 @@ async function settleDialog(dialog: Locator) {
   });
 }
 
-async function expectReferenceBounds(locator: Locator, surface: keyof typeof panelBounds, width: number, tolerance: number) {
-  const actual = await box(locator);
-  const expected = panelBounds[surface][width === 1280 ? 0 : 1];
-  expect.soft(Math.max(...actual.map((value, i) => Math.abs(value - expected[i]!))),
-    `${surface} at ${width}: ${actual.join(", ")}`).toBeLessThanOrEqual(tolerance);
-  return actual;
+// The reference prescribes gutters and gaps, not a text width or a y offset after wrapping.
+async function expectPanelLayout(panel: Locator, preceding: Locator, width: number, gap: number, maxWidth = width) {
+  const bounds = await box(panel);
+  const [x, y, w] = bounds;
+  const [, precedingY, , precedingHeight] = await box(preceding);
+  const left = width === 1280 ? 222 + 52 : 14;
+  const right = width === 1280 ? 52 : 14;
+  expect.soft([x, w, y - precedingY - precedingHeight], `${panel} at ${width}`).toEqual([
+    left, Math.min(maxWidth, width - left - right), gap,
+  ]);
+  return bounds;
+}
+
+async function expectDetailLayout(dialog: Locator, width: number) {
+  await settleDialog(dialog);
+  const bounds = await box(dialog);
+  const [x, y, w, h] = bounds;
+  const desktop = width === 1280;
+  expect.soft([x, w]).toEqual(desktop ? [355, 570] : [10, 340]);
+  expect.soft(Math.abs(desktop ? y * 2 + h - 900 : y + h - 890)).toBeLessThanOrEqual(0.25);
+  const body = dialog.locator(".adm-dialog-body");
+  // Text sets the sheet height up to its cap; the body, not the pinned controls, scrolls.
+  await expect.soft(dialog).toHaveCSS("max-height", desktop ? "780px" : "880px");
+  expect.soft(h).toBeLessThanOrEqual(desktop ? 780 : 880);
+  await expect.soft(body).toHaveCSS("overflow-y", "auto");
+  await expect.soft(dialog.locator("header")).toBeInViewport({ ratio: 1 });
+  await expect.soft(dialog.locator("footer")).toBeInViewport({ ratio: 1 });
+  const [, bodyY, , bodyHeight] = await box(body);
+  const [, footerY] = await box(dialog.locator("footer"));
+  expect.soft(bodyY + bodyHeight).toBe(footerY);
+  return bounds;
 }
 
 test("the redesigned administration screen preserves the real business workflow responsively", async ({ page, system }, testInfo) => {
@@ -329,25 +345,25 @@ test("the redesigned administration screen preserves the real business workflow 
   const trigger = await registerPending(page, name, email);
   await expect(requests(page).getByText(email, { exact: true })).toBeVisible();
   const when = await requests(page).locator("time").innerText();
-  const measured: Record<string, number | readonly number[]> = {};
+  const titlebar = admin(page).locator(".adm-titlebar");
+  const measured: Record<string, readonly number[]> = {};
   for (const width of [1280, 360]) {
     await page.setViewportSize({ width, height: 900 });
     await expectNoHorizontalOverflow(page);
-    measured[`requests-${width}`] = await expectReferenceBounds(requests(page), "requests", width, 1);
-    const headingTextWidth = await page.getByRole("heading", { level: 1 }).evaluate(element => {
-      const content = document.createRange();
-      content.selectNodeContents(element);
-      return content.getBoundingClientRect().width;
-    });
-    measured[`headingTextWidth-${width}`] = headingTextWidth;
-    expect.soft(Math.abs(headingTextWidth - (width === 1280 ? 367.89 : 280.77)), `request heading at ${width}: ${headingTextWidth}`).toBeLessThanOrEqual(1);
+    const bounds = await expectPanelLayout(requests(page), titlebar, width, 16);
+    measured[`requests-${width}`] = bounds;
+    expect.soft(bounds[3]).toBe(width === 1280 ? 85 : 131);
+    const heading = titlebar.getByRole("heading", { level: 1, name: "Solicitudes pendientes", exact: true });
+    await expect.soft(heading).toHaveCSS("font-size", width === 1280 ? "38px" : "29px");
+    await expect.soft(heading).toHaveCSS("font-weight", "800");
+    expect.soft(await heading.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await expect.soft(titlebar).toHaveCSS("flex-direction", width === 1280 ? "row" : "column");
     await page.screenshot({ path: testInfo.outputPath(`requests-${width}.png`) });
     const request = requests(page).getByRole("button", { name: `Ver solicitud de ${name}`, exact: true });
     await request.click();
     const detail = page.getByRole("dialog", { name: "Solicitud de alta", exact: true });
     await expect(detail.getByText(email)).toBeVisible();
-    await settleDialog(detail);
-    measured[`request-dialog-${width}`] = await expectReferenceBounds(detail, "requestDialog", width, 2);
+    measured[`request-dialog-${width}`] = await expectDetailLayout(detail, width);
     expect.soft((await box(detail.locator("header button svg")))[2]).toBe(16);
     await page.screenshot({ path: testInfo.outputPath(`request-dialog-${width}.png`) });
     await page.keyboard.press("Escape");
@@ -386,7 +402,12 @@ test("the redesigned administration screen preserves the real business workflow 
   for (const width of [1280, 360]) {
     await page.setViewportSize({ width, height: 900 });
     await expectNoHorizontalOverflow(page);
-    measured[`businesses-${width}`] = await expectReferenceBounds(page.locator(".adm-table"), "businesses", width, 1);
+    const table = page.locator(".adm-table");
+    const bounds = await expectPanelLayout(table, page.locator(".adm-list-count"), width, width === 1280 ? 25 : 17);
+    measured[`businesses-${width}`] = bounds;
+    expect.soft(Math.abs(bounds[3] - (width === 1280 ? 132.94 : 85))).toBeLessThanOrEqual(1);
+    if (width === 1280) await expect.soft(table.locator(".adm-table-head")).toBeVisible();
+    else await expect.soft(table.locator(".adm-table-head")).toBeHidden();
     expect.soft(await row.locator(":scope > svg path").getAttribute("d")).toBe("M5 12h14m-6-6 6 6-6 6");
     await page.screenshot({ path: testInfo.outputPath(`businesses-${width}.png`) });
     await row.click();
@@ -395,8 +416,7 @@ test("the redesigned administration screen preserves the real business workflow 
     await expect(details(page).getByText("Sin actividad", { exact: true })).toBeVisible();
     await expect(details(page).getByRole("button", { name: /Renombrar|Cambiar contraseña/ })).toHaveCount(0);
     created = await details(page).locator('dt').filter({ hasText: /^Alta · UTC$/ }).locator('+ dd').innerText();
-    await settleDialog(details(page));
-    measured[`business-dialog-${width}`] = await expectReferenceBounds(details(page), "businessDialog", width, 6);
+    measured[`business-dialog-${width}`] = await expectDetailLayout(details(page), width);
     await page.screenshot({ path: testInfo.outputPath(`business-dialog-${width}.png`) });
     await page.keyboard.press("Escape");
     await expect(row).toBeFocused();
@@ -414,16 +434,21 @@ test("the redesigned administration screen preserves the real business workflow 
   for (const width of [1280, 360]) {
     await page.setViewportSize({ width, height: 900 });
     await expectNoHorizontalOverflow(page);
-    measured[`settings-${width}`] = await expectReferenceBounds(page.locator(".adm-settings-compact"), "settings", width, 1);
+    const settings = admin(page).getByRole("region", { name: "Tiempos de respuesta", exact: true });
+    await expect(settings).toBeVisible();
+    measured[`settings-${width}`] = await expectPanelLayout(settings, titlebar, width, 20, 680);
+    const rows = settings.locator("dl > div");
+    await expect.soft(rows).toHaveCount(3);
+    for (const row of await rows.all()) {
+      const [labelX, , labelWidth] = await box(row.locator("dt"));
+      const [valueX] = await box(row.locator("dd"));
+      expect.soft(valueX - labelX - labelWidth).toBeGreaterThanOrEqual(18);
+      await expect.soft(row).toHaveCSS("padding-block", width === 1280 ? "16px" : "14px");
+    }
     await page.screenshot({ path: testInfo.outputPath(`settings-${width}.png`) });
     const timingDialog = await editTiming(page);
     await expect(timing(page)).toHaveAccessibleDescription(/Entre 0 y 86400 segundos/);
-    await settleDialog(timingDialog);
-    const bounds = await box(timingDialog);
-    measured[`timing-dialog-${width}`] = bounds;
-    const [x, y, w, h] = bounds;
-    expect.soft([x, w]).toEqual(width === 1280 ? [355, 570] : [10, 340]);
-    expect.soft(Math.abs(width === 1280 ? y * 2 + h - 900 : y + h - 890)).toBeLessThanOrEqual(0.25);
+    measured[`timing-dialog-${width}`] = await expectDetailLayout(timingDialog, width);
     await page.screenshot({ path: testInfo.outputPath(`timing-dialog-${width}.png`) });
     await page.keyboard.press("Escape");
   }

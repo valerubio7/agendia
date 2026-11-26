@@ -186,7 +186,15 @@ test("the redesigned Agent screen preserves the real configuration workflow resp
   system,
 }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 900 });
-  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
+  const adminLoginUrl = `${system.webUrl}/admin/login`;
+  const entrance = await page.goto(adminLoginUrl);
+  expect(entrance?.status(), `GET ${adminLoginUrl}\n${system.logs.join("")}`).toBe(200);
+  await expect(page).toHaveURL(adminLoginUrl);
+  const email = page.getByLabel("Correo", { exact: true });
+  await expect(email, "the admin login form is ready after the session check").toBeVisible();
+  await email.fill(system.admin.email);
+  await page.getByLabel("Contraseña", { exact: true }).fill(system.admin.password);
+  await page.getByRole("button", { name: "Ingresar", exact: true }).click();
   await expect(page).toHaveURL(/\/solicitudes$/);
 
   await createBusinessInAdminUi(page, tenant);
@@ -206,9 +214,9 @@ test("the redesigned Agent screen preserves the real configuration workflow resp
       '[data-ui="authenticated-shell"][data-variant="business"]',
     );
     await expect(shell).toHaveCount(1);
-    await expect(
-      shell.getByTitle("agendIA", { exact: true }).locator('img[src="/brand/logo-symbol-inverse.svg"]'),
-    ).toBeVisible();
+    const brand = shell.getByTitle("agendIA", { exact: true });
+    await expect(brand.locator('.panel-brand__mark svg')).toBeVisible();
+    await expect(brand.locator('img[src="/brand/logo-wordmark-panel.svg"]')).toBeVisible();
     await expect(
       shell.getByRole("navigation", {
         name: "Navegación del negocio",
