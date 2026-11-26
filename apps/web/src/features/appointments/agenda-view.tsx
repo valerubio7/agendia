@@ -25,7 +25,7 @@ function EditorialHead({ title, subtitle, count, singular = false }: { title: st
 }
 
 function AppointmentButton({ row, layout, locked, select }: { row: AppointmentRecord; layout: AgendaView; locked: boolean; select: (id: string) => void }) {
-  const person = `${row.client.firstName} ${row.client.lastName}`;
+  const person = row.client.name;
   const status = row.state === "done" ? "Finalizado" : row.state === "no_show" ? "No asistió" : turnoStates[row.state];
   const time = <time dateTime={row.startsAt} className={layout === "day" ? "ag-flat-time ag-num" : "ag-num"}>{turnoTime(row.startMs)}</time>;
   const client = <><strong>{person}</strong><small>{row.terms.serviceName}{(layout === "day" || row.state === "cancelled") && ` · ${status}`}</small></>;

@@ -44,7 +44,7 @@ test("Agenda opens in Día with the reference date controls and preserves bookin
 
 test("Inicio only shows Argentina's current day, using the booking's saved terms", () => {
   const row = (name: string, startsAt: string, state: AppointmentRecord["state"]): AppointmentRecord => ({
-    id: name, client: { id: name, firstName: name, lastName: "Prueba", phone: "" },
+    id: name, client: { id: name, name: `${name} Prueba`, phone: "" },
     startsAt, startMs: Date.parse(startsAt), endMs: Date.parse(startsAt) + 1_800_000,
     terms: { serviceId: "service", serviceName: "Consulta", resourceId: "resource", resourceName: "Consultorio", durationMinutes: 30, priceArs: 0 },
     state, origin: "manual", notes: null, customerResourcePreference: null,

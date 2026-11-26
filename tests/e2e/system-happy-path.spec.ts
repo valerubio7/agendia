@@ -346,7 +346,7 @@ test("real services complete the deterministic multi-tenant happy path", async (
   const saved = await read(appointmentPath);
   expect(saved).toHaveLength(1);
   expect(saved[0]).toMatchObject({ origin: "ai", state: "confirmed", startsAt: slot.start,
-    client: { firstName: "Clara", lastName: "López" }, terms: { serviceId: service.id, priceArs: 1000, durationMinutes: 30 } });
+    client: { name: "Clara López" }, terms: { serviceId: service.id, priceArs: 1000, durationMinutes: 30 } });
   const otherTenantAppointments = await tenantPages[1]!.request.get(`${system.webUrl}/api/me/${appointmentPath}`);
   expect(otherTenantAppointments.status()).toBe(200);
   expect(await otherTenantAppointments.json()).toEqual([]);

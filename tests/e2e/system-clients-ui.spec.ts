@@ -69,8 +69,8 @@ test("Clientes searches and edits owned identities with complete appointment his
       expect(response.status()).toBe(200);
       return response.json();
     };
-    const client = await create("clients", { firstName: "Ana %_\\\\", lastName: "Pérez", phone: "+5491123456789" });
-    const second = await create("clients", { firstName: "Bruno", lastName: "Díaz", phone: "+5491123456788" });
+    const second = await create("clients", { name: "Bruno Díaz", phone: "+5491123456788" });
+    const client = await create("clients", { name: "Ana %_\\\\ Pérez", phone: "+5491123456789" });
     const full = Object.fromEntries(Array.from({ length: 7 }, (_, day) => [day, [{ startMinute: 0, endMinute: 1440 }]]));
     const calendar = await business.request.put(`${system.webUrl}/api/me/business-calendar`, { headers, data: { weeklySchedule: full } });
     expect(calendar.status()).toBe(200);
@@ -129,10 +129,15 @@ test("Clientes searches and edits owned identities with complete appointment his
       await expect(list.getByRole("listitem")).toHaveCount(count);
     };
     await runSearch("  %_\\\\  ", 1); // Literal wildcards/backslash through the real API.
+    await runSearch(client.name, 1);
+    await expect(list.getByRole("button").first()).toContainText(client.name);
     await runSearch("23456789", 1);
+    await expect(list.getByRole("button").first()).toContainText(client.name);
     await runSearch("no existe", 0);
     await expect(screen.getByText("No hay clientes que coincidan.", { exact: true })).toBeVisible();
     await runSearch("", 2);
+    await expect(list.getByRole("button").nth(0)).toContainText(client.name);
+    await expect(list.getByRole("button").nth(1)).toContainText(second.name);
     await openClient(/Ana/);
     const detail = screen.getByRole("region", { name: "Cliente seleccionado", exact: true });
     const upcoming = detail.getByRole("list", { name: "Próximos turnos", exact: true });
@@ -195,7 +200,10 @@ test("Clientes searches and edits owned identities with complete appointment his
     await edit.click();
     const form = detail.getByRole("form", { name: "Editar cliente", exact: true });
     const save = form.getByRole("button", { name: "Guardar cliente", exact: true });
-    await expect(form.getByLabel("Nombre", { exact: true })).toBeFocused();
+    const fullName = form.getByLabel("Nombre completo", { exact: true });
+    await expect(fullName).toBeFocused();
+    await expect(fullName).toHaveValue(client.name);
+    await expect(form.getByLabel("Apellido", { exact: true })).toHaveCount(0);
     await form.getByRole("button", { name: "Cancelar", exact: true }).click();
     await expect(edit).toBeEnabled();
     await expect(edit).toBeFocused();
@@ -210,8 +218,7 @@ test("Clientes searches and edits owned identities with complete appointment his
     await expect(save).toBeEnabled();
     await expect(save).toBeFocused();
     await business.screenshot({ path: testInfo.outputPath("clients-real-conflict-focus.png"), fullPage: true });
-    await form.getByLabel("Nombre", { exact: true }).fill(" Alicia ");
-    await form.getByLabel("Apellido", { exact: true }).fill(" Gómez ");
+    await fullName.fill(" Alicia Gómez ");
     await form.getByLabel("Teléfono", { exact: true }).fill("11 2345-6789");
     let release!: () => void;
     const held = new Promise<void>(resolve => { release = resolve; });
@@ -223,7 +230,7 @@ test("Clientes searches and edits owned identities with complete appointment his
     const savedResponse = business.waitForResponse(response => response.request().method() === "PUT" && response.url().endsWith(`/clients/${client.id}`));
     await save.click();
     await expect(form).toHaveAttribute("aria-busy", "true");
-    await expect(form.getByLabel("Nombre", { exact: true })).toBeDisabled();
+    await expect(fullName).toBeDisabled();
     await form.evaluate(element => { element.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
     expect(counts.PUT).toBe(2); // Failed real PUT plus exactly one held PUT.
     release();
@@ -241,11 +248,11 @@ test("Clientes searches and edits owned identities with complete appointment his
     await expect(screen.getByText("El cliente se guardó, pero no pudimos actualizar la lista.", { exact: true })).toHaveCount(0);
     expect(counts).toEqual({ PUT: beforeRetry.PUT, GET: beforeRetry.GET + 1 });
     const persisted = (await read("clients")).find((row: { id: string }) => row.id === client.id);
-    expect(persisted).toEqual({ id: client.id, firstName: "Alicia", lastName: "Gómez", phone: "+5491123456789" });
+    expect(persisted).toEqual({ id: client.id, name: "Alicia Gómez", phone: "+5491123456789" });
     const afterHistory = await read(`appointments?clientId=${client.id}`);
     expect(afterHistory).toEqual(appointments.map(row => ({ ...row, client: persisted })));
     await business.reload();
-    await runSearch("Alicia", 1);
+    await runSearch("Alicia Gómez", 1);
     await openClient(/Alicia/);
     await expect(history.getByRole("listitem")).toHaveCount(2);
 
@@ -312,7 +319,7 @@ test("Clientes searches and edits owned identities with complete appointment his
       const otherCsrf = await other.evaluate(() => sessionStorage.getItem("agendia.csrf"));
       const foreign = await other.request.put(`${system.webUrl}/api/me/clients/${client.id}`, {
         headers: { Origin: system.webUrl, "x-csrf-token": otherCsrf! },
-        data: { firstName: "Ajeno", lastName: "Ajeno", phone: client.phone },
+        data: { name: "Ajeno Ajeno", phone: client.phone },
       });
       expect(foreign.status()).toBe(404);
       expect(await (await other.request.get(`${system.webUrl}/api/me/appointments?clientId=${client.id}`)).json()).toEqual([]);
@@ -342,7 +349,7 @@ test("Clientes refreshes history on booking close despite a held pre-save read",
       expect(response.status()).toBe(201);
       return response.json();
     };
-    const client = await create("clients", { firstName: "Clara", lastName: "López", phone: "+5491123456777" });
+    const client = await create("clients", { name: "Clara López", phone: "+5491123456777" });
     const service = await create("services", { name: "Consulta nueva", durationMinutes: 30, priceArs: 1000 });
     const weeklySchedule = Object.fromEntries(Array.from({ length: 7 }, (_, day) => [day, [{ startMinute: 0, endMinute: 1440 }]]));
     const calendar = await page.request.put(`${endpoint}/business-calendar`, { headers, data: { weeklySchedule } });
@@ -404,7 +411,7 @@ test("Clientes refreshes history on booking close despite a held pre-save read",
   } finally { release?.(); await page.close(); }
 });
 
-test("Clientes fences an uncertain standalone POST across reload until GET confirms the exact identity", async ({ browser, page, system }) => {
+test("Clientes fences an uncertain standalone POST across reload and upgrade until GET confirms the exact identity", async ({ browser, page, system }) => {
   test.setTimeout(180_000);
   const password = "uncertain clients tenant password";
   await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
@@ -422,7 +429,7 @@ test("Clientes fences an uncertain standalone POST across reload until GET confi
     const csrf = await business.evaluate(() => sessionStorage.getItem("agendia.csrf"));
     const seed = await business.request.post(`${system.webUrl}/api/me/clients`, {
       headers: { Origin: system.webUrl, "x-csrf-token": csrf! },
-      data: { firstName: "Bruno", lastName: "Existente", phone: "+5491123456788" },
+      data: { name: "Bruno Existente", phone: "+5491123456788" },
     });
     expect(seed.status()).toBe(201);
     await business.reload();
@@ -430,10 +437,10 @@ test("Clientes fences an uncertain standalone POST across reload until GET confi
     const create = screen.getByRole("button", { name: "Nuevo cliente", exact: true, includeHidden: true });
     await create.click();
     const form = screen.getByRole("form", { name: "Crear cliente", exact: true });
-    const draft = { Nombre: " Alicia ", Apellido: " Gómez ", Teléfono: "11 2345-6789" };
+    const draft = { "Nombre completo": "Alicia María Gómez", Teléfono: "11 2345-6789" };
     for (const [label, value] of Object.entries(draft)) await form.getByLabel(label, { exact: true }).fill(value);
     let posts = 0;
-    let saved: { id: string; firstName: string; lastName: string; phone: string } | undefined;
+    let saved: { id: string; name: string; phone: string } | undefined;
     const selectedIds: string[] = [];
     business.on("request", request => {
       const url = new URL(request.url());
@@ -449,8 +456,15 @@ test("Clientes fences an uncertain standalone POST across reload until GET confi
     });
     await form.locator('button[type="submit"]').click();
     await expect(form.getByRole("alert")).toContainText("No pudimos confirmar");
-    for (const reload of [false, true]) {
-      if (reload) await business.reload();
+    for (const restore of ["live", "current", "legacy"] as const) {
+      if (restore === "legacy") {
+        const session = await (await business.request.get(`${system.webUrl}/api/auth/session`)).json();
+        // The prior bundle recorded raw fields, while the migrated API returns one canonical name.
+        await business.evaluate(({ key, phone }) => localStorage.setItem(key, JSON.stringify({
+          version: 1, draft: { firstName: " Alicia\u00a0 María ", lastName: " Gómez ", phone },
+        })), { key: `agendia.client-create:${session.businessId}:${session.identityId}`, phone: draft.Teléfono });
+      }
+      if (restore !== "live") await business.reload();
       for (const [label, value] of Object.entries(draft)) {
         await expect(form.getByLabel(label, { exact: true })).toHaveValue(value);
         await expect(form.getByLabel(label, { exact: true })).toBeDisabled();
@@ -494,7 +508,7 @@ test("Clientes fences an uncertain standalone POST across reload until GET confi
     await business.unroute("**/api/me/clients");
     const recoveryUrl = new URL("/api/me/clients", system.webUrl).href;
     for (const [status, body] of [[500, '{"code":"INTERNAL_ERROR"}'], [200, "[]"],
-      [200, JSON.stringify([{ ...saved, firstName: "Otra persona" }])]] as const) {
+      [200, JSON.stringify([{ ...saved, name: "Otra persona" }])]] as const) {
       let intercepted: Request | undefined;
       let handled = 0;
       await business.route(recoveryUrl, async route => {
@@ -521,15 +535,17 @@ test("Clientes fences an uncertain standalone POST across reload until GET confi
     await check.click(); // Real GET finds the canonical row committed by the lost POST.
     const detail = screen.getByRole("region", { name: "Cliente seleccionado", exact: true });
     await expect(detail.getByRole("status").filter({ hasText: /^Este cliente existe$/ })).toHaveText("Este cliente existe");
-    expect(saved).toEqual({ id: expect.any(String), firstName: "Alicia", lastName: "Gómez", phone: "+5491123456789" });
-    await expect(detail.getByRole("heading", { name: "Alicia Gómez", exact: true })).toBeVisible();
+    expect(saved).toEqual({ id: expect.any(String), name: draft["Nombre completo"], phone: "+5491123456789" });
+    await expect(detail.getByRole("heading", { name: draft["Nombre completo"], exact: true })).toBeVisible();
     await expect(detail.getByText(saved!.phone, { exact: true })).toBeVisible();
     await expect.poll(() => selectedIds).toEqual([saved!.id]);
     await expect(form).toHaveCount(0);
     await expect(detail.getByRole("button", { name: "Editar cliente", exact: true })).toBeFocused();
     expect(posts).toBe(1);
     await expect(business).toHaveURL(`${system.webUrl}/clients`);
-    await screen.getByRole("button", { name: "Cerrar panel" }).click();
+    await business.reload();
+    await expect(create).toBeEnabled();
+    await expect(form).toHaveCount(0);
     await business.evaluate(() => {
       const original = Storage.prototype.setItem;
       Storage.prototype.setItem = function (key, value) {
@@ -594,7 +610,7 @@ test("Clientes creates standalone owned identities with canonical detail and GET
     expect(csrf).toBeTruthy();
     const seedResponse = await business.request.post(`${system.webUrl}/api/me/clients`, {
       headers: { Origin: system.webUrl, "x-csrf-token": csrf! },
-      data: { firstName: "Bruno", lastName: "Existente", phone: "+5491123456788" },
+      data: { name: "Bruno Existente", phone: "+5491123456788" },
     });
     expect(seedResponse.status()).toBe(201);
     const seed = await seedResponse.json();
@@ -603,39 +619,35 @@ test("Clientes creates standalone owned identities with canonical detail and GET
     await expect(list.getByRole("listitem")).toHaveCount(1);
     await create.click();
     const form = screen.getByRole("form", { name: "Crear cliente", exact: true });
-    const firstName = form.getByLabel("Nombre", { exact: true });
-    const lastName = form.getByLabel("Apellido", { exact: true });
+    const fullName = form.getByLabel("Nombre completo", { exact: true });
+    await expect(form.getByLabel("Apellido", { exact: true })).toHaveCount(0);
     const phone = form.getByLabel("Teléfono", { exact: true });
     const submit = form.locator('button[type="submit"]');
     const cancel = form.getByRole("button", { name: "Cancelar", exact: true });
     await expect(screen.getByRole("dialog")).toBeVisible();
-    await expect(firstName).toBeFocused();
-    await firstName.fill("Borrador cancelado");
+    await expect(fullName).toBeFocused();
+    await fullName.fill("Borrador cancelado");
     await cancel.click();
     await expect(form).toHaveCount(0);
     await expect(create).toBeFocused();
     expect(counts.POST).toBe(0);
     await expect(list.getByRole("listitem")).toHaveCount(1);
     await create.click();
-    for (const input of [firstName, lastName, phone]) {
+    for (const input of [fullName, phone]) {
       await expect(input).toHaveValue("");
       await expect(input).toHaveAttribute("required", "");
     }
     for (const width of [1280, 360]) {
       await business.setViewportSize({ width, height: 900 });
-      await expect(firstName).toBeFocused();
+      await expect(fullName).toBeFocused();
       expect(await business.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await business.screenshot({ path: testInfo.outputPath(`clients-create-blank-${width}.png`), fullPage: true });
     }
     await submit.click();
-    await expect(firstName).toBeFocused();
-    expect(await firstName.evaluate((input: HTMLInputElement) => input.validity.valueMissing)).toBe(true);
+    await expect(fullName).toBeFocused();
+    expect(await fullName.evaluate((input: HTMLInputElement) => input.validity.valueMissing)).toBe(true);
     expect(counts.POST).toBe(0);
-    await firstName.fill(" Alicia ");
-    await submit.click();
-    await expect(lastName).toBeFocused();
-    expect(counts.POST).toBe(0);
-    await lastName.fill(" Gómez ");
+    await fullName.fill(" Alicia Gómez ");
     await submit.click();
     await expect(phone).toBeFocused();
     expect(counts.POST).toBe(0);
@@ -645,8 +657,7 @@ test("Clientes creates standalone owned identities with canonical detail and GET
     await submit.click();
     expect((await invalid).status()).toBe(400); // Real API validation, not a mocked rejection.
     await expect(form.getByRole("alert")).toHaveText("Revisá los campos indicados.");
-    await expect(firstName).toHaveValue(" Alicia ");
-    await expect(lastName).toHaveValue(" Gómez ");
+    await expect(fullName).toHaveValue(" Alicia Gómez ");
     await expect(phone).toHaveValue("not-a-phone");
     await expect(submit).toBeEnabled();
     await expect(submit).toBeFocused();
@@ -657,8 +668,7 @@ test("Clientes creates standalone owned identities with canonical detail and GET
     await submit.click();
     expect((await duplicate).status()).toBe(409); // Existing phone in this tenant only.
     await expect(form.getByRole("alert")).toHaveText("Ya hay un cliente con ese teléfono. Usá otro teléfono.");
-    await expect(firstName).toHaveValue(" Alicia ");
-    await expect(lastName).toHaveValue(" Gómez ");
+    await expect(fullName).toHaveValue(" Alicia Gómez ");
     await expect(phone).toHaveValue("11 2345-6788");
     await expect(submit).toBeEnabled();
     await expect(submit).toBeFocused();
@@ -688,7 +698,7 @@ test("Clientes creates standalone owned identities with canonical detail and GET
     await expect(form).toHaveAttribute("aria-busy", "true");
     await business.keyboard.press("Escape");
     await expect(form).toBeVisible();
-    for (const control of [firstName, lastName, phone, submit, cancel]) await expect(control).toBeDisabled();
+    for (const control of [fullName, phone, submit, cancel]) await expect(control).toBeDisabled();
     await expect(screen.getByRole("form", { name: "Buscar clientes", exact: true }).getByRole("button")).toBeDisabled();
     await form.evaluate(element => { element.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
     await expect.poll(() => counts.POST).toBe(3); // Two failures plus exactly one pending real POST.
@@ -706,7 +716,7 @@ test("Clientes creates standalone owned identities with canonical detail and GET
     expect(saved.id).toEqual(expect.any(String));
     expect(saved.id.length).toBeGreaterThan(0);
     expect(saved.id).not.toBe(seed.id);
-    expect(saved).toEqual({ id: saved.id, firstName: "Alicia", lastName: "Gómez", phone: "+5491123456789" });
+    expect(saved).toEqual({ id: saved.id, name: "Alicia Gómez", phone: "+5491123456789" });
     const detail = screen.getByRole("region", { name: "Cliente seleccionado", exact: true });
     const edit = detail.getByRole("button", { name: "Editar cliente", exact: true });
     await expect(form).toHaveCount(0);
@@ -763,7 +773,10 @@ test("Clientes creates standalone owned identities with canonical detail and GET
       await reference.route(/^https?:/, route => route.abort());
       await reference.goto(pathToFileURL(referencePath!).href);
       // Match the isolated tenant's real fixture records, in prototype memory only.
-      const rows = [saved, seed].map(({ id, firstName, lastName, phone }) => ({ id, first: firstName, last: lastName, phone }));
+      const rows = [saved, seed].map(({ id, name, phone }) => {
+        const [first, ...last] = name.split(" ");
+        return { id, first, last: last.join(" "), phone };
+      });
       await reference.evaluate(`state.role = 'business'; state.page = 'clientes'; clients = ${JSON.stringify(rows)}; appointments = []; render();`);
     }
     for (const width of [1280, 360]) {
@@ -801,7 +814,7 @@ test("Clientes creates standalone owned identities with canonical detail and GET
       await edit.click();
       await reference?.getByRole("button", { name: "Editar", exact: true }).click();
       const editForm = detail.getByRole("form", { name: "Editar cliente", exact: true });
-      await expect(editForm.getByLabel("Nombre", { exact: true })).toBeFocused();
+      await expect(editForm.getByLabel("Nombre completo", { exact: true })).toBeFocused();
       await checkGeometry("edit", panel, ".client-float-dialog");
       await editForm.getByRole("button", { name: "Cancelar", exact: true }).click();
       await expect(edit).toBeFocused();
@@ -818,8 +831,7 @@ test("Clientes creates standalone owned identities with canonical detail and GET
     await expect(other.getByRole("list", { name: "Clientes del negocio", exact: true }).getByRole("listitem")).toHaveCount(0);
     await other.getByRole("button", { name: "Nuevo cliente", exact: true }).click();
     const otherForm = other.getByRole("form", { name: "Crear cliente", exact: true });
-    await otherForm.getByLabel("Nombre", { exact: true }).fill("Otra");
-    await otherForm.getByLabel("Apellido", { exact: true }).fill("Identidad");
+    await otherForm.getByLabel("Nombre completo", { exact: true }).fill("Otra Identidad");
     await otherForm.getByLabel("Teléfono", { exact: true }).fill(saved.phone);
     const otherCreated = other.waitForResponse(result => result.request().method() === "POST" &&
       new URL(result.url()).pathname === "/api/me/clients");
@@ -827,7 +839,7 @@ test("Clientes creates standalone owned identities with canonical detail and GET
     const otherResponse = await otherCreated;
     expect(otherResponse.status()).toBe(201); // Same phone is legal in a different tenant.
     const otherSaved = await otherResponse.json();
-    expect(otherSaved).toEqual({ id: expect.any(String), firstName: "Otra", lastName: "Identidad", phone: saved.phone });
+    expect(otherSaved).toEqual({ id: expect.any(String), name: "Otra Identidad", phone: saved.phone });
     expect(otherSaved.id).not.toBe(saved.id);
     await expect(other).toHaveURL(`${system.webUrl}/clients`);
     await expect(other.getByRole("region", { name: "Cliente seleccionado", exact: true }).getByRole("heading", { name: "Otra Identidad", exact: true })).toBeVisible();

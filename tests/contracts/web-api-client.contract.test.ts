@@ -153,7 +153,7 @@ test("Turnos wrappers allowlist wire bodies, encode queries and forward cancella
   await client.appointment("id/slash", signal);
   await client.appointmentAvailability({ serviceId: "s &?", resourceId: "r", date: "2026-01-01", appointmentId: "a" }, signal);
   await client.createAppointment({ ...structure, clientId: "c", businessId: "foreign" } as typeof structure & { clientId: string }, signal);
-  await client.createAppointment({ ...structure, newClient: { firstName: "Ana", lastName: "Pérez", phone: "11 23456789", role: "admin" } } as typeof structure & { newClient: { firstName: string; lastName: string; phone: string } }, signal);
+  await client.createAppointment({ ...structure, newClient: { name: "Ana Pérez", phone: "11 23456789", firstName: "legacy", lastName: "legacy", role: "admin" } } as typeof structure & { newClient: { name: string; phone: string } }, signal);
   await client.changeAppointment("id/slash", { ...structure, notes: "not structural" } as typeof structure, signal);
   await client.appointmentNotes("a", { notes: null, state: "done" } as { notes: null }, signal);
   await client.appointmentState("a", { state: "cancelled", confirmed: true, actor: "admin" } as { state: "cancelled"; confirmed: true }, signal);
@@ -163,7 +163,7 @@ test("Turnos wrappers allowlist wire bodies, encode queries and forward cancella
   expect(calls[5]?.path).toBe("/api/me/appointments/id%2Fslash");
   expect(calls.map(call => call.init?.method)).toEqual(["GET", "GET", "GET", "POST", "POST", "PATCH", "PATCH", "PATCH"]);
   expect(JSON.parse(String(calls[3]?.init?.body))).toEqual({ ...structure, clientId: "c" });
-  expect(JSON.parse(String(calls[4]?.init?.body))).toEqual({ ...structure, newClient: { firstName: "Ana", lastName: "Pérez", phone: "11 23456789" } });
+  expect(JSON.parse(String(calls[4]?.init?.body))).toEqual({ ...structure, newClient: { name: "Ana Pérez", phone: "11 23456789" } });
   expect(JSON.parse(String(calls[5]?.init?.body))).toEqual(structure);
   expect(JSON.parse(String(calls[6]?.init?.body))).toEqual({ notes: null });
   expect(JSON.parse(String(calls[7]?.init?.body))).toEqual({ state: "cancelled", confirmed: true });
@@ -264,7 +264,7 @@ test("Argentina closure display retains local days, precision and per-instant of
 test("standalone client POST allowlists raw input and returns the canonical DTO with transport protections", async () => {
   const signal = new AbortController().signal;
   const calls: { path: string; init?: RequestInit }[] = [];
-  const saved = { id: "owned-client", firstName: "Alicia", lastName: "Gómez", phone: "+5491123456789" };
+  const saved = { id: "owned-client", name: "Alicia Gómez", phone: "+5491123456789" };
   const client = new ApiClient(async (path, init) => {
     if (path === "/api/auth/login") return Response.json({ csrfToken: "create-client-csrf" });
     if (path === "/api/auth/session") return Response.json({ role: "business_user", businessId: "tenant" });
@@ -272,8 +272,8 @@ test("standalone client POST allowlists raw input and returns the canonical DTO 
     return Response.json(saved, { status: 201 });
   });
   await client.login("create-client@example.test", "safe test password");
-  const input = { firstName: " Alicia ", lastName: " Gómez ", phone: "11 2345-6789",
-    businessId: "foreign", id: "untrusted", role: "admin" };
+  const input = { name: " Alicia Gómez ", phone: "11 2345-6789",
+    firstName: "legacy", lastName: "legacy", businessId: "foreign", id: "untrusted", role: "admin" };
   expect(await client.createClient(input, signal)).toEqual(saved);
   expect(calls).toHaveLength(1);
   expect(calls[0]?.path).toBe("/api/me/clients");
@@ -284,7 +284,7 @@ test("standalone client POST allowlists raw input and returns the canonical DTO 
   expect(headers.get("content-type")).toBe("application/json");
   expect(headers.get("x-csrf-token")).toBe("create-client-csrf");
   expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
-    firstName: " Alicia ", lastName: " Gómez ", phone: "11 2345-6789",
+    name: " Alicia Gómez ", phone: "11 2345-6789",
   });
 });
 
@@ -310,7 +310,7 @@ test("client query encoding preserves literal search and history identity withou
   await client.clientAppointments("row/id?x=#", signal);
   expect(paths.at(-1)).toBe("/api/me/appointments?clientId=row%2Fid%3Fx%3D%23");
   const calls: RequestInit[] = [];
-  const saved = { id: "stable-id", firstName: "Ana", lastName: "María", phone: "+5491123456789" };
+  const saved = { id: "stable-id", name: "Ana María", phone: "+5491123456789" };
   const writer = new ApiClient(async (path, init) => {
     if (path === "/api/auth/login") return Response.json({ csrfToken: "client-csrf" });
     if (path === "/api/auth/session") return Response.json({ role: "business_user", businessId: "tenant" });
@@ -319,12 +319,13 @@ test("client query encoding preserves literal search and history identity withou
     return Response.json(saved);
   });
   await writer.login("clients@example.test", "safe test password");
-  expect(await writer.updateClient(saved.id, { ...saved }, signal)).toEqual(saved);
+  const legacyCaller = { ...saved, firstName: "legacy", lastName: "legacy" };
+  expect(await writer.updateClient(saved.id, legacyCaller, signal)).toEqual(saved);
   expect(calls).toHaveLength(1);
   expect(calls[0]?.method).toBe("PUT");
   expect(calls[0]?.signal).toBe(signal);
   expect(new Headers(calls[0]?.headers).get("x-csrf-token")).toBe("client-csrf");
-  expect(JSON.parse(calls[0]!.body as string)).toEqual({ firstName: saved.firstName, lastName: saved.lastName, phone: saved.phone });
+  expect(JSON.parse(calls[0]!.body as string)).toEqual({ name: saved.name, phone: saved.phone });
   for (const id of ["..", "."]) {
     await expect(writer.updateClient(id, saved, signal)).rejects.toBeInstanceOf(TypeError);
   }

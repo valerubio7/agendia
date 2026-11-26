@@ -16,7 +16,7 @@ export function TurnosBookingForm({ appointment, initialClient, services, resour
   const [search, setSearch] = useState("");
   const [clients, setClients] = useState<Client[]>([]);
   const [client, setClient] = useState<Client | null>(initialClient ?? null);
-  const [newClient, setNewClient] = useState<ClientInput>({ firstName: "", lastName: "", phone: "" });
+  const [newClient, setNewClient] = useState<ClientInput>({ name: "", phone: "" });
   const [clientPending, setClientPending] = useState(false);
   const [clientError, setClientError] = useState("");
   const [serviceId, setServiceId] = useState(appointment?.terms.serviceId ?? "");
@@ -143,7 +143,7 @@ export function TurnosBookingForm({ appointment, initialClient, services, resour
   const eligible = resources.filter(resource => resource.status === "active" && resource.serviceIds.includes(serviceId));
   const activeServices = services.filter(service => service.status === "active");
   const ready = slot && validOffer(slot) && (appointment || (source === "existing" ? client :
-    newClient.firstName.trim() && newClient.lastName.trim() && newClient.phone.trim()));
+    newClient.name.trim() && newClient.phone.trim()));
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     enterRequest.current = null;
@@ -153,8 +153,8 @@ export function TurnosBookingForm({ appointment, initialClient, services, resour
         : !appointment && source === "existing" && !client ? "Elegí el cliente antes de guardar."
         : !eligible.some(resource => resource.id === resourceId) ? "Seleccioná un profesional que realice el servicio."
         : !date || date < argentinaDate(now) || !slot || !validOffer(slot) ? "Seleccioná una fecha válida y un horario."
-        : !appointment && source === "new" && (!newClient.firstName.trim() || !newClient.lastName.trim() || !newClient.phone.trim())
-          ? "Completá nombre, apellido y un teléfono válido." : "";
+        : !appointment && source === "new" && (!newClient.name.trim() || !newClient.phone.trim())
+          ? "Completá el nombre completo y un teléfono válido." : "";
       setValidation(message);
       if (message) { onInvalid(message); return; }
     }
@@ -186,7 +186,7 @@ export function TurnosBookingForm({ appointment, initialClient, services, resour
       <div className="booking-column">
         <fieldset className="booking-panel booking-client" disabled={locked || confirmation}>
           <legend>Cliente</legend>
-          {appointment || initialClient ? <p><strong>{customer?.firstName} {customer?.lastName}</strong><br />{customer?.phone}</p> : <>
+          {appointment || initialClient ? <p><strong>{customer?.name}</strong><br />{customer?.phone}</p> : <>
             <div className="booking-mode" role="group" aria-label="Tipo de cliente">
               {([["existing", "Cliente registrado"], ["new", "Nuevo cliente"]] as const).map(([mode, label]) =>
                 <button key={mode} type="button" aria-pressed={source === mode} onClick={() => {
@@ -198,7 +198,7 @@ export function TurnosBookingForm({ appointment, initialClient, services, resour
             {source === "existing" ? <>
               <label htmlFor="turnos-client-search">Buscar cliente por nombre o teléfono</label>
               <div className="booking-search">
-                <input id="turnos-client-search" ref={searchInput} autoComplete="off" placeholder="Nombre, apellido o teléfono" value={search}
+                <input id="turnos-client-search" ref={searchInput} autoComplete="off" placeholder="Nombre o teléfono" value={search}
                   onBlur={() => { enterRequest.current = null; }} onChange={event => {
                   if (locked || submitGuard.current || !sessionActive()) return;
                   const value = event.target.value;
@@ -224,12 +224,12 @@ export function TurnosBookingForm({ appointment, initialClient, services, resour
                 <button type="button" aria-pressed={client?.id === row.id} onClick={() => {
                   if (!clientRequest.current && client?.id !== row.id) chooseClient(row);
                 }}>
-                  <strong>{row.firstName} {row.lastName}</strong><small>{row.phone}</small>
+                  <strong>{row.name}</strong><small>{row.phone}</small>
                 </button></li>)}</ul>}
             </> : <>
               <div className="booking-pair">
-                {([["firstName", "Nombre"], ["lastName", "Apellido"], ["phone", "Teléfono"]] as const).map(([key, label]) =>
-                  <label key={key} htmlFor={`turnos-new-${key}`}>{label}<input id={`turnos-new-${key}`} required
+                {([["name", "Nombre completo", "name"], ["phone", "Teléfono", "tel"]] as const).map(([key, label, autoComplete]) =>
+                  <label key={key} htmlFor={`turnos-new-${key}`}>{label}<input id={`turnos-new-${key}`} autoComplete={autoComplete} required
                     type={key === "phone" ? "tel" : "text"} value={newClient[key]} onChange={event => {
                       setNewClient(value => ({ ...value, [key]: event.target.value })); invalidate();
                     }} /></label>)}
@@ -283,7 +283,7 @@ export function TurnosBookingForm({ appointment, initialClient, services, resour
     {slot && confirmation && <section className="booking-panel booking-review" aria-labelledby="booking-review-title">
       <h3 id="booking-review-title">Revisá el turno</h3>
       <dl className="booking-facts">
-        <div><dt>Cliente</dt><dd>{customer?.firstName} {customer?.lastName}<small>{customer?.phone}</small></dd></div>
+        <div><dt>Cliente</dt><dd>{customer?.name}<small>{customer?.phone}</small></dd></div>
         <div><dt>Fecha y hora</dt><dd>{dateLabel(date)} · {turnoTime(slot.startMs)}</dd></div>
         <div><dt>Servicio</dt><dd>{slot.terms.serviceName}</dd></div>
         <div><dt>Recurso</dt><dd>{slot.terms.resourceName}</dd></div>

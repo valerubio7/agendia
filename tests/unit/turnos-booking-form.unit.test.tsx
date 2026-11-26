@@ -27,14 +27,25 @@ test("booking offers labeled client modes and native service choices, with Argen
   expect(html).not.toContain("Confirmar turno");
 });
 
-test("detail labels the saved schedule and does not offer mutations for a closed booking", () => {
+test("booking from Clientes keeps the selected client's full name and phone fixed", () => {
+  const html = renderToStaticMarkup(createElement(TurnosBookingForm, {
+    ...common, appointment: null, initialClient: { id: "c", name: "Ana María López", phone: "+5491111111111" },
+    services: [], resources: [], sessionActive: () => true, cancel() {},
+  }));
+  expect(html).toContain("<strong>Ana María López</strong><br/>+5491111111111");
+  expect(html).not.toContain("Tipo de cliente");
+  expect(html).not.toContain("Buscar cliente por nombre o teléfono");
+});
+
+test("detail shows the client's full name and saved schedule with no mutations for a closed booking", () => {
   const row: AppointmentRecord = {
-    id: "a", client: { id: "c", firstName: "Clara", lastName: "López", phone: "+5491111111111" },
+    id: "a", client: { id: "c", name: "Clara López", phone: "+5491111111111" },
     startsAt: "2026-11-19T02:45:00Z", startMs: now + 900_000, endMs: now + 2_700_000,
     terms: { serviceId: "s", serviceName: "Consulta histórica", resourceId: "r", resourceName: "Consultorio", durationMinutes: 30, priceArs: 2000 },
     state: "done", origin: "manual", notes: "Traer estudios", customerResourcePreference: null,
   };
   const html = renderToStaticMarkup(createElement(TurnosDetail, { ...common, row, change() {} }));
+  expect(html).toContain(">Clara López</h2><p>+5491111111111</p>");
   expect(html).toMatch(/<time dateTime="2026-11-19T02:45:00Z"[^>]*>23:45<\/time>/);
   expect(html).toContain("Consulta histórica");
   expect(html).toContain("Traer estudios");

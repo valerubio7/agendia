@@ -10,8 +10,8 @@ export type {
   AppointmentOperationContext, AppointmentOperationReceipt,
 } from "@agendia/contracts";
 export type { AppointmentRecord } from "@agendia/contracts";
-export type Client = { id: string; firstName: string; lastName: string; phone: string };
-export type ClientInput = Pick<Client, "firstName" | "lastName" | "phone">;
+export type { Client, ClientInput } from "@agendia/domain/client-registry";
+import type { Client, ClientInput } from "@agendia/domain/client-registry";
 export type { ResponseTiming } from "@agendia/contracts";
 
 export type Session = {
@@ -342,12 +342,10 @@ export class ApiClient {
   clients = (q = "", signal?: AbortSignal) =>
     this.call<Client[]>("/me/clients", "GET", undefined, undefined, signal,
       q.trim() ? new URLSearchParams({ q: q.trim() }) : undefined);
-  createClient = (body: ClientInput, signal?: AbortSignal) =>
-    this.call<Client>("/me/clients", "POST",
-      { firstName: body.firstName, lastName: body.lastName, phone: body.phone }, undefined, signal);
-  updateClient = (id: string, body: ClientInput, signal?: AbortSignal) =>
-    this.call<Client>(`/me/clients/${encodeURIComponent(id)}`, "PUT",
-      { firstName: body.firstName, lastName: body.lastName, phone: body.phone }, undefined, signal);
+  createClient = ({ name, phone }: ClientInput, signal?: AbortSignal) =>
+    this.call<Client>("/me/clients", "POST", { name, phone }, undefined, signal);
+  updateClient = (id: string, { name, phone }: ClientInput, signal?: AbortSignal) =>
+    this.call<Client>(`/me/clients/${encodeURIComponent(id)}`, "PUT", { name, phone }, undefined, signal);
   clientAppointments = (clientId: string, signal?: AbortSignal) =>
     this.call<AppointmentRecord[]>("/me/appointments", "GET", undefined, undefined, signal,
       new URLSearchParams({ clientId }));
@@ -382,7 +380,7 @@ export class ApiClient {
       ...this.appointmentStructure(body),
       ...(body.clientId === undefined ? {} : { clientId: body.clientId }),
       ...(body.newClient === undefined ? {} : { newClient: {
-        firstName: body.newClient.firstName, lastName: body.newClient.lastName, phone: body.newClient.phone,
+        name: body.newClient.name, phone: body.newClient.phone,
       } }),
       ...(body.notes === undefined ? {} : { notes: body.notes }),
     }, signal, "create", null);
