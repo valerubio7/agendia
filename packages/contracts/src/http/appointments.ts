@@ -6,7 +6,9 @@ import { AppointmentTermsSnapshotSchema, AppointmentStateSchema, AppointmentOrig
 const appointmentId = z.string().uuid();
 export const AppointmentListQuerySchema = z.object({
   clientId: appointmentId.optional(), from: InstantSchema.optional(), to: InstantSchema.optional(),
-}).strict().refine(value => value.from === undefined || value.to === undefined || parseInstantMs(value.from)! < parseInstantMs(value.to)!);
+  overlap: z.literal("true").transform(() => true as const).optional(),
+}).strict().refine(({ from, to, overlap }) => from && to
+  ? parseInstantMs(from)! < parseInstantMs(to)! : !overlap);
 /** Current client identity and historical terms, matching the DAL read projection. */
 export const AppointmentRecordSchema = z.object({
   id: appointmentId,

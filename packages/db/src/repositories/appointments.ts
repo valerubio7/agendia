@@ -32,13 +32,13 @@ export type AppointmentAvailabilityContext = { appointmentId?: string; clock?: (
 export type AppointmentAvailabilityOption = {
   start: string; startMs: number; endMs: number; resourceId: string; terms: AppointmentTermsSnapshot;
 };
-export type AppointmentHistoryFilter = { clientId?: string; from?: string; to?: string };
+export type AppointmentHistoryFilter = { clientId?: string; from?: string; to?: string; overlap?: true };
 const appointmentActionFacts = z.object({
   actor: z.enum(["businessAdmin", "platformAdmin", "customer", "ai"]), channel: z.enum(["manual", "ai"]),
   now: InstantSchema, confirmed: z.boolean().optional(),
 });
-const appointmentHistoryFilter = z.object({ clientId: appointmentId.optional(), from: InstantSchema.optional(), to: InstantSchema.optional() })
-  .refine(filter => filter.from === undefined || filter.to === undefined || parseInstantMs(filter.from)! < parseInstantMs(filter.to)!);
+const appointmentHistoryFilter = z.object({ clientId: appointmentId.optional(), from: InstantSchema.optional(), to: InstantSchema.optional(), overlap: z.literal(true).optional() })
+  .refine(({ from, to, overlap }) => from && to ? parseInstantMs(from)! < parseInstantMs(to)! : !overlap);
 const appointmentChangeCommand = z.object({ serviceId: appointmentId, resourceId: appointmentId, startRaw: InstantSchema });
 const customerExpression = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("chosen"), resourceId: appointmentId }), z.object({ kind: z.literal("none") }),
@@ -72,7 +72,10 @@ export class AppointmentError extends Error {
 }
 
 /** Shared owned projection for detail and untruncated history; never converts epochs to ISO. */
-function appointmentRows(db: Db, businessId: string, filters: { id?: string; clientId?: string; fromMs?: number; toMs?: number } = {}) {
+function appointmentRows(db: Db, businessId: string, filters: { id?: string; clientId?: string; fromMs?: number; toMs?: number; overlap?: true } = {}) {
+  const from = filters.fromMs ?? null;
+  const lowerBound = filters.overlap ? db`ap.end_ms>${from}::bigint`
+    : db`(${from}::bigint is null or ap.start_ms>=${from}::bigint)`;
   return db<AppointmentRow[]>`select ap.id,ap.client_id "clientId",
       c.first_name "firstName",c.last_name "lastName",c.phone,
       ap.start_raw "startsAt",ap.start_ms "startMs",ap.end_ms "endMs",
@@ -83,7 +86,7 @@ function appointmentRows(db: Db, businessId: string, filters: { id?: string; cli
       where ap.business_id=${businessId}
         and (${filters.id ?? null}::uuid is null or ap.id=${filters.id ?? null}::uuid)
         and (${filters.clientId ?? null}::uuid is null or ap.client_id=${filters.clientId ?? null}::uuid)
-        and (${filters.fromMs ?? null}::bigint is null or ap.start_ms>=${filters.fromMs ?? null}::bigint)
+        and ${lowerBound}
         and (${filters.toMs ?? null}::bigint is null or ap.start_ms<${filters.toMs ?? null}::bigint)
       order by ap.start_ms,ap.id`;
 }
@@ -92,13 +95,13 @@ export async function getAppointment(db: Db, businessId: string, id: string): Pr
   const [row] = await appointmentRows(db, businessId, { id });
   return row ? appointmentDto(row) : null;
 }
-/** All states, exact half-open START bounds. Caller materializes local dates for UI. */
+/** All states, half-open start bounds by default; optional overlap requires both bounds. */
 export async function listAppointments(db: Db, businessId: string, input: unknown = {}): Promise<StoredAppointment[]> {
   const scope = appointmentId.safeParse(businessId), filters = appointmentHistoryFilter.safeParse(input);
   if (!scope.success || !filters.success) throw new AppointmentError("INVALID_INPUT");
   const value = filters.data;
   return (await appointmentRows(db, scope.data, { ...(value.clientId ? { clientId: value.clientId } : {}),
-    ...(value.from ? { fromMs: parseInstantMs(value.from)! } : {}), ...(value.to ? { toMs: parseInstantMs(value.to)! } : {}),
+    ...(value.from ? { fromMs: parseInstantMs(value.from)! } : {}), ...(value.to ? { toMs: parseInstantMs(value.to)! } : {}), ...(value.overlap ? { overlap: true } : {}),
   })).map(appointmentDto);
 }
 async function appointmentAction(repo: PostgresRepositories, businessId: string, id: string, trusted: AppointmentActionContext) {
