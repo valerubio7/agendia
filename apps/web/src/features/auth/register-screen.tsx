@@ -3,23 +3,25 @@
 import { useRef, useState, type FormEvent, type FormEventHandler, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "../../api/api-client";
-import { Brand } from "../../components/brand";
-import { AuthStory } from "./login-screen";
+import { PanelBrand } from "../../components/panel-brand";
+import "./register.css";
 
 export function RegisterScreen({ pending, success = false, feedback, submitAction }: { pending: boolean; success?: boolean; feedback: ReactNode; submitAction: FormEventHandler<HTMLFormElement> }) {
-  return <main className="login-frame" data-ui="login-frame">
-    <section className="login-form-panel" data-ui="login-form-panel" aria-labelledby="register-title"><div className="login-card">
-      <Brand /><h1 id="register-title">Solicitar acceso</h1><p className="login-welcome">Completá tus datos para solicitar acceso.</p>
+  return <main className="register-screen" data-ui="register-screen">
+    <PanelBrand dark />
+    <section aria-labelledby="register-title">
+      <header><h1 id="register-title">Solicitar acceso</h1><p>Completá los datos de tu negocio. Vas a poder ingresar cuando se apruebe tu solicitud.</p></header>
       {feedback}
       <form onSubmit={submitAction} aria-busy={pending}>
-        <label className="login-field">Nombre del negocio<input name="name" required maxLength={160} pattern={".*\\S.*"} /></label>
-        <label className="login-field">Correo<input name="email" type="email" autoComplete="email" required /></label>
-        <label className="login-field">Contraseña<input name="password" type="password" autoComplete="new-password" minLength={16} required /></label>
-        <label className="login-field">Repetir contraseña<input name="passwordConfirmation" type="password" autoComplete="new-password" minLength={16} required /></label>
-        <button className="login-submit" disabled={pending || success} type="submit">{pending ? "Enviando…" : success ? "Solicitud enviada" : "Solicitar acceso"}</button>
-      </form><p><a href="/login">Volver a iniciar sesión</a></p>
-    </div></section>
-    <AuthStory />
+        <label>Nombre del negocio<input name="name" autoComplete="organization" required maxLength={160} pattern={".*\\S.*"} /></label>
+        <label>Correo<input name="email" type="email" autoComplete="email" required /></label>
+        <label>Contraseña<input name="password" type="password" autoComplete="new-password" minLength={16} required aria-describedby="register-password-help" /></label>
+        <p id="register-password-help">Al menos 16 caracteres.</p>
+        <label>Repetir contraseña<input name="passwordConfirmation" type="password" autoComplete="new-password" minLength={16} required /></label>
+        <button disabled={pending || success} type="submit">{pending ? "Enviando…" : success ? "Solicitud enviada" : "Solicitar acceso"}</button>
+      </form>
+      <footer><a href="/login">Volver a iniciar sesión</a></footer>
+    </section>
   </main>;
 }
 

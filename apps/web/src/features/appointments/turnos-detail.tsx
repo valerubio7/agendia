@@ -6,9 +6,9 @@ import type { TurnosMutation } from "./turnos-screen";
 import { argentinaDate, dateLabel, turnoMoney, turnoStates, turnoTime } from "./turnos-calendar";
 
 type FinalState = "cancelled" | "done" | "no_show";
-export function TurnosDetail({ row, now, disabled, mutate, change, error }: {
+export function TurnosDetail({ row, now, disabled, mutate, change }: {
   row: AppointmentRecord; now: number; disabled: boolean; mutate: TurnosMutation;
-  change: () => void; error: string;
+  change: () => void;
 }) {
   const [notes, setNotes] = useState(row.notes ?? "");
   const [editingNotes, setEditingNotes] = useState(false);
@@ -62,26 +62,30 @@ export function TurnosDetail({ row, now, disabled, mutate, change, error }: {
     } finally { guard.current = false; if (mounted.current) setSaving(false); }
   };
   return <section className="turnos-detail" aria-label="Detalle del turno" aria-busy={saving}>
-    <h2 id="turnos-detail-title" tabIndex={-1}>{row.client.firstName} {row.client.lastName}</h2>
-    <dl>
-      <dt>Teléfono</dt><dd>{row.client.phone}</dd>
-      <dt>Servicio guardado</dt><dd>{row.terms.serviceName}</dd>
-      <dt>Recurso guardado</dt><dd>{row.terms.resourceName}</dd>
-      <dt>Fecha y hora</dt><dd>{dateLabel(argentinaDate(row.startMs))} · {turnoTime(row.startMs)}</dd>
-      <dt>Condiciones guardadas</dt><dd>{row.terms.durationMinutes} min · {turnoMoney(row.terms.priceArs)}</dd>
-      <dt>Estado</dt><dd><span className="turnos-state" data-state={row.state}>{turnoStates[row.state]}</span></dd>
-      <dt>Origen</dt><dd>{row.origin === "manual" ? "Manual" : "IA"}</dd>
-      <dt>Notas</dt><dd>{row.notes ?? "Sin notas"}</dd>
+    <header className="booking-detail-head">
+      <div><h2 id="turnos-detail-title" tabIndex={-1}>{row.client.firstName} {row.client.lastName}</h2><p>{row.client.phone}</p></div>
+      <span className="turnos-state" data-state={row.state}>{turnoStates[row.state]}</span>
+    </header>
+    <dl className="booking-panel booking-facts">
+      <div><dt>Fecha y hora</dt><dd><time dateTime={row.startsAt}>{turnoTime(row.startMs)}</time><small>{dateLabel(argentinaDate(row.startMs))}</small></dd></div>
+      <div><dt>Servicio guardado</dt><dd>{row.terms.serviceName}<small>{row.terms.durationMinutes} min · {turnoMoney(row.terms.priceArs)}</small></dd></div>
+      <div><dt>Recurso guardado</dt><dd>{row.terms.resourceName}</dd></div>
+      <div><dt>Origen</dt><dd>{row.origin === "manual" ? "Manual" : "IA"}</dd></div>
     </dl>
+    <section className="booking-detail-notes" aria-labelledby="booking-detail-notes">
+      <h3 id="booking-detail-notes">Notas internas</h3><p>{row.notes ?? "Sin notas"}</p>
+    </section>
     {confirmed && <>
-      {started ? <p>El turno ya comenzó. No se pueden modificar servicio, recurso ni horario.</p>
-        : <button className="turnos-primary" disabled={locked || !!confirmation || editingNotes} onClick={change}>Modificar turno</button>}
-      {!editingNotes ? <button id="turnos-edit-notes" disabled={locked || !!confirmation} onClick={() => {
-        setNotes(row.notes ?? ""); setEditingNotes(true); scheduleFocus("notes");
-      }}>Editar notas</button> : <form ref={form} aria-label="Editar notas del turno" aria-busy={saving} onSubmit={saveNotes}>
+      {started && <p>El turno ya comenzó. No se pueden modificar servicio, recurso ni horario.</p>}
+      <div className="booking-detail-actions">
+        {!editingNotes && <button id="turnos-edit-notes" disabled={locked || !!confirmation} onClick={() => {
+          setNotes(row.notes ?? ""); setEditingNotes(true); scheduleFocus("notes");
+        }}>Editar notas</button>}
+        {!started && <button className="turnos-primary" disabled={locked || !!confirmation || editingNotes} onClick={change}>Modificar turno</button>}
+      </div>
+      {editingNotes && <form ref={form} aria-label="Editar notas del turno" aria-busy={saving} onSubmit={saveNotes}>
         <label htmlFor="turnos-notes">Notas del turno</label>
         <textarea id="turnos-notes" disabled={locked} value={notes} onChange={event => setNotes(event.target.value)} />
-        {error && <p role="alert">{error}</p>}
         <button id="turnos-save-notes" disabled={locked} type="submit">Guardar notas</button>
         <button disabled={locked} type="button" onClick={() => { setEditingNotes(false); scheduleFocus("edit-notes"); }}>Cancelar notas</button>
       </form>}
@@ -93,7 +97,6 @@ export function TurnosDetail({ row, now, disabled, mutate, change, error }: {
       </div> : <section className="turnos-confirmation" aria-label="Confirmar estado del turno">
         <h3>Confirmar: {turnoStates[confirmation]}</h3>
         <p>Esta acción es definitiva. El turno no se puede reabrir y no se envía WhatsApp.</p>
-        {error && <p role="alert">{error}</p>}
         <button id="turnos-confirm-state" disabled={locked} onClick={() => void saveState()}>Confirmar estado</button>
         <button id="turnos-cancel-state" disabled={locked} onClick={() => {
           const former = confirmation; setConfirmation(null); scheduleFocus(`action-${former}`);

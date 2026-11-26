@@ -2,7 +2,7 @@ import type { Session } from "../api/api-client";
 
 // Both the login submission and the entrance check share one destination per role.
 export const entryPathFor = (session: Pick<Session, "role">): string =>
-  session.role === "platform_admin" ? "/businesses" : "/profile";
+  session.role === "platform_admin" ? "/solicitudes" : "/inicio";
 
 // The administration entrance only bounces an existing administrator session.
 // A business session stays on the form so it can authenticate as administrator.

@@ -35,7 +35,7 @@ test("real services complete the deterministic multi-tenant happy path", async (
     deepSeek: true,
   });
   await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
-  await expect(page).toHaveURL(/\/businesses$/);
+  await expect(page).toHaveURL(/\/solicitudes$/);
   for (const tenant of tenants) {
     await createBusinessInAdminUi(page, tenant);
   }
@@ -48,24 +48,31 @@ test("real services complete the deterministic multi-tenant happy path", async (
     const tenantPage = await context.newPage();
     tenantPages.push(tenantPage);
     await login(tenantPage, system.webUrl, tenant.email, tenant.password);
-    await expect(tenantPage).toHaveURL(/\/profile$/);
+    await expect(tenantPage).toHaveURL(/\/inicio$/);
+    await tenantPage.getByRole("link", { name: "Negocio", exact: true }).click();
+    const editProfile = tenantPage.getByRole("button", { name: "Editar información del negocio", exact: true });
+    await editProfile.click();
     await tenantPage.getByLabel("Nombre comercial").fill(tenant.name);
     await tenantPage.getByLabel("Descripción", { exact: true }).fill(tenant.description);
     await tenantPage.getByLabel("Dirección", { exact: true }).fill(tenant.address);
     for (const label of ["Horarios", "Servicios o productos"])
       await expect(tenantPage.getByLabel(label, { exact: true })).toHaveCount(0);
-    await tenantPage.getByRole("button", { name: "Guardar perfil" }).click();
+    await tenantPage.getByRole("button", { name: "Guardar cambios" }).click();
     await expect(tenantPage.locator(".profile-feedback").getByRole("status")).toHaveText("Perfil guardado");
     await tenantPage.reload();
+    await editProfile.click();
     await expect(tenantPage.getByLabel("Nombre comercial")).toHaveValue(
       tenant.name,
     );
     await expect(tenantPage.getByLabel("Descripción", { exact: true })).toHaveValue(tenant.description);
     await expect(tenantPage.getByLabel("Dirección", { exact: true })).toHaveValue(tenant.address);
-    await tenantPage.getByRole("link", { name: "Agente" }).click();
+    await tenantPage.getByRole("button", { name: "Cancelar", exact: true }).click();
+    const hub = tenantPage.getByRole("navigation", { name: "Gestión del negocio", exact: true });
+    const backToBusiness = tenantPage.getByRole("navigation", { name: "Ruta de navegación", exact: true }).getByRole("link", { name: "Negocio", exact: true });
+    await hub.getByRole("link", { name: "Asistente IA", exact: true }).click();
     await expect(tenantPage).toHaveURL(/\/agent$/);
     await tenantPage.getByLabel("Respuestas automáticas activas").check();
-    await tenantPage.getByRole("button", { name: "Guardar y activar" }).click();
+    await tenantPage.getByRole("button", { name: "Guardar cambios" }).click();
     await expect(tenantPage.locator(".agent-feedback").getByRole("status")).toHaveText(
       "Agente guardado",
     );
@@ -73,16 +80,19 @@ test("real services complete the deterministic multi-tenant happy path", async (
     await expect(
       tenantPage.getByLabel("Respuestas automáticas activas"),
     ).toBeChecked();
-    await tenantPage.getByRole("link", { name: "Servicios", exact: true }).click();
-    const serviceForm = tenantPage.getByRole("form", { name: "Crear servicio", exact: true });
-    await serviceForm.getByLabel("Nombre", { exact: true }).fill(`Servicio ${tenant.name}`);
-    await serviceForm.getByLabel("Duración (minutos)", { exact: true }).fill("30");
-    await serviceForm.getByLabel("Precio (ARS)", { exact: true }).fill("1000");
-    await serviceForm.getByRole("button", { name: "Crear servicio", exact: true }).click();
-    await expect(serviceForm.getByRole("status")).toHaveText("Servicio creado");
+    await tenantPage.getByRole("dialog", { name: "Asistente IA", exact: true })
+      .getByRole("button", { name: "Cerrar panel", exact: true }).click();
+    await hub.getByRole("link", { name: "Servicios", exact: true }).click();
+    await tenantPage.getByRole("button", { name: "Nuevo servicio", exact: true }).click();
+    const servicePanel = tenantPage.getByRole("dialog", { name: "Nuevo servicio", exact: true });
+    await servicePanel.getByLabel("Nombre del servicio", { exact: true }).fill(`Servicio ${tenant.name}`);
+    await servicePanel.getByLabel("Duración (minutos)", { exact: true }).fill("30");
+    await servicePanel.getByLabel("Precio (ARS)", { exact: true }).fill("1000");
+    await servicePanel.getByRole("button", { name: "Guardar servicio", exact: true }).click();
     await expect(tenantPage.getByRole("list", { name: "Catálogo de servicios", exact: true })
       .getByRole("heading", { name: `Servicio ${tenant.name}`, exact: true })).toBeVisible();
-    await tenantPage.getByRole("link", { name: "WhatsApp" }).click();
+    await backToBusiness.click();
+    await hub.getByRole("link", { name: "WhatsApp", exact: true }).click();
     await expect(tenantPage).toHaveURL(/\/whatsapp$/);
     await tenantPage.getByRole("button", { name: "Vincular WhatsApp" }).click();
     await expect(
@@ -102,6 +112,9 @@ test("real services complete the deterministic multi-tenant happy path", async (
       tenantPage.getByRole("button", { name: "WhatsApp vinculado" }),
     ).toBeDisabled();
     connectedUi++;
+    await tenantPage.getByRole("dialog", { name: "WhatsApp", exact: true })
+      .getByRole("button", { name: "Cerrar panel", exact: true }).click();
+    await expect(tenantPage).toHaveURL(/\/profile$/);
   }
 
   const accepted = await Promise.all(
@@ -147,17 +160,16 @@ test("real services complete the deterministic multi-tenant happy path", async (
       (ack, index) => ack.jid === accepted[index]?.remoteJid,
     ),
   });
-  const evidence = await system.deliveryEvidence();
-  expect(evidence).toEqual(
-    expect.arrayContaining(
-      accepted.map((item) =>
-        expect.objectContaining({
-          connection_id: item.connectionId,
-          state: "sent",
-        }),
-      ),
-    ),
-  );
+  // The provider records the ACK before the dispatcher commits the delivery row.
+  const expectedDeliveries = accepted.map((item, index) => ({
+    connection_id: item.connectionId,
+    state: "sent",
+    provider_message_id: system.providers.baileys.acks[index]!.providerMessageId,
+  }));
+  const byConnection = (a: { connection_id: string }, b: { connection_id: string }) =>
+    a.connection_id.localeCompare(b.connection_id);
+  await expect.poll(async () => (await system.deliveryEvidence()).sort(byConnection))
+    .toEqual(expectedDeliveries.sort(byConnection));
   expect(system.providers.baileys.acks.map(ack => ack.text)).toEqual(
     accepted.map(() => "No se guardó ningún cambio de agenda."),
   );
@@ -305,10 +317,16 @@ test("real services complete the deterministic multi-tenant happy path", async (
   });
   system.providers.deepSeek.nativeCalls = [{ name: "confirm_quote", arguments: {} }];
   const quoted = await sendNative("Mi nombre es Clara López");
-  expect(system.providers.baileys.acks.at(-1)!.text).toContain("30 minutos, ARS 1000");
+  const quoteAck = system.providers.baileys.acks.at(-1)!;
+  expect(quoteAck.text).toContain("30 minutos, ARS 1000");
   expect(await system.agendaEvidence(tenants[0]!.email, quoted.providerMessageId)).toMatchObject({ appointments: 0, effects: 0 });
-  const delivery = await system.deliveryEvidence();
-  expect(delivery.at(-1)).toMatchObject({ state: "sent" });
+  await expect.poll(async () => (await system.deliveryEvidence())
+    .filter((row) => row.provider_message_id === quoteAck.providerMessageId))
+    .toEqual([{
+      connection_id: quoted.connectionId,
+      state: "sent",
+      provider_message_id: quoteAck.providerMessageId,
+    }]);
   let interpretedAcceptances = 0;
   system.providers.deepSeek.nativeCalls = messages => {
     const runtime = JSON.parse(messages[1]!.content!).runtime;
@@ -329,18 +347,35 @@ test("real services complete the deterministic multi-tenant happy path", async (
   expect(saved).toHaveLength(1);
   expect(saved[0]).toMatchObject({ origin: "ai", state: "confirmed", startsAt: slot.start,
     client: { firstName: "Clara", lastName: "López" }, terms: { serviceId: service.id, priceArs: 1000, durationMinutes: 30 } });
-  await businessPage.getByRole("link", { name: "Turnos", exact: true }).click();
+  const otherTenantAppointments = await tenantPages[1]!.request.get(`${system.webUrl}/api/me/${appointmentPath}`);
+  expect(otherTenantAppointments.status()).toBe(200);
+  expect(await otherTenantAppointments.json()).toEqual([]);
+  await businessPage.getByRole("navigation", { name: "Navegación del negocio", exact: true }).getByRole("link", { name: "Agenda", exact: true }).click();
+  await expect(businessPage).toHaveURL(`${system.webUrl}/turnos`);
   const time = new Intl.DateTimeFormat("es-AR", { timeZone: "America/Argentina/Buenos_Aires",
     hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(slot.startMs);
   for (const reload of [false, true]) {
     if (reload) await businessPage.reload();
-    await businessPage.getByRole("button", { name: "Semana", exact: true }).click();
-    const appointment = businessPage.getByRole("list", { name: `Turnos ${date}`, exact: true })
-      .getByRole("button", { name: /Clara López/ });
+    const views = businessPage.getByRole("group", { name: "Vista de agenda", exact: true });
+    await views.getByRole("button", { name: "Semana", exact: true }).click();
+    const datePicker = businessPage.getByLabel("Elegir fecha de la agenda", { exact: true });
+    await datePicker.fill(date);
+    await expect(datePicker).toHaveValue(date);
+    const weekAppointment = businessPage.getByRole("region", { name: "Vista semanal", exact: true })
+      .getByRole("group", { name: `Turnos ${date}`, exact: true }).getByRole("button", { name: /Clara López/ });
+    await expect(weekAppointment).toHaveCount(1);
+    await expect(weekAppointment).toBeVisible();
+    await expect(weekAppointment.getByText(`Servicio ${tenants[0]!.name}`, { exact: true })).toBeVisible();
+    await expect(weekAppointment.locator("time")).toHaveAttribute("datetime", slot.start);
+    await expect(weekAppointment.locator("time")).toHaveText(time);
+
+    await views.getByRole("button", { name: "Día", exact: true }).click();
+    await expect(datePicker).toHaveValue(date);
+    const appointment = businessPage.getByRole("region", { name: "Turnos del día", exact: true })
+      .getByRole("button", { name: `Abrir turno de Clara López, ${time}`, exact: true });
     await expect(appointment).toHaveCount(1);
     await expect(appointment).toBeVisible();
-    await expect(appointment.getByText(`Servicio ${tenants[0]!.name}`, { exact: true })).toBeVisible();
-    await expect(appointment.getByText("Confirmado", { exact: true })).toBeVisible();
+    await expect(appointment.getByText(`Servicio ${tenants[0]!.name} · Confirmado`, { exact: true })).toBeVisible();
     await expect(appointment.locator("time")).toHaveAttribute("datetime", slot.start);
     await expect(appointment.locator("time")).toHaveText(time);
     const detailResponse = businessPage.waitForResponse(response =>

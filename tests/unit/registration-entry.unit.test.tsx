@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createRequire } from "node:module";
 import { RegisterScreen } from "../../apps/web/src/features/auth/register-screen";
-import { AdminBusinessesScreen } from "../../apps/web/src/features/administration/admin-businesses-screen";
+import { AdminScreenContent } from "../../apps/web/src/features/administration/admin-businesses-screen";
 import { ApiClient } from "../../apps/web/src/api/api-client";
 const require = createRequire(new URL("../../apps/web/package.json", import.meta.url));
 const { createElement } = require("react");
@@ -18,9 +18,13 @@ test("registration requires a password confirmation", () => {
   expect(html).toContain('name="passwordConfirmation"');
   expect(html).toContain("Repetir contraseña");
 });
-test("registration shares the login visual layout", () => {
+test("registration has its own branded form and explains the real password requirement", () => {
   const html = renderToStaticMarkup(createElement(RegisterScreen, { pending: false, feedback: null, submitAction: () => {} }));
-  expect(html).toContain('data-ui="login-story"');
+  expect(html).toContain('data-ui="register-screen"');
+  expect(html).not.toContain('data-ui="login-story"');
+  expect(html).toContain('aria-describedby="register-password-help"');
+  expect(html).toContain("Al menos 16 caracteres");
+  expect(html).toContain('href="/login"');
 });
 test("completed registration shows approval feedback without a busy submission", () => {
   const html = renderToStaticMarkup(createElement(RegisterScreen, { pending: false, success: true,
@@ -31,16 +35,16 @@ test("completed registration shows approval feedback without a busy submission",
   expect(html).not.toContain("Enviando…");
   expect(html).toContain('disabled=""');
 });
-test("admin business management offers status but no name or password editing", () => {
-  const html = renderToStaticMarkup(createElement(AdminBusinessesScreen, {
+test("admin business directory offers status and opens business information", () => {
+  const html = renderToStaticMarkup(createElement(AdminScreenContent, { section: "businesses",
     businesses: [{ id: "a", name: "Negocio", status: "active", agentStatus: "inactive", whatsappStatus: "disconnected", createdAt: "2026-01-01T00:00:00Z", lastTechnicalActivityAt: null }],
     registrations: [], responseTiming: { responseTiming: { initialDelaySeconds: 0, activeDelaySeconds: 0, inactivityResetSeconds: 60 } },
     notice: "", error: "", refreshWarning: false, refreshPending: false,
     retryRefreshAction: () => {}, decideAction: async () => true, saveResponseTimingAction: async () => true,
     setStatusAction: async () => true, deleteBusinessAction: async () => true,
   }));
-  expect(html).toContain("Suspender");
-  expect(html).toContain('aria-label="Eliminar Negocio"');
+  expect(html).toContain('data-status="active"');
+  expect(html).toContain('aria-label="Información del negocio: Negocio"');
   expect(html).not.toContain("Renombrar");
   expect(html).not.toContain("Cambiar contraseña");
   expect(html).not.toContain('name="password"');
@@ -69,7 +73,7 @@ test("admin deletion uses authenticated encoded DELETE and propagates errors wit
   expect(client.errorMessage(new Error())).toBe("No se pudo completar la operación.");
 });
 test("admin shows pending registrations and accessible decision actions", () => {
-  const html = renderToStaticMarkup(createElement(AdminBusinessesScreen, {
+  const html = renderToStaticMarkup(createElement(AdminScreenContent, { section: "requests",
     businesses: [], registrations: [{ id: "a", name: "Negocio", email: "a@example.test", createdAt: "2026-01-01T00:00:00Z" }],
     responseTiming: { responseTiming: { initialDelaySeconds: 0, activeDelaySeconds: 0, inactivityResetSeconds: 60 } },
     notice: "", error: "", refreshWarning: true, refreshPending: false,

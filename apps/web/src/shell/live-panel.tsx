@@ -1,6 +1,6 @@
 "use client";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useContext, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import {
   ApiError,
   api,
@@ -23,10 +23,8 @@ import { renderWhatsAppQrDataUrl } from "../features/whatsapp/qr-code";
 import { LoginScreen } from "../features/auth/login-screen";
 import { entryPathFor, entryRedirectFor } from "./entry-path";
 import { startSessionActivity } from "./session-activity";
-import {
-  AuthenticatedShell,
-  TerminalAuthenticatedState,
-} from "./authenticated-shell";
+import { TerminalAuthenticatedState } from "./authenticated-shell";
+import { PanelRoute, sameSession } from "./panel-route";
 import { AdminBusinessesScreen } from "../features/administration/admin-businesses-screen";
 import { AgentScreen } from "../features/agent-settings/agent-screen";
 import { ProfileScreen } from "../features/business-profile/profile-screen";
@@ -59,9 +57,8 @@ const agentFields = [
 ] as const;
 type AdminData = { businesses: Business[]; registrations: Registration[] | null; responseTiming: ResponseTiming };
 type ServicesData = { services: Service[]; categories: ServiceCategory[] };
-const sameSession = (a: Session, b: Session) =>
-  typeof a.sessionId === "string" && a.sessionId.length > 0 && a.sessionId === b.sessionId &&
-  a.identityId === b.identityId && a.role === b.role && a.businessId === b.businessId;
+const isUnauthenticated = (cause: unknown) => cause instanceof ApiError &&
+  (cause.status === 401 || cause.code === "UNAUTHENTICATED");
 const WHATSAPP_QR_LIFECYCLE_MS = 5 * 60_000;
 
 export type WhatsAppLinkMonitorEvent =
@@ -158,6 +155,9 @@ export async function runWhatsAppLinkMonitor({
 
 export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance = false, registrationPending = false }: { mode: Mode; loginTitle?: string; adminEntrance?: boolean; registrationPending?: boolean }) {
   const router = useRouter();
+  const route = useContext(PanelRoute);
+  const report = mode === "login" ? undefined : route?.report;
+  const verifiedOwner = useRef<Session | null>(null);
   const [data, setData] = useState<unknown>(null),
     [notice, setNotice] = useState(""),
     [error, setError] = useState(""),
@@ -345,9 +345,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
       if (!isCurrent()) return;
       setError(await api.errorMessage(cause));
       setViewState(
-        cause instanceof ApiError && cause.code === "UNAUTHENTICATED"
-          ? "session-recovery"
-          : "load-error",
+        isUnauthenticated(cause) ? "session-recovery" : "load-error",
       );
       return;
     }
@@ -356,6 +354,11 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
     if ((mode === "admin") !== (session.role === "platform_admin")) {
       setError("Tu rol no permite acceder a este panel.");
       setViewState("denied");
+      return;
+    }
+    if (route && !route.accepts(session)) {
+      setError("Tu sesión cambió. Volvé a iniciar sesión.");
+      setViewState("session-recovery");
       return;
     }
 
@@ -391,25 +394,31 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
               : await api.whatsappStatus();
     } catch (cause) {
       if (!isCurrent()) return;
-      setError(await api.errorMessage(cause));
-      setViewState("load-error");
+      setError(api.errorMessage(cause));
+      setViewState(isUnauthenticated(cause) ? "session-recovery" : "load-error");
       return;
     }
     if (!isCurrent()) return;
 
-    if (mode === "services") {
+    // A delayed read may belong to a session that is no longer in this browser.
+    if (mode !== "clients" && mode !== "turnos") {
       try {
         const currentSession = await api.session();
         if (!isCurrent()) return;
-        if (!sameSession(session, currentSession)) throw new Error("Session changed");
+        if (!sameSession(session, currentSession)) {
+          setError("Tu sesión cambió. Volvé a iniciar sesión.");
+          setViewState("session-recovery");
+          return;
+        }
       } catch (cause) {
         if (!isCurrent()) return;
         setError(api.errorMessage(cause));
-        setViewState("load-error");
+        setViewState(isUnauthenticated(cause) ? "session-recovery" : "load-error");
         return;
       }
-      servicesOwnerRef.current = session;
     }
+    verifiedOwner.current = session;
+    if (mode === "services") servicesOwnerRef.current = session;
     setData(loaded);
     if (mode === "admin") adminOwnerRef.current = session;
     if (mode === "admin" && (loaded as AdminData).registrations === null) setAdminWarning(true);
@@ -756,6 +765,13 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
           : state);
     }
   };
+  const actions = useRef({ load, logout });
+  useLayoutEffect(() => { actions.current = { load, logout }; });
+  const terminalError = viewState === "ready" ? "" : error;
+  useLayoutEffect(() => {
+    report?.({ state: viewState, session: verifiedOwner.current, message: terminalError,
+      retry: () => void actions.current.load(), logout: () => void actions.current.logout(), logoutPending });
+  }, [report, viewState, terminalError, logoutPending]);
   const feedback = (
     <>
       {error && <p role="alert">{error}</p>}
@@ -766,7 +782,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
 
   if (mode === "login")
     return viewState === "loading" ? (
-      <TerminalAuthenticatedState state="loading" />
+      <TerminalAuthenticatedState state="loading" title={loginTitle} />
     ) : (
       <LoginScreen
         title={loginTitle}
@@ -776,15 +792,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
         submitAction={submitLogin}
       />
     );
-  if (viewState !== "ready")
-    return (
-      <TerminalAuthenticatedState
-        loginHref={mode === "admin" ? "/admin/login" : "/"}
-        state={viewState}
-        message={error}
-        retryAction={() => void load()}
-      />
-    );
+  if (viewState !== "ready" || !route?.visible) return null;
 
   if (mode === "admin") {
     const { businesses, registrations, responseTiming } = data as AdminData;
@@ -794,13 +802,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
         : [...state.businesses, saved],
     });
     return (
-      <AuthenticatedShell
-        variant="admin"
-        activeHref="/businesses"
-        logoutPending={logoutPending}
-        logoutAction={() => void logout()}
-      >
-        <AdminBusinessesScreen
+      <AdminBusinessesScreen
           businesses={businesses}
           responseTiming={responseTiming}
           saveResponseTimingAction={(timing) => runAdminMutation(
@@ -829,37 +831,32 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
             )
           }
         />
-      </AuthenticatedShell>
     );
   }
   if (mode === "turnos") {
     const session = data as Session;
     const generation = loadAttemptRef.current;
-    return <AuthenticatedShell variant="business" activeHref="/turnos"
-      logoutPending={logoutPending} logoutAction={() => void logout()}>
+    return <>
       {feedback}
       <TurnosScreen key={`${session.businessId}:${generation}`} disabled={logoutPending}
         sessionActive={() => !logoutPendingRef.current && loadAttemptRef.current === generation} />
-    </AuthenticatedShell>;
+    </>;
   }
   if (mode === "clients") {
     const session = data as Session;
     const generation = loadAttemptRef.current;
-    return <AuthenticatedShell variant="business" activeHref="/clients"
-      logoutPending={logoutPending} logoutAction={() => void logout()}>
+    return <>
       {feedback}
       <ClientsScreen key={`${session.businessId}:${session.identityId}:${generation}`} disabled={logoutPending}
         businessId={session.businessId} identityId={session.identityId}
         sessionActive={() => !logoutPendingRef.current && loadAttemptRef.current === generation} />
-    </AuthenticatedShell>;
+    </>;
   }
 
   if (mode === "resources") {
     const catalog = data as { resources: Resource[]; services: Service[] };
     return (
-      <AuthenticatedShell variant="business" activeHref="/resources"
-        logoutPending={logoutPending} logoutAction={() => void logout()}>
-        <ResourcesScreen resources={catalog.resources} services={catalog.services}
+      <ResourcesScreen resources={catalog.resources} services={catalog.services}
           onLifecycle={async (id, action, signal) => {
             const attempt = loadAttemptRef.current;
             if (!catalog.resources.some(resource => resource.id === id)) throw new Error("Unknown resource");
@@ -906,7 +903,6 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
             if (!signal.aborted && loadAttemptRef.current === attempt)
               setData((current: unknown) => ({ ...(current as typeof catalog), resources }));
           }} />
-      </AuthenticatedShell>
     );
   }
   if (mode === "services") {
@@ -937,12 +933,7 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
       }
     };
     return (
-      <AuthenticatedShell
-        variant="business"
-        activeHref="/services"
-        logoutPending={logoutPending}
-        logoutAction={() => void logout()}
-      >
+      <>
         <ServicesScreen
           services={(data as ServicesData).services}
           categories={(data as ServicesData).categories}
@@ -1039,14 +1030,12 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
           }}
         />
         {feedback}
-      </AuthenticatedShell>
+      </>
     );
   }
   if (mode === "business-calendar") {
     return (
-      <AuthenticatedShell variant="business" activeHref="/business-calendar"
-        logoutPending={logoutPending} logoutAction={() => void logout()}>
-        <BusinessCalendarScreen {...data as BusinessCalendar}
+      <BusinessCalendarScreen {...data as BusinessCalendar}
           closures={closures} retryClosures={loadClosures}
           createClosure={(input, signal) => mutateClosure({ kind: "create", input }, signal)}
           updateClosure={(id, input, signal) => mutateClosure({ kind: "update", id, input }, signal)}
@@ -1056,62 +1045,24 @@ export function LivePanel({ mode, loginTitle = "Iniciar sesión", adminEntrance 
           clearFeedback={() => {
             if (!calendarRequestRef.current) { setError(""); setNotice(""); }
           }} />
-      </AuthenticatedShell>
     );
   }
   if (mode === "profile") {
     const profile = data as Partial<Profile>;
     return (
-      <AuthenticatedShell
-        variant="business"
-        activeHref="/profile"
-        logoutPending={logoutPending}
-        logoutAction={() => void logout()}
-      >
-        <ProfileScreen
-          profile={profile}
-          feedback={feedback}
-          savePending={profilePending}
-          submitAction={submitProfile}
-        />
-      </AuthenticatedShell>
+      <ProfileScreen profile={profile} feedback={feedback} savePending={profilePending} submitAction={submitProfile} />
     );
   }
   if (mode === "agent") {
     const agent = data as Partial<Agent>;
     return (
-      <AuthenticatedShell
-        variant="business"
-        activeHref="/agent"
-        logoutPending={logoutPending}
-        logoutAction={() => void logout()}
-      >
-        <AgentScreen
-          agent={agent}
-          feedback={feedback}
-          conflict={agentConflict}
-          savePending={agentPending}
-          submitAction={submitAgent}
-          reloadAction={() => void load()}
-        />
-      </AuthenticatedShell>
+      <AgentScreen agent={agent} feedback={feedback} conflict={agentConflict}
+        savePending={agentPending} submitAction={submitAgent} reloadAction={() => void load()} />
     );
   }
   const whatsapp = data as WhatsAppStatus;
   return (
-    <AuthenticatedShell
-      variant="business"
-      activeHref="/whatsapp"
-      logoutPending={logoutPending}
-      logoutAction={() => void logout()}
-    >
-      <WhatsAppScreen
-        status={whatsapp}
-        feedback={feedback}
-        qrDataUrl={qrDataUrl}
-        linking={linking}
-        linkAction={() => void startWhatsAppLink()}
-      />
-    </AuthenticatedShell>
+    <WhatsAppScreen status={whatsapp} feedback={feedback} qrDataUrl={qrDataUrl}
+      linking={linking} linkAction={() => void startWhatsAppLink()} />
   );
 }

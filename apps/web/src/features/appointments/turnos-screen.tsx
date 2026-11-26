@@ -1,10 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { api, ApiError, type AppointmentRecord, type AppointmentOperationContext, type AppointmentOperationReceipt, type Service, type Resource } from "../../api/api-client";
+import { usePathname } from "next/navigation";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { api, ApiError, type AppointmentRecord, type AppointmentOperationContext, type AppointmentOperationReceipt, type Service, type Resource, type Client } from "../../api/api-client";
+import { useOutsideDismiss } from "../../components/dialog-dismiss";
+import { PanelInlineError, PanelToast } from "../../components/panel-feedback";
+import { BusinessHome } from "./business-home";
 import { TurnosBookingForm } from "./turnos-booking-form";
 import { TurnosDetail } from "./turnos-detail";
-import { addDays, argentinaDate, calendarRows, dateLabel, dayBounds, monthDays, shiftMonth, turnoStates, turnoTime } from "./turnos-calendar";
+import { AgendaIcon, AgendaViewContent } from "./agenda-view";
+import { agendaDates, type AgendaSchedule, type AgendaView } from "./agenda-calendar";
+import { argentinaDate, dayBounds } from "./turnos-calendar";
 
 export type TurnosMutation = (save: (signal: AbortSignal) => Promise<AppointmentRecord>) => Promise<boolean>;
 type Read<T> = { value: T; pending: boolean; error: string };
@@ -13,15 +19,59 @@ const read = <T,>(value: T): Read<T> => ({ value, pending: false, error: "" });
 const unknownMessage = "No pudimos confirmar el resultado. El turno podría haberse guardado. Consultá el resultado guardado; no repetimos la operación.";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export function TurnosScreen({ disabled, sessionActive }: { disabled: boolean; sessionActive: () => boolean }) {
-  const [view, setView] = useState<"today" | "week" | "month">("today");
-  const [anchor, setAnchor] = useState(argentinaDate), [day, setDay] = useState(argentinaDate);
+// In-memory intent from the authenticated Clients screen, never from the URL.
+export type ClientTurno = ({ client: Client } | { appointmentId: string }) & { trigger: HTMLButtonElement };
+
+type ClientFlow = { target: ClientTurno | null; close: () => void };
+type TurnosProps = { disabled: boolean; sessionActive: () => boolean; clientFlow?: ClientFlow };
+const ClientHandoff = createContext<((flow: ClientFlow & { sessionActive: () => boolean }) => void) | null>(null);
+
+export function FloatingTurnos({ disabled, children }: { disabled: boolean; children: ReactNode }) {
+  const active = useRef(!disabled);
+  const [handoff, setHandoff] = useState<(ClientFlow & { sessionActive: () => boolean }) | null>(null);
+  useLayoutEffect(() => {
+    active.current = !disabled;
+    return () => { active.current = false; };
+  }, [disabled]);
+  return <ClientHandoff.Provider value={setHandoff}>
+    <TurnosWorkspace floating disabled={disabled || !!handoff && !handoff.sessionActive()}
+      sessionActive={() => active.current && (handoff?.sessionActive() ?? true)}
+      {...(handoff && { clientFlow: { target: handoff.target, close: () => { setHandoff(null); handoff.close(); } } })} />
+    {children}
+  </ClientHandoff.Provider>;
+}
+
+export function TurnosScreen(props: TurnosProps) {
+  const handoff = useContext(ClientHandoff);
+  const target = props.clientFlow?.target;
+  useEffect(() => {
+    if (handoff && target && props.clientFlow && props.sessionActive()) handoff({ ...props.clientFlow, sessionActive: props.sessionActive });
+  }, [handoff, target]);
+  return handoff && props.clientFlow ? null : <TurnosWorkspace {...props} />;
+}
+
+function TurnosWorkspace({ disabled, sessionActive, clientFlow, floating = false }: TurnosProps & { floating?: boolean }) {
+  const home = usePathname() === "/inicio";
+  const embedded = floating || !!clientFlow;
+  const [loadedHomeDate, setLoadedHomeDate] = useState("");
+  const [view, setView] = useState<AgendaView>("day");
+  const [selectedDate, setDate] = useState<string | null>(null);
+  const [resource, setResource] = useState("");
+  const [schedule, setSchedule] = useState(() => read<AgendaSchedule | null>(null));
+  const [loadedAgendaRange, setLoadedAgendaRange] = useState<{ from: string; to: string } | null>(null);
   const [list, setList] = useState(() => read<AppointmentRecord[]>([]));
   const [detail, setDetail] = useState(() => read<AppointmentRecord | null>(null));
   const [catalog, setCatalog] = useState(() => read<{ services: Service[]; resources: Resource[] }>({ services: [], resources: [] }));
   const [editor, setEditor] = useState<"create" | "change" | null>(null);
   const [pending, setPending] = useState(false), [scopeReady, setScopeReady] = useState(false);
   const [error, setError] = useState(""), [notice, setNotice] = useState("");
+  const [toast, setToast] = useState<{ revision: number; message: string; error: boolean } | null>(null);
+  const showToast = (message: string, error = false) =>
+    setToast(previous => ({ revision: (previous?.revision ?? 0) + 1, message, error }));
+  const announceSaved = () => {
+    setNotice("Turno guardado");
+    showToast("Turno guardado");
+  };
   const [operations, setOperations] = useState<Operation[]>([]);
   const operationRef = useRef<Operation[]>([]);
   const [inspection, setInspection] = useState<Record<string, string>>({});
@@ -36,17 +86,18 @@ export function TurnosScreen({ disabled, sessionActive }: { disabled: boolean; s
   const scopeRequest = useRef<AbortController | null>(null);
   const listRequest = useRef<AbortController | null>(null), detailRequest = useRef<AbortController | null>(null);
   const catalogRequest = useRef<AbortController | null>(null), mutation = useRef<AbortController | null>(null);
+  const scheduleRequest = useRef<AbortController | null>(null);
   const receiptRequests = useRef(new Map<string, AbortController>());
   const selected = useRef<string | null>(null), range = useRef({ from: "", to: "" });
   const heading = useRef<HTMLHeadingElement>(null), createButton = useRef<HTMLButtonElement>(null);
   const [dialogVisible, setDialogVisible] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null), dialogHeading = useRef<HTMLHeadingElement>(null);
   const invoker = useRef<HTMLElement | null>(null);
-  const revealDialog = () => {
-    if (!dialog.current?.open) invoker.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const revealDialog = (trigger?: HTMLButtonElement) => {
+    if (!dialog.current?.open) invoker.current = trigger ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     setDialogVisible(true);
   };
-  useEffect(() => {
+  useLayoutEffect(() => {
     const surface = dialog.current;
     if (!surface) return;
     if (dialogVisible) {
@@ -109,17 +160,20 @@ export function TurnosScreen({ disabled, sessionActive }: { disabled: boolean; s
     } finally { if (scopeRequest.current === controller) scopeRequest.current = null; }
   };
   const loadList = async () => {
-    if (mutation.current || listRequest.current || !sessionActive()) return;
+    if (embedded || mutation.current || listRequest.current || !sessionActive()) return;
     const controller = new AbortController(), generation = owner.current, bounds = range.current, revision = projectionRevision.current;
     listRequest.current = controller; setList(state => ({ ...state, pending: true, error: "" }));
     try {
-      const rows = await api.appointments(bounds, controller.signal);
+      const rows = await api.appointments(home ? bounds : { ...bounds, overlap: true }, controller.signal);
       if (owns(generation, controller) && listRequest.current === controller && range.current === bounds) {
-        if (projectionRevision.current === revision) setList(state => read([
-          ...rows.filter(row => !freshnessRef.current.has(row.id)),
-          ...state.value.filter(row => freshnessRef.current.has(row.id)),
-        ]));
-        else setList(state => ({ ...state, pending: false }));
+        if (projectionRevision.current === revision) {
+          if (home) setLoadedHomeDate(argentinaDate(Date.parse(bounds.from)));
+          else setLoadedAgendaRange(bounds);
+          setList(state => read([
+            ...rows.filter(row => !freshnessRef.current.has(row.id)),
+            ...state.value.filter(row => freshnessRef.current.has(row.id)),
+          ]));
+        } else setList(state => ({ ...state, pending: false }));
       }
     } catch (cause) {
       if (owns(generation, controller) && listRequest.current === controller)
@@ -127,11 +181,12 @@ export function TurnosScreen({ disabled, sessionActive }: { disabled: boolean; s
     } finally { if (listRequest.current === controller) listRequest.current = null; }
   };
   const loadDetail = async (id = selected.current, focusDetail = false) => {
-    if (!id || mutation.current || detailRequest.current || !sessionActive()) return;
+    if (disabled || !id || mutation.current || detailRequest.current || !sessionActive()) return;
     const controller = new AbortController(), generation = owner.current;
     detailRequest.current = controller; setDetail(state => ({ ...state, pending: true, error: "" }));
     try {
       const row = await api.appointment(id, controller.signal);
+      if (row.id !== id) throw new Error("Current appointment identity differs");
       if (owns(generation, controller) && detailRequest.current === controller && selected.current === id && !freshnessRef.current.has(id)) {
         setDetail(read(row)); if (focusDetail) scheduleFocus("detail");
       }
@@ -152,8 +207,25 @@ export function TurnosScreen({ disabled, sessionActive }: { disabled: boolean; s
         setCatalog(state => ({ ...state, pending: false, error: api.errorMessage(cause) }));
     } finally { if (catalogRequest.current === controller) catalogRequest.current = null; }
   };
+  const loadSchedule = async () => {
+    if (scheduleRequest.current || !sessionActive()) return;
+    const controller = new AbortController(), generation = owner.current;
+    scheduleRequest.current = controller;
+    setSchedule(state => ({ ...state, pending: true, error: "" }));
+    try {
+      const [calendar, closures, resources] = await Promise.all([
+        api.businessCalendar(controller.signal), api.businessClosures(controller.signal), api.resources(controller.signal),
+      ]);
+      if (owns(generation, controller)) {
+        setSchedule(read({ calendar, closures, resources }));
+        setResource(id => resources.some(item => item.id === id && item.status === "active") ? id : "");
+      }
+    } catch (cause) {
+      if (owns(generation, controller)) setSchedule(state => ({ ...state, pending: false, error: api.errorMessage(cause) }));
+    } finally { if (scheduleRequest.current === controller) scheduleRequest.current = null; }
+  };
   const abortOwned = () => {
-    for (const ref of [scopeRequest, listRequest, detailRequest, catalogRequest, mutation]) {
+    for (const ref of [scopeRequest, listRequest, detailRequest, catalogRequest, scheduleRequest, mutation]) {
       const controller = ref.current; controller?.abort();
       if (ref.current === controller) ref.current = null;
     }
@@ -175,23 +247,29 @@ export function TurnosScreen({ disabled, sessionActive }: { disabled: boolean; s
   }, []);
   useEffect(() => {
     if (!disabled) { void loadScope(); return; }
-    owner.current++; abortOwned(); setScopeReady(false); setPending(false); setReading([]);
+    owner.current++; abortOwned(); setScopeReady(false); setPending(false); setReading([]); setToast(null);
     setFreshness(state => Object.fromEntries(Object.keys(state).map(id => [id, "failed" as const])));
     setList(state => ({ ...state, pending: false, error: "Lectura interrumpida. Actualizá los turnos." }));
     setDetail(state => ({ ...state, pending: false, error: selected.current ? "Lectura interrumpida. Actualizá el detalle." : "" }));
     setCatalog(state => ({ ...state, pending: false }));
+    setSchedule(state => ({ ...state, pending: false }));
   }, [disabled]);
-  const today = argentinaDate(now);
-  const first = view === "today" ? today : view === "week" ? anchor : `${anchor.slice(0, 7)}-01`;
-  const last = view === "week" ? addDays(first, 6) : view === "month" ? addDays(shiftMonth(first, 1), -1) : first;
+  useEffect(() => { if (!embedded && !home && !disabled) void loadSchedule(); }, [embedded, home, disabled]);
+  const today = argentinaDate(now), agendaDate = selectedDate ?? today;
+  const dates = home ? [today] : agendaDates(agendaDate, view);
+  const first = dates[0]!, last = dates.at(-1)!;
+  const listReady = scopeReady && !disabled && !pending && !list.pending && !list.error
+    && !operations.length && !Object.keys(freshness).length && !!loadedAgendaRange
+    && argentinaDate(Date.parse(loadedAgendaRange.from)) === first
+    && argentinaDate(Date.parse(loadedAgendaRange.to) - 1) === last;
   useEffect(() => {
     listRequest.current?.abort(); listRequest.current = null;
     range.current = { from: dayBounds(first).from, to: dayBounds(last).to }; void loadList();
-  }, [first, last]);
+  }, [home, first, last]);
   const installSaved = (saved: AppointmentRecord, show = true) => {
     setList(state => ({ ...state, value: [...state.value.filter(row => row.id !== saved.id), saved], pending: false }));
     if (show) { selected.current = saved.id; setDetail(read(saved)); setEditor(null); scheduleFocus("detail"); }
-    setNotice("Turno guardado");
+    announceSaved();
   };
   const loadCurrent = async (id: string, focusDetail = false) => {
     if (disabled || mutation.current || currentRequests.current.has(id) || !sessionActive()) return;
@@ -206,8 +284,12 @@ export function TurnosScreen({ disabled, sessionActive }: { disabled: boolean; s
       setList(state => ({ ...state, value: [...state.value.filter(row => row.id !== id), current] }));
       if (selected.current === id) { setDetail(read(current)); if (focusDetail) scheduleFocus("detail"); }
       freshnessRef.current.delete(id);
-      setNotice("Turno guardado");
+      announceSaved();
       setFreshness(state => { const next = { ...state }; delete next[id]; return next; });
+      if (!home) {
+        listRequest.current?.abort(); listRequest.current = null;
+        void loadList();
+      }
     } catch (cause) {
       if (owns(generation, controller) && currentRequests.current.get(id) === controller)
         setFreshness(state => ({ ...state, [id]: "failed" }));
@@ -243,9 +325,11 @@ export function TurnosScreen({ disabled, sessionActive }: { disabled: boolean; s
         }
         storeOperations(operationRef.current.filter(item => item.key !== op.key));
         setFence(null);
-        setError(receipt.state === "failed" ? api.errorMessage(new ApiError(receipt.error!.code, receipt.error!.message, receipt.httpStatus!)) : "");
+        const rejection = receipt.state === "failed" ? api.errorMessage(new ApiError(receipt.error!.code, receipt.error!.message, receipt.httpStatus!)) : "";
+        setError(rejection);
+        if (rejection) showToast(rejection, true);
         if (!quiet && receipt.state !== "completed") scheduleFocus(op.kind === "create" ? "create" : "heading");
-        void loadList();
+        if (home || !currentId) void loadList();
         if (currentId) void loadCurrent(currentId, true);
         else if (selected.current) void loadDetail();
       } else setInspection(state => ({ ...state, [op.key]: receipt.state === "pending"
@@ -265,7 +349,7 @@ export function TurnosScreen({ disabled, sessionActive }: { disabled: boolean; s
     const dispatched: { current: Operation | null } = { current: null };
     mutation.current = controller;
     listRequest.current?.abort(); listRequest.current = null; detailRequest.current?.abort(); detailRequest.current = null;
-    setPending(true); setError(""); setNotice("");
+    setPending(true); setError(""); setNotice(""); setToast(null);
     setList(state => ({ ...state, pending: false })); setDetail(state => ({ ...state, pending: false }));
     try {
       const saved = await api.withAppointmentOperation(crypto.randomUUID(), context => {
@@ -291,49 +375,53 @@ export function TurnosScreen({ disabled, sessionActive }: { disabled: boolean; s
   const locked = disabled || pending;
   const createLocked = locked || !scopeReady || blocked("create", null);
   const detailLocked = locked || !scopeReady || (detail.value ? blocked("change", detail.value.id) : false);
-  const select = (id: string) => {
+  const select = (id: string, trigger?: HTMLButtonElement) => {
     if (locked || mutation.current || !sessionActive()) return;
-    revealDialog();
+    revealDialog(trigger);
     detailRequest.current?.abort(); detailRequest.current = null; selected.current = id;
     setDetail(read(null)); setEditor(null); setNotice(""); setError(operationRef.current.length ? unknownMessage : "");
     if (freshnessRef.current.has(id)) void loadCurrent(id, true);
     else void loadDetail(id, true);
   };
-  const open = (mode: "create" | "change") => {
-    if ((mode === "create" ? createLocked : detailLocked) || mutation.current || !sessionActive()) return;
-    revealDialog();
+  const open = (mode: "create" | "change", trigger?: HTMLButtonElement) => {
+    // A client handoff may display the editor while scope/recovery locks still prevent writes.
+    if ((trigger ? locked : mode === "create" ? createLocked : detailLocked) || mutation.current || !sessionActive()) return;
+    revealDialog(trigger ?? (mode === "create" ? createButton.current ?? undefined : undefined));
     setError(operationRef.current.length ? unknownMessage : ""); setNotice(""); setEditor(mode); void loadCatalog();
   };
+  const target = clientFlow?.target;
+  useEffect(() => {
+    if (!target) return;
+    if ("appointmentId" in target) select(target.appointmentId, target.trigger);
+    else open("create", target.trigger);
+  }, [target]);
+  const dismissClientFlow = () => {
+    detailRequest.current?.abort(); detailRequest.current = null; selected.current = null;
+    setDetail(read(null)); setEditor(null); setDialogVisible(false);
+    clientFlow?.close();
+  };
   const cancelEditor = () => {
+    if (clientFlow && editor === "create") return dismissClientFlow();
     setEditor(null); setError(operationRef.current.length ? unknownMessage : "");
     if (editor === "create") setDialogVisible(false);
     scheduleFocus(editor === "create" ? "create" : "detail");
   };
+  const outsideDismiss = useOutsideDismiss(() => closeDialog());
   const closeDialog = () => {
     // Hiding must never interrupt a write or resolve an operation intent.
     if (pending || mutation.current || dialog.current?.querySelector('[aria-busy="true"]')) return;
+    if (clientFlow) return dismissClientFlow();
     if (editor && !(editor === "create" ? createLocked : detailLocked) && sessionActive()) cancelEditor();
     setDialogVisible(false);
   };
-  const days = view === "month" ? monthDays(anchor) : view === "week" ? Array.from({ length: 7 }, (_, index) => addDays(first, index)) : [today];
-  const renderRows = (date: string) => {
-    const rows = calendarRows(list.value, date);
-    return <section className="turnos-day" key={date} aria-label={dateLabel(date)}><h2>{dateLabel(date)}</h2>
-      {!rows.length ? <p className="turnos-day__empty">No hay turnos para esta fecha.</p> : <ul className="turnos-list" aria-label={`Turnos ${date}`}>
-        {rows.map(row => <li key={row.id}><button disabled={locked} onClick={() => select(row.id)} aria-pressed={selected.current === row.id} aria-haspopup="dialog" aria-controls="turnos-dialog">
-          <time dateTime={row.startsAt}>{turnoTime(row.startMs)}</time>
-          <span className="turnos-list__person"><strong>{row.client.firstName} {row.client.lastName}</strong><span>{row.terms.serviceName}</span></span><span className="turnos-state" data-state={row.state}>{turnoStates[row.state]}</span>
-        </button></li>)}
-      </ul>}
-    </section>;
-  };
   const feedback = <div className="turnos-feedback">
-    {notice && <p role="status">{notice}</p>}{error && <p role="alert">{error}</p>}
-    {!scopeReady && !disabled && <button disabled={pending} onClick={() => void loadScope()}>Actualizar autorización</button>}
+    {notice && notice !== "Turno guardado" && <p role="status">{notice}</p>}
+    {error && (!dialogVisible || !editor || catalog.pending || catalog.error) && <PanelInlineError message={error} />}
+    {!scopeReady && !disabled && (!floating || error) && <button disabled={pending} onClick={() => void loadScope()}>Actualizar autorización</button>}
     {Object.entries(freshness).map(([id, state]) => <section className="turnos-recovery" key={id} aria-label="Estado actual del turno">
-      <p role={state === "failed" ? "alert" : "status"}>{state === "failed"
-        ? "No pudimos verificar el estado actual del turno. La operación se guardó; los datos visibles pueden no estar actualizados. Solo este turno permanece protegido."
-        : "Verificando el estado actual del turno. La recepción histórica no reemplaza los datos actuales."}</p>
+      {state === "failed"
+        ? <PanelInlineError message="No pudimos verificar el estado actual del turno. La operación se guardó; los datos visibles pueden no estar actualizados. Solo este turno permanece protegido." />
+        : <p role="status">Verificando el estado actual del turno. La recepción histórica no reemplaza los datos actuales.</p>}
       <button disabled={locked || state === "pending"} onClick={() => void loadCurrent(id, true)}>Actualizar estado actual</button>
     </section>)}
     {operations.map(op => <section className="turnos-recovery" key={op.key} aria-label="Recuperar solicitud de turno">
@@ -346,35 +434,41 @@ export function TurnosScreen({ disabled, sessionActive }: { disabled: boolean; s
           <button disabled={locked || reading.includes(op.key)} onClick={() => setFence(null)}>Volver sin cancelar solicitud</button></>}
     </section>)}
     </div>;
-  return <main className="turnos-screen" aria-labelledby="turnos-title">
-    <header className="turnos-heading"><h1 id="turnos-title" ref={heading} tabIndex={-1}>Turnos</h1>
-      <button className="turnos-primary" ref={createButton} disabled={createLocked} onClick={() => open("create")} aria-haspopup="dialog" aria-controls="turnos-dialog">Nuevo turno</button></header>
-    <div className="turnos-controls">
-    <div className="turnos-views" role="group" aria-label="Vista de turnos">
-      {([ ["today", "Hoy"], ["week", "Semana"], ["month", "Mes"] ] as const).map(([value, label]) =>
-        <button key={value} disabled={locked} aria-pressed={view === value} onClick={() => { setView(value); setAnchor(today); setDay(today); }}>{label}</button>)}
-    </div>
-    {view !== "today" && <div className="turnos-range" role="group" aria-label="Navegar calendario">
-      <button disabled={locked} onClick={() => { const next = view === "week" ? addDays(anchor, -7) : shiftMonth(anchor, -1); setAnchor(next); setDay(next); }}>Anterior</button>
-      <button disabled={locked} onClick={() => { setAnchor(today); setDay(today); }}>Volver a hoy</button>
-      <button disabled={locked} onClick={() => { const next = view === "week" ? addDays(anchor, 7) : shiftMonth(anchor, 1); setAnchor(next); setDay(next); }}>Siguiente</button>
-    </div>}
-    <button className="turnos-refresh" disabled={locked || list.pending} onClick={() => void loadList()}>Actualizar turnos</button>
-    </div>
-    {!dialogVisible && feedback}
-    <div className="turnos-agenda">
-    {list.pending && <p role="status">Actualizando turnos…</p>}
-    {list.error && <p role="alert">{notice ? "El turno se guardó, pero no pudimos actualizar la lista." : list.error}</p>}
-    {view === "month" && <div className="turnos-month" role="group" aria-label="Días del mes">{days.map(date =>
-      <button key={date} disabled={locked} aria-pressed={day === date} onClick={() => setDay(date)}>
-        <span>{Number(date.slice(-2))}</span><span>{calendarRows(list.value, date).length} turnos</span>
-      </button>)}</div>}
-    {view === "month" ? renderRows(day) : days.map(renderRows)}
-    </div>
+  const listError = list.error && (notice ? "El turno se guardó, pero no pudimos actualizar la lista." : list.error);
+  const refreshAgenda = () => { void loadList(); void loadSchedule(); };
+  const Surface = embedded ? "div" : "main";
+  return <Surface className={floating ? "turnos-screen turnos-floating" : embedded ? "turnos-screen" : home ? "turnos-screen business-home-screen" : "turnos-screen agenda-screen"}
+    aria-labelledby={embedded ? undefined : "turnos-title"}>
+    {(!embedded || floating) && <button type="button" className="turnos-fab" ref={createButton}
+      aria-disabled={createLocked} onClick={() => open("create")} aria-haspopup="dialog" aria-controls="turnos-dialog">
+      <span className="turnos-fab__icon"><AgendaIcon name="plus" /></span><span>Nuevo turno</span>
+    </button>}
+    {floating && !dialogVisible && feedback}
+    {!embedded && <><header className="turnos-heading"><h1 id="turnos-title" ref={heading} tabIndex={-1}>{home ? "Inicio" : "Agenda"}</h1></header>
+    {home && !dialogVisible && feedback}
+    {home ? <BusinessHome today={today} now={now} rows={list.value}
+      pending={list.pending} stale={loadedHomeDate !== today}
+      error={list.error && (notice ? "El turno se guardó, pero no pudimos actualizar la lista." : list.error)}
+      locked={locked} select={select} refresh={() => void loadList()} /> : <>
+      {!dialogVisible && <div className="ag-feedback">{feedback}</div>}
+      {list.pending && <div className="ag-loading"><p role="status">Actualizando turnos…</p></div>}
+      {(listError || schedule.error) && <div className="ag-feedback">
+        {listError && <p role="alert">{listError}</p>}
+        {schedule.error && <p role="alert">No pudimos consultar los horarios y recursos. {schedule.error}</p>}
+        <button type="button" disabled={locked || list.pending || schedule.pending} onClick={refreshAgenda}>Actualizar turnos</button>
+      </div>}
+      <AgendaViewContent date={agendaDate} today={today} {...{ view, setDate, setView, resource, setResource, select, locked, listReady }}
+        rows={list.value} schedule={schedule.error ? null : schedule.value}
+        pending={list.pending || schedule.pending} availabilityReady={!schedule.pending} />
+      {!listError && !schedule.error && <button type="button" className="ag-refresh" disabled={locked || list.pending || schedule.pending} onClick={refreshAgenda}>Actualizar turnos</button>}
+    </>}</>}
     <dialog id="turnos-dialog" className="turnos-dialog" ref={dialog} aria-labelledby="turnos-dialog-title"
+      {...outsideDismiss}
       onCancel={event => { event.preventDefault(); closeDialog(); }}>
     <header className="turnos-dialog__header">
-      <h2 id="turnos-dialog-title" ref={dialogHeading} tabIndex={-1}>{editor === "create" ? "Nuevo turno" : editor === "change" ? "Modificar turno" : "Detalle del turno"}</h2>
+      <div><h2 id="turnos-dialog-title" ref={dialogHeading} tabIndex={-1}>{editor === "create" ? "Nuevo turno" : editor === "change" ? "Modificar turno" : "Detalle del turno"}</h2>
+        {editor && <p>{editor === "create" ? "Cliente, servicio y disponibilidad en una sola vista." : "Modificá el servicio, el recurso o el horario de la reserva."}</p>}
+      </div>
       <button id="turnos-dialog-close" type="button" aria-label="Cerrar ventana de turno" disabled={pending} onClick={closeDialog}>
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
       </button>
@@ -383,19 +477,23 @@ export function TurnosScreen({ disabled, sessionActive }: { disabled: boolean; s
     {dialogVisible && feedback}
     <div hidden={!!editor}>
     {detail.pending && <p role="status">Actualizando detalle…</p>}
-    {detail.error && <div><p role="alert">{notice ? "El turno se guardó, pero no pudimos actualizar el detalle." : detail.error}</p>
+    {detail.error && <div><PanelInlineError message={notice ? "El turno se guardó, pero no pudimos actualizar el detalle." : detail.error} />
       <button disabled={locked || detail.pending} onClick={() => void loadDetail()}>Actualizar detalle</button></div>}
-    {detail.value && <TurnosDetail key={detail.value.id} row={detail.value} now={now} disabled={detailLocked} mutate={mutate} change={() => open("change")} error={error} />}
+    {detail.value && <TurnosDetail key={detail.value.id} row={detail.value} now={now} disabled={detailLocked} mutate={mutate} change={() => open("change")} />}
     </div>
-    {editor && <section className="turnos-editor" aria-label={editor === "create" ? "Nuevo turno" : "Modificar turno"}>
+    {editor && <section aria-label={editor === "create" ? "Nuevo turno" : "Modificar turno"}>
       {catalog.pending && <p role="status">Cargando servicios y recursos…</p>}
-      {catalog.error && <div><p role="alert">{catalog.error}</p><button disabled={locked} onClick={() => void loadCatalog()}>Actualizar catálogo</button></div>}
+      {catalog.error && <div><PanelInlineError message={catalog.error} /><button disabled={locked} onClick={() => void loadCatalog()}>Actualizar catálogo</button></div>}
       {!catalog.pending && !catalog.error && <TurnosBookingForm key={`${editor}:${detail.value?.id ?? "new"}`}
-        appointment={editor === "change" ? detail.value : null} services={catalog.value.services} resources={catalog.value.resources}
+        appointment={editor === "change" ? detail.value : null}
+        initialClient={editor === "create" && target && "client" in target ? target.client : null}
+        services={catalog.value.services} resources={catalog.value.resources}
         disabled={editor === "create" ? createLocked : detailLocked} sessionActive={sessionActive} now={now} mutate={mutate}
-        initialFocus={false} error={error} cancel={cancelEditor} />}
+        error={error} onInvalid={message => showToast(message, true)} cancel={cancelEditor} />}
     </section>}
     </div>
     </dialog>
-  </main>;
+    {!disabled && toast && <PanelToast key={toast.revision} message={toast.message} error={toast.error}
+      dialog={dialogVisible ? dialog.current : null} />}
+  </Surface>;
 }

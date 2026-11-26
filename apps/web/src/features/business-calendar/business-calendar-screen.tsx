@@ -1,15 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { BusinessCalendar, BusinessClosureRequest, WeeklySchedule } from "../../api/api-client";
 import { BusinessClosuresSection, type ClosureReadState } from "./business-closures-section";
-import { ControlledWeeklyScheduleEditor, formatScheduleClock, scheduleDays,
-  serializeScheduleDraft, type WeeklyScheduleDraft } from "../../components/weekly-schedule-editor";
-
-const weekdays = [
-  [1, "Lunes"], [2, "Martes"], [3, "Miércoles"], [4, "Jueves"],
-  [5, "Viernes"], [6, "Sábado"], [0, "Domingo"],
-] as const;
-const time = (minute: number) =>
-  `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+import { formatScheduleClock, scheduleDays, serializeScheduleDraft, type ScheduleDay,
+  type WeeklyScheduleDraft } from "../../components/weekly-schedule-editor";
+import { CalendarDialog, CalendarIcon } from "./calendar-dialog";
+import "./business-calendar.css";
 
 export function BusinessCalendarScreen({ weeklySchedule, pending, error, notice, warning,
   saveAction, retryAction, clearFeedback, closures, retryClosures, createClosure, updateClosure, deleteClosure,
@@ -30,7 +25,9 @@ export function BusinessCalendarScreen({ weeklySchedule, pending, error, notice,
   const nextId = useRef(0);
   const requestPending = useRef(false);
   const opener = useRef<HTMLButtonElement>(null);
+  const activeTab = useRef<HTMLButtonElement>(null);
   const form = useRef<HTMLFormElement>(null);
+  const [day, setDay] = useState<ScheduleDay>(1);
   const saveButton = useRef<HTMLButtonElement>(null);
   const focusGeneration = useRef(0);
   const [failedSaveFocus, setFailedSaveFocus] = useState<{ generation: number; form: HTMLFormElement } | null>(null);
@@ -48,7 +45,7 @@ export function BusinessCalendarScreen({ weeklySchedule, pending, error, notice,
     };
   }, []);
   useEffect(() => {
-    if (editing) form.current?.querySelector<HTMLElement>("input, button")?.focus();
+    if (editing) activeTab.current?.focus({ preventScroll: true });
     else if (restoreFocus.current) {
       restoreFocus.current = false;
       opener.current?.focus();
@@ -62,8 +59,10 @@ export function BusinessCalendarScreen({ weeklySchedule, pending, error, notice,
       failedSaveFocus.generation === focusGeneration.current && failedSaveFocus.form === form.current &&
       target?.isConnected && !target.disabled && failedSaveFocus.form.contains(target)) target.focus();
   }, [failedSaveFocus, pending, editing, error]);
-  const begin = () => {
+  const begin = (trigger: HTMLButtonElement, initialDay: ScheduleDay = 1) => {
     if (pending || requestPending.current) return;
+    opener.current = trigger;
+    setDay(initialDay);
     invalidateSaveFocus();
     const hydrated: WeeklyScheduleDraft = {};
     for (const [day] of scheduleDays) hydrated[day] = (weeklySchedule?.[day] ?? []).map(span => ({
@@ -76,6 +75,11 @@ export function BusinessCalendarScreen({ weeklySchedule, pending, error, notice,
     setEditing(true);
   };
   const close = () => {
+    if (requestPending.current) return;
+    clearFeedback();
+    finish();
+  };
+  const finish = () => {
     invalidateSaveFocus();
     restoreFocus.current = true;
     setEditing(false);
@@ -90,6 +94,7 @@ export function BusinessCalendarScreen({ weeklySchedule, pending, error, notice,
     const generation = focusGeneration.current;
     const serialized = serializeScheduleDraft(draft);
     if ("invalidDay" in serialized) {
+      setDay(serialized.invalidDay);
       setValidationError(`Usá horas HH:mm distintas para ${scheduleDays.find(([day]) => day === serialized.invalidDay)![1]}.`);
       return;
     }
@@ -97,7 +102,7 @@ export function BusinessCalendarScreen({ weeklySchedule, pending, error, notice,
     setValidationError("");
     try {
       if (await saveAction(edited ? serialized : weeklySchedule ?? {})) {
-        if (alive.current) close();
+        if (alive.current) finish();
       } else if (alive.current && requestPending.current && generation === focusGeneration.current &&
         submittedForm === form.current && submittedForm.isConnected) {
         // Failure keeps the form open; focus only after React enables the submitted Save.
@@ -111,63 +116,99 @@ export function BusinessCalendarScreen({ weeklySchedule, pending, error, notice,
     requestPending.current = true;
     try { await retryAction(); } finally { requestPending.current = false; }
   };
-  const allOff = weeklySchedule !== null && weekdays.every(([day]) => !weeklySchedule[day]?.length);
-  return (
-    <main className="services-screen" aria-labelledby="business-calendar-title">
-      <header className="services-header">
-        <h1 id="business-calendar-title">Horario del negocio</h1>
+  const allOff = weeklySchedule !== null && scheduleDays.every(([id]) => !weeklySchedule[id]?.length);
+  const label = scheduleDays.find(([id]) => id === day)![1];
+  const spans = draft[day] ?? [];
+  const updateSpans = (rows: typeof spans) => {
+    if (pending || requestPending.current) return;
+    setDraft({ ...draft, [day]: rows });
+    setEdited(true);
+    setValidationError("");
+  };
+  const changeSpan = (id: number, field: "start" | "end", value: string) =>
+    updateSpans(spans.map(span => span.id === id ? { ...span, [field]: value } : span));
+  return <main className="hours-studio" aria-labelledby="business-calendar-title">
+    <div className="calendar-weekly">
+      <header className="hours-heading">
+        <h1 id="business-calendar-title">Horarios</h1>
+        <button className="hours-primary" type="button" disabled={pending || editing} onClick={event => begin(event.currentTarget)}>
+          <CalendarIcon name="pencil" /> Editar horario
+        </button>
       </header>
-      <div className="calendar-workspace">
-        <div className="calendar-weekly">
-          <div className="calendar-weekly-tools">
-            <button ref={opener} className="calendar-edit" type="button" disabled={pending || editing} onClick={begin}>Editar horario</button>
-          </div>
-      {editing && <form ref={form} className="services-form calendar-weekly-form" aria-label="Editar horario" aria-busy={pending} onSubmit={save}>
-        <ControlledWeeklyScheduleEditor value={draft} disabled={pending}
-          helpText="Sin franjas no habrá atención ese día. Usá HH:mm; 24:00 solo para el fin. Si el fin es anterior al inicio, continúa al día siguiente."
-          onChange={value => {
-            if (pending || requestPending.current) return;
-            const allocated: WeeklyScheduleDraft = {};
-            for (const [day] of scheduleDays) allocated[day] = (value[day] ?? []).map(span =>
-              span.id === -1 ? { ...span, id: nextId.current++ } : span);
-            setDraft(allocated);
-            setEdited(true);
-            setValidationError("");
-          }} />
-        <div className="services-form-actions">
-          <button ref={saveButton} className="calendar-primary" type="submit" disabled={pending}>Guardar horario</button>
-          <button type="button" disabled={pending} onClick={() => {
-            if (!requestPending.current) { clearFeedback(); close(); }
-          }}>Cancelar</button>
-        </div>
-      </form>}
-      {(validationError || error) && <p role="alert">{validationError || error}</p>}
-      {notice && <p role="status">{notice}</p>}
-      {warning && <section className="services-refresh-warning" aria-label="Actualizar horario">
+      {!editing && error && <p className="hours-feedback" role="alert">{error}</p>}
+      {notice && <p className="hours-feedback" role="status">{notice}</p>}
+      {warning && <section className="hours-feedback" aria-label="Actualizar horario">
         <p role="alert">El horario está guardado, pero no se pudo actualizar la vista.</p>
-        <button className="calendar-quiet" type="button" disabled={pending || editing} onClick={() => void retry()}>Actualizar horario</button>
+        <button className="hours-button" type="button" disabled={pending || editing} onClick={() => void retry()}>Actualizar horario</button>
       </section>}
-      <section className="services-empty calendar-saved" aria-label="Horario semanal">
-        {weeklySchedule === null ? <>
-          <h2>Horario sin configurar</h2>
-          <p>Todavía no hay un horario semanal guardado.</p>
-        </> : <>
-          <h2>{allOff ? "Todos los días sin atención" : "Horario semanal guardado"}</h2>
-          {allOff && <p>El horario está guardado sin franjas de atención.</p>}
-          <dl className="resources-week">
-            {weekdays.map(([day, label]) => <div key={day}>
-              <dt>{label}</dt>
-              <dd>{weeklySchedule[day]?.length ? weeklySchedule[day]!.map((span, index) =>
-                <p key={index}>{time(span.startMinute)} – {time(span.endMinute)}{span.endMinute < span.startMinute ? " (día siguiente)" : ""}</p>
-              ) : "Sin atención"}</dd>
-            </div>)}
-          </dl>
+      <section className="hours-week-lines" aria-label="Horario semanal">
+        <h2 className={weeklySchedule && !allOff ? "hours-sr-only" : "hours-feedback"}>
+          {weeklySchedule === null ? "Horario sin configurar" : allOff ? "Todos los días sin atención" : "Horario semanal guardado"}
+        </h2>
+        {weeklySchedule === null ? <p className="hours-feedback">Todavía no hay un horario semanal guardado.</p> : <>
+          <div className="hours-axis" aria-hidden="true"><div className="hours-axis-labels">
+            {[0, 360, 720, 1080, 1440].map(minute => <span key={minute}>{formatScheduleClock(minute)}</span>)}
+          </div></div>
+          {scheduleDays.map(([id, name]) => {
+            const saved = weeklySchedule[id] ?? [];
+            return <button key={id} className={`hours-day-line${saved.length ? "" : " is-closed"}`} type="button"
+              aria-label={`Editar horario de ${name}`} aria-describedby={`hours-day-${id}`} disabled={pending || editing}
+              onClick={event => begin(event.currentTarget, id)}>
+              <span className="hours-day-label"><strong>{name}</strong>{!saved.length && <small>Sin atención</small>}</span>
+              <span className="hours-timeline" aria-hidden="true">{saved.map(({ startMinute, endMinute }, index) =>
+                <i key={index} className="hours-bar" style={{ left: `${100 * startMinute / 1440}%`,
+                  width: `${100 * ((endMinute < startMinute ? 1440 : endMinute) - startMinute) / 1440}%` }} />)}</span>
+              <span className="hours-time-copy" id={`hours-day-${id}`}>{saved.length ? saved.map((span, index) =>
+                <span key={index}>{formatScheduleClock(span.startMinute)} — {formatScheduleClock(span.endMinute)}{span.endMinute < span.startMinute ? " · día siguiente" : ""}</span>) : "Cerrado"}</span>
+              <CalendarIcon name="arrow" />
+            </button>;
+          })}
         </>}
       </section>
-        </div>
-        <BusinessClosuresSection state={closures} retryAction={retryClosures} createAction={createClosure}
-          updateAction={updateClosure} deleteAction={deleteClosure} />
-      </div>
-    </main>
-  );
+      {editing && <CalendarDialog title="Editar horario" icon="clock" pending={pending} onDismiss={close}>
+        <form ref={form} aria-label="Editar horario" aria-busy={pending} onSubmit={save}>
+          <div className="hours-dialog-content">
+            <nav className="hours-tabs" aria-label="Elegir día">
+              {scheduleDays.map(([id, name]) => <button key={id} type="button" className="hours-tab" aria-label={name}
+                ref={day === id ? activeTab : null} aria-pressed={day === id} disabled={pending} onClick={() => setDay(id)}>
+                <span>{name.slice(0, 3)}</span><small>{draft[id]?.length || "—"}</small>
+              </button>)}
+            </nav>
+            <fieldset className="hours-draft" disabled={pending}>
+              <legend className="hours-sr-only">Horario semanal</legend>
+              <div className="hours-editor-topline">
+                <div><h3>{label}</h3><p>{spans.length ? `${spans.length} ${spans.length === 1 ? "franja" : "franjas"} de atención` : "Sin atención"}</p></div>
+                <button type="button" className="hours-editor-add" aria-label={`Agregar franja ${label}`}
+                  onClick={() => updateSpans([...spans, { id: nextId.current++, start: "", end: "" }])}>
+                  <CalendarIcon name="plus" /> Agregar franja
+                </button>
+              </div>
+              <div className="hours-span-list">{spans.length ? spans.map((span, index) => <div key={span.id} className="hours-span-row">
+                <label className="hours-time-field">Desde <input aria-label={`Inicio ${label} ${index + 1}`} placeholder="HH:mm"
+                  value={span.start} onChange={event => changeSpan(span.id, "start", event.target.value)} /></label>
+                <div className="hours-time-field">
+                  <label>Hasta <input aria-label={`Fin ${label} ${index + 1}`} placeholder="HH:mm" value={span.end}
+                    onChange={event => changeSpan(span.id, "end", event.target.value)} /></label>
+                  <label className="hours-end-option"><input type="checkbox" checked={span.end === "24:00"}
+                    onChange={event => changeSpan(span.id, "end", event.target.checked ? "24:00" : "00:00")} /> Termina a las 24:00</label>
+                </div>
+                <button type="button" className="hours-span-remove" aria-label={`Quitar franja ${label} ${index + 1}`}
+                  onClick={() => updateSpans(spans.filter(row => row.id !== span.id))}><CalendarIcon name="trash" /></button>
+              </div>) : <div className="hours-off-message"><strong>Sin franjas de atención</strong><p>Agregá una franja para habilitar este día.</p></div>}</div>
+            </fieldset>
+            <p className="hours-edit-note"><CalendarIcon name="info" />
+              Podés cargar varias franjas por día. Si la hora de fin es anterior a la de inicio, se interpreta como atención hasta el día siguiente. La aplicación valida conflictos con recursos y turnos confirmados al guardar.
+            </p>
+            <div className="hours-error">{(validationError || error) && <p role="alert">{validationError || error}</p>}</div>
+          </div>
+          <footer className="hours-dialog-footer">
+            <button className="hours-button" type="button" disabled={pending} onClick={close}>Cancelar</button>
+            <button ref={saveButton} className="hours-button primary" type="submit" disabled={pending}><CalendarIcon name="check" /> Guardar horario</button>
+          </footer>
+        </form>
+      </CalendarDialog>}
+    </div>
+    <BusinessClosuresSection state={closures} retryAction={retryClosures} createAction={createClosure}
+      updateAction={updateClosure} deleteAction={deleteClosure} />
+  </main>;
 }

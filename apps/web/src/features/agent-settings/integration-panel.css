@@ -1,0 +1,77 @@
+.authenticated-shell__workspace:has(.integration-dialog[open]) > .business-shell__breadcrumb { display: none; }
+
+.integration-dialog {
+  position: fixed;
+  width: min(578px, calc(100% - 48px));
+  max-width: none;
+  max-height: min(780px, calc(100dvh - 48px));
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 70%);
+  border-radius: 27px;
+  background: #fcfaf3;
+  color: #1c2620;
+  box-shadow: 0 35px 85px rgb(8 34 22 / 30%), 0 5px 15px rgb(8 34 22 / 7%);
+  font: 14px/1.45 var(--font-body);
+}
+.integration-dialog, .integration-dialog * { box-sizing: border-box; }
+.integration-dialog[open], .integration-form { display: flex; flex-direction: column; min-height: 0; }
+.integration-dialog::before { content: ""; position: absolute; inset: 0 32px auto; height: 3px; border-radius: 0 0 6px 6px; background: linear-gradient(90deg, #ff6b49 29%, #2e6b4e 29%); }
+.integration-dialog::backdrop { background: rgb(10 31 22 / 56%); backdrop-filter: blur(5px); }
+.integration-dialog {
+  & svg { width: 16px; height: 16px; flex: none; }
+  & .integration-head { display: grid; align-items: center; grid-template-columns: 48px minmax(0, 1fr) 48px; gap: 12px; padding: 30px 32px 22px; flex: none; }
+  & .integration-head h2 { margin: 0; font: 780 26px/1.14 var(--font-body); letter-spacing: -.045em; text-align: center; color: #12372a; }
+  & .integration-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 15px; background: #f9d9cd; color: #a83a1a; }
+  & .integration-icon svg { width: 25px; height: 25px; }
+  & button.integration-close { display: grid; place-items: center; justify-self: end; width: 36px; height: 36px; min-height: 36px; padding: 0; border: 1px solid #e3e9e0; border-radius: 11px; background: #f1f3ec; color: #486251; }
+  & .integration-body { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 0 32px 24px; }
+  & .integration-body > hr { border: 0; height: 1px; margin: 0 0 22px; background: #e6eae1; }
+  & .integration-footer { display: flex; flex: none; justify-content: flex-end; flex-wrap: wrap; gap: 10px; padding: 17px 32px 24px; border-top: 1px solid #e9ede6; }
+  & button.integration-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 42px; padding: 11px 17px; border: 1px solid #dde6da; border-radius: 12px; background: #fffefa; color: #294534; font: 740 13px/1.45 var(--font-body); }
+  & button.integration-primary { background: #12372a; color: #f3eee1; border-color: #12372a; }
+  & button.integration-close:enabled:hover { background: #e3ebdf; color: #173c2d; }
+  & button.integration-button:enabled:hover { background: #f0f5ee; }
+  & button.integration-primary:enabled:hover { background: #21543c; }
+  & button:disabled { opacity: .48; cursor: not-allowed; }
+  & :is(button, textarea):focus-visible { outline: 2px solid #2e6b4e; outline-offset: 2px; }
+  & .integration-feedback:not(:empty) { display: grid; justify-items: start; gap: 8px; margin-block: 12px; }
+  & .integration-feedback p { margin: 0; padding: 8px 12px; border-radius: 10px; background: #dfe9e1; color: #12372a; }
+  & .integration-feedback [role="alert"] { background: #f9e1d8; color: #843118; }
+  & .integration-field { display: grid; gap: 8px; margin-bottom: 20px; }
+  & .integration-field label { font-size: 13px; font-weight: 760; color: #254532; }
+  & .integration-field small, & .integration-switch small { font-size: 11px; color: #536759; line-height: 1.35; }
+  & .integration-field textarea { resize: vertical; width: 100%; min-height: 100px; border: 1px solid #dce4d9; border-radius: 14px; background: #fffefa; color: inherit; font: 13px/1.45 var(--font-body); padding: 13px 15px; }
+  & .integration-field textarea:focus { outline: none; border-color: #2e6b4e; box-shadow: 0 0 0 3px #dfe9e1; }
+  & .integration-field textarea[rows="4"] { min-height: 130px; }
+  @media (prefers-reduced-motion: no-preference) {
+    & button.integration-close { transition: background .18s, color .18s; }
+    & button.integration-button { transition: background .16s, transform .16s; }
+    & .integration-field textarea { transition: border-color .16s, box-shadow .16s; }
+    & .integration-track { transition: background .18s; }
+    & .integration-track::before { transition: transform .18s; }
+  }
+  & .integration-limit { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; white-space: nowrap; }
+  & button { cursor: pointer; }
+  & .integration-switch { display: flex; align-items: center; justify-content: space-between; gap: 14px; border-radius: 16px; background: #f0f4ec; padding: 14px 15px; margin-bottom: 24px; }
+  & .integration-switch-copy { display: grid; gap: 2px; }
+  & .integration-switch-copy strong { font-size: 13px; font-weight: 760; color: #224631; }
+  & .integration-toggle { cursor: pointer; position: relative; display: inline-flex; align-items: center; gap: 10px; padding: 5px 2px 5px 12px; color: #214a34; font-size: 12px; font-weight: 760; }
+  & .integration-toggle input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; margin: 0; cursor: pointer; }
+  & .integration-track { flex: none; width: 42px; height: 24px; padding: 3px; border-radius: 99px; background: #9aa99c; }
+  & .integration-track::before { content: ""; display: block; width: 18px; height: 18px; border-radius: 50%; background: #fffdf9; }
+  & input:checked ~ .integration-track { background: #2e6b4e; }
+  & input:checked ~ .integration-track::before { transform: translateX(18px); }
+  & input:focus-visible ~ .integration-track { outline: 2px solid #2e6b4e; outline-offset: 2px; }
+}
+@media (max-width: 640px) {
+  .integration-dialog { inset: auto 0 10px; width: calc(100% - 20px); max-height: calc(100dvh - 20px); margin: auto; border-radius: 23px 23px 17px 17px; }
+  .integration-dialog {
+    & .integration-head { grid-template-columns: 42px minmax(0, 1fr) 42px; gap: 10px; padding: 25px 21px 19px; }
+    & .integration-head h2 { font-size: clamp(20px, 5.35vw, 23px); line-height: 1.17; }
+    & .integration-icon { width: 42px; height: 42px; border-radius: 13px; }
+    & .integration-body { padding: 0 21px 20px; }
+    & .integration-switch-copy strong { max-width: 130px; }
+    & .integration-footer { padding: 14px 21px 21px; }
+  }
+}

@@ -1,0 +1,157 @@
+.authenticated-shell__workspace:has(.hours-studio) { background: #f6f5ef; }
+.authenticated-shell__content:has(> .hours-studio) { padding-bottom: 0; }
+.authenticated-shell__content > .hours-studio {
+  --hours-forest: #12372a;
+  max-width: 1274px;
+  margin-inline: auto;
+  padding: 47px 52px 80px;
+  color: #1c2620;
+  font: 14px/1.45 var(--panel-font);
+
+  & :is(h1, h2, h3, p, ul, fieldset) { margin: 0; }
+  & :is(h1, h2, h3) { font-family: inherit; line-height: 1.13; }
+  & :is(svg, small) { flex: none; }
+  & svg { display: block; width: 17px; height: 17px; }
+  & button { font: inherit; box-shadow: none; }
+  & button:disabled { opacity: .55; cursor: not-allowed; }
+  & :is(button, input, select):focus-visible { outline: 2px solid #bc482e; outline-offset: 2px; }
+  & .hours-day-line:focus-visible { outline-offset: -3px; }
+  & .hours-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  & .hours-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 27px; }
+  & .hours-heading h1 { font-size: 34px; font-weight: 770; letter-spacing: -.05em; color: var(--hours-forest); }
+  & .hours-primary { display: inline-flex; align-items: center; justify-content: center; gap: 9px; border: 0; background: var(--hours-forest); color: #f3eee1; border-radius: 13px; padding: 12px 17px; font-size: 13px; font-weight: 780; min-height: 44px; }
+  & .hours-primary:hover:not(:disabled) { background: #235a40; }
+  & .hours-week-lines { position: relative; background: #fffdf8; border: 1px solid #e2e8df; border-radius: 22px; overflow: hidden; }
+  & :is(.hours-axis, .hours-day-line) { display: grid; grid-template-columns: 118px minmax(0, 1fr) 235px 22px; align-items: center; gap: 18px; padding-inline: 23px; }
+  & .hours-axis { padding-block: 19px 9px; }
+  & .hours-axis-labels { grid-column: 2; display: flex; justify-content: space-between; color: #687c6d; font-size: 10px; font-weight: 750; letter-spacing: .04em; }
+  & .hours-day-line { width: 100%; min-height: 76px; padding-block: 13px; border: 0; border-radius: 0; border-bottom: 1px solid #ebefea; background: transparent; color: inherit; text-align: left; }
+  & .hours-day-line:last-child { border-bottom: 0; }
+  & .hours-day-line:hover:not(:disabled) { background: #f7f9f5; }
+  & .hours-day-label { display: grid; gap: 3px; }
+  & .hours-day-label strong { font-size: 14px; font-weight: 770; }
+  & .hours-day-label small { font-size: 11px; color: #647768; }
+  & .hours-day-line.is-closed :is(.hours-day-label strong, .hours-time-copy) { color: #647768; }
+  & .hours-timeline { position: relative; height: 32px; border-radius: 9px; background: repeating-linear-gradient(90deg, transparent, transparent calc(25% - 1px), #e8ede7 calc(25% - 1px), #e8ede7 25%), #f5f8f3; overflow: hidden; }
+  & .is-closed .hours-timeline { background: #f5f6f2; border: 1px dashed #e1e7df; }
+  & .hours-bar { position: absolute; top: 7px; height: 18px; min-width: 4px; border-radius: 6px; background: #2e6b4e; box-shadow: inset 0 -2px 0 rgb(0 0 0 / 7%); }
+  & .hours-bar:nth-child(even) { background: #6c9f79; }
+  & .hours-time-copy { display: grid; gap: 5px; color: #405f4a; font-size: 12px; font-weight: 680; font-variant-numeric: tabular-nums; }
+  & .hours-day-line > svg { color: #718875; }
+  & .hours-feedback { padding: 12px 16px; color: #405f4a; }
+  & [role="alert"] { color: #9c3920; }
+  & .hours-closures { margin-top: 30px; }
+  & .hours-closures-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  & .hours-closures-top h2 { font-size: 21px; letter-spacing: -.04em; color: var(--hours-forest); }
+  & .hours-closure-add { display: inline-flex; align-items: center; gap: 8px; padding: 11px 14px; min-height: 0; border: 1px solid #dce5da; border-radius: 12px; background: #fdfaf3; color: #194832; font-size: 13px; font-weight: 760; }
+  & .hours-closure-add:hover:not(:disabled) { background: #eaf2e8; }
+  & .hours-closure-add svg { width: 16px; height: 16px; }
+  & .hours-closure-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; padding: 0; list-style: none; }
+  & .hours-closure-item { display: flex; align-items: center; gap: 13px; width: 100%; height: 100%; padding: 16px; border: 1px solid #e3e9e0; border-radius: 17px; background: #fffdfa; color: inherit; text-align: left; }
+  & .hours-closure-item:hover:not(:disabled) { border-color: #b8c9b9; background: #f8faf5; }
+  & .hours-closure-item > svg { color: #718875; }
+  & .hours-closure-icon { display: grid; place-items: center; width: 44px; height: 44px; flex: none; border-radius: 13px; background: #f9d9cd; color: #9c3b20; }
+  & .hours-closure-icon svg { width: 19px; height: 19px; }
+  & .hours-closure-info { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  & .hours-closure-info strong { display: block; font-weight: 760; font-size: 14px; }
+  & .hours-closure-info small { display: block; color: #647768; margin-top: 4px; font-size: 11px; }
+  & .hours-empty-note { padding: 17px; border-radius: 15px; background: #f7f9f5; color: #647768; font-size: 13px; }
+  & .hours-closure-refresh { padding: 8px 0; border: 0; background: transparent; color: #405f4a; font-size: 12px; text-decoration: underline; }
+  & .hours-closures > :is([role="status"], [role="alert"]) { margin-bottom: 10px; }
+
+  & .hours-editor { width: min(770px, calc(100% - 48px)); max-width: none; max-height: min(780px, calc(100dvh - 48px)); padding: 0; overflow: hidden; border: 1px solid rgb(255 255 255 / 70%); border-radius: 27px; background: #fcfaf3; color: inherit; box-shadow: 0 35px 85px rgb(8 34 22 / 30%), 0 5px 15px rgb(8 34 22 / 7%); }
+  & .hours-editor[open], & .hours-editor form { display: flex; flex-direction: column; min-height: 0; }
+  & .hours-editor::backdrop { background: rgb(10 31 22 / 56%); backdrop-filter: blur(5px); }
+  & .hours-editor::before { content: ""; position: absolute; inset: 0 32px auto; height: 3px; border-radius: 0 0 6px 6px; background: linear-gradient(90deg, #ff6b49 29%, #2e6b4e 29%); }
+  & .hours-dialog-head { display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; gap: 12px; align-items: center; padding: 25px 27px 22px; flex: none; }
+  & .hours-dialog-head h2 { color: var(--hours-forest); font-size: 26px; font-weight: 780; text-align: center; letter-spacing: -.045em; line-height: 1.14; }
+  & .hours-dialog-icon { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 15px; background: #dfe9e1; color: var(--hours-forest); }
+  & .hours-dialog-icon svg { width: 25px; height: 25px; }
+  & .hours-dialog-close { display: grid; place-items: center; justify-self: end; padding: 0; min-height: 36px; width: 36px; border: 1px solid #e3e9e0; border-radius: 11px; background: #f1f3ec; color: #486251; }
+  & .hours-dialog-close:hover:not(:disabled) { background: #e3ebdf; }
+  & .hours-dialog-content { padding: 0 27px 24px; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+  & .hours-dialog-content::before { content: ""; display: block; height: 1px; background: #e6eae1; margin-bottom: 22px; }
+  & .hours-dialog-footer { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; padding: 15px 27px 22px; border-top: 1px solid #e9ede6; flex: none; }
+  & .hours-button { display: inline-flex; justify-content: center; align-items: center; gap: 8px; min-height: 42px; padding: 11px 17px; border: 1px solid #dde6da; border-radius: 12px; background: #fffefa; color: #294534; font-size: 13px; font-weight: 740; }
+  & .hours-button:hover:not(:disabled) { background: #f0f5ee; }
+  & .hours-button.primary { background: var(--hours-forest); border-color: var(--hours-forest); color: #f3eee1; }
+  & .hours-button.primary:hover:not(:disabled) { background: #21543c; }
+  & .hours-button svg { width: 16px; height: 16px; }
+  & .hours-tabs { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; margin-bottom: 22px; }
+  & .hours-tab { display: grid; justify-items: center; gap: 6px; border: 1px solid #e2e9df; background: #fafbf8; border-radius: 13px; padding: 11px 3px; color: #536b59; }
+  & .hours-tab span { font-size: 12px; font-weight: 750; }
+  & .hours-tab small { color: #637b69; font-size: 10px; font-variant-numeric: tabular-nums; }
+  & .hours-tab[aria-pressed="true"] { background: var(--hours-forest); border-color: var(--hours-forest); color: #f3eee1; }
+  & .hours-tab[aria-pressed="true"] small { color: #c9decf; }
+  & .hours-draft { min-width: 0; border: 0; padding: 0; }
+  & .hours-editor-topline { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 13px; }
+  & .hours-editor-topline h3 { color: var(--hours-forest); font-size: 18px; letter-spacing: -.03em; }
+  & .hours-editor-topline p { color: #647569; font-size: 12px; margin-top: 3px; }
+  & .hours-editor-add { display: inline-flex; align-items: center; gap: 6px; min-height: 0; border: 1px solid #dce6da; border-radius: 10px; padding: 10px 13px; background: #fffdfa; color: #22523a; font-size: 12px; font-weight: 760; }
+  & .hours-editor-add svg { width: 15px; height: 15px; }
+  & .hours-span-list { display: grid; gap: 10px; }
+  & .hours-span-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)) 35px; gap: 12px; align-items: start; padding: 14px; border: 1px solid #e6ece4; border-radius: 15px; background: #f8faf6; }
+  & .hours-time-field, & .hours-time-field > label { display: grid; gap: 7px; min-width: 0; font-size: 11px; font-weight: 750; color: #627467; }
+  & .hours-time-field input:not([type="checkbox"]) { width: 100%; min-height: 42px; padding: 10px 12px; border: 1px solid #d8e4d8; border-radius: 10px; background: #fffefa; color: #1c2620; font: inherit; font-size: 14px; font-weight: 450; font-variant-numeric: tabular-nums; }
+  & .hours-time-field .hours-end-option { display: flex; align-items: center; margin-top: 3px; }
+  & .hours-end-option input { flex: none; margin: 3px 3px 3px 4px; accent-color: #2e6b4e; }
+  & .hours-span-remove { display: grid; place-items: center; width: 35px; min-height: 35px; padding: 0; margin-top: 20px; border: 1px solid #e7ded8; border-radius: 10px; color: #a54b31; background: #fffdfa; }
+  & .hours-off-message { display: grid; place-items: center; text-align: center; gap: 5px; padding: 25px 15px; border: 1px dashed #dce7db; border-radius: 15px; background: #f7f9f5; color: #486451; }
+  & .hours-off-message p { font-size: 12px; }
+  & .hours-edit-note { display: flex; align-items: flex-start; gap: 8px; color: #647569; font-size: 11px; line-height: 1.5; margin-top: 17px; }
+  & .hours-edit-note svg { width: 15px; height: 15px; color: #2e6b4e; margin-top: 1px; }
+  & .hours-error { color: #9c3920; font-size: 12px; font-weight: 720; margin-top: 12px; }
+  & :is(.hours-closure-fields, .hours-confirmation) { display: grid; gap: 16px; min-height: 0; }
+  & .hours-confirmation { display: flex; flex-direction: column; gap: 0; }
+  & .hours-confirmation h3 { margin-bottom: 8px; color: var(--hours-forest); }
+  & .hours-button.danger { color: #9c3920; border-color: #edc1b0; }
+  & .hours-field { display: grid; gap: 8px; min-width: 0; font-size: 13px; font-weight: 760; color: #254532; }
+  & .hours-field :is(input, select) { width: 100%; min-width: 0; min-height: 47px; padding: 9px 12px; border: 1px solid #d8e3d8; border-radius: 11px; background: #fffefa; color: #1c2620; font: inherit; font-size: 14px; font-weight: 400; }
+  & .hours-closure-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  & .hours-closure-endpoint { display: contents; }
+  & .hours-ambiguity { grid-column: 1 / -1; min-width: 0; border: 1px solid #d8e3d8; border-radius: 11px; padding: 8px; }
+  & .hours-ambiguity label { display: flex; align-items: start; gap: 6px; padding: 4px 0; font-size: 12px; }
+  & .hours-mini-note { margin-top: 14px; color: #647768; font-size: 11px; }
+  & .hours-closure-delete { margin-inline-end: auto; padding: 10px 4px; border: 0; background: transparent; color: #a33d28; font-size: 12px; font-weight: 730; }
+}
+
+@media (max-width: 1000px) {
+  .authenticated-shell__content > .hours-studio :is(.hours-axis, .hours-day-line) { grid-template-columns: 100px minmax(0, 1fr) 205px 16px; gap: 10px; padding-inline: 16px; }
+}
+@media (max-width: 960px) { .authenticated-shell__content > .hours-studio { padding-inline: 24px; } }
+@media (max-width: 720px) {
+  .authenticated-shell__content > .hours-studio {
+    & :is(.hours-axis, .hours-timeline) { display: none; }
+    & .hours-day-line { grid-template-columns: 96px minmax(0, 1fr) 16px; min-height: 66px; }
+    & .hours-closure-list { grid-template-columns: 1fr; }
+    & .hours-day-label strong { font-size: 13px; }
+    & .hours-dialog-head { padding: 25px 20px 20px; }
+    & .hours-dialog-content { padding: 0 20px 18px; }
+    & .hours-dialog-footer { padding: 15px 20px 22px; }
+    & .hours-tabs { gap: 4px; }
+    & .hours-tab { padding: 10px 2px; }
+    & .hours-tab span { font-size: 10px; }
+    & .hours-tab small { font-size: 9px; }
+  }
+}
+@media (max-width: 640px) {
+  .authenticated-shell__content > .hours-studio {
+    padding: 21.5px 14px 80px;
+    & .hours-editor { inset: auto 0 10px; margin-block: 0; width: calc(100% - 20px); max-height: calc(100dvh - 20px); border-radius: 23px 23px 17px 17px; }
+    & .hours-dialog-head { grid-template-columns: 42px minmax(0, 1fr) 42px; gap: 10px; }
+    & .hours-dialog-head h2 { font-size: clamp(20px, 5.35vw, 23px); line-height: 1.17; }
+    & .hours-dialog-icon { width: 42px; height: 42px; border-radius: 13px; }
+  }
+}
+@media (max-width: 450px) {
+  .authenticated-shell__content > .hours-studio {
+    & .hours-heading h1 { font-size: 30px; }
+    & .hours-span-row { grid-template-columns: repeat(2, minmax(0, 1fr)) 30px; gap: 7px; padding: 10px; }
+    & .hours-time-field input:not([type="checkbox"]) { padding: 7px 4px; font-size: 12px; }
+    & .hours-span-remove { width: 30px; min-height: 34px; }
+    & .hours-editor-topline h3 { font-size: 16px; }
+    & .hours-editor-add { font-size: 11px; padding: 9px; }
+    & .hours-closure-pair { grid-template-columns: minmax(0, 1fr); }
+    & .hours-closure-delete { padding-inline: 0; }
+  }
+}

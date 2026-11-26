@@ -1,5 +1,5 @@
 @font-face {
-  font-family: "Source Sans 3";
+  font-family: "AgendIA Legacy Sans";
   src: url("/fonts/SourceSans3.ttf") format("truetype");
   font-weight: 200 900;
   font-style: normal;
@@ -7,7 +7,7 @@
 }
 
 @font-face {
-  font-family: "JetBrains Mono";
+  font-family: "AgendIA Legacy Mono";
   src: url("/fonts/JetBrainsMono.ttf") format("truetype");
   font-weight: 100 800;
   font-style: normal;
@@ -43,10 +43,10 @@
   --danger: #b33a1f;
   --danger-soft: #f3d9d3;
   --focus: #a83a1a;
-  --font-body: "Source Sans 3", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-display: "Source Sans 3", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-body: "AgendIA Legacy Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: var(--font-body);
   --font-logo: Bricolage, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+  --font-mono: "AgendIA Legacy Mono", ui-monospace, Consolas, monospace;
   /* Compatibility names still used by existing sections; no near-color palette. */
   --ink-secondary: var(--ink-2);
   --surface-secondary: var(--surface);
@@ -60,6 +60,32 @@
 body {
   margin: 0;
   font-weight: 400;
+}
+
+/* The standalone panel names Source Sans 3 without loading it. Keep the
+   bundled faces under private aliases so the public login still loads them. */
+:is(.authenticated-shell, .adm-shell) {
+  --panel-font: "Source Sans 3", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-body: var(--panel-font);
+  --font-display: var(--panel-font);
+  --font-mono: var(--panel-font);
+  font: 14px/1.45 var(--panel-font);
+}
+
+@keyframes panel-float-in {
+  from { opacity: 0; transform: translateY(18px) scale(.965); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes panel-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: no-preference) {
+  :is(.authenticated-shell, .adm-shell) dialog:modal,
+  .business-shell__header details[open] .business-shell__drawer {
+    animation: panel-float-in .25s cubic-bezier(.2,.84,.27,1) both;
+  }
+  :is(.authenticated-shell, .adm-shell) dialog:modal::backdrop,
+  .business-shell__header details[open] .business-shell__scrim {
+    animation: panel-backdrop-in .2s ease both;
+  }
 }
 
 h1,
@@ -656,9 +682,41 @@ main.login-frame {
   align-self: flex-start;
 }
 
-.authenticated-terminal[data-state="loading"] {
-  align-items: center;
-  text-align: center;
+.panel-destination {
+  width: 100%;
+  max-width: 1284px;
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding: clamp(1.5rem, 4vw, 3.25rem);
+  display: grid;
+  align-content: start;
+  gap: 1.5rem;
+  color: var(--ink);
+}
+
+.panel-destination h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 5vw, 3rem);
+  letter-spacing: -0.05em;
+}
+
+.panel-destination section {
+  border-block-start: 1px solid var(--sand);
+  padding-block-start: 1rem;
+}
+
+.panel-destination section h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.125rem;
+}
+
+.panel-destination section ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: 0.5rem 1rem;
+  margin: 0;
+  padding-inline-start: 1.25rem;
 }
 
 .authenticated-terminal h1 {
@@ -668,24 +726,13 @@ main.login-frame {
   letter-spacing: -0.05em;
 }
 
-.authenticated-terminal [role="alert"],
-.authenticated-terminal [role="status"] {
+.authenticated-terminal [role="alert"] {
   margin: 0;
   border-radius: 0.75rem;
   line-height: 1.55;
-}
-
-.authenticated-terminal [role="alert"] {
   border-left-color: var(--coral-ink);
   background: var(--paper);
   color: var(--coral-ink);
-}
-
-.authenticated-terminal [role="status"] {
-  padding: 1rem;
-  border-left: 0.25rem solid var(--pine);
-  background: var(--paper);
-  color: var(--pine);
 }
 
 .authenticated-terminal__actions {
@@ -822,270 +869,6 @@ main.login-frame {
 
   .authenticated-shell__content table {
     min-width: 48rem;
-  }
-}
-
-/* Profile navigation — horizontal shell, unchanged route controls */
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-}
-
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar {
-  position: static;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 1rem;
-  flex: 0 0 auto;
-  width: 100%;
-  height: auto;
-  min-height: 5.75rem;
-  padding: 0 1.5rem;
-  overflow: visible;
-  background: var(--pine-deep);
-}
-
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar > .brand {
-  --brand-height: 32px;
-  --brand-clearspace: calc(var(--brand-height) * 11 / 12);
-  align-self: center;
-}
-
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__navigation {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 0.25rem;
-  min-width: 0;
-  padding-block: 0.5rem;
-}
-
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__navigation a {
-  flex: 0 0 auto;
-  min-height: 2.75rem;
-  padding: 0.65rem 0.75rem;
-  border: 1px solid transparent;
-  border-radius: 0.375rem;
-  color: var(--paper);
-  line-height: 1.3;
-  white-space: nowrap;
-  transition:
-    background-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1),
-    border-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
-}
-
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__navigation a:hover {
-  border-color: var(--pine);
-  background: var(--pine);
-}
-
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__navigation a[aria-current="page"] {
-  border-color: var(--pine);
-  background: var(--pine);
-  color: var(--white);
-}
-
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar > button {
-  width: auto;
-  min-height: 2.75rem;
-  margin: 0;
-  padding: 0.65rem 1rem;
-  border: 1px solid color-mix(in srgb, var(--pine-soft) 40%, transparent);
-  border-radius: 0.5rem;
-  background: transparent;
-  color: var(--paper);
-  line-height: 1.3;
-  white-space: nowrap;
-  transition: background-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
-}
-
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar > button:hover:not(:disabled) {
-  background: var(--pine);
-}
-
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar a:focus-visible,
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar > button:focus-visible {
-  outline: 2px solid var(--paper);
-  outline-offset: 2px;
-}
-
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar > button:disabled {
-  cursor: wait;
-  opacity: 0.65;
-}
-
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__workspace {
-  flex: 1 0 auto;
-  width: 100%;
-  min-height: 0;
-}
-
-.authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__topbar {
-  display: none;
-}
-
-@media (width < 64rem) {
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar {
-    grid-template-columns: minmax(0, 1fr);
-    padding-inline: 1rem;
-  }
-
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar > .brand {
-    justify-self: start;
-  }
-
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__navigation,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar > button {
-    display: none;
-  }
-
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__topbar {
-    position: absolute;
-    top: 0;
-    right: 1rem;
-    z-index: 10;
-    display: flex;
-    align-items: center;
-    min-height: 5.75rem;
-    padding: 0;
-    border: 0;
-    background: transparent;
-  }
-
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-brand,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__section {
-    display: none;
-  }
-
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) [data-ui="mobile-navigation"] {
-    position: relative;
-    display: block;
-  }
-
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) [data-ui="mobile-navigation"] > summary {
-    display: list-item;
-    min-height: 2.75rem;
-    padding: 0.65rem 0.85rem;
-    border: 1px solid var(--pine);
-    border-radius: 0.5rem;
-    background: var(--pine);
-    color: var(--white);
-    cursor: pointer;
-    font-weight: 650;
-    line-height: 1.3;
-    list-style: disclosure-closed inside;
-    transition: background-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
-  }
-
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) [data-ui="mobile-navigation"] > summary::-webkit-details-marker {
-    display: revert;
-  }
-
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) [data-ui="mobile-navigation"] > summary::after {
-    content: none;
-  }
-
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) [data-ui="mobile-navigation"][open] > summary {
-    list-style-type: disclosure-open;
-  }
-
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) [data-ui="mobile-navigation"] > summary:hover {
-    background: var(--pine-deep);
-  }
-
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) [data-ui="mobile-navigation"] > summary:focus-visible {
-    outline: 2px solid var(--paper);
-    outline-offset: 3px;
-  }
-
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu {
-    position: absolute;
-    top: calc(100% + 0.75rem);
-    right: 0;
-    display: grid;
-    gap: 1rem;
-    width: min(22rem, calc(100vw - 2rem));
-    max-height: calc(100svh - 7rem);
-    padding: 1rem;
-    overflow-y: auto;
-    border: 1px solid var(--sand);
-    border-radius: 0.875rem;
-    background: var(--surface);
-    color: var(--ink);
-    box-shadow: 0 0.75rem 2rem color-mix(in srgb, var(--pine-deep) 12%, transparent);
-  }
-
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu nav {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.25rem;
-    min-width: 0;
-  }
-
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu a {
-    display: flex;
-    align-items: center;
-    min-width: 0;
-    min-height: 2.75rem;
-    padding: 0.65rem 0.75rem;
-    border: 1px solid transparent;
-    border-radius: 0.375rem;
-    background: transparent;
-    color: var(--ink);
-    line-height: 1.3;
-    text-decoration: none;
-    transition: background-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
-  }
-
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu a:hover {
-    background: var(--pine-soft);
-    color: var(--pine-deep);
-  }
-
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu a[aria-current="page"] {
-    border-color: var(--pine);
-    background: var(--pine);
-    color: var(--white);
-  }
-
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu button {
-    width: 100%;
-    min-height: 2.75rem;
-    padding: 0.65rem 1rem;
-    border: 1px solid var(--pine);
-    border-radius: 0.5rem;
-    background: var(--pine);
-    color: var(--white);
-    line-height: 1.3;
-    transition: background-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
-  }
-
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu button:hover:not(:disabled) {
-    background: var(--pine-deep);
-  }
-
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu a:focus-visible,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu button:focus-visible {
-    outline: 2px solid var(--pine);
-    outline-offset: 2px;
-  }
-
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu button:disabled {
-    cursor: wait;
-    opacity: 0.65;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__navigation a,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__sidebar > button,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) [data-ui="mobile-navigation"] > summary,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu a,
-  .authenticated-shell[data-variant="business"]:has(main.profile-screen, main.turnos-screen, main.services-screen:where([aria-labelledby="services-title"]), main.resources-screen:where([aria-labelledby="resources-title"]), main.services-screen:where([aria-labelledby="business-calendar-title"]), main.clients-screen:where([aria-labelledby="clients-title"]), main.agent-screen:where([data-ui="agent-screen"]), main.whatsapp-screen:where([data-ui="whatsapp-screen"])) .authenticated-shell__mobile-menu button {
-    transition: none;
   }
 }
 
@@ -3582,7 +3365,7 @@ main.login-frame {
 .services-confirmation h2 { overflow-wrap: anywhere; }
 .services-confirmation p { max-width: 68ch; }
 .services-confirmation [role="alert"] { color: var(--coral-ink); }
-.services-screen button:hover:not(:disabled) { background: var(--pine-deep); }
+.services-screen button:hover:not(:disabled, .service-tile) { background: var(--pine-deep); }
 .services-screen button:disabled { opacity: 0.65; }
 
 .clients-screen { max-width: 70rem; }
@@ -3613,7 +3396,7 @@ main.login-frame {
   margin-inline: auto;
   padding: 2rem 2rem 3rem;
   color: var(--ink);
-  line-height: 1.5;
+  line-height: 1.45;
 }
 
 .turnos-screen :is(h1, h2, h3, p, dd, button, strong) {
@@ -3655,12 +3438,12 @@ main.login-frame {
     border-color 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
-.turnos-screen button:hover:not(:disabled) {
+.turnos-screen button:hover:not(:disabled, [aria-disabled="true"]) {
   border-color: var(--pine);
   background: var(--pine-soft);
 }
 
-.turnos-screen button:active:not(:disabled) {
+.turnos-screen button:active:not(:disabled, [aria-disabled="true"]) {
   transform: translateY(1px);
 }
 
@@ -3689,8 +3472,7 @@ main.login-frame {
 
 .turnos-screen .turnos-controls,
 .turnos-screen .turnos-toolbar,
-.turnos-screen .turnos-range,
-.turnos-screen .turnos-form-actions {
+.turnos-screen .turnos-range {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -3917,20 +3699,21 @@ main.login-frame {
 }
 
 .turnos-screen .turnos-dialog {
+  --booking-dialog-padding: 30px;
   display: none;
   flex-direction: column;
-  width: min(58rem, calc(100% - 4rem));
+  width: min(1040px, calc(100% - 32px));
   max-width: none;
-  max-height: calc(100dvh - 4rem);
+  max-height: min(92dvh, 940px);
   margin: auto;
   padding: 0;
   overflow: hidden;
-  border: 1px solid var(--sand);
-  border-radius: 1rem;
-  background: var(--white);
+  border: 0;
+  border-radius: 20px;
+  background: #fcfbf7;
   color: var(--ink);
-  font-family: var(--font-body);
-  box-shadow: 0 1.5rem 5rem color-mix(in srgb, var(--pine-deep) 24%, transparent);
+  font: 14px/1.45 var(--font-body);
+  box-shadow: 0 30px 70px -28px rgb(0 0 0 / 38%);
 }
 
 /* Never override the native closed-dialog hiding with an unconditional flex. */
@@ -3939,7 +3722,7 @@ main.login-frame {
 }
 
 .turnos-screen .turnos-dialog::backdrop {
-  background: color-mix(in srgb, var(--pine-deep) 48%, transparent);
+  background: rgb(14 28 19 / 42%);
 }
 
 .turnos-screen .turnos-dialog__header {
@@ -3948,81 +3731,48 @@ main.login-frame {
   justify-content: space-between;
   flex: 0 0 auto;
   gap: 1rem;
-  padding: 1.25rem 1.75rem;
-  border-bottom: 1px solid var(--sand);
-  background: var(--surface);
+  padding: 22px 30px 16px;
+  border-bottom: 1px solid #e5e9e1;
 }
 
 .turnos-screen .turnos-dialog__header h2 {
   margin: 0;
-  font-size: 1.5rem;
-  line-height: 1.3;
-  letter-spacing: -0.02em;
+  font-size: 24px;
+  font-weight: 730;
+  line-height: 1.13;
+  letter-spacing: -.032em;
 }
 
 .turnos-screen #turnos-dialog-close {
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  width: 2.75rem;
-  padding: 0.5rem;
-  border-color: transparent;
+  width: 36px;
+  min-height: 41px;
+  padding: 8px;
+  border: 1px solid #e0e5de;
+  border-radius: 10px;
   background: transparent;
 }
 
 .turnos-screen #turnos-dialog-close:hover:not(:disabled) {
-  border-color: var(--pine);
-  background: var(--pine-soft);
+  border-color: #8fa89a;
+  background: #f2f5ef;
 }
 
 .turnos-screen .turnos-dialog__body {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 1.75rem;
+  padding: 22px var(--booking-dialog-padding) var(--booking-dialog-padding);
   overflow-y: auto;
   overscroll-behavior: contain;
   scroll-padding-block: 1rem 7rem;
 }
 
-.turnos-screen .turnos-detail,
-.turnos-screen .turnos-editor {
-  min-width: 0;
-}
-
-.turnos-screen .turnos-detail h2 {
-  margin: 0 0 1.25rem;
-  font-size: 1.375rem;
-  letter-spacing: -0.015em;
-  line-height: 1.3;
-}
-
-.turnos-screen .turnos-detail dl {
-  display: grid;
-  grid-template-columns: minmax(0, 8rem) minmax(0, 1fr);
-  gap: 0.75rem 1rem;
-  margin: 0 0 1.25rem;
-}
-
-.turnos-screen .turnos-detail dt {
-  color: var(--ink-2);
-  font-size: 0.875rem;
-  font-weight: 400;
-}
-
-.turnos-screen .turnos-detail dd {
-  min-width: 0;
-  margin: 0;
-}
-
-.turnos-screen .turnos-detail > button {
-  margin: 0.25rem 0.35rem 0.25rem 0;
-}
-
-.turnos-screen .turnos-toolbar,
-.turnos-screen .turnos-form-actions {
-  margin-top: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--sand);
+.turnos-screen .turnos-dialog__header p {
+  margin: 5px 0 0;
+  color: #738375;
+  font-size: 12px;
 }
 
 .turnos-screen #turnos-action-cancelled,
@@ -4045,27 +3795,15 @@ main.login-frame {
   margin: 0;
 }
 
-.turnos-screen fieldset {
-  display: grid;
-  gap: 0.625rem;
-  min-width: 0;
-  margin: 0;
-  padding: 0 0 1.25rem;
-  border: 0;
-  border-bottom: 1px solid var(--sand);
-}
-
-.turnos-screen legend {
-  margin-bottom: 0.875rem;
-  padding: 0;
-  font-weight: 650;
-}
-
 .turnos-screen label {
   display: grid;
-  gap: 0.5rem;
-  font-size: 0.9375rem;
+  gap: 7px;
+  color: #3a5845;
+  font-size: 12px;
+  font-weight: 750;
 }
+
+.turnos-screen .booking-pair label { color: #405248; font-weight: 760; }
 
 .turnos-screen input,
 .turnos-screen select,
@@ -4073,37 +3811,20 @@ main.login-frame {
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  min-height: 3.125rem;
-  padding: 0.8rem 1rem;
-  border: 1px solid var(--turnos-stroke);
-  border-radius: 0.625rem;
-  background: var(--white);
-  color: var(--ink);
-  font-family: var(--font-body);
-  font-size: 1rem;
-  font-weight: 450;
-  line-height: 1.5;
-  caret-color: var(--pine);
+  min-height: 46px;
+  padding: 10px 12px;
+  border: 1px solid #cddccf;
+  border-radius: 11px;
+  background: #fff;
+  color: #233b2c;
+  font: 400 14px/1.45 var(--font-body);
 }
 
-.turnos-screen input[type="date"] {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-}
-
-.turnos-screen textarea {
-  min-height: 7rem;
-  resize: vertical;
-}
-
-.turnos-screen :is(input, select, textarea):hover:not(:disabled) {
-  border-color: var(--pine);
-}
+.turnos-screen textarea { min-height: 72px; resize: vertical; }
 
 .turnos-screen :is(input, select, textarea):focus-visible {
-  border-color: var(--pine);
-  outline: 2px solid var(--pine);
-  outline-offset: 2px;
+  outline: 3px solid #ff9f88;
+  outline-offset: 1px;
 }
 
 .turnos-screen :is(input, select, textarea):disabled,
@@ -4113,66 +3834,184 @@ main.login-frame {
   cursor: not-allowed;
 }
 
-.turnos-screen .turnos-client-results:empty {
-  display: none;
+/* Booking and detail share the dialog on Inicio and Agenda. */
+.turnos-dialog :is(.turnos-detail, .booking-column, .booking-grid:not([hidden])) {
+  display: grid;
+  min-width: 0;
+  gap: 1rem;
+  align-items: start;
 }
 
-.turnos-screen .turnos-client-results button {
-  width: 100%;
-  text-align: left;
+.turnos-dialog .booking-grid {
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
 }
 
-.turnos-screen .turnos-booking fieldset p,
-.turnos-screen .turnos-confirmation p {
-  margin: 0.25rem 0;
-  font-size: 0.9375rem;
+.turnos-dialog .booking-grid fieldset {
+  display: grid;
+  gap: 0.65rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
+
+.turnos-dialog .booking-grid legend {
+  margin-bottom: 0.5rem;
+  padding: 0;
+  font-weight: 750;
+}
+
+.turnos-dialog .booking-panel,
+.turnos-dialog .booking-grid fieldset.booking-panel {
+  padding: 18px;
+  border: 1px solid #e0e7dc;
+  border-radius: 15px;
+  background: #fffefa;
+}
+
+.turnos-dialog .booking-grid .booking-client { background: #f2f7ef; border-color: #d8e3d7; }
+.turnos-dialog .booking-panel legend { padding-inline: 0.3rem; }
+.turnos-dialog .booking-mode,
+.turnos-dialog .booking-search,
+.turnos-dialog .booking-detail-head,
+.turnos-dialog .booking-detail-actions,
+.turnos-dialog .booking-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.turnos-dialog .booking-mode {
+  gap: 5px;
+  padding: 4px;
+  border: 1px solid #d4e0d3;
+  border-radius: 11px;
+  background: #e7eee5;
+}
+
+.turnos-screen .booking-mode button:not([aria-pressed="true"]) { color: #54715c; background: transparent; }
+.turnos-screen .booking-mode button {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  padding: 9px 8px;
+  border: 0;
+  border-radius: 8px;
+  font: 780 12px/1.45 var(--font-body);
+}
+
+.turnos-screen .booking-mode button[aria-pressed="true"] {
+  color: #173c27;
+  background: #fff;
+  box-shadow: 0 2px 7px -5px #283c2e99;
+}
+.turnos-screen .booking-mode button:active:not(:disabled) { transform: none; }
+
+.turnos-dialog .booking-search input { flex: 1 1 10rem; }
+.turnos-dialog .booking-search button { flex: 1 0 auto; }
+.turnos-dialog .turnos-client-results button { width: 100%; text-align: left; }
+.turnos-dialog :is(.turnos-client-results, .booking-service, .booking-facts) small {
+  display: block;
+  color: var(--ink-2);
+  font-size: 0.875rem;
+}
+
+.turnos-dialog .booking-pair,
+.turnos-dialog .booking-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.turnos-dialog .booking-pair label:last-child:nth-child(3) { grid-column: 1 / -1; }
+.turnos-dialog .booking-slots {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(4.4rem, 1fr));
+  gap: 0.4rem;
+}
+
+.turnos-dialog :is(.booking-service, .booking-slot) {
+  position: relative;
+  align-items: center;
+  border: 1px solid #dce6da;
+  border-radius: 13px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.turnos-dialog .booking-service {
+  grid-template-columns: 34px minmax(0, 1fr) auto; overflow-wrap: anywhere;
+  gap: 11px; min-height: 67px; padding: 13px; transition: background .16s, border-color .16s;
+}
+.turnos-dialog .booking-service:hover:not(:has(input:disabled)) { background: #f6f8f1; border-color: #8caf97; }
+.turnos-dialog .booking-service:has(input:checked) { background: #eff6ed; border: 2px solid #43815b; padding: 12px; }
+.turnos-dialog .booking-service strong { color: #223e2b; font-size: 13px; font-weight: 760; }
+.turnos-dialog .booking-service > strong { color: #264b32; font-size: 12px; font-weight: 780; font-variant-numeric: tabular-nums; }
+.turnos-dialog .booking-service small { color: #738775; font-size: 11px; font-weight: 400; margin-top: 3px; }
+.turnos-screen .booking-service input {
+  width: 1.125rem;
+  height: 1.125rem;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  accent-color: #285b3d;
+}
+
+.turnos-dialog .booking-slot { text-align: center; min-height: 40px; padding: 9px 4px; border-color: #d7e3d7; border-radius: 9px; color: #294c36; font-weight: 720; font-variant-numeric: tabular-nums; }
+.turnos-dialog .booking-slot input { position: absolute; inset: 0; min-height: 0; height: 100%; margin: 0; opacity: 0; cursor: inherit; }
+.turnos-dialog .booking-slot:hover:not(:has(input:disabled)) { background: #edf5eb; color: #214b33; border-color: #528c65; }
+.turnos-dialog .booking-slot:has(input:checked) { background: #285b3d; border-color: #285b3d; color: #fff; }
+.turnos-dialog :is(.booking-service, .booking-slot):has(input:focus-visible) { outline: 3px solid #ff9f88; outline-offset: 1px; }
+.turnos-dialog :is(.booking-service, .booking-slot):has(input:disabled) { cursor: not-allowed; opacity: .75; }
+.turnos-dialog .booking-slot-empty { padding: 16px 14px; border: 1px dashed #d7e4d5; border-radius: 10px; color: #687f6d; font-size: 12px; line-height: 1.5; text-align: center; background: #f8faf6; }
+
+.turnos-dialog .booking-review h3,
+.turnos-dialog .booking-detail-notes h3,
+.turnos-dialog .booking-detail-head :is(h2, p) { margin: 0; }
+.turnos-dialog .booking-detail-head { justify-content: space-between; }
+.turnos-dialog .booking-detail-head h2 { font-size: 1.5rem; }
+.turnos-dialog .booking-facts { margin: 0; overflow-wrap: anywhere; }
+.turnos-dialog .booking-review .booking-facts { margin-top: 0.75rem; }
+.turnos-dialog .booking-facts dt { color: var(--ink-2); font-size: 0.875rem; }
+.turnos-dialog .booking-facts dd { margin: 0.2rem 0 0; font-weight: 650; }
+.turnos-dialog .booking-facts time { font-size: 22px; font-weight: 760; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.turnos-dialog .booking-detail-notes p { margin: 0.25rem 0 0; white-space: pre-wrap; }
+.turnos-dialog .booking-footer {
+  justify-content: flex-end;
+  gap: 12px;
+  padding-block: 15px;
+  border-top: 1px solid #e2e3d9;
+  background: #fff;
+}
+.turnos-dialog .booking-footer .booking-quote { margin: 0 auto 0 0; color: #355440; font-size: 13px; font-weight: 750; }
+.turnos-screen .booking-footer button { min-height: 41px; padding: 10px 15px; border-radius: 10px; font: 720 13px/1.45 var(--font-body); }
+.turnos-screen .booking-footer .turnos-primary { color: #231d17; }
+.turnos-screen .booking-footer .turnos-primary:hover:not(:disabled) { background: #fa805e; border-color: #8fa89a; }
+
+@media (min-width: 48.0625rem) and (min-height: 32rem) {
+  .turnos-dialog .booking-footer {
+    position: sticky;
+    bottom: 0;
+    margin: 0 calc(-1 * var(--booking-dialog-padding)) calc(-1 * var(--booking-dialog-padding));
+    padding-inline: var(--booking-dialog-padding);
+  }
+}
+.turnos-dialog .turnos-toolbar { padding: 0.65rem; border-radius: 0.75rem; background: #edf4ea; }
 
 .turnos-screen .turnos-confirmation {
-  margin-top: 1rem;
-  padding: 1.25rem;
+  padding: 1rem;
   border: 1px solid var(--honey);
-  border-radius: 0.5rem;
+  border-radius: 0.75rem;
   background: var(--honey-soft);
-  color: var(--ink);
 }
 
-.turnos-screen .turnos-booking .turnos-form-actions {
-  position: sticky;
-  bottom: -1.75rem;
-  margin-top: 0;
-  padding-block: 1rem;
-  background: var(--white);
-}
-
-.turnos-screen .turnos-booking > :is(.turnos-confirmation, [role="alert"], .turnos-form-actions) {
-  grid-column: 1 / -1;
-}
-
-.turnos-screen .turnos-confirmation h3 {
-  margin: 0 0 0.75rem;
-  font-size: 1.125rem;
-}
-
-.turnos-screen .turnos-confirmation button {
-  margin: 0.75rem 0.35rem 0 0;
-}
+.turnos-screen .turnos-confirmation h3 { margin: 0; }
+.turnos-screen .turnos-confirmation button { margin: 0.5rem 0.35rem 0 0; }
 
 .turnos-screen ::selection {
   background: var(--pine-soft);
   color: var(--pine-deep);
-}
-
-@media (min-width: 48.0625rem) {
-  .turnos-screen .turnos-booking {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-items: start;
-    gap: 1.5rem 2rem;
-  }
-
-  .turnos-screen .turnos-booking > fieldset:only-of-type {
-    grid-column: 1 / -1;
-  }
 }
 
 @media (max-width: 48rem) {
@@ -4217,31 +4056,26 @@ main.login-frame {
     padding: 0.25rem 0.875rem;
   }
 
-  .turnos-screen .turnos-dialog {
-    width: calc(100% - 1rem);
-    height: calc(100dvh - 1rem);
-    max-height: calc(100dvh - 1rem);
-    border-radius: 0.75rem;
-  }
+  .turnos-screen .turnos-dialog { --booking-dialog-padding: 19px; }
+  .turnos-screen .turnos-dialog__header { padding: 18px 19px 15px; }
 
-  .turnos-screen .turnos-dialog__header {
-    gap: 0.5rem;
-    padding: 0.875rem 1rem;
-  }
-
-  .turnos-screen .turnos-dialog__header h2 {
-    font-size: 1.25rem;
+  @media (max-width: 540px) {
+    .turnos-screen .turnos-dialog {
+      --booking-dialog-padding: 13px;
+      width: calc(100% - 18px);
+      max-height: 95dvh;
+      border-radius: 15px;
+    }
+    .turnos-screen .turnos-dialog__header h2 { font-size: 21px; }
+    .turnos-screen .turnos-dialog__header p { font-size: 11px; }
   }
 
   .turnos-screen .turnos-dialog__body {
-    padding: 1rem;
-    padding-bottom: max(1rem, env(safe-area-inset-bottom));
-    scroll-padding-bottom: 12rem;
+    padding-bottom: max(var(--booking-dialog-padding), env(safe-area-inset-bottom));
+    scroll-padding-bottom: 1rem;
   }
 
-  .turnos-screen .turnos-booking .turnos-form-actions {
-    position: static;
-  }
+  .turnos-dialog .booking-grid { grid-template-columns: minmax(0, 1fr); }
 
   .turnos-screen .turnos-list button {
     grid-template-columns: 3.5rem minmax(0, 1fr);
@@ -4257,26 +4091,12 @@ main.login-frame {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
-  .turnos-screen .turnos-form-actions > button {
-    width: 100%;
-  }
-}
-
-@media (max-width: 24rem) {
-  .turnos-screen .turnos-detail dl {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0.25rem;
-  }
-
-  .turnos-screen .turnos-detail dd {
-    margin-bottom: 0.75rem;
-  }
+  .turnos-dialog .booking-footer .booking-quote { flex-basis: 100%; }
+  .turnos-dialog .booking-footer button { flex: 1 1 auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .turnos-screen button {
-    transition: none;
-  }
+  .turnos-screen :is(button, .booking-service) { transition: none; }
 }
 
 @media (max-width: 48rem) {
@@ -6783,4 +6603,215 @@ main.whatsapp-screen[data-ui="whatsapp-screen"] ::selection {
   main.whatsapp-screen[data-ui="whatsapp-screen"] .whatsapp-link-panel > button {
     transition: none;
   }
+}
+
+/* Inicio shares the prototype canvas; keep its route heading available on focus. */
+.authenticated-shell__content > main.business-home-screen {
+  max-width: 1284px;
+  padding: 44px 52px 80px;
+}
+.business-home-screen .turnos-heading { margin: 0; }
+.business-home-screen .turnos-heading h1:not(:focus) {
+  position: absolute; width: 1px; height: 1px;
+  clip-path: inset(50%); overflow: hidden; white-space: nowrap;
+}
+.turnos-screen button.turnos-fab {
+  --fab-offset: 24px;
+  position: fixed;
+  z-index: 35;
+  right: max(var(--fab-offset), env(safe-area-inset-right));
+  bottom: max(var(--fab-offset), env(safe-area-inset-bottom));
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 56px;
+  padding: 7px 18px 7px 9px;
+  border: 0;
+  border-radius: 17px;
+  background: #ff6b49;
+  color: #1f241e;
+  font: 790 13px/1.45 var(--panel-font);
+  box-shadow: 0 12px 23px -18px rgb(141 50 25 / 48%), 0 4px 12px -12px rgb(18 55 42 / 18%);
+  transition: transform .18s, box-shadow .18s, background .18s;
+}
+.turnos-screen button.turnos-fab:hover:not([aria-disabled="true"]) {
+  transform: translateY(-2px);
+  background: #ff7b5b;
+  box-shadow: 0 15px 25px -18px rgb(141 50 25 / 55%);
+}
+.turnos-screen button.turnos-fab[aria-disabled="true"] { opacity: .6; cursor: not-allowed; }
+.turnos-fab__icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 35px;
+  height: 35px;
+  border-radius: 11px;
+  background: #12372a;
+  color: #fffaed;
+}
+.turnos-fab__icon svg { width: 17px; height: 17px; stroke-width: 2.4; }
+.business-shell:has(dialog:modal) .turnos-fab { visibility: hidden; }
+.authenticated-shell__content:has(> .turnos-floating) { padding-bottom: 84px; }
+.turnos-floating > .turnos-feedback:not(:empty) { padding: 12px clamp(14px, 4vw, 52px); }
+@media (max-width: 920px) {
+  .business-shell:has([data-ui="mobile-navigation"][open]) .turnos-fab { visibility: hidden; }
+}
+@media (max-width: 640px) {
+  .turnos-screen button.turnos-fab {
+    --fab-offset: 14px;
+    min-height: 52px;
+    padding: 6px 14px 6px 7px;
+    border-radius: 15px;
+  }
+  .turnos-fab__icon { width: 34px; height: 34px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .turnos-screen button.turnos-fab { transition: none; }
+  .turnos-screen button.turnos-fab:hover { transform: none; }
+}
+
+.business-home {
+  display: grid;
+  grid-template-columns: minmax(210px, 260px) minmax(0, 1fr);
+  align-items: start;
+  gap: 31px;
+
+  & time { font-family: inherit; font-variant-numeric: tabular-nums; }
+  & .business-home__summary { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; padding: 5px 14px 0 4px; }
+  & .business-home__date { display: flex; align-items: flex-start; gap: 15px; margin-bottom: 38px; text-transform: uppercase; }
+  & .business-home__date strong { color: #193c2b; font-size: 112px; font-weight: 780; line-height: .79; letter-spacing: -.09em; }
+  & .business-home__date-words { display: grid; gap: 2px; padding-top: 8px; color: #42654e; font-size: 13px; font-weight: 760; line-height: 1.35; }
+  & .business-home__date-words span:last-child { color: #879489; font-size: 12px; font-weight: 500; }
+  & .business-home__counts { width: 100%; padding-top: 23px; border-top: 1px solid #d3ddd0; }
+  & .business-home__counts p { display: flex; align-items: center; gap: 9px; margin: 10px 0 0; color: #63796a; font-size: 12px; }
+  & .business-home__counts p strong { color: #21432e; font-size: 13px; }
+  & .business-home__counts p:first-child { align-items: baseline; margin: 0; color: #607464; font-size: 13px; font-weight: 650; }
+  & .business-home__counts p:first-child strong { color: #203e2b; font-size: 44px; line-height: 1; font-weight: 760; letter-spacing: -.06em; font-variant-numeric: tabular-nums; }
+  & .business-home__counts p:nth-child(2) { margin-top: 21px; }
+  & .business-home__counts p:not(:first-child)::before { content: ""; flex: 0 0 7px; height: 7px; border-radius: 50%; background: #639773; }
+  & .business-home__counts p:last-child::before { background: #9da9a0; }
+  & .business-home__agenda {
+    display: inline-flex; align-items: center; gap: 17px; min-height: 47px;
+    margin-top: 29px; padding: 5px 6px 5px 14px; border: 1px solid #c7d8c9; border-radius: 14px;
+    background: #fffefa; color: #214632; font-size: 12px; font-weight: 780; letter-spacing: .005em; text-decoration: none;
+    box-shadow: 0 7px 16px -15px rgb(18 55 42 / 25%);
+    transition: background .18s, border-color .18s, transform .18s, box-shadow .18s;
+  }
+  & .business-home__agenda span:first-child { display: inline-flex; align-items: center; gap: 8px; }
+  & .business-home__agenda span:first-child svg { width: 17px; height: 17px; color: #2e6b4e; }
+  & .business-home__agenda span:last-child { display: grid; place-items: center; flex: 0 0 32px; height: 32px; border-radius: 10px; background: #e8f0e7; color: #28583f; transition: background .18s, color .18s; }
+  & .business-home__agenda span:last-child svg { width: 16px; height: 16px; }
+  & .business-home__agenda:hover { transform: translateY(-1px); background: #f6faf4; border-color: #96b99b; box-shadow: 0 11px 22px -18px rgb(18 55 42 / 35%); }
+  & .business-home__agenda:hover span:last-child { background: #ff6b49; color: #183526; }
+  & .business-home__agenda:focus-visible { outline: 3px solid #ff967b; outline-offset: 3px; }
+  & .business-home__sheet { display: grid; gap: 19px; min-width: 0; }
+  & .business-home__upcoming { position: relative; --next-inline: 29px; --next-top: 24px; }
+  & .business-home__upcoming h2 { position: absolute; z-index: 1; pointer-events: none; inset: var(--next-top) auto auto var(--next-inline); margin: 0; color: #cbdccb; font-size: 12px; line-height: 1.45; font-weight: 730; letter-spacing: .005em; }
+  & .business-home__next {
+    display: grid; align-content: start; width: 100%; min-height: 199px;
+    position: relative; isolation: isolate; overflow: hidden; gap: 17px;
+    padding: var(--next-top) var(--next-inline) 26px; border: 0; border-radius: 20px;
+    background: #193a2c; color: #f9f9ee; text-align: left; font: inherit;
+    transition: background .18s, transform .18s, box-shadow .18s;
+  }
+  & .business-home__next::before { content: ""; position: absolute; z-index: -1; right: -80px; top: -115px; width: 300px; height: 300px; border: 1px solid rgb(234 243 230 / 10%); border-radius: 50%; box-shadow: 0 0 0 40px rgb(249 250 242 / 2.5%); }
+  & button.business-home__next:hover:not(:disabled) { background: #24503a; transform: translateY(-2px); box-shadow: 0 20px 38px -23px rgb(14 46 26 / 42%); }
+  & button.business-home__next:active:not(:disabled) { transform: translateY(0); }
+  & button.business-home__next:disabled { opacity: 1; }
+  & button.business-home__next:focus-visible { outline: 3px solid #ff967b; outline-offset: 3px; }
+  & .business-home__next > svg { position: absolute; right: 27px; bottom: 23px; width: 20px; height: 20px; color: #ff9b7f; }
+  & .business-home__confirmed { justify-self: end; display: inline-flex; align-items: center; gap: 6px; color: #d2e8d4; font-size: 11px; font-weight: 650; }
+  & .business-home__confirmed::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #a3d69e; }
+  & .business-home__next-body { display: grid; grid-template-columns: minmax(max-content, var(--next-time-track, 150px)) minmax(0, 1fr); align-items: center; gap: 22px; }
+  & .business-home__next time { white-space: nowrap; }
+  & .business-home__next--empty .business-home__next-body { margin-top: 33px; }
+  & .business-home__next :is(time, .business-home__dash) { color: #f7f4e9; font-size: 62px; line-height: 1; font-weight: 760; letter-spacing: -.065em; }
+  & .business-home__person { display: grid; min-width: 0; overflow-wrap: anywhere; }
+  & .business-home__next .business-home__person strong { font-size: 24px; line-height: 1.12; font-weight: 750; letter-spacing: -.035em; }
+  & .business-home__next small { color: #c0d7c5; margin-top: 8px; font-size: 13px; line-height: 1.5; }
+  & .business-home__today { min-width: 0; padding: 22px 27px 4px; background: #fffefa; border: 1px solid #e1e9df; border-radius: 19px; }
+  & .business-home__today > p:not([role]) { padding: 38px 6px 42px; margin: 0; color: #718173; font-size: 13px; }
+  & .business-home__today > p:not([role]) strong { display: block; margin-bottom: 5px; color: #2f4d39; font-size: 16px; }
+  & .business-home__today header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-bottom: 20px; border-bottom: 1px solid #e8ece4; }
+  & .business-home__today h2 { margin: 0; font-size: 21px; font-weight: 780; line-height: 1.13; letter-spacing: -.035em; }
+  & .business-home__today ul { margin: 0; padding: 0; list-style: none; }
+  & .business-home__today li:not(:last-child) { border-bottom: 1px solid #eef0e9; }
+  & button.business-home__row {
+    display: grid; grid-template-columns: 78px 12px minmax(0, 1fr) minmax(90px, 155px) 88px 16px;
+    align-items: center; gap: 16px; width: 100%; min-height: 85px; padding: 12px 2px;
+    border: 0; border-radius: 0; background: transparent; color: #1c2620; text-align: left; font: inherit;
+    transition: background .15s, margin .15s, padding .15s;
+  }
+  & button.business-home__row:is(:hover, :focus-visible):not(:disabled) { background: #f2f5ef; margin-inline: -8px; padding-inline: 10px; border-radius: 10px; width: calc(100% + 16px); }
+  & button.business-home__row:active:not(:disabled) { transform: none; }
+  & .business-home__row time { color: #294f36; font-size: 21px; font-weight: 780; letter-spacing: -.04em; }
+  & .business-home__row strong { font-size: 14px; font-weight: 790; line-height: 1.3; }
+  & .business-home__row small { color: #738277; margin-top: 4px; font-size: 12px; font-weight: 500; }
+  & .business-home__row > svg { width: 16px; height: 16px; color: #8fa397; }
+  & .business-home__resource { color: #5a705f; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  & .business-home__state { color: #50715a; font-size: 11px; font-weight: 730; }
+  & .business-home__state[data-state="done"] { color: #8b978d; }
+  & .business-home__dot { width: 9px; height: 9px; border-radius: 50%; background: #90b49a; box-shadow: 0 0 0 4px #e6f0e7; }
+  & .business-home__dot[data-origin="manual"] { background: #d8a562; box-shadow: 0 0 0 4px #faf0df; }
+  & .business-home__dot[data-state="done"] { background: #adb7ad; box-shadow: 0 0 0 4px #eff1ed; }
+  & [data-state="cancelled"].business-home__state, & [data-state="no_show"].business-home__state { color: #a83a1a; }
+  & .business-home__dot:is([data-state="cancelled"], [data-state="no_show"]) { background: #b67a73; box-shadow: 0 0 0 4px #f4e4e1; }
+}
+
+@media (max-width: 1050px) {
+  .business-home { grid-template-columns: 205px minmax(0, 1fr); gap: 24px; }
+  .business-home .business-home__date strong { font-size: 95px; }
+  .business-home .business-home__next-body { --next-time-track: 130px; gap: 18px; }
+  .business-home .business-home__next :is(time, .business-home__dash) { font-size: 54px; }
+  .business-home button.business-home__row { grid-template-columns: 68px 10px minmax(0, 1fr) 86px 16px; gap: 12px; }
+  .business-home__resource { display: none; }
+}
+@media (max-width: 960px) {
+  .authenticated-shell__content > main.business-home-screen { padding-inline: 24px; }
+}
+@media (max-width: 750px) {
+  .business-home { grid-template-columns: minmax(0, 1fr); gap: 17px; }
+  .business-home .business-home__summary { flex-flow: row wrap; justify-content: space-between; align-items: center; gap: 14px; padding: 0; }
+  .business-home .business-home__date { gap: 10px; margin-bottom: 0; }
+  .business-home .business-home__date strong { font-size: 63px; letter-spacing: -.08em; }
+  .business-home .business-home__date-words { padding-top: 3px; font-size: 12px; }
+  .business-home .business-home__date-words span:last-child { font-size: 11px; }
+  .business-home .business-home__counts { display: grid; justify-items: end; width: auto; padding: 0; border: 0; margin-left: auto; }
+  .business-home .business-home__counts p { margin-top: 3px; font-size: 10px; }
+  .business-home .business-home__counts p:nth-child(2) { margin-top: 4px; }
+  .business-home .business-home__counts p:first-child { font-size: 11px; }
+  .business-home .business-home__counts p:first-child strong { font-size: 28px; }
+  .business-home .business-home__agenda { margin-top: 0; }
+  .business-home .business-home__sheet { gap: 15px; }
+  .business-home .business-home__upcoming { --next-inline: 21px; --next-top: 20px; }
+  .business-home .business-home__next { min-height: 173px; padding-bottom: 21px; gap: 23px; border-radius: 17px; }
+  .business-home .business-home__next-body { --next-time-track: 118px; gap: 12px; }
+  .business-home .business-home__next :is(time, .business-home__dash) { font-size: 48px; }
+  .business-home .business-home__next .business-home__person strong { font-size: 20px; }
+  .business-home .business-home__next small { font-size: 11px; }
+  .business-home .business-home__next > svg { right: 19px; bottom: 17px; }
+  .business-home .business-home__today { padding: 20px 18px 3px; border-radius: 16px; }
+  .business-home .business-home__today h2 { font-size: 19px; }
+  .business-home button.business-home__row { min-height: 77px; grid-template-columns: 60px 9px minmax(0, 1fr) 16px; row-gap: 0; }
+  .business-home .business-home__row time { font-size: 18px; }
+  .business-home .business-home__row strong { font-size: 13px; }
+  .business-home .business-home__row small { font-size: 11px; }
+  .business-home .business-home__row > svg { grid-column: 4; grid-row: 1 / span 2; }
+  .business-home .business-home__state { grid-column: 3; }
+}
+@media (max-width: 640px) {
+  .authenticated-shell__content > main.business-home-screen { padding: 18px 14px 80px; }
+}
+@media (max-width: 375px) {
+  .business-home .business-home__next-body { --next-time-track: 100px; }
+  .business-home .business-home__next :is(time, .business-home__dash) { font-size: 43px; }
+  .business-home .business-home__next .business-home__person strong { font-size: 18px; }
+  .business-home .business-home__today { padding-inline: 13px; }
+  .business-home button.business-home__row { grid-template-columns: 54px 8px minmax(0, 1fr) 14px; column-gap: 9px; }
+  .business-home .business-home__row time { font-size: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .business-home :is(.business-home__next, .business-home__row, .business-home__agenda, .business-home__agenda span:last-child) { transition: none; }
+  .business-home :is(button.business-home__next, .business-home__agenda):hover:not(:disabled) { transform: none; }
 }

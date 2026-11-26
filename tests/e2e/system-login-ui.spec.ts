@@ -19,7 +19,7 @@ test("administrators can sign in only through the administration entrance", asyn
   await page.getByLabel("Contraseña", { exact: true }).fill(system.admin.password);
   await page.getByRole("checkbox", { name: "Mantener sesión iniciada" }).check();
   await page.getByRole("button", { name: "Ingresar", exact: true }).click();
-  await expect(page).toHaveURL(/\/businesses$/);
+  await expect(page).toHaveURL(/\/solicitudes$/);
   const cookie = (await page.context().cookies()).find(item => item.name === "__Host-agendia_session");
   expect(cookie?.secure).toBe(true);
   expect(cookie?.expires).toBeGreaterThan(Date.now() / 1000);
@@ -191,7 +191,7 @@ test("login preserves its approved semantic, responsive, and pending-state contr
     releaseLoginRequest();
   }
 
-  await expect(page).toHaveURL(/\/businesses$/);
+  await expect(page).toHaveURL(/\/solicitudes$/);
   expect(loginRequestCount).toBe(1);
 });
 
@@ -199,7 +199,7 @@ test("an active session skips the login screens", async ({ browser, system }) =>
   const adminContext = await browser.newContext();
   const adminPage = await adminContext.newPage();
   await login(adminPage, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
-  await expect(adminPage).toHaveURL(/\/businesses$/);
+  await expect(adminPage).toHaveURL(/\/solicitudes$/);
   await createBusinessInAdminUi(adminPage, {
     name: "Clínica Centro",
     email: "centro@example.test",
@@ -207,23 +207,23 @@ test("an active session skips the login screens", async ({ browser, system }) =>
   });
   for (const path of ["/", "/login", "/admin/login"]) {
     await adminPage.goto(`${system.webUrl}${path}`);
-    await expect(adminPage).toHaveURL(/\/businesses$/);
+    await expect(adminPage).toHaveURL(/\/solicitudes$/);
   }
   await adminContext.close();
 
   const tenantContext = await browser.newContext();
   const tenantPage = await tenantContext.newPage();
   await login(tenantPage, system.webUrl, "centro@example.test", "tenant centro password safe");
-  await expect(tenantPage).toHaveURL(/\/profile$/);
+  await expect(tenantPage).toHaveURL(/\/inicio$/);
   for (const path of ["/", "/login"]) {
     await tenantPage.goto(`${system.webUrl}${path}`);
-    await expect(tenantPage).toHaveURL(/\/profile$/);
+    await expect(tenantPage).toHaveURL(/\/inicio$/);
   }
   await tenantPage.goto(`${system.webUrl}/admin/login`);
   await expect(tenantPage.getByRole("heading", { name: "Acceso de administración" })).toBeVisible();
   await tenantPage.getByLabel("Correo", { exact: true }).fill(system.admin.email);
   await tenantPage.getByLabel("Contraseña", { exact: true }).fill(system.admin.password);
   await tenantPage.getByRole("button", { name: "Ingresar", exact: true }).click();
-  await expect(tenantPage).toHaveURL(/\/businesses$/);
+  await expect(tenantPage).toHaveURL(/\/solicitudes$/);
   await tenantContext.close();
 });
