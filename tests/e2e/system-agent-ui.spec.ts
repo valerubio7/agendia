@@ -8,14 +8,44 @@ const tenant = {
   password: "tenant agent password safe",
 };
 
+test("Negocio opens the Asistente panel and Cancel restores the card without saving", async ({ page, system }) => {
+  await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
+  await createBusinessInAdminUi(page, tenant);
+  await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
+  await expect(page).toHaveURL(/\/admin\/login$/);
+  await login(page, system.webUrl, tenant.email, tenant.password);
+  await expect(page).toHaveURL(/\/inicio$/);
+  await page.getByRole("link", { name: "Negocio", exact: true }).click();
+  const card = page.getByRole("link", { name: "Asistente IA", exact: true });
+  const writes: string[] = [];
+  page.on("request", request => {
+    if (request.url().endsWith("/api/me/agent") && request.method() !== "GET") writes.push(request.method());
+  });
+  await card.press("Enter");
+  await expect(page).toHaveURL(/\/agent$/);
+  const panel = page.getByRole("dialog", { name: "Asistente IA", exact: true });
+  await expect(panel, "the integration route opens a modal over Negocio").toBeVisible({ timeout: 5_000 });
+  await expect(panel.getByRole("button", { name: "Cerrar panel" })).toBeFocused();
+  await expect(page.getByRole("button", { name: "Nuevo turno", exact: true })).toHaveCount(0);
+  await panel.getByLabel("Tono y personalidad").fill("Borrador cancelado");
+  await panel.getByRole("button", { name: "Cancelar", exact: true }).click();
+  await expect(page).toHaveURL(/\/profile$/);
+  await expect(card).toBeFocused();
+  await card.press("Enter");
+  await expect(panel.getByLabel("Tono y personalidad")).toHaveValue("");
+  await page.keyboard.press("Escape");
+  await expect(card).toBeFocused();
+  expect(writes).toEqual([]);
+});
+
 const values = {
   style: "  \tCálida, resolutiva y atenta a cada consulta.\n\nClaro, cercano y profesional,\n\tsiempre en español rioplatense.\t  ",
   businessInstructions: " \tRespondé con precisión y proponé un próximo paso concreto.\n\nEl estudio acompaña a pequeños negocios de todo el país.\n\tConfirmá disponibilidad antes de prometer una fecha.\nNo inventes precios, horarios ni servicios no informados.\t  ",
 };
 
 const fields = [
-  ["Estilo de atención", "style"],
-  ["Indicaciones del negocio", "businessInstructions"],
+  ["Tono y personalidad", "style"],
+  ["Instrucciones", "businessInstructions"],
 ] as const;
 
 async function expectNoHorizontalOverflow(page: Page) {
@@ -58,7 +88,7 @@ test("agent save preserves newer activation draft and advances the next revision
   await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
   await expect(page).toHaveURL(/\/admin\/login$/);
   await login(page, system.webUrl, "agent-draft@example.test", tenant.password);
-  await expect(page).toHaveURL(/\/profile$/);
+  await expect(page).toHaveURL(/\/inicio$/);
   await page.goto(`${system.webUrl}/agent`);
   const active = page.getByRole("checkbox", { name: "Respuestas automáticas activas", exact: true });
   await expect(active).not.toBeChecked();
@@ -79,36 +109,40 @@ test("agent save preserves newer activation draft and advances the next revision
     await route.fulfill({ response });
   });
   await active.check();
-  await page.getByRole("button", { name: "Guardar y activar", exact: true }).click();
+  await page.getByRole("button", { name: "Guardar cambios", exact: true }).click();
   await mutationObserved;
   try {
     await expect(page.getByRole("button", { name: "Guardando…", exact: true })).toBeDisabled();
     await expect(active).toBeEnabled();
     await active.uncheck();
-    await page.getByLabel("Estilo de atención", { exact: true }).fill("Borrador posterior al envío");
+    await page.getByLabel("Tono y personalidad", { exact: true }).fill("Borrador posterior al envío");
   } finally { release(); }
   await expect(page.getByRole("status")).toHaveText("Agente guardado");
   await expect(active).not.toBeChecked();
   await expect(page.getByText("Pausa pendiente", { exact: true })).toBeVisible();
-  await expect(page.getByLabel("Estilo de atención", { exact: true })).toHaveValue("Borrador posterior al envío");
-  await page.getByRole("button", { name: "Guardar configuración", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Guardar configuración", exact: true })).toBeEnabled();
+  await expect(page.getByLabel("Tono y personalidad", { exact: true })).toHaveValue("Borrador posterior al envío");
+  await page.getByRole("button", { name: "Guardar cambios", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Guardar cambios", exact: true })).toBeEnabled();
   expect(submitted).toHaveLength(2);
   expect(submitted[0]!.active).toBe(true);
   expect(submitted[1]).toMatchObject({ active: false, expectedRevision: submitted[0]!.expectedRevision + 1 });
   await page.reload();
   await expect(active).not.toBeChecked();
-  await expect(page.getByLabel("Estilo de atención", { exact: true })).toHaveValue("Borrador posterior al envío");
+  await expect(page.getByLabel("Tono y personalidad", { exact: true })).toHaveValue("Borrador posterior al envío");
   await page.unroute("**/me/agent");
   await page.route("**/me/agent", route => route.request().method() === "PUT"
     ? route.fulfill({ status: 409, json: { code: "CONFLICT" } }) : route.continue());
   await active.check();
-  await page.getByRole("button", { name: "Guardar y activar", exact: true }).click();
+  await page.getByRole("button", { name: "Guardar cambios", exact: true }).click();
   await expect(page.locator('[data-ui="agent-screen"]').getByRole("alert")).toHaveText("Los datos cambiaron. Recargá y volvé a intentar.");
   await expect(active).toBeChecked();
   await page.getByRole("button", { name: "Recargar configuración", exact: true }).click();
   await expect(active).not.toBeChecked();
   await page.unroute("**/me/agent");
+
+  await page.getByRole("button", { name: "Cerrar panel" }).click();
+  await page.getByRole("link", { name: "Asistente IA", exact: true }).click();
+  await expect(active).not.toBeChecked();
 
   let releaseLate!: () => void;
   let observeLate!: () => void;
@@ -126,13 +160,17 @@ test("agent save preserves newer activation draft and advances the next revision
     deliverLate();
   });
   await active.check();
-  await page.getByRole("button", { name: "Guardar y activar", exact: true }).click();
+  await page.getByRole("button", { name: "Guardar cambios", exact: true }).click();
   await lateObserved;
   try {
+    await page.goBack();
+    await expect(page).toHaveURL(/\/profile$/);
     await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click();
     await expect(page).toHaveURL(/\/$/);
     await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
     await expect(page.locator('[data-ui="admin-screen"]')).toBeVisible();
+    await page.getByRole("link", { name: "Negocios", exact: true }).click();
+    await expect(page).toHaveURL(`${system.webUrl}/businesses`);
   } finally { releaseLate(); }
   await lateDelivered;
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
@@ -149,7 +187,7 @@ test("the redesigned Agent screen preserves the real configuration workflow resp
 }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
-  await expect(page).toHaveURL(/\/businesses$/);
+  await expect(page).toHaveURL(/\/solicitudes$/);
 
   await createBusinessInAdminUi(page, tenant);
 
@@ -160,7 +198,7 @@ test("the redesigned Agent screen preserves the real configuration workflow resp
 
   try {
     await login(tenantPage, system.webUrl, tenant.email, tenant.password);
-    await expect(tenantPage).toHaveURL(/\/profile$/);
+    await expect(tenantPage).toHaveURL(/\/inicio$/);
     await tenantPage.goto(`${system.webUrl}/agent`);
     await expect(tenantPage).toHaveURL(/\/agent$/);
 
@@ -169,7 +207,7 @@ test("the redesigned Agent screen preserves the real configuration workflow resp
     );
     await expect(shell).toHaveCount(1);
     await expect(
-      shell.getByRole("img", { name: "agendIA", exact: true }),
+      shell.getByTitle("agendIA", { exact: true }).locator('img[src="/brand/logo-symbol-inverse.svg"]'),
     ).toBeVisible();
     await expect(
       shell.getByRole("navigation", {
@@ -179,34 +217,11 @@ test("the redesigned Agent screen preserves the real configuration workflow resp
     ).toBeVisible();
 
     const screen = shell.locator('[data-ui="agent-screen"]');
-    const heading = screen.getByRole("heading", { level: 1, name: "Agente", exact: true });
+    await expect(tenantPage.getByRole("dialog", { name: "Asistente IA", exact: true })).toBeVisible();
+    const heading = screen.getByRole("heading", { level: 2, name: "Asistente IA", exact: true });
     const activation = screen.locator('[data-ui="agent-activation"]');
     const savePanel = screen.locator('[data-ui="agent-save-panel"]');
-    await expect(screen).toHaveCount(1);
     await expect(heading).toBeVisible();
-    const guide = screen.getByRole("complementary", { name: "Guía para dirigir el agente", exact: true });
-    await expect(guide.getByRole("heading", { name: "Escribí para orientar", exact: true })).toBeVisible();
-    await expect(guide.getByRole("listitem")).toHaveText([
-      "Usá indicaciones concretas y sin contradicciones.",
-      "Separá el estilo de las reglas obligatorias.",
-      "Revisá que los límites sean explícitos.",
-    ]);
-
-    const sectionHeadings = [
-      "Voz y personalidad",
-      "Contexto y dirección",
-    ] as const;
-    const sections: Locator[] = [];
-    for (const heading of sectionHeadings) {
-      const section = screen.locator("section", {
-        has: tenantPage.getByRole("heading", { name: heading, exact: true }),
-      });
-      sections.push(section);
-      await expect(section).toHaveCount(1);
-      await expect(
-        section.getByRole("heading", { name: heading, exact: true }),
-      ).toBeVisible();
-    }
 
     const form = screen.locator("form#agent-configuration-form");
     await expect(form).toHaveCount(1);
@@ -224,7 +239,7 @@ test("the redesigned Agent screen preserves the real configuration workflow resp
 
     await expect(screen.locator("textarea")).toHaveCount(2);
     await expect(form.locator("input, textarea, select, button")).toHaveCount(
-      3,
+      5,
     );
     await expect(form.locator("textarea")).toHaveCount(2);
     await expect(form.locator('input[type="checkbox"]')).toHaveCount(1);
@@ -247,7 +262,7 @@ test("the redesigned Agent screen preserves the real configuration workflow resp
     }
 
     const save = savePanel.getByRole("button", {
-      name: "Guardar configuración",
+      name: "Guardar cambios",
       exact: true,
     });
     await expect(save).toHaveCount(1);
@@ -261,26 +276,27 @@ test("the redesigned Agent screen preserves the real configuration workflow resp
     await tenantPage.keyboard.press("Shift+Tab");
     await expect(active).toBeFocused();
     expect(await active.evaluate(element => element.matches(":focus-visible"))).toBe(true);
-    expect(await activation.locator(".agent-activation__track").evaluate((element) => {
+    expect(await activation.locator(".integration-track").evaluate((element) => {
       const style = getComputedStyle(element);
       return (style.outlineStyle !== "none" && parseFloat(style.outlineWidth) > 0) || style.boxShadow !== "none";
     })).toBe(true);
     await expectKeyboardFocus(tenantPage, save);
-    await tenantPage.screenshot({ path: testInfo.outputPath("agent-desktop.png"), fullPage: true });
+    await screen.getByRole("button", { name: "Cerrar panel" }).click();
+    await tenantPage.getByRole("link", { name: "Asistente IA", exact: true }).click();
+    await expect(heading).toBeVisible();
+    for (const width of [1280, 360]) {
+      await tenantPage.setViewportSize({ width, height: width === 1280 ? 900 : 800 });
+      const boxes = await Promise.all([screen, screen.locator(".integration-head"), activation, textareas.style, textareas.businessInstructions, savePanel].map(locator => locator.boundingBox()));
+      console.log(`agent geometry ${width}: ${JSON.stringify(boxes)}`);
+      await tenantPage.screenshot({ path: testInfo.outputPath(`agent-panel-${width}.png`) });
+    }
+    await tenantPage.setViewportSize({ width: 1280, height: 900 });
     await expect(save).toHaveAttribute("type", "submit");
-    await expect(save).toHaveAttribute("form", "agent-configuration-form");
-    await expect(form.locator("button")).toHaveCount(0);
-    await expect(screen.getByRole("button")).toHaveCount(1);
+    await expect(screen.getByRole("button", { name: "Cancelar", exact: true })).toBeVisible();
     await expect(screen.getByRole("link")).toHaveCount(0);
-    await expect(
-      screen.getByText(
-        /Cancelar|Restablecer|Vista previa|Conversaciones|Métricas/i,
-      ),
-    ).toHaveCount(0);
 
     await expectNoHorizontalOverflow(tenantPage);
     await expectReachable(heading);
-    for (const section of sections) await expectReachable(section);
     await expectReachable(activation);
     await expectReachable(savePanel);
 
@@ -309,7 +325,7 @@ test("the redesigned Agent screen preserves the real configuration workflow resp
 
     await active.check();
     const activateAndSave = savePanel.getByRole("button", {
-      name: "Guardar y activar",
+      name: "Guardar cambios",
       exact: true,
     });
     await expect(activateAndSave).toBeEnabled();
@@ -331,10 +347,10 @@ test("the redesigned Agent screen preserves the real configuration workflow resp
     await tenantPage.reload();
     await expect(tenantPage).toHaveURL(/\/agent$/);
     await expect(
-      tenantPage.getByLabel("Estilo de atención", { exact: true }),
+      tenantPage.getByLabel("Tono y personalidad", { exact: true }),
     ).toHaveValue(values.style);
     await expect(
-      tenantPage.getByLabel("Indicaciones del negocio", { exact: true }),
+      tenantPage.getByLabel("Instrucciones", { exact: true }),
     ).toHaveValue(values.businessInstructions);
     await expect(
       tenantPage.getByLabel("Respuestas automáticas activas", {
@@ -365,7 +381,7 @@ test("the redesigned Agent screen preserves the real configuration workflow resp
 
     await textareas.style.fill(staleStyle);
     await savePanel
-      .getByRole("button", { name: "Guardar y activar", exact: true })
+      .getByRole("button", { name: "Guardar cambios", exact: true })
       .click();
 
     const conflictAlert = screen.getByRole("alert");
@@ -394,12 +410,12 @@ test("the redesigned Agent screen preserves the real configuration workflow resp
     await expect(textareas.style).toHaveValue(values.style);
     await expect(conflictAlert).toHaveCount(0);
     await expect(reloadConfiguration).toHaveCount(0);
-    await expect(screen.getByRole("button")).toHaveCount(1);
+    await expect(screen.getByRole("button", { name: "Guardar cambios", exact: true })).toBeEnabled();
 
     const refreshedStyle = `${values.style} Revisión actualizada.`;
     await textareas.style.fill(refreshedStyle);
     const refreshedSave = savePanel.getByRole("button", {
-      name: "Guardar y activar",
+      name: "Guardar cambios",
       exact: true,
     });
     await expect(refreshedSave).toBeEnabled();
@@ -416,7 +432,7 @@ test("the redesigned Agent screen preserves the real configuration workflow resp
     for (const [, name] of fields) await expectReachable(textareas[name]);
     await expectReachable(activation);
     const mobileSave = savePanel.getByRole("button", {
-      name: "Guardar y activar",
+      name: "Guardar cambios",
       exact: true,
     });
     await expectReachable(mobileSave);

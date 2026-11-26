@@ -8,7 +8,7 @@ const tenant = {
 };
 
 const values = {
-  displayName: "Estudio Perfil Claro",
+  displayName: "Estudio Perfil Actualizado",
   description: "Asesoramiento personalizado para pequeños negocios.",
   address: "Avenida Siempreviva 742, Buenos Aires",
 };
@@ -47,7 +47,7 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
 }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
-  await expect(page).toHaveURL(/\/businesses$/);
+  await expect(page).toHaveURL(/\/solicitudes$/);
 
   await createBusinessInAdminUi(page, tenant);
 
@@ -63,6 +63,8 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
       tenant.email,
       tenant.password,
     );
+    await expect(tenantPage).toHaveURL(/\/inicio$/);
+    await tenantPage.getByRole("link", { name: "Negocio", exact: true }).click();
     await expect(tenantPage).toHaveURL(/\/profile$/);
 
     const shell = tenantPage.locator(
@@ -70,7 +72,7 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
     );
     await expect(shell).toHaveCount(1);
     await expect(
-      shell.getByRole("img", { name: "agendIA", exact: true }),
+      shell.getByTitle("agendIA", { exact: true }).locator('img[src="/brand/logo-symbol-inverse.svg"]'),
     ).toBeVisible();
     await expect(
       shell.getByRole("navigation", {
@@ -80,26 +82,39 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
     ).toBeVisible();
 
     const screen = shell.locator('[data-ui="profile-screen"]');
-    const heading = screen.getByRole("heading", { level: 1, name: "Perfil del negocio", exact: true });
+    const edit = screen.getByRole("button", { name: "Editar información del negocio", exact: true });
+    const dialog = screen.getByRole("dialog", { name: "Información del negocio", exact: true });
+    const heading = screen.getByRole("heading", { level: 1, name: "Negocio", exact: true });
+    const hub = screen.getByRole("navigation", { name: "Gestión del negocio", exact: true });
     const savePanel = screen.locator('[data-ui="profile-save-panel"]');
     await expect(screen).toHaveCount(1);
     await expect(heading).toBeVisible();
 
-    const form = screen.getByRole("form", { name: "Perfil del negocio", exact: true });
+    await expect(shell.getByRole("navigation", { name: "Gestión del negocio", exact: true })).toHaveCount(1);
+    await expect(hub.getByRole("link")).toHaveCount(6);
+    for (const [label, href] of [["Asistente IA", "/agent"], ["WhatsApp", "/whatsapp"], ["Clientes", "/clients"], ["Servicios", "/services"], ["Recursos", "/resources"], ["Horarios", "/business-calendar"]] as const)
+      await expect(hub.getByRole("link", { name: label, exact: true })).toHaveAttribute("href", href);
+    await expect(hub.getByRole("link", { name: "Asistente IA", exact: true })).toHaveAccessibleDescription("Estado no disponible");
+    const status = await tenantContext.request.get(`${system.webUrl}/api/me/whatsapp/status`);
+    expect(status.ok()).toBe(true);
+    expect((await status.json()).status).toBe("link_required");
+    await expect(hub.getByRole("link", { name: "WhatsApp", exact: true })).toHaveAccessibleDescription("Requiere vinculación");
+    await expect(screen.getByRole("form")).toHaveCount(0);
+    await edit.click();
+    await expect(dialog).toBeVisible();
+
+    const form = dialog.getByRole("form", { name: "Perfil del negocio", exact: true });
     await expect(form).toHaveAttribute("id", "business-profile-form");
     await expect(form).toHaveCount(1);
     await expect(savePanel).toBeVisible();
     const save = savePanel.getByRole("button", {
-      name: "Guardar perfil",
+      name: "Guardar cambios",
       exact: true,
     });
     await expect(save).toHaveAttribute("type", "submit");
     await expect(save).toHaveAttribute("form", "business-profile-form");
-    await expect(
-      screen
-        .getByRole("button", { name: /Cancelar|Restablecer/i })
-        .or(screen.getByRole("link", { name: /Cancelar|Restablecer/i })),
-    ).toHaveCount(0);
+    const cancel = dialog.getByRole("button", { name: "Cancelar", exact: true });
+    await expect(cancel).toBeVisible();
 
     const displayName = form.getByLabel("Nombre comercial", { exact: true });
     const description = form.getByLabel("Descripción", { exact: true });
@@ -129,10 +144,21 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
     await expectTextInput(address, "500");
 
     await expectNoHorizontalOverflow(tenantPage);
-    await expect(heading).toBeVisible();
+    await expect(dialog.getByRole("heading", { name: "Información del negocio" })).toBeVisible();
     await expect(form).toBeVisible();
     await expect(savePanel).toBeVisible();
 
+    await displayName.fill("Borrador sin guardar");
+    await cancel.click();
+    await expect(dialog).toBeHidden();
+    await expect(edit).toBeFocused();
+    await expect(heading).toBeVisible();
+    await edit.click();
+    await expect(displayName).toHaveValue("");
+    await displayName.fill("");
+    await save.click();
+    expect(await displayName.evaluate((field: HTMLInputElement) => field.validity.valueMissing)).toBe(true);
+    await expect(dialog).toBeVisible();
     await displayName.fill(values.displayName);
     await description.fill(values.description);
     await address.fill(values.address);
@@ -157,8 +183,8 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
     };
     await tenantPage.route("**/me/business-profile", saveHandler);
 
-    // Enter keyboard modality through the last field, then genuinely Tab to save.
-    await address.click();
+    // Enter keyboard modality through Cancelar, then genuinely Tab to save.
+    await cancel.focus();
     await tenantPage.keyboard.press("Tab");
     await expect(save).toBeFocused();
     expect(await save.evaluate((element) => element.matches(":focus-visible"))).toBe(true);
@@ -172,14 +198,23 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
         savePanel.getByRole("button", { name: "Guardando…", exact: true }),
       ).toBeDisabled();
       await expect(form).toHaveAttribute("aria-busy", "true");
+      await expect(cancel).toBeDisabled();
+      await tenantPage.keyboard.press("Escape");
+      await expect(dialog).toBeVisible();
     } finally {
       releaseSaveRequest();
     }
     await expect(screen.getByRole("status")).toHaveText("Perfil guardado");
+    await expect(dialog).toBeHidden();
+    await expect(edit).toBeFocused();
+    await expect(screen.getByRole("heading", { name: values.displayName })).toBeVisible();
+    await expect(screen.getByText(values.description, { exact: true })).toBeVisible();
+    await expect(screen.getByText(values.address, { exact: true })).toBeVisible();
     await tenantPage.unroute("**/me/business-profile", saveHandler);
 
     await tenantPage.reload();
     await expect(tenantPage).toHaveURL(/\/profile$/);
+    await edit.click();
     await expect(
       tenantPage.getByLabel("Nombre comercial", { exact: true }),
     ).toHaveValue(values.displayName);
@@ -242,20 +277,25 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
     await expect(screen.getByRole("alert")).toHaveCount(0);
     expect(await readProfile()).toEqual(draft);
     await tenantPage.reload();
+    await expect(screen.getByText(draft.description, { exact: true })).toBeVisible();
+    await edit.click();
     for (const [name, value] of Object.entries(draft))
       await expect(form.locator(`[name="${name}"]`)).toHaveValue(value);
     await expectNoHorizontalOverflow(tenantPage);
     await tenantPage.screenshot({ path: testInfo.outputPath("profile-desktop.png"), fullPage: true });
+    await cancel.click();
     await tenantPage.setViewportSize({ width: 360, height: 800 });
     const mobileMenu = shell.locator('[data-ui="mobile-navigation"]');
     await mobileMenu.getByText("Menú", { exact: true }).click();
     const mobileNavigation = mobileMenu.getByRole("navigation", { name: "Navegación móvil del negocio", exact: true });
     await expect(mobileNavigation).toBeVisible();
-    const profileLink = mobileNavigation.getByRole("link", { name: "Perfil", exact: true });
+    const profileLink = mobileNavigation.getByRole("link", { name: "Negocio", exact: true });
     await expect(profileLink).toHaveAttribute("href", "/profile");
     await expect(profileLink).toHaveAttribute("aria-current", "page");
-    await mobileMenu.locator("summary").click();
+    await profileLink.click();
     await expect(mobileNavigation).toBeHidden();
+    await expect(mobileMenu.locator("summary")).toBeFocused();
+    await edit.click();
     for (const field of fields) {
       const label = await field.getAttribute("name");
       const mobileField = tenantPage.locator(
@@ -268,7 +308,7 @@ test("the redesigned Profile screen preserves the real profile workflow responsi
       '[data-ui="profile-save-panel"]',
     );
     const mobileSave = mobileSavePanel.getByRole("button", {
-      name: "Guardar perfil",
+      name: "Guardar cambios",
       exact: true,
     });
     await mobileSave.scrollIntoViewIfNeeded();

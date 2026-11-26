@@ -1,0 +1,53 @@
+.integration-dialog[data-ui="whatsapp-screen"] {
+  & button.wa-panel-confirmed { background: transparent; border-color: #e9b8a8; color: #65483e; opacity: 1; }
+  & .wa-panel-status { display: flex; align-items: center; gap: 16px; padding: 21px 20px; margin-bottom: 21px; border: 1px solid #e5e8df; border-radius: 18px; background: #f4f3ed; }
+  & .wa-panel-status[data-status="connected"] { background: #e9f0e7; border-color: #d9e5d6; }
+  & .wa-panel-symbol { display: grid; place-items: center; flex: 0 0 42px; width: 42px; height: 42px; border-radius: 13px; background: #e4e9e1; color: #385c44; }
+  & [data-status="connected"] .wa-panel-symbol { background: #2e6b4e; color: #fffefa; }
+  & .wa-panel-symbol svg { width: 22px; height: 22px; }
+  & .wa-panel-summary { flex: 1; min-width: 0; }
+  & .wa-panel-summary strong { display: block; color: #173c2d; font-size: 17px; font-weight: 770; letter-spacing: -.025em; }
+  & .wa-panel-summary span { display: block; margin-top: 5px; font-size: 12px; color: #597262; overflow-wrap: anywhere; }
+  & .wa-panel-indicator { display: flex; align-items: center; gap: 6px; flex: none; padding: 6px 9px; border-radius: 99px; color: #57665b; background: #fffefa; font-size: 10px; font-weight: 770; }
+  & .wa-panel-indicator::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #aeb8ad; }
+  & [data-status="connected"] .wa-panel-indicator { color: #2e6b4e; }
+  & [data-status="connected"] .wa-panel-indicator::before { background: #2e6b4e; }
+  & .wa-panel-note { display: flex; align-items: start; gap: 9px; margin: 0 0 20px; color: #616f62; font-size: 12px; line-height: 1.5; }
+  & .wa-panel-note svg { width: 17px; height: 17px; margin-top: 1px; color: #2e6b4e; }
+  & .wa-panel-steps { display: grid; gap: 10px; list-style: none; padding: 0; margin: 0 0 20px; }
+  & .wa-panel-steps li { display: flex; gap: 12px; align-items: center; color: #445b4a; font-size: 12px; }
+  & .wa-panel-steps b { display: grid; place-items: center; flex: 0 0 25px; height: 25px; border-radius: 9px; background: #e8efe5; color: #2e6b4e; font-size: 11px; }
+  & .wa-panel-qr { display: flex; align-items: center; gap: 22px; margin: 0 0 16px; padding: 16px; border: 1px solid #dfe7dc; border-radius: 18px; background: #f2f5ee; }
+  & .wa-panel-qr img { width: 140px; height: auto; aspect-ratio: 1; flex: none; border-radius: 10px; background: #fff; }
+  & .wa-panel-qr strong { display: block; color: #244a34; font-size: 13px; font-weight: 770; }
+  & .wa-panel-qr span { display: block; margin-top: 7px; color: #616f62; font-size: 11px; line-height: 1.5; }
+  & .wa-panel-metadata { margin-bottom: 12px; color: #445b4a; font-size: 12px; }
+  & .wa-panel-metadata summary { cursor: pointer; }
+  & .wa-panel-metadata dl { display: flex; flex-wrap: wrap; gap: 8px 24px; margin: 8px 0; }
+  & .wa-panel-metadata dt { font-weight: 760; }
+  & .wa-panel-metadata dd { margin: 0; overflow-wrap: anywhere; }
+  & .wa-panel-lower { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding: 19px 0 2px; border-top: 1px solid #e6eae1; }
+  & .wa-panel-annotation { min-width: 0; max-width: 260px; color: #616f62; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+  & .wa-panel-annotation small { display: block; font: inherit; }
+  & .wa-panel-annotation p { margin: 0; }
+  & .wa-panel-annotation [role="alert"] { margin-top: 6px; padding: 7px 9px; border-radius: 8px; color: #843118; }
+  & .wa-panel-lower .integration-button { flex: 0 0 auto; max-width: 100%; }
+}
+@media (max-width: 640px) {
+  .integration-dialog[data-ui="whatsapp-screen"] {
+    & .wa-panel-status { gap: 10px; padding: 17px 13px; flex-wrap: wrap; }
+    & .wa-panel-indicator { margin-left: 52px; }
+    /* Let a longer live badge wrap before it squeezes the summary to a few glyphs. */
+    & .wa-panel-summary { min-width: min(100%, 48px); }
+    & .wa-panel-lower { align-items: stretch; }
+    & .wa-panel-lower .integration-button { width: 100%; }
+    & .wa-panel-qr { gap: 13px; }
+    & .wa-panel-qr img { width: 112px; }
+  }
+}
+@media (max-width: 340px) {
+  .integration-dialog[data-ui="whatsapp-screen"] {
+    & .wa-panel-summary strong { overflow-wrap: anywhere; }
+    & .wa-panel-qr { flex-wrap: wrap; }
+  }
+}

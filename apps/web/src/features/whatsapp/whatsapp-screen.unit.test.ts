@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ApiClient, ApiError, type WhatsAppStatus } from "../../api/api-client";
-import { resolveWhatsAppStatusView, WhatsAppScreen } from "./whatsapp-screen";
+import { WhatsAppPanelContent } from "./whatsapp-screen";
+import { resolveWhatsAppStatusView } from "./whatsapp-status";
 
 describe("resolveWhatsAppStatusView", () => {
   test.each([
@@ -42,11 +43,11 @@ describe("WhatsApp recovery action", () => {
     "allows recovery from %s unless a request is pending",
     (status) => {
       for (const linking of [false, true]) {
-        const html = renderToStaticMarkup(createElement(WhatsAppScreen, {
+        const html = renderToStaticMarkup(createElement(WhatsAppPanelContent, {
           status: { status: status as WhatsAppStatus["status"] },
           feedback: null, qrDataUrl: null, linking, linkAction: () => {},
         }));
-        const button = html.match(/<button\b[^>]*>[^<]*<\/button>/)?.[0];
+        const button = html.match(/<button\b[^>]*>[\s\S]*?<\/button>/)?.[0];
         expect(button).toBeDefined();
         expect(button!.includes('disabled=""')).toBe(linking);
         expect(button).toContain(linking ? "Esperando conexión…" : "Vincular WhatsApp");
@@ -55,11 +56,11 @@ describe("WhatsApp recovery action", () => {
   );
 
   test.each(["connected", "connecting"])("keeps %s disabled", (status) => {
-    const html = renderToStaticMarkup(createElement(WhatsAppScreen, {
+    const html = renderToStaticMarkup(createElement(WhatsAppPanelContent, {
       status: { status: status as WhatsAppStatus["status"] },
       feedback: null, qrDataUrl: null, linking: false, linkAction: () => {},
     }));
-    expect(html).toContain('<button type="button" disabled="">');
+    expect(html).toMatch(/<button\b[^>]*disabled=""/);
     expect(html).toContain(status === "connected" ? "WhatsApp vinculado" : "Estado no disponible");
   });
 });
