@@ -101,6 +101,35 @@ test("explicit Argentina midnight bounds use inclusive/exclusive epochs, not a U
   expect((await get(`/me/appointments?${new URLSearchParams({ from: "2026-06-01T00:00:00Z", to: from })}`, a)).json().map((row: { id: string }) => row.id)).toEqual([a.ids[0]]);
 });
 
+test("opt-in overlap reads include earlier starts, exclude touching edges and preserve starts-only reads", async () => {
+  const insert = async (raw: string, duration: number) => {
+    const id = randomUUID(), ms = parseInstantMs(raw)!;
+    await database.sql`insert into appointments(id,business_id,client_id,service_id,resource_id,service_label,resource_label,duration_minutes,price_ars,start_raw,start_ms,end_ms,state,origin)
+      values(${id},${a.businessId},${a.client},${a.service},${a.resource},'Frozen service','Frozen resource',${duration},0,${raw},${ms},${ms + duration * 60000},'done','manual')`;
+    return id;
+  };
+  const crossing = await insert("2026-05-30T12:00:00-03:00", 2880);
+  const touching = await insert("2026-05-31T23:45:00-03:00", 15);
+  const before = await effects();
+  const bounds = new URLSearchParams({ from, to });
+  const url = `/me/appointments?${bounds}`;
+  const starts = await get(url, a);
+  expect(starts.statusCode).toBe(200);
+  expect(starts.json<AppointmentRecord[]>().map(row => row.id)).toEqual(a.ids.slice(1, 4));
+  const overlap = await get(`${url}&overlap=true`, a);
+  expect(overlap.statusCode).toBe(200);
+  expect(overlap.json<AppointmentRecord[]>().map(row => row.id)).toEqual([crossing, ...a.ids.slice(0, 4)]);
+  expect((await get(`${url}&overlap=true`, b)).json<AppointmentRecord[]>().map(row => row.id)).toEqual(b.ids.slice(0, 4));
+  expect((await get(`${url}&overlap=true&clientId=${b.client}`, a)).json<AppointmentRecord[]>()).toEqual([]);
+  for (const query of ["overlap=true", `overlap=true&${new URLSearchParams({ to })}`, `overlap=true&${new URLSearchParams({ from })}`, `${bounds}&overlap=false`]) {
+    const invalid = await get(`/me/appointments?${query}`, a);
+    expect(invalid.statusCode).toBe(400);
+    expect(invalid.json().code).toBe("VALIDATION_FAILED");
+  }
+  expect(await effects()).toEqual(before);
+  expect(overlap.json<AppointmentRecord[]>().some(row => row.id === touching)).toBe(false);
+});
+
 test("tenant sessions isolate same-name identities and reject authority/filter injection safely", async () => {
   const before = await effects();
   for (const url of ["/me/appointments", `/me/appointments/${a.ids[0]}`]) {
