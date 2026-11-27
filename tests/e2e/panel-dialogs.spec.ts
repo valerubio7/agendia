@@ -74,7 +74,7 @@ test("client dialog keeps a draft on an inside drag and restores focus after out
   await page.goto(`${system.webUrl}/clients`);
   const opener = page.getByRole("button", { name: "Nuevo cliente", exact: true });
   const dialog = page.getByRole("dialog", { name: "Nuevo cliente", exact: true });
-  const name = dialog.getByRole("textbox", { name: "Nombre", exact: true });
+  const name = dialog.getByRole("textbox", { name: "Nombre completo", exact: true });
   for (const width of [1280, 360]) {
     await page.setViewportSize({ width, height: 800 });
     await opener.click();
