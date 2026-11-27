@@ -411,7 +411,7 @@ test("Clientes refreshes history on booking close despite a held pre-save read",
   } finally { release?.(); await page.close(); }
 });
 
-test("Clientes fences an uncertain standalone POST across reload and upgrade until GET confirms the exact identity", async ({ browser, page, system }) => {
+test("Clientes fences a current uncertain POST across reload and discards obsolete drafts", async ({ browser, page, system }) => {
   test.setTimeout(180_000);
   const password = "uncertain clients tenant password";
   await login(page, `${system.webUrl}/admin/login`, system.admin.email, system.admin.password);
@@ -456,15 +456,12 @@ test("Clientes fences an uncertain standalone POST across reload and upgrade unt
     });
     await form.locator('button[type="submit"]').click();
     await expect(form.getByRole("alert")).toContainText("No pudimos confirmar");
-    for (const restore of ["live", "current", "legacy"] as const) {
-      if (restore === "legacy") {
-        const session = await (await business.request.get(`${system.webUrl}/api/auth/session`)).json();
-        // The prior bundle recorded raw fields, while the migrated API returns one canonical name.
-        await business.evaluate(({ key, phone }) => localStorage.setItem(key, JSON.stringify({
-          version: 1, draft: { firstName: " Alicia\u00a0 María ", lastName: " Gómez ", phone },
-        })), { key: `agendia.client-create:${session.businessId}:${session.identityId}`, phone: draft.Teléfono });
-      }
-      if (restore !== "live") await business.reload();
+    const session = await (await business.request.get(`${system.webUrl}/api/auth/session`)).json();
+    const journalKey = `agendia.client-create:${session.businessId}:${session.identityId}`;
+    const journal = await business.evaluate(key => localStorage.getItem(key), journalKey);
+    expect(JSON.parse(journal!)).toEqual({ version: 2, draft: { name: draft["Nombre completo"], phone: draft.Teléfono } });
+    for (const reload of [false, true]) {
+      if (reload) await business.reload();
       for (const [label, value] of Object.entries(draft)) {
         await expect(form.getByLabel(label, { exact: true })).toHaveValue(value);
         await expect(form.getByLabel(label, { exact: true })).toBeDisabled();
@@ -475,6 +472,7 @@ test("Clientes fences an uncertain standalone POST across reload and upgrade unt
       await expect(screen.getByRole("form", { name: "Buscar clientes", exact: true }).getByRole("textbox")).toBeDisabled();
       await expect(screen.getByRole("form", { name: "Buscar clientes", exact: true }).getByRole("button")).toBeDisabled();
       await expect(screen.getByRole("list", { name: "Clientes del negocio", exact: true }).getByRole("button").first()).toBeDisabled();
+      expect(await business.evaluate(key => localStorage.getItem(key), journalKey)).toBe(journal);
       expect(posts).toBe(1);
     }
     // Leaving the dialog cannot clear the journal, and logout remains reachable.
@@ -543,9 +541,31 @@ test("Clientes fences an uncertain standalone POST across reload and upgrade unt
     await expect(detail.getByRole("button", { name: "Editar cliente", exact: true })).toBeFocused();
     expect(posts).toBe(1);
     await expect(business).toHaveURL(`${system.webUrl}/clients`);
+    expect(await business.evaluate(key => localStorage.getItem(key), journalKey)).toBeNull();
+    await business.evaluate(key => localStorage.setItem(key, JSON.stringify({
+      version: 1, draft: { firstName: "Bruno", lastName: "Existente", phone: "+5491123456788" },
+    })), journalKey);
     await business.reload();
     await expect(create).toBeEnabled();
     await expect(form).toHaveCount(0);
+    await expect(check).toHaveCount(0);
+    await expect(screen.getByRole("button", { name: /Bruno Existente/ })).toBeEnabled();
+    expect(posts).toBe(1);
+    await create.click();
+    await expect(form.getByLabel("Nombre completo", { exact: true })).toHaveValue("");
+    await expect(form.getByLabel("Teléfono", { exact: true })).toHaveValue("");
+    const fresh = { name: "Carla Nueva", phone: "+5491123456787" };
+    await form.getByLabel("Nombre completo", { exact: true }).fill(fresh.name);
+    await form.getByLabel("Teléfono", { exact: true }).fill(fresh.phone);
+    const freshResponse = business.waitForResponse(r => r.url() === recoveryUrl && r.request().method() === "POST");
+    await form.locator('button[type="submit"]').click();
+    const response = await freshResponse;
+    expect(response.status()).toBe(201);
+    expect(response.request().postDataJSON()).toEqual(fresh);
+    expect(await response.json()).toEqual({ id: expect.any(String), ...fresh });
+    await expect(detail.getByRole("heading", { name: fresh.name, exact: true })).toBeVisible();
+    await business.keyboard.press("Escape");
+    await expect(create).toBeEnabled();
     await business.evaluate(() => {
       const original = Storage.prototype.setItem;
       Storage.prototype.setItem = function (key, value) {
@@ -560,7 +580,7 @@ test("Clientes fences an uncertain standalone POST across reload and upgrade unt
     await expect(form.getByLabel("Teléfono", { exact: true })).toBeDisabled();
     await expect(form.locator('button[type="submit"]')).toBeDisabled();
     await expect(form.getByRole("button", { name: "Cancelar", exact: true })).toBeDisabled();
-    expect(posts).toBe(1); // No durable journal means no new POST.
+    expect(posts).toBe(2); // No durable journal means no new POST.
   } finally { await context.close(); }
 });
 

@@ -1849,45 +1849,48 @@ describe("native booking names: provenance enforcement, not semantic name owners
     await h.run("confirmo", async tools => { expect((await tools.execute("confirm_quote", {})).status).toBe("staged_action"); return final(tools); });
     expect((await h.appointments())[0]!.client).toMatchObject({ name: "Sol", phone });
   });
-  test("legacy partial dialogue keeps the selected slot but cannot reuse delivery or consent", async () => {
+  for (const shape of ["quote", "name fields"] as const) test(`obsolete ${shape} cannot supply booking consent and a new booking can start`, async () => {
     const h = await fixture(true, false);
     const original = await pendingNames(h);
     if (original.status !== "committed") throw new Error("Missing draft");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${original.outboundId}`;
     const [row] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
-    const legacy = row!.dialogue;
-    delete legacy.quote.name;
-    legacy.quote.names = null;
-    legacy.quote.outboundId = original.outboundId;
-    delete legacy.bookingName;
-    legacy.bookingNames = null;
-    legacy.bookingNameFields = { firstName: "María" };
-    legacy.awaiting = ["names"];
-    legacy.acceptedBookingQuote = JSON.stringify(legacy.quote);
-    await db.sql`update whatsapp_agenda_dialogues set dialogue=${db.sql.json(legacy)} where business_id=${h.business}`;
-    const proposal = await h.run("Sol", async tools => {
+    const oldQuote = row!.dialogue.quote;
+    delete oldQuote.name;
+    oldQuote.names = { firstName: "María", lastName: "Pérez" };
+    oldQuote.outboundId = original.outboundId;
+    const obsolete = shape === "quote"
+      ? { quote: oldQuote, awaitingNames: false, acceptedBookingQuote: JSON.stringify(oldQuote) }
+      : { quote: null, awaitingNames: false, awaiting: ["time"], bookingNameFields: { firstName: "María" } };
+    await db.sql`update whatsapp_agenda_dialogues set dialogue=${db.sql.json(obsolete)} where business_id=${h.business}`;
+    const restart = await h.run("confirmo", async tools => {
+      expect(tools.context.pending).toEqual({ quote: null, awaitingNames: false });
+      expect(tools.context.pendingQuotePresentationReference).toBeNull();
       expect(tools.context.naturalConfirmation).toBeNull();
       expect(tools.context.retainedBookingConfirmation).toBeNull();
-      expect(tools.context.pending).toMatchObject({ awaiting: ["name"], quote: { name: null, startsAt: legacy.quote.startsAt, outboundId: null } });
-      expect(tools.context.pending).not.toHaveProperty("bookingNameFields");
-      const runtime = nameRuntime(tools), member = runtime.nameSources.at(-1)!;
-      expect(await tools.execute("collect_booking_names", { namesReference: runtime.namesReference, name: nameField(member.messageId, "Sol") }))
-        .toMatchObject({ status: "prepared_quote", quote: { name: "Sol", startsAt: legacy.quote.startsAt } });
-      return final(tools, "Te propongo el mismo horario. ¿Confirmás?");
+      expect(nameRuntime(tools).namesReference).toBeNull();
+      expect(await tools.execute("confirm_quote", {})).toMatchObject({ status: "clarification", reason: "NO_CONFIRMATION", missingFields: [] });
+      return final(tools, "¿Qué horario querés reservar?");
     });
-    if (proposal.status !== "committed") throw new Error("Missing updated proposal");
+    if (restart.status !== "committed") throw new Error("Missing restart reply");
+    expect(restart.actions).toEqual([]);
+    expect(await h.appointments()).toEqual([]);
+    expect((await db.sql`select count(*)::int count from clients where business_id=${h.business}`)[0]!.count).toBe(0);
+    expect((await db.sql`select text from outbound_commands where outbound_id=${restart.outboundId}`)[0]!.text).toBe("¿Qué horario querés reservar?");
+    const nextStart = "2035-04-02T11:00:00-03:00";
+    const proposal = await h.run("Mi nombre es Sol", async tools => {
+      expect(await tools.execute("prepare_booking", { serviceId: h.service, startsAt: nextStart }))
+        .toMatchObject({ status: "prepared_quote", quote: { name: "Sol", startsAt: new Date(nextStart).toISOString(), outboundId: null } });
+      return final(tools, "Te propongo un nuevo horario. ¿Confirmás?");
+    });
+    if (proposal.status !== "committed") throw new Error("Missing new proposal");
     expect(proposal.actions).toEqual([]);
-    expect(await h.appointments()).toHaveLength(0);
-    const [before] = await db.sql`select count(*)::int count from clients where business_id=${h.business}`;
-    expect(before!.count).toBe(0);
-    const [output] = await db.sql`select text from outbound_commands where outbound_id=${proposal.outboundId}`;
-    expect(output!.text).toBe("Te propongo el mismo horario. ¿Confirmás?");
     await db.sql`update outbound_commands set state='sent',acknowledged_at=now() where outbound_id=${proposal.outboundId}`;
     await h.run("confirmo", async tools => {
       expect((await tools.execute("confirm_quote", {})).status).toBe("staged_action");
       return final(tools, "Guardado.");
     });
-    expect(await h.appointments()).toMatchObject([{ client: { name: "Sol", phone } }]);
+    expect(await h.appointments()).toMatchObject([{ startsAt: new Date(nextStart).toISOString(), client: { name: "Sol", phone } }]);
   });
   test("authenticated earlier group names are available when the latest fragment asks availability", async () => {
     const h = await fixture(true, false);

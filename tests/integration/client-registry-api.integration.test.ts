@@ -94,25 +94,21 @@ test("safe validation and foreign/missing IDs leave no effects", async () => {
   expect(await effects()).toEqual(before);
 });
 
-test("mixed legacy name keys are rejected on registry POST and PUT without effects", async () => {
-  const created = await request("POST", undefined, a, { ...input, phone: "+5491189012310" });
+test("registry POST and PUT ignore extra keys when name is valid", async () => {
+  const before = await effects();
+  const extras = { firstName: "Old", lastName: "Name", extra: { ignored: true } };
+  const created = await request("POST", undefined, a, { ...extras, name: " New Client ", phone: "+5491189012310" });
   expect(created.statusCode).toBe(201);
-  const { id } = created.json<Client>();
-  const clientsBefore = (await request("GET", undefined, a)).json<Client[]>();
-  const effectsBefore = await effects();
-  const results = [];
-  for (const [key, suffix] of [["firstName", 0], ["lastName", 1]] as const) {
-    const body = { name: "Changed Name", [key]: "Legacy" };
-    results.push(await request("POST", undefined, a, { ...body, phone: `+549118901232${suffix}` }));
-    results.push(await request("PUT", `/me/clients/${id}`, a, { ...body, phone: `+549118901233${suffix}` }));
-  }
-  expect(results.map(result => result.statusCode)).toEqual([400, 400, 400, 400]);
-  for (const result of results)
-    expect(result.json<ValidationError>()).toEqual({ code: "VALIDATION_FAILED", message: "Invalid client fields", requestId: expect.any(String) });
-  const clientsAfter = await request("GET", undefined, a);
-  expect(clientsAfter.statusCode).toBe(200);
-  expect(clientsAfter.json<Client[]>()).toEqual(clientsBefore);
-  expect(await effects()).toEqual(effectsBefore);
+  const client = created.json<Client>();
+  expect(client).toEqual({ id: expect.any(String), name: "New Client", phone: "+5491189012310" });
+  const updated = await request("PUT", `/me/clients/${client.id}`, a, { ...extras, name: " Edited Client ", phone: "+5491189012311" });
+  expect(updated.statusCode).toBe(200);
+  const edited = { id: client.id, name: "Edited Client", phone: "+5491189012311" };
+  expect(updated.json<Client>()).toEqual(edited);
+  const found = await request("GET", "/me/clients?q=Edited%20Client", a);
+  expect(found.statusCode).toBe(200);
+  expect(found.json<Client[]>()).toEqual([edited]);
+  expect(await effects()).toEqual({ clients: before.clients + 1, audit: before.audit + 2, outbox: before.outbox + 2, replies: before.replies });
 });
 
 test("canonical duplicates are race-safe, tenant-local, and fixed/mobile remain distinct", async () => {

@@ -76,31 +76,11 @@ const nameReply = (dialogue: AgendaDialogue): Reply => ({
   reason: "MISSING_NAMES", dialogue, missingFields: ["name"],
 });
 
-// JSONB predates the single-name draft. Keep complete names, never promote an old partial field.
-function upgradeRetainedDialogue(dialogue: AgendaDialogue) {
-  type SplitName = { firstName?: string; lastName?: string };
-  const legacy = dialogue as AgendaDialogue & { bookingNames?: SplitName | null; bookingNameFields?: SplitName };
-  const quote = dialogue.quote as (NonNullable<AgendaDialogue["quote"]> & { names?: SplitName | null }) | null;
-  const completeName = (split?: SplitName | null) => {
-    const first = split?.firstName?.trim(), last = split?.lastName?.trim();
-    return first && last ? `${first} ${last}` : null;
-  };
-  if (quote && Object.hasOwn(quote, "names")) {
-    quote.name = quote.kind === "book" ? completeName(quote.names) : null;
-    delete quote.names;
-    if (quote.kind === "book") {
-      // The old delivery and acceptance did not bind this new quote shape.
-      quote.outboundId = null;
-      delete dialogue.acceptedBookingQuote;
-    }
-  }
-  if (Object.hasOwn(legacy, "bookingNames") || Object.hasOwn(legacy, "bookingNameFields")) {
-    dialogue.bookingName ??= quote?.kind === "book" ? quote.name ?? completeName(legacy.bookingNames) : completeName(legacy.bookingNames);
-    delete legacy.bookingNames;
-    delete legacy.bookingNameFields;
-  }
-  if (dialogue.awaiting?.some(field => ["names", "firstName", "lastName"].includes(field)))
-    dialogue.awaiting = [...new Set(dialogue.awaiting.map(field => ["names", "firstName", "lastName"].includes(field) ? "name" : field))];
+function currentDialogue(dialogue: AgendaDialogue) {
+  // Delivery and consent from a split-name draft cannot bind a new proposal.
+  if (Object.hasOwn(dialogue, "bookingNames") || Object.hasOwn(dialogue, "bookingNameFields")
+    || (dialogue.quote && dialogue.quote.name !== null && typeof dialogue.quote.name !== "string"))
+    return emptyAgendaDialogue();
   return dialogue;
 }
 type GuardedMutation = Extract<AgentToolCommand, { name: "cancel" | "notes" | "preference" }>;
@@ -125,7 +105,7 @@ export class PostgresWhatsAppAgenda {
         const source = await repo.lockAgendaSource(job.messageId);
         if (!source || source.business_id !== job.businessId) return { status: "not_current" } as const;
         const phone = await repo.agendaSender(job.messageId);
-        let dialogue = phone ? upgradeRetainedDialogue(await repo.lockAgendaDialogue(job.businessId, source.connection_id, phone)) : emptyAgendaDialogue();
+        let dialogue = phone ? currentDialogue(await repo.lockAgendaDialogue(job.businessId, source.connection_id, phone)) : emptyAgendaDialogue();
         await repo.acquireBusinessCalendarLock({ businessId: job.businessId });
         const actions: { operation: string; appointmentId: string }[] = [];
         let pendingCleared = false;

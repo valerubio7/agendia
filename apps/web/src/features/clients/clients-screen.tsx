@@ -188,20 +188,20 @@ export function ClientsScreen({ disabled, sessionActive, businessId, identityId 
       const raw = localStorage.getItem(journalKey);
       if (raw !== null) {
         const entry = JSON.parse(raw);
-        const draft = entry?.draft;
-        if (typeof draft?.phone !== "string" || Object.keys(entry).length !== 2)
-          throw new Error("Invalid journal");
-        const keys = Object.keys(draft).length;
-        const name = entry.version === 2 && keys === 2 && typeof draft.name === "string" ? draft.name
-          : entry.version === 1 && keys === 3 && typeof draft.firstName === "string" && typeof draft.lastName === "string"
-            ? `${draft.firstName} ${draft.lastName}`.replace(/\s+/g, " ").trim() : null;
-        if (name === null) throw new Error("Invalid journal");
-        // Read legacy drafts without changing the stored bytes used to prove ownership.
-        journalValue.current = raw;
-        setDraft({ name, phone: draft.phone });
-        setCreating(true);
-        setUncertain(true);
-        setSaveError(uncertainMessage);
+        if (entry?.version === 1) {
+          journalValue.current = raw;
+          clearJournal();
+        } else {
+          const draft = entry?.draft;
+          if (entry?.version !== 2 || typeof draft?.phone !== "string" || typeof draft.name !== "string"
+            || Object.keys(entry).length !== 2 || Object.keys(draft).length !== 2)
+            throw new Error("Invalid journal");
+          journalValue.current = raw;
+          setDraft({ name: draft.name, phone: draft.phone });
+          setCreating(true);
+          setUncertain(true);
+          setSaveError(uncertainMessage);
+        }
       } else fenced.current = false;
     } catch {
       setStorageError(storageMessage);

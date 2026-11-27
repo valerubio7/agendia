@@ -3,11 +3,6 @@ import { z } from "zod";
 import { ClientInputSchema } from "@agendia/domain";
 import type { RouteFailure, TenantRouteContext } from "./context.ts";
 
-const RegistryClientInputSchema = ClientInputSchema.extend({
-  firstName: z.never().optional(),
-  lastName: z.never().optional(),
-});
-
 export function registerClientRoutes(
   app: FastifyInstance,
   { pools, requireTenant, context, fail, tenantWrite, clientFailure, clientNotFound }: TenantRouteContext & {
@@ -30,7 +25,7 @@ export function registerClientRoutes(
   app.post("/me/clients", async (request, reply) => {
     const auth = await requireTenant(request, reply, true);
     if (!auth) return;
-    const parsed = RegistryClientInputSchema.safeParse(request.body);
+    const parsed = ClientInputSchema.safeParse(request.body);
     if (!parsed.success)
       return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid client fields");
     try {
@@ -45,7 +40,7 @@ export function registerClientRoutes(
     const auth = await requireTenant(request, reply, true);
     if (!auth) return;
     const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-    const parsed = RegistryClientInputSchema.safeParse(request.body);
+    const parsed = ClientInputSchema.safeParse(request.body);
     if (!params.success || !parsed.success)
       return fail(reply, request, 400, "VALIDATION_FAILED", "Invalid client fields");
     try {
