@@ -963,7 +963,7 @@ describe("bounded generation retries through real pg-boss work", () => {
       const context = tenantContext({ businessId: business, actorId: "test", role: "internal_worker", requestId: queue });
       const appointment = await pools.api.run(context, r => r.createAppointment(business, {
         serviceId: service, resourceId: resource, startRaw: "2035-04-02T11:00:00-03:00",
-        newClient: { firstName: "María", lastName: "Pérez", phone },
+        newClient: { name: "María Pérez", phone },
       }, { now: "2035-04-01T08:00:00-03:00", origin: "manual" }));
       const receive = async (suffix: string) => {
         const providerMessageId = `${queue}-${suffix}`;

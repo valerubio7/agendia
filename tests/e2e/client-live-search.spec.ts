@@ -1,8 +1,8 @@
 import { expect, type Page } from "@playwright/test";
 import { createBusinessInAdminUi, login, test } from "./support/fixtures.ts";
 
-const clara = { id: "clara", firstName: "Clara", lastName: "López", phone: "+5491123456777" };
-const claudio = { id: "claudio", firstName: "Claudio", lastName: "Díaz", phone: "+5491123456788" };
+const clara = { id: "clara", name: "Clara López", phone: "+5491123456777" };
+const claudio = { id: "claudio", name: "Claudio Díaz", phone: "+5491123456788" };
 
 // Only session setup writes, through the isolated system fixture. Search/history responses are read-only fixtures.
 async function start(page: Page, admin: Page, system: { webUrl: string; admin: { email: string; password: string } }) {
@@ -41,10 +41,10 @@ test("booking live search selects the first current match on Enter without submi
     await page.route(clientList, async route => {
       if (route.request().method() !== "GET") return route.fallback();
       const query = new URL(route.request().url()).searchParams.get("q");
-      if (query === "Clau") await latest.held;
+      if (query === "Claudio Díaz") await latest.held;
       if (query === "Pendiente") await obsolete.held;
       if (query === "Cerrar") await closing.held;
-      return route.fulfill({ json: query === "No existe" ? [] : query === "Clau" ? [claudio] : [clara, claudio] });
+      return route.fulfill({ json: query === "No existe" ? [] : query === "Claudio Díaz" || query === claudio.phone ? [claudio] : [clara, claudio] });
     });
     await page.getByRole("button", { name: "Nuevo turno", exact: true }).click();
     const form = page.getByRole("form", { name: "Crear turno" });
@@ -54,14 +54,18 @@ test("booking live search selects the first current match on Enter without submi
     await expect(results.getByRole("button")).toHaveCount(2);
     await input.press("Enter");
     await expect(results.getByRole("button", { name: /Clara López/ })).toHaveAttribute("aria-pressed", "true");
-    const requestedLatest = page.waitForRequest(queryIs("Clau"));
-    await input.fill("Clau");
+    const requestedLatest = page.waitForRequest(queryIs("Claudio Díaz"));
+    await input.fill("Claudio Díaz");
     await requestedLatest;
     await input.press("Enter");
     await expect(results).toHaveCount(0);
     latest.release();
     await expect(results.getByRole("button", { name: /Claudio Díaz/ })).toHaveAttribute("aria-pressed", "true");
     await expect(results.getByRole("button", { name: /Clara López/ })).toHaveCount(0);
+    await input.fill(claudio.phone);
+    await expect(results.getByRole("button", { name: /Claudio Díaz/ })).toHaveAttribute("aria-pressed", "false");
+    await input.press("Enter");
+    await expect(results.getByRole("button", { name: /Claudio Díaz/ })).toHaveAttribute("aria-pressed", "true");
     await input.fill("No existe");
     await input.press("Enter");
     await expect(results).toHaveCount(0);

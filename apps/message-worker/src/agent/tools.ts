@@ -33,7 +33,8 @@ export function canonicalAgentDate(instant: unknown, timeZone: unknown): AgentDa
 
 const id = z.uuid();
 const selection = { serviceId: id, resourceId: id.optional(), startsAt: InstantSchema };
-const nameField = z.object({ value: z.string().min(1).max(100).refine(value => value.trim() === value),
+// Preserve the two former 100-unit parts plus their separating space.
+const nameField = z.object({ value: z.string().min(1).max(201).refine(value => value.trim() === value && !value.includes("\0")),
   messageId: id, start: z.number().int().nonnegative() }).strict();
 const memberBinding = { evidenceReference: z.string().regex(/^[a-f0-9]{64}$/u),
   messageId: id, evidence: z.string().min(1).max(12000) };
@@ -55,8 +56,8 @@ const schemas = {
   owned_appointment: z.object({ appointmentId: id }).strict(),
   prepare_booking: z.object(selection).strict(),
   collect_booking_names: z.object({ namesReference: z.string().regex(/^[a-f0-9]{64}$/u),
-    firstName: nameField.optional(), lastName: nameField.optional(), bookingNotes, deferForBusinessRequirements: z.boolean().optional(),
-  }).strict().refine(args => args.firstName !== undefined || args.lastName !== undefined),
+    name: nameField, bookingNotes, deferForBusinessRequirements: z.boolean().optional(),
+  }).strict(),
   prepare_change: z.object({ appointmentId: id, serviceId: id.optional(), resourceId: id.optional(), startsAt: InstantSchema.optional() })
     .strict().refine(args => args.serviceId !== undefined || args.resourceId !== undefined || args.startsAt !== undefined),
   confirm_quote: z.object({ bookingNotes }).strict(),
@@ -93,8 +94,8 @@ const descriptions: Record<ToolName, string> = {
   availability: "Read actual slots on exactly one date for a tenant service and optional resource. startGroups indexes reference returned items and describe quarter-hour start options, not appointment end times; hasMore means results are incomplete. Optional appointmentId is verified as current sender-owned before excluding its occupancy for a change. No reservation.",
   owned_appointments: "Read current sender-owned appointments with target/snapshot-bound cancellationReference, notesReference and preferenceReference.",
   owned_appointment: "Inspect one current sender-owned appointment with cancellationReference, notesReference and preferenceReference. IDs never establish ownership.",
-  prepare_booking: "Prepare a real slot quote, not a booking, including before offering a concrete alternative even when names are missing. Replaces previous pending selection. Confirmation requires later explicit customer consent after quote delivery.",
-  collect_booking_names: "Patch only the customer's own new-booking names in an active draft. Copy its fresh namesReference and literal field values from authenticated nameSources, each with messageId and zero-based UTF-16 start offset. Omitted fields are retained; corrections replace only supplied fields. Never use DNI, insurance, profile, third-person names, history or summaries as the customer's names. Binding authenticates provenance, NOT semantic name ownership. Names alone never authorize booking; completing missing names can stage a booking only after prior clear acceptance of the same delivered quote. If business requirements still remain after names, set deferForBusinessRequirements true so retained acceptance does not save yet. If this may save the booking, provide bookingNotes from bookingNoteSources as literal messageId/value/start spans for current relevant customer details; omit obsolete or ambiguous details. Use the returned fresh reference for another patch.",
+  prepare_booking: "Prepare a real slot quote, not a booking, including before offering a concrete alternative even when the customer's name is missing. Replaces previous pending selection. Confirmation requires later explicit customer consent after quote delivery.",
+  collect_booking_names: "Set or replace the customer's own single name in an active new-booking draft. Copy its fresh namesReference and one literal name span from authenticated nameSources with value, messageId and zero-based UTF-16 start offset. A single-word name is valid. Never use DNI, insurance, profile, third-person names, history or summaries as the customer's name. Binding authenticates provenance, NOT semantic name ownership. A name alone never authorizes booking; filling a missing name can stage a booking only after prior clear acceptance of the same delivered quote. If business requirements remain, set deferForBusinessRequirements true so retained acceptance does not save yet. If this may save the booking, provide bookingNotes from bookingNoteSources as literal messageId/value/start spans for current relevant customer details; omit obsolete or ambiguous details. Use the returned fresh reference for a correction.",
   prepare_change: "Prepare a sender-owned change quote, not a saved change. Requires later explicit confirmation after delivery.",
   confirm_quote: "Legacy literal confirmation or pending names using the actual received message. For a new booking, provide bookingNotes from bookingNoteSources as literal messageId/value/start spans for current relevant customer details; omit obsolete or ambiguous details. Effects are staged until session commit.",
   confirm_quote_naturally: "Interpret clear explicit acceptance of the exact delivered pending quote. Copy the COMPLETE current message as evidence and its runtime naturalConfirmation bindings. For a new booking, provide bookingNotes from bookingNoteSources as literal messageId/value/start spans for current relevant customer details; omit obsolete or ambiguous details. If business requirements remain, set deferForBusinessRequirements true to retain acceptance without booking. Never invoke for ambiguity, hypotheticals, negation or changed conditions: clarify or prepare a fresh quote instead. Backend verifies evidence authenticity and quote context, NOT consent semantics; interpretation can be wrong. Effects remain staged until session commit.",

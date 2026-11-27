@@ -63,7 +63,7 @@ export function TurnosDetail({ row, now, disabled, mutate, change }: {
   };
   return <section className="turnos-detail" aria-label="Detalle del turno" aria-busy={saving}>
     <header className="booking-detail-head">
-      <div><h2 id="turnos-detail-title" tabIndex={-1}>{row.client.firstName} {row.client.lastName}</h2><p>{row.client.phone}</p></div>
+      <div><h2 id="turnos-detail-title" tabIndex={-1}>{row.client.name}</h2><p>{row.client.phone}</p></div>
       <span className="turnos-state" data-state={row.state}>{turnoStates[row.state]}</span>
     </header>
     <dl className="booking-panel booking-facts">

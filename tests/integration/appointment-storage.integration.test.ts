@@ -16,7 +16,7 @@ const minutes = 60_000;
 const fixture = async (): Promise<Owner> => {
   const owner = { business: randomUUID(), client: randomUUID(), service: randomUUID(), resource: randomUUID(), alternate: randomUUID() };
   await database.sql`insert into businesses(id,name) values(${owner.business},'Storage fixture')`;
-  await database.sql`insert into clients(id,business_id,first_name,last_name,phone) values(${owner.client},${owner.business},'Current','Name','+5491123456789')`;
+  await database.sql`insert into clients(id,business_id,name,phone) values(${owner.client},${owner.business},'Current Name','+5491123456789')`;
   await database.sql`insert into services(id,business_id,name,duration_minutes,price_ars) values(${owner.service},${owner.business},'Current service',15,12.34567)`;
   for (const resource of [owner.resource, owner.alternate]) {
     await database.sql`insert into resources(id,business_id,name,weekly_schedule) values(${resource},${owner.business},${resource},'{}'::jsonb)`;
@@ -79,12 +79,12 @@ test("composite ownership and history references are enforced for privileged SQL
 
 test("catalog edits preserve frozen terms while client names remain current through stable ID", async () => {
   const saved = await insert(row());
-  await database.sql`update clients set first_name='Renamed' where id=${a.client}`;
+  await database.sql`update clients set name='Renamed Name' where id=${a.client}`;
   await database.sql`update services set name='New service',price_ars=999,duration_minutes=30 where id=${a.service}`;
   await database.sql`update resources set name='New resource' where id=${a.resource}`;
-  const [joined] = await database.sql`select ap.client_id,ap.service_label,ap.resource_label,ap.price_ars,ap.duration_minutes,c.first_name
+  const [joined] = await database.sql`select ap.client_id,ap.service_label,ap.resource_label,ap.price_ars,ap.duration_minutes,c.name
     from appointments ap join clients c on (c.business_id,c.id)=(ap.business_id,ap.client_id) where ap.id=${saved.id}`;
-  expect(joined).toEqual({ client_id: a.client, service_label: "Frozen service", resource_label: "Frozen resource", price_ars: "12.34567", duration_minutes: 15, first_name: "Renamed" });
+  expect(joined).toEqual({ client_id: a.client, service_label: "Frozen service", resource_label: "Frozen resource", price_ars: "12.34567", duration_minutes: 15, name: "Renamed Name" });
 });
 
 test("SQL rejects primitive invalid fields without inventing catalog authority or caps", async () => {
@@ -219,7 +219,7 @@ test("native GiST exclusion blocks concurrent raw SQL and releases final-state o
 // Typed caller facts in these tests are not production sender/authorization proof.
 const now = "2026-06-01T09:00:00-03:00";
 const full: WeeklySchedule = Object.fromEntries(Array.from({ length: 7 }, (_, day) => [day, [{ startMinute: 0, endMinute: 1440 }]]));
-const clientInput = { firstName: " New ", lastName: " Client ", phone: "11 3456 7890" };
+const clientInput = { name: " New Client ", phone: "11 3456 7890" };
 const context = (owner: Owner) => tenantContext({ businessId: owner.business, actorId: "storage-caller", role: "business_user", requestId: randomUUID() });
 const command = (owner: Owner, extra: Record<string, unknown> = {}) => ({ serviceId: owner.service, resourceId: owner.resource,
   startRaw: "2026-06-01T10:00:00-03:00", clientId: owner.client, ...extra });
@@ -494,15 +494,15 @@ test("repository books server terms and exact epochs; read DTO joins current cli
   const saved = await book(owner, command(owner, { notes: "notes", priceArs: 999, durationMinutes: 30, state: "done" }));
   expect(saved).toMatchObject({ state: "confirmed", origin: "manual", startsAt: "2026-06-01T10:00:00-03:00",
     startMs: start, endMs: start + 15 * minutes, notes: "notes", customerResourcePreference: null,
-    client: { id: owner.client, firstName: "Current", lastName: "Name", phone: "+5491123456789" },
+    client: { id: owner.client, name: "Current Name", phone: "+5491123456789" },
     terms: { serviceId: owner.service, resourceId: owner.resource, serviceName: "Current service", resourceName: owner.resource, durationMinutes: 15, priceArs: 12.34567 } });
   expect(() => JSON.stringify(saved)).not.toThrow();
-  await database.sql`update clients set first_name='Latest' where id=${owner.client}`;
+  await database.sql`update clients set name='Latest Name' where id=${owner.client}`;
   await database.sql`update services set price_ars=900,duration_minutes=30 where id=${owner.service}`;
   await database.sql`update resources set name='Latest resource' where id=${owner.resource}`;
   const loaded = await new RolePool(runtime, "agendia_runtime").run(context(owner), repo => repo.getAppointment(owner.business, saved.id));
   expect(loaded!.terms).toEqual(saved.terms);
-  expect(loaded!.client.firstName).toBe("Latest");
+  expect(loaded!.client.name).toBe("Latest Name");
   const foreign = await readyOwner();
   expect(await new RolePool(runtime, "agendia_runtime").run(context(foreign), repo => repo.getAppointment(foreign.business, saved.id))).toBeNull();
   expect(await effects(owner)).toEqual({ clients: 1, appointments: 1, audit: 1, outbox: 1 });
@@ -518,11 +518,11 @@ test("new clients use the shared codec; existing AI client is reused without edi
   const owner = await readyOwner();
   for (const [index, phone, canonical] of [[0, clientInput.phone, "+5491134567890"], [1, "+541134567890", "+541134567890"], [2, "+442079460018", "+442079460018"]] as const) {
     const saved = await book(owner, { ...command(owner), clientId: undefined, newClient: { ...clientInput, phone }, startRaw: `2026-06-01T10:${index * 15 === 0 ? "00" : index * 15}:00-03:00`, notes: null }, { origin: "ai", now });
-    expect(saved.client).toMatchObject({ firstName: "New", lastName: "Client", phone: canonical });
+    expect(saved.client).toMatchObject({ name: "New Client", phone: canonical });
     expect(saved.origin).toBe("ai");
   }
   const reused = await book(owner, command(owner, { startRaw: "2026-06-01T11:00:00-03:00" }), { origin: "ai", now });
-  expect(reused.client).toEqual({ id: owner.client, firstName: "Current", lastName: "Name", phone: "+5491123456789" });
+  expect(reused.client).toEqual({ id: owner.client, name: "Current Name", phone: "+5491123456789" });
 });
 
 test("invalid command/clock/origin and foreign or missing IDs have no effects", async () => {
@@ -1067,12 +1067,12 @@ test("business/client history shares current client projection, frozen terms, ev
   const sameStart = await insert(row(owner, { state: "done" }));
   const third = await insert(row(owner, { state: "no_show", start_ms: start + 15 * minutes, end_ms: start + 30 * minutes }));
   await insert(row(owner, { state: "confirmed", start_ms: -62135683140000, end_ms: -62135683140000 + 15 * minutes }));
-  await database.sql`update clients set first_name='Latest',last_name='Names',phone='+5491198765432' where id=${owner.client}`;
+  await database.sql`update clients set name='Latest Names',phone='+5491198765432' where id=${owner.client}`;
   await database.sql`update services set name='Latest service',price_ars=999,duration_minutes=30 where id=${owner.service}`;
   await database.sql`update resources set name='Latest resource' where id=${owner.resource}`;
   const all = await history(owner);
   expect(all).toHaveLength(4);
-  expect(all.every(item => item.client.id === owner.client && item.client.firstName === "Latest" && item.client.phone === "+5491198765432")).toBe(true);
+  expect(all.every(item => item.client.id === owner.client && item.client.name === "Latest Names" && item.client.phone === "+5491198765432")).toBe(true);
   expect(all.find(item => item.id === saved.id)).toMatchObject({ state: "cancelled", notes: "history", terms: saved.terms });
   expect(() => JSON.stringify(all)).not.toThrow();
   const bounded = await history(owner, { clientId: owner.client.toUpperCase(), from: "2026-06-01T13:00:00.000Z", to: "2026-06-01T10:15:00-03:00" });
@@ -1094,7 +1094,7 @@ test("business/client history shares current client projection, frozen terms, ev
 });
 
 const serviceEdit = { name: "Edited terms", durationMinutes: 30, priceArs: 80 };
-const clientEdit = { firstName: "Edited", lastName: "Identity", phone: "+5491198765432" };
+const clientEdit = { name: "Edited Identity", phone: "+5491198765432" };
 const catalogMutations = (owner: Owner, closure: string): Array<(repo: PostgresRepositories, business?: string) => Promise<unknown>> => [
   (repo: PostgresRepositories, business = owner.business) => repo.createClient(business, { ...clientEdit, phone: "+5491187654321" }),
   (repo: PostgresRepositories, business = owner.business) => repo.updateClient(business, owner.client, clientEdit),
@@ -1135,7 +1135,7 @@ test("every client/service/closure mutation rejects raw pools and mismatched sco
     await expect(new RolePool(runtime, "agendia_runtime").run(context(owner), repo => mutate(repo, foreign.business))).rejects.toThrow("matching tenant context");
   }
   expect(await effects(owner)).toEqual(before);
-  expect((await database.sql`select first_name,phone from clients where id=${owner.client}`)[0]).toEqual({ first_name: "Current", phone: "+5491123456789" });
+  expect((await database.sql`select name,phone from clients where id=${owner.client}`)[0]).toEqual({ name: "Current Name", phone: "+5491123456789" });
   expect((await database.sql`select name,status from services where id=${owner.service}`)[0]).toEqual({ name: "Current service", status: "active" });
 });
 const insertClosure = async (owner: Owner) => (await database.sql<{ id: string }[]>`insert into business_calendar_closures(business_id,kind,closed_date)
@@ -1454,11 +1454,11 @@ test("retired names are reusable with new IDs, while past Confirmed history and 
   }));
   expect(replacement.service.id).not.toBe(owner.service);
   expect(replacement.resource.id).not.toBe(owner.resource);
-  await database.sql`update clients set first_name='Latest',phone='+5491198765432' where id=${owner.client}`;
+  await database.sql`update clients set name='Latest',phone='+5491198765432' where id=${owner.client}`;
   const noop = await change(owner, saved.id, command(owner, { serviceId: owner.service.toUpperCase(), resourceId: owner.resource.toUpperCase(), startRaw: "2000-01-01T13:00:00.000Z" }), { now });
   expect(noop.terms).toEqual(saved.terms);
   expect(noop.customerResourcePreference).toBe(owner.alternate);
-  expect(noop.client).toMatchObject({ id: owner.client, firstName: "Latest", phone: "+5491198765432" });
+  expect(noop.client).toMatchObject({ id: owner.client, name: "Latest", phone: "+5491198765432" });
   expect(await physical(saved.id)).toEqual(before);
   expect((await history(owner))[0]!.terms).toEqual(saved.terms);
   await changeRejected(owner, saved.id, command(owner, { startRaw: "2099-06-01T10:00:00-03:00" }), "UNKNOWN_OWNED_ID");

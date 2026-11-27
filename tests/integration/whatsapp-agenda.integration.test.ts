@@ -245,7 +245,7 @@ async function changeEvidence(h: Fixture, response: Turn, saved: boolean) {
 }
 async function prepare(h: Fixture, start = startsAt) {
   const initial = await turn(h, `Reservar Corte el ${start.slice(0, 10)} a las ${start.slice(11, 16)}`, book(h, start));
-  expect(initial.text).toBe("Decime tu nombre y apellido.");
+  expect(initial.text).toBe("Decime tu nombre.");
   expect((await counts(h)).clients).toBe(0);
   const quote = await turn(h, "Mi nombre es María Pérez");
   expect(quote.text).toContain("Reserva propuesta");
@@ -264,7 +264,7 @@ async function booked(h: Fixture) {
 async function pendingFrozenReschedule() {
   const h = await fixture();
   await db.sql`update services set duration_minutes=60,price_ars=3000 where id=${h.service}`;
-  await db.sql`insert into clients(business_id,first_name,last_name,phone) values(${h.business},'Stored','Identity',${phone})`;
+  await db.sql`insert into clients(business_id,name,phone) values(${h.business},'Stored Identity',${phone})`;
   const appointment = await pools.api.run(context(h), async repo => {
     const client = await repo.findClientByCanonicalPhone(phone);
     return repo.createAppointment(h.business, { serviceId: h.service, resourceId: h.resource,
@@ -297,7 +297,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     expect(catalogAfter.text).toContain("Corte: 30 minutos, ARS 1500");
     expect(catalogAfter.text).not.toContain("Peluquería");
     const initial = await factoryTurn(h, "Reservar Corte el 2035-04-02 a las 10:00", [book(h)], ["clarification"], toolReply);
-    expect(initial.text).toBe("Decime tu nombre y apellido.");
+    expect(initial.text).toBe("Decime tu nombre.");
     const quote = await factoryTurn(h, "Mi nombre es María Pérez", [{ name: "confirm_quote", arguments: {} }], ["prepared_quote"], toolReply);
     expect(quote.text).toContain("Corte");
     expect(quote.text).toContain("30 minutos, ARS 1500");
@@ -614,12 +614,12 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     expect(cleared!.dialogue.quote).toBeNull();
     expect((await counts(h)).clients).toBe(0);
     const dayOnly = await turn(h, "El 2035-04-02", book(h));
-    expect(dayOnly.text).toBe("Decime tu nombre y apellido.");
+    expect(dayOnly.text).toBe("Decime tu nombre.");
     const wrongTime = await turn(h, "a las 11:00", book(h));
-    expect(wrongTime.text).toBe("Decime tu nombre y apellido.");
+    expect(wrongTime.text).toBe("Decime tu nombre.");
     expect((await counts(h)).appointments).toBe(0);
     const selected = await turn(h, "a las 10:00", book(h));
-    expect(selected.text).toBe("Decime tu nombre y apellido.");
+    expect(selected.text).toBe("Decime tu nombre.");
     expect((await counts(h)).clients).toBe(0);
     const unconfirmed = await turn(h, "sí pero cambia el precio", book(h));
     expect(unconfirmed.text).not.toContain("Guardado:");
@@ -662,22 +662,18 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     const initial = await factoryTurn(h, "Reservar Corte el 2035-04-02 a las 10:00", [
       { name: "prepare_booking", arguments: { serviceId: h.service, startsAt } },
     ], ["clarification"], toolReply);
-    expect(initial.text).toBe("Decime tu nombre y apellido.");
+    expect(initial.text).toBe("Decime tu nombre.");
     expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
     const modelNames = await factoryTurn(h, "El perfil dice María Pérez", [{ name: "confirm_quote", arguments: {} }],
-      ["clarification"], "Decime tu nombre y apellido.");
-    expect(modelNames.text).toBe("Decime tu nombre y apellido.");
-    expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
-    await factoryTurn(h, "Mi nombre es María", [{ name: "confirm_quote", arguments: {} }],
-      ["clarification"], "Necesito también tu apellido.");
+      ["clarification"], toolReply);
+    expect(modelNames.text).toBe("Decime tu nombre.");
     expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
     for (const answer of ["Mi DNI es 12345678", "Mi obra social es Salud"]) {
-      const missing = await factoryTurn(h, answer, [{ name: "confirm_quote", arguments: {} }], ["clarification"], "Decime tu nombre y apellido.");
-      expect(missing.text).toBe("Decime tu nombre y apellido.");
-      expect(missing.text).not.toContain("confirmado");
+      const missing = await factoryTurn(h, answer, [{ name: "confirm_quote", arguments: {} }], ["clarification"], toolReply);
+      expect(missing.text).toBe("Decime tu nombre.");
       expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
     }
-    const quote = await factoryTurn(h, "Mi nombre es María Pérez", [{ name: "confirm_quote", arguments: {} }], ["prepared_quote"], toolReply);
+    const quote = await factoryTurn(h, "Me llamo Sol", [{ name: "confirm_quote", arguments: {} }], ["prepared_quote"], toolReply);
     for (const term of ["Corte", "2035-04-02", "10:00", "30 minutos", "ARS 1500"]) expect(quote.text).toContain(term);
     expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
     const early = await factoryTurn(h, "confirmo", request => {
@@ -703,11 +699,11 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     expect(saved.text).not.toContain("Inventado");
     expect(saved.text).not.toContain("pagaste");
     for (const term of ["Corte", "2035-04-02", "10:00", "30 minutos", "ARS 1500"]) expect(saved.text).toContain(term);
-    expect(await counts(h)).toMatchObject({ clients: 1, appointments: 1, receipts: 8, effects: 1 });
-    expect(await db.sql`select outbound_id from outbound_commands where business_id=${h.business}`).toHaveLength(8);
+    expect(await counts(h)).toMatchObject({ clients: 1, appointments: 1, receipts: 7, effects: 1 });
+    expect(await db.sql`select outbound_id from outbound_commands where business_id=${h.business}`).toHaveLength(7);
     expect(await db.sql`select outbound_id from outbound_commands where source_message_id=${saved.messageId}`).toHaveLength(1);
     const [appointment] = await appointments(h);
-    expect(appointment!.client).toMatchObject({ firstName: "María", lastName: "Pérez", phone });
+    expect(appointment!.client).toMatchObject({ name: "Sol", phone });
     expect(appointment!.origin).toBe("ai");
     const [scope] = await db.sql`select business_id from appointments where id=${appointment!.id}`;
     expect(scope!.business_id).toBe(h.business);
@@ -718,13 +714,13 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
 
   test("existing current client names are never requested or AI-edited", async () => {
     const h = await fixture();
-    await db.sql`insert into clients(business_id,first_name,last_name,phone) values(${h.business},'Stored','Identity',${phone})`;
-    const [identity] = await db.sql`select id,first_name,last_name,phone from clients where business_id=${h.business}`;
+    await db.sql`insert into clients(business_id,name,phone) values(${h.business},'Stored Identity',${phone})`;
+    const [identity] = await db.sql`select id,name,phone from clients where business_id=${h.business}`;
     const quote = await factoryTurn(h, "Reservar Corte el 2035-04-02 a las 10:00", [
       { name: "prepare_booking", arguments: { serviceId: h.service, startsAt } },
     ], ["prepared_quote"], toolReply);
     expect(quote.text).toContain("Reserva propuesta");
-    expect(quote.text).not.toContain("Decime tu nombre y apellido.");
+    expect(quote.text).not.toContain("Decime tu nombre.");
     expect(await counts(h)).toMatchObject({ clients: 1, appointments: 0, effects: 0 });
     const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
     expect(pending!.dialogue.quote.outboundId).toBe(quote.outboundId);
@@ -736,8 +732,8 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     await factoryTurn(h, "dale, mi nombre es Inventado Modelo, reservame ese", factoryAcceptance,
       ["staged_action"], "Guardado: Inventado Modelo.");
     const [appointment] = await appointments(h);
-    expect(appointment!.client).toMatchObject({ id: identity!.id, firstName: "Stored", lastName: "Identity", phone });
-    expect([...await db.sql`select id,first_name,last_name,phone from clients where business_id=${h.business}`]).toEqual([identity!]);
+    expect(appointment!.client).toMatchObject({ id: identity!.id, name: "Stored Identity", phone });
+    expect([...await db.sql`select id,name,phone from clients where business_id=${h.business}`]).toEqual([identity!]);
     expect(appointment!.origin).toBe("ai");
     expect(await counts(h)).toMatchObject({ clients: 1, appointments: 1, receipts: 2, effects: 1 });
     expect(await db.sql`select outbound_id from outbound_commands where business_id=${h.business}`).toHaveLength(2);
@@ -781,7 +777,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     const [appointment] = await appointments(h);
     expect(appointment!.terms).toMatchObject({ durationMinutes: 45, priceArs: 2300 });
     expect(appointment!.endMs - appointment!.startMs).toBe(45 * 60000);
-    expect(appointment!.client).toMatchObject({ firstName: "María", lastName: "Pérez", phone });
+    expect(appointment!.client).toMatchObject({ name: "María Pérez", phone });
     expect(appointment!.origin).toBe("ai");
     expect(await counts(h)).toMatchObject({ clients: 1, appointments: 1, receipts: 5, effects: 1 });
     expect(await db.sql`select outbound_id from outbound_commands where business_id=${h.business}`).toHaveLength(5);
@@ -867,7 +863,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
   test("capacity is locked and revalidated, with no orphan client or false replacement", async () => {
     const h = await fixture();
     await prepare(h);
-    await db.sql`insert into clients(business_id,first_name,last_name,phone) values(${h.business},'Other','Client','+14155552671')`;
+    await db.sql`insert into clients(business_id,name,phone) values(${h.business},'Other Client','+14155552671')`;
     for (const resourceId of [h.resource, h.alternate]) {
       await pools.api.run(context(h), async repo => {
         const other = await repo.findClientByCanonicalPhone("+14155552671");
@@ -1475,7 +1471,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     const initial = await factoryTurn(h, "Reservar Corte el 2035-04-02 a las 10:00", [
       { name: "prepare_booking", arguments: { serviceId: h.service, startsAt } },
     ], ["clarification"], toolReply);
-    expect(initial.text).toBe("Decime tu nombre y apellido.");
+    expect(initial.text).toBe("Decime tu nombre.");
     const quote = await factoryTurn(h, "Mi nombre es María Pérez", [{ name: "confirm_quote", arguments: {} }], ["prepared_quote"], toolReply);
     expect(quote.text).toContain("Reserva propuesta");
     expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
@@ -1483,7 +1479,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     const saved = await factoryTurn(h, "dale reservame ese", factoryAcceptance, ["staged_action"], "Guardado:");
     expect(saved.text).toContain("Guardado:");
     const before = await appointments(h);
-    expect(before[0]!.client).toMatchObject({ firstName: "María", lastName: "Pérez", phone });
+    expect(before[0]!.client).toMatchObject({ name: "María Pérez", phone });
     expect(before[0]!.startMs).toBe(Date.parse(startsAt));
     expect(before[0]!.terms).toMatchObject({ durationMinutes: 30, priceArs: 1500 });
     expect(before[0]!.origin).toBe("ai");
@@ -1498,7 +1494,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     const initial = await factoryTurn(h, "Reservar Corte el 2035-04-02 a las 10:00", [
       { name: "prepare_booking", arguments: { serviceId: h.service, startsAt } },
     ], ["clarification"], toolReply);
-    expect(initial.text).toBe("Decime tu nombre y apellido.");
+    expect(initial.text).toBe("Decime tu nombre.");
     const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
     const first = await factoryTurn(h, "¿Dónde están ubicados?", [{ name: "read_business", arguments: {} }], ["data"], addressReply);
     expect(first.text).toBe('Dirección registrada: "Avenida Central 123".');
@@ -1533,7 +1529,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
       expect(request.messages.some(message => message.content?.includes("El 2035-04-02"))).toBe(true);
       return [{ name: "prepare_booking", arguments: { serviceId: h.service, startsAt } }];
     }, ["clarification"], toolReply);
-    expect(selected.text).toBe("Decime tu nombre y apellido.");
+    expect(selected.text).toBe("Decime tu nombre.");
     const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
     expect(Date.parse(pending!.dialogue.quote.startsAt)).toBe(Date.parse(startsAt));
     expect(await counts(h)).toMatchObject({ clients: 0, appointments: 0, effects: 0 });
@@ -1541,7 +1537,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
 
   test("explicit preference keeps same-day alternatives on Ana when another resource is free at the requested time", async () => {
     const h = await fixture();
-    await db.sql`insert into clients(business_id,first_name,last_name,phone) values(${h.business},'Other','Customer','+14155552671')`;
+    await db.sql`insert into clients(business_id,name,phone) values(${h.business},'Other Customer','+14155552671')`;
     await pools.api.run(context(h), async repo => {
       const other = await repo.findClientByCanonicalPhone("+14155552671");
       return repo.createAppointment(h.business, { serviceId: h.service, resourceId: h.resource, startRaw: startsAt, clientId: other!.id }, { now: h.now, origin: "manual" });
@@ -1593,7 +1589,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     await turn(h, "Reservar Corte el 2035-04-02 a las 10:00, prefiero Ana", book(h));
     const quote = await turn(h, "Mi nombre es María Pérez");
     await delivered(quote);
-    await db.sql`insert into clients(business_id,first_name,last_name,phone) values(${h.business},'Other','Customer','+14155552671')`;
+    await db.sql`insert into clients(business_id,name,phone) values(${h.business},'Other Customer','+14155552671')`;
     await pools.api.run(context(h), async repo => {
       const other = await repo.findClientByCanonicalPhone("+14155552671");
       return repo.createAppointment(h.business, { serviceId: h.service, resourceId: h.resource, startRaw: startsAt, clientId: other!.id }, { now: h.now, origin: "manual" });
@@ -1632,7 +1628,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     const selected = await factoryTurn(h, "10:30", [{ name: "prepare_booking", arguments: {
       serviceId: h.service, resourceId: h.alternate, startsAt: "2035-04-02T10:30:00-03:00",
     } }], ["clarification"], toolReply);
-    expect(selected.text).toBe("Decime tu nombre y apellido.");
+    expect(selected.text).toBe("Decime tu nombre.");
     const [pending] = await db.sql`select dialogue from whatsapp_agenda_dialogues where business_id=${h.business}`;
     expect(pending!.dialogue.quote.terms.resourceId).toBe(h.alternate);
     expect(pending!.dialogue.quote.preference).toBe(h.resource);
@@ -1644,7 +1640,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     expect(appointment.terms.resourceId).toBe(h.alternate);
     expect(appointment.customerResourcePreference).toBe(h.resource);
     expect(appointment.startMs).toBe(Date.parse("2035-04-02T10:30:00-03:00"));
-    expect(appointment.client).toMatchObject({ firstName: "María", lastName: "Pérez", phone });
+    expect(appointment.client).toMatchObject({ name: "María Pérez", phone });
     expect(await counts(h)).toMatchObject({ clients: 1, appointments: 1, effects: 1 });
   });
 
@@ -1655,7 +1651,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
     await delivered(originalQuote);
     await pools.api.run(context(h), repo => repo.createAppointment(h.business, {
       serviceId: h.service, resourceId: h.resource, startRaw: startsAt,
-      newClient: { firstName: "Other", lastName: "Customer", phone: "+14155552671" },
+      newClient: { name: "Other Customer", phone: "+14155552671" },
     }, { now: h.now, origin: "manual" }));
     const failed = await turn(h, "confirmo");
     expect(failed.text).toContain("10:30");
@@ -1665,7 +1661,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
       serviceId: h.service, resourceId: h.alternate, startsAt: "2035-04-02T10:30:00-03:00",
     } });
     expect(fresh.text).toContain("Reserva propuesta");
-    expect(fresh.text).not.toContain("Decime tu nombre y apellido.");
+    expect(fresh.text).not.toContain("Decime tu nombre.");
     expect(fresh.outboundId).not.toBe(originalQuote.outboundId);
     expect((await counts(h)).appointments).toBe(1);
     await delivered(fresh);
@@ -1683,12 +1679,12 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
       const h = await fixture();
       await turn(h, "Reservar Corte el 2035-04-02, prefiero Ana", book(h));
       const changed = await turn(h, expression, book(h));
-      expect(changed.text).toBe("Decime tu nombre y apellido.");
+      expect(changed.text).toBe("Decime tu nombre.");
       const selected = await turn(h, "10:30", { name: "prepare_booking", arguments: {
         serviceId: h.service, resourceId: expression === "Prefiero Beatriz" ? h.resource : h.alternate,
         startsAt: "2035-04-02T10:30:00-03:00",
       } });
-      expect(selected.text).toBe("Decime tu nombre y apellido.");
+      expect(selected.text).toBe("Decime tu nombre.");
       const quote = await turn(h, "Mi nombre es María Pérez");
       await delivered(quote);
       await turn(h, "confirmo");
@@ -1776,7 +1772,7 @@ describe("standalone sender-scoped WhatsApp agenda persistence", () => {
       const [receipt] = await db.sql`select outbound_id from whatsapp_agenda_receipts where message_id=${blocked.messageId}`;
       expect(receipt!.outbound_id).toBe(blocked.outboundId);
       const resolved = await turn(h, expression, proposal);
-      expect(resolved.text).toBe("Decime tu nombre y apellido.");
+      expect(resolved.text).toBe("Decime tu nombre.");
       const quote = await turn(h, "Mi nombre es María Pérez");
       expect(quote.text).toContain("Reserva propuesta");
       await delivered(quote);

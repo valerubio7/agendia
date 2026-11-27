@@ -214,7 +214,7 @@ test("HTTP resource future conflicts return safe 409 and cannot be evaded by bod
   const full = Object.fromEntries(Array.from({ length: 7 }, (_, day) => [day, [{ startMinute: 0, endMinute: 1440 }]]));
   expect((await request("PUT", "/me/business-calendar", a, { weeklySchedule: full })).statusCode).toBe(200);
   const service = (await request("POST", "/me/services", a, { name: "Future guard service", durationMinutes: 45, priceArs: 10 })).json();
-  const client = (await request("POST", "/me/clients", a, { firstName: "Future", lastName: "Client", phone: "+5491123456785" })).json();
+  const client = (await request("POST", "/me/clients", a, { name: "Future Client", phone: "+5491123456785" })).json();
   const body = { name: "Future guard resource", serviceIds: [service.id], weeklySchedule: full };
   const created = await request("POST", url, a, body);
   expect(created.statusCode).toBe(201);
@@ -245,7 +245,7 @@ const retirementFixture = async (future = false, preferredOnly = false) => {
   const actual = preferredOnly ? (await request("POST", url, a, { name: name + " actual", serviceIds: [service.id], weeklySchedule: full })).json() : resource;
   const saved = await pools.api.run(retirementContext(), repo => repo.createAppointment(a.businessId,
     { serviceId: service.id, resourceId: actual.id, startRaw: future ? "2099-06-01T10:00:00-03:00" : "2020-06-01T10:00:00-03:00",
-      newClient: { firstName: "Retirement", lastName: "Client", phone: `+54911${retirementPhone++}` } },
+      newClient: { name: "Retirement Client", phone: `+54911${retirementPhone++}` } },
     { origin: "manual", now: future ? "2099-01-01T00:00:00Z" : "2019-01-01T00:00:00Z", customerResourceExpression: { kind: "chosen", resourceId: resource.id } }));
   return { service, resource, saved };
 };
@@ -267,8 +267,8 @@ test("resource DELETE preserves frozen history/preferences, allows NEW-ID name r
     expect((await request(method, `${url}/${resource.id}${suffix}`, a, body)).statusCode).toBe(404);
   const replacement = await request("POST", url, a, { ...input, name: resource.name });
   expect(replacement.statusCode).toBe(201); expect(replacement.json().id).not.toBe(resource.id); expect(replacement.json().serviceIds).toEqual([]);
-  await pools.api.run(retirementContext(), repo => repo.updateClient(a.businessId, saved.client.id, { ...saved.client, firstName: "Current" }));
-  expect(await pools.api.run(retirementContext(), repo => repo.getAppointment(a.businessId, saved.id))).toMatchObject({ terms: saved.terms, client: { firstName: "Current" }, customerResourcePreference: resource.id });
+  await pools.api.run(retirementContext(), repo => repo.updateClient(a.businessId, saved.client.id, { ...saved.client, name: "Current Client" }));
+  expect(await pools.api.run(retirementContext(), repo => repo.getAppointment(a.businessId, saved.id))).toMatchObject({ terms: saved.terms, client: { name: "Current Client" }, customerResourcePreference: resource.id });
   expect([...(await database.sql`select * from appointments where id=${saved.id}`)]).toEqual([...physical]);
   const after = await effects(); expect(after.audit - before.audit).toBe(2); expect(after.outbox - before.outbox).toBe(2);
   expect(after.messages).toBe(0); expect(after.replies).toBe(0);
@@ -324,7 +324,7 @@ test("HTTP retirement waits behind repository booking on the same business lock 
   const ready = new Promise<void>(resolve => { entered = resolve; }), gate = new Promise<void>(resolve => { release = resolve; });
   const booking = pools.api.run(retirementContext(), async repo => {
     const saved = await repo.createAppointment(a.businessId, { serviceId: service.id, resourceId: resource.id, startRaw: "2099-06-01T10:00:00-03:00",
-      newClient: { firstName: "Race", lastName: "Client", phone: `+54911${retirementPhone++}` } }, { origin: "manual", now: "2099-01-01T00:00:00Z" });
+      newClient: { name: "Race Client", phone: `+54911${retirementPhone++}` } }, { origin: "manual", now: "2099-01-01T00:00:00Z" });
     entered(); await gate; return saved;
   });
   await Promise.race([ready, booking.then(() => { throw new Error("Booking did not hold its lock"); })]);

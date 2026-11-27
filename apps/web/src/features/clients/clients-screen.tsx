@@ -25,7 +25,8 @@ function Icon({ name }: { name: keyof typeof icons }) {
 }
 
 function Avatar({ client }: { client: Client }) {
-  return <span className="client-avatar" aria-hidden="true">{Array.from(client.firstName)[0]}{Array.from(client.lastName)[0]}</span>;
+  const initials = client.name.trim().split(/\s+/, 2).map(word => Array.from(word)[0]).join("");
+  return <span className="client-avatar" aria-hidden="true">{initials}</span>;
 }
 
 type ReadState<T> = { rows: T[]; pending: boolean; error: string };
@@ -35,8 +36,7 @@ const states: Record<AppointmentRecord["state"], string> = {
 };
 const currency = new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" });
 const fields = [
-  ["firstName", "Nombre", "given-name", "Nombre"],
-  ["lastName", "Apellido", "family-name", "Apellido"],
+  ["name", "Nombre completo", "name", "Nombre completo"],
   ["phone", "Teléfono", "tel", "+54 9 260 ..."],
 ] as const;
 
@@ -133,7 +133,7 @@ export function ClientsScreen({ disabled, sessionActive, businessId, identityId 
     focusTarget.current = null;
     if (!target || disabled || !sessionActive()) return;
     const element = target === "edit" ? editButton.current : target === "create" ? createButton.current
-      : form.current?.querySelector<HTMLInputElement | HTMLButtonElement>(target === "name" ? '[name="firstName"]' : '[type="submit"]');
+      : form.current?.querySelector<HTMLInputElement | HTMLButtonElement>(target === "name" ? '[name="name"]' : '[type="submit"]');
     if (element?.isConnected && !element.disabled) element.focus();
   }, [focusRevision]);
 
@@ -188,15 +188,20 @@ export function ClientsScreen({ disabled, sessionActive, businessId, identityId 
       const raw = localStorage.getItem(journalKey);
       if (raw !== null) {
         const entry = JSON.parse(raw);
-        if (entry?.version !== 1 || !entry.draft || Object.keys(entry).length !== 2 ||
-            Object.keys(entry.draft).length !== 3 ||
-            !["firstName", "lastName", "phone"].every(key => typeof entry.draft[key] === "string"))
-          throw new Error("Invalid journal");
-        journalValue.current = raw;
-        setDraft(entry.draft);
-        setCreating(true);
-        setUncertain(true);
-        setSaveError(uncertainMessage);
+        if (entry?.version === 1) {
+          journalValue.current = raw;
+          clearJournal();
+        } else {
+          const draft = entry?.draft;
+          if (entry?.version !== 2 || typeof draft?.phone !== "string" || typeof draft.name !== "string"
+            || Object.keys(entry).length !== 2 || Object.keys(draft).length !== 2)
+            throw new Error("Invalid journal");
+          journalValue.current = raw;
+          setDraft({ name: draft.name, phone: draft.phone });
+          setCreating(true);
+          setUncertain(true);
+          setSaveError(uncertainMessage);
+        }
       } else fenced.current = false;
     } catch {
       setStorageError(storageMessage);
@@ -263,7 +268,7 @@ export function ClientsScreen({ disabled, sessionActive, businessId, identityId 
     if (mutation.current || fenced.current || disabled || !sessionActive()) return;
     select(null);
     setCreating(true);
-    setDraft({ firstName: "", lastName: "", phone: "" });
+    setDraft({ name: "", phone: "" });
     scheduleFocus("name");
   };
   const cancelCreate = () => {
@@ -282,7 +287,7 @@ export function ClientsScreen({ disabled, sessionActive, businessId, identityId 
       setUncertain(true);
       try {
         if (!journalKey || localStorage.getItem(journalKey) !== null) throw new Error("Journal unavailable");
-        journalValue.current = JSON.stringify({ version: 1, draft });
+        journalValue.current = JSON.stringify({ version: 2, draft });
         localStorage.setItem(journalKey, journalValue.current);
         if (localStorage.getItem(journalKey) !== journalValue.current) throw new Error("Journal not durable");
       } catch {
@@ -357,7 +362,7 @@ export function ClientsScreen({ disabled, sessionActive, businessId, identityId 
       if (!owns()) return;
       const phone = normalizeClientPhone(draft.phone);
       const matches = rows.filter(row => phone && row.phone === phone &&
-        row.firstName === draft.firstName.trim() && row.lastName === draft.lastName.trim());
+        row.name === draft.name.trim());
       if (matches.length !== 1) {
         setSaveError(uncertainMessage); // Absence or mismatched names never proves rollback.
         return;
@@ -441,7 +446,7 @@ export function ClientsScreen({ disabled, sessionActive, businessId, identityId 
         <ul className="client-rows" aria-label="Clientes del negocio">
           {list.rows.map(client => <li key={client.id}>
             <button className="client-row" disabled={locked} aria-pressed={selected?.id === client.id} onClick={() => select(client)}>
-              <Avatar client={client} /><span className="client-row-copy"><strong>{client.firstName} {client.lastName}</strong><small className="client-number">{client.phone}</small></span>
+              <Avatar client={client} /><span className="client-row-copy"><strong>{client.name}</strong><small className="client-number">{client.phone}</small></span>
               <span className="client-row-arrow"><Icon name="arrow" /></span>
             </button>
           </li>)}
@@ -480,7 +485,7 @@ export function ClientsScreen({ disabled, sessionActive, businessId, identityId 
           </footer>
         </form> : selected && <>
           <div className="client-panel-body client-record">
-            <div className="client-identity"><Avatar client={selected} /><h2>{selected.firstName} {selected.lastName}</h2></div>
+            <div className="client-identity"><Avatar client={selected} /><h2>{selected.name}</h2></div>
             <div className="client-phone"><Icon name="phone" /><span><strong>Teléfono</strong><br /><span className="client-number">{selected.phone}</span></span></div>
             {notice && <p role="status">{notice}</p>}
             {listWarning}
@@ -497,7 +502,7 @@ export function ClientsScreen({ disabled, sessionActive, businessId, identityId 
             <button className="client-button" disabled={locked} onClick={closePanel}>Cerrar</button>
             <button className="client-button" ref={editButton} aria-label="Editar cliente" disabled={locked} onClick={() => {
               if (mutation.current || fenced.current || disabled || !sessionActive()) return;
-              setDraft({ firstName: selected.firstName, lastName: selected.lastName, phone: selected.phone });
+              setDraft({ name: selected.name, phone: selected.phone });
               setSaveError(""); scheduleFocus("name");
             }}><Icon name="pencil" />Editar</button>
             <button className="client-button client-button-primary" type="button" disabled={locked} aria-haspopup="dialog"

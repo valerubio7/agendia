@@ -30,7 +30,7 @@ const fixture = async (platform = false): Promise<Owner> => {
   const cookies = login.headers["set-cookie"]!;
   o.cookie = (Array.isArray(cookies) ? cookies[0]! : cookies).split(";")[0]!;
   if (platform) return o;
-  await database.sql`insert into clients(id,business_id,first_name,last_name,phone) values(${o.client},${o.business},'Current','Client','+5491123456789')`;
+  await database.sql`insert into clients(id,business_id,name,phone) values(${o.client},${o.business},'Current Client','+5491123456789')`;
   await database.sql`insert into services(id,business_id,name,duration_minutes,price_ars) values(${o.service},${o.business},'Service',30,12.34567)`;
   await database.sql`insert into business_calendars values(${o.business},${database.sql.json(full)})`;
   for (const resource of o.resources) {

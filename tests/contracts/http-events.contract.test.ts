@@ -131,7 +131,7 @@ describe("safe HTTP and event contracts", () => {
     expect(document.paths["/me/appointments"]).toHaveProperty("get.responses.200.content.application/json.schema", { type: "array", items: { $ref: "#/components/schemas/AppointmentRecord" } });
     expect(document.paths["/me/appointments/:appointmentId"]).toHaveProperty("get.responses.200.content.application/json.schema.$ref", "#/components/schemas/AppointmentRecord");
     const id = "11111111-1111-4111-8111-111111111111";
-    const record: AppointmentRecord = { id, client: { id, firstName: "Current", lastName: "Name", phone: "+5491123456789" }, startsAt: "2026-06-01T00:00:00-03:00", startMs: 1780282800000, endMs: 1780283700000,
+    const record: AppointmentRecord = { id, client: { id, name: "Current Name", phone: "+5491123456789" }, startsAt: "2026-06-01T00:00:00-03:00", startMs: 1780282800000, endMs: 1780283700000,
       terms: { serviceId: id, serviceName: "Frozen", resourceId: id, resourceName: "Frozen", durationMinutes: 15, priceArs: 0 }, state: "cancelled", origin: "ai", notes: null, customerResourcePreference: id };
     expect(AppointmentRecordSchema.parse(record)).toEqual(record);
     const schema = document.components.schemas.AppointmentRecord;

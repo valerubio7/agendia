@@ -36,8 +36,7 @@ export function normalizeClientPhone(input: unknown): string | undefined {
 }
 
 export const ClientInputSchema = z.object({
-  firstName: z.string().trim().min(1),
-  lastName: z.string().trim().min(1),
+  name: z.string().trim().min(1).refine(name => !name.includes("\0")),
   phone: z.string().transform((input, ctx) => {
     const phone = normalizeClientPhone(input);
     if (phone === undefined) {
@@ -49,3 +48,6 @@ export const ClientInputSchema = z.object({
 });
 
 export type ClientInput = z.infer<typeof ClientInputSchema>;
+
+export const ClientSchema = z.strictObject({ id: z.string().uuid(), name: z.string(), phone: z.string() });
+export type Client = z.infer<typeof ClientSchema>;

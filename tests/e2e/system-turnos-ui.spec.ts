@@ -54,7 +54,7 @@ async function provision(admin: Page, business: Page, system: { webUrl: string; 
   const full = Object.fromEntries(Array.from({ length: 7 }, (_, day) => [day, [{ startMinute: 0, endMinute: 1440 }]]));
   const calendar = await business.request.put(`${system.webUrl}/api/me/business-calendar`, { headers, data: { weeklySchedule: full } });
   expect(calendar.status()).toBe(200);
-  const client = await create("clients", { firstName: "Clara", lastName: "López", phone: "+5491123456777" });
+  const client = await create("clients", { name: "Clara López", phone: "+5491123456777" });
   const service = await create("services", { name: "Servicio de prueba", durationMinutes: 30, priceArs: 0 });
   const resource = await create("resources", { name: "Recurso de prueba", serviceIds: [service.id], weeklySchedule: full });
   const date = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Argentina/Buenos_Aires", year: "numeric", month: "2-digit", day: "2-digit" })
@@ -307,7 +307,7 @@ for (const width of [1280, 360]) {
       await expect(business.locator(".toast-area .toast")).toHaveText("Elegí el servicio antes de guardar.");
       expect(await read("appointments")).toEqual([]);
       await business.screenshot({ path: testInfo.outputPath(`validation-${width}.png`), animations: "disabled" });
-      await form.getByLabel("Buscar cliente por nombre o teléfono", { exact: true }).fill(client.firstName);
+      await form.getByLabel("Buscar cliente por nombre o teléfono", { exact: true }).fill(client.name);
       await form.getByRole("button", { name: "Buscar cliente", exact: true }).click();
       await form.getByRole("list", { name: "Resultados de clientes", exact: true }).getByRole("button", { name: /Clara López/ }).click();
       await choice(form, "Servicio", service.id).check();
@@ -376,7 +376,7 @@ test("Clientes hands off an existing client to review and confirm a real booking
       const path = new URL(request.url()).pathname;
       if (path.startsWith("/api/me/") && !["GET", "HEAD"].includes(request.method())) writes.push({ path, body: request.postDataJSON() });
     });
-    await business.goto(`${system.webUrl}/clients?clientId=${crypto.randomUUID()}&firstName=Inventado`);
+    await business.goto(`${system.webUrl}/clients?clientId=${crypto.randomUUID()}&name=Inventado`);
     const row = business.getByRole("list", { name: "Clientes del negocio" }).getByRole("button", { name: /Clara López/ });
     const card = business.getByRole("dialog", { name: "Cliente", exact: true });
     await row.click();
@@ -475,7 +475,7 @@ test("Turnos navigation and real manual booking lifecycle", async ({ browser, pa
     const full = Object.fromEntries(Array.from({ length: 7 }, (_, day) => [day, [{ startMinute: 0, endMinute: 1440 }]]));
     const calendar = await business.request.put(`${system.webUrl}/api/me/business-calendar`, { headers, data: { weeklySchedule: full } });
     expect(calendar.status()).toBe(200);
-    const client = await create("clients", { firstName: "Ana", lastName: "Pérez", phone: "+5491123456789" });
+    const client = await create("clients", { name: "Ana Pérez", phone: "+5491123456789" });
     const service = await create("services", { name: "Consulta original", durationMinutes: 30, priceArs: 1250.5 });
     const alternative = await create("services", { name: "Consulta distinta", durationMinutes: 45, priceArs: 5000 });
     const resource = await create("resources", { name: "Profesional uno", serviceIds: [service.id, alternative.id], weeklySchedule: full });
@@ -555,18 +555,28 @@ test("Turnos navigation and real manual booking lifecycle", async ({ browser, pa
     // Same start on another resource remains a separate chronological row.
     const newForm = await openCreate();
     await newForm.getByRole("button", { name: "Nuevo cliente", exact: true }).click();
-    await newForm.getByLabel("Nombre", { exact: true }).fill("Bruno");
-    await newForm.getByLabel("Apellido", { exact: true }).fill("Díaz");
+    const newName = newForm.getByLabel("Nombre completo", { exact: true });
+    await expect(newName).toHaveAttribute("required", "");
+    await expect(newForm.getByLabel("Apellido", { exact: true })).toHaveCount(0);
     await newForm.getByLabel("Teléfono", { exact: true }).fill("11 23456788");
     await chooseSlot(newForm, otherResource.id, offer.start);
-    await newForm.getByRole("button", { name: "Revisar turno", exact: true }).click();
+    const review = newForm.getByRole("button", { name: "Revisar turno", exact: true });
+    await review.click();
+    await expect(newForm.getByRole("alert")).toHaveText("Completá el nombre completo y un teléfono válido.");
+    await expect(newForm.getByRole("heading", { name: "Revisá el turno" })).toHaveCount(0);
+    expect(counts.POST).toBe(1);
+    expect(await read("clients")).toEqual([client]);
+    await newName.fill("Bruno Díaz");
+    await chooseSlot(newForm, otherResource.id, offer.start);
+    await review.click();
+    await expect(newForm.getByRole("region", { name: "Revisá el turno" })).toContainText("Bruno Díaz");
     const newSaved = business.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/me/appointments"));
     await newForm.getByRole("button", { name: "Confirmar turno", exact: true }).click();
     expect((await newSaved).status()).toBe(201);
     await expect(detail.getByRole("heading", { name: "Bruno Díaz", exact: true })).toBeVisible();
     const ownedClients = await read("clients");
     expect(ownedClients).toHaveLength(2);
-    expect(ownedClients.find((row: { firstName: string }) => row.firstName === "Bruno").phone).toBe("+5491123456788");
+    expect(ownedClients).toContainEqual({ id: expect.any(String), name: "Bruno Díaz", phone: "+5491123456788" });
     expect(counts.clientPOST).toBe(0);
     await closeTurno(business);
     await screen.getByRole("button", { name: "Semana", exact: true }).click();
@@ -663,8 +673,7 @@ for (const width of [1280, 360]) test(`Turnos real atomic conflicts and changed 
     await screen.getByRole("button", { name: "Nuevo turno", exact: true }).click();
     const form = screen.getByRole("form", { name: "Crear turno", exact: true });
     await form.getByRole("button", { name: "Nuevo cliente", exact: true }).click();
-    await form.getByLabel("Nombre", { exact: true }).fill("Nueva");
-    await form.getByLabel("Apellido", { exact: true }).fill("Persona");
+    await form.getByLabel("Nombre completo", { exact: true }).fill("Nueva Persona");
     await form.getByLabel("Teléfono", { exact: true }).fill(client.phone);
     await choice(form, "Servicio", service.id).check();
     await form.getByRole("combobox", { name: "Recurso", exact: true }).selectOption(resource.id);
@@ -839,8 +848,7 @@ test("Turnos mounted read recovery, stale availability, session ownership and un
     await screen.getByRole("button", { name: "Nuevo turno", exact: true }).click();
     const form = screen.getByRole("form", { name: "Crear turno", exact: true });
     await form.getByRole("button", { name: "Nuevo cliente", exact: true }).click();
-    await form.getByLabel("Nombre", { exact: true }).fill("Incierta");
-    await form.getByLabel("Apellido", { exact: true }).fill("Persona");
+    await form.getByLabel("Nombre completo", { exact: true }).fill("Incierta Persona");
     await form.getByLabel("Teléfono", { exact: true }).fill("11 23456775");
     await choice(form, "Servicio", service.id).check();
     await form.getByRole("combobox", { name: "Recurso", exact: true }).selectOption(resource.id);
@@ -1004,7 +1012,7 @@ test("Turnos uncapped all-state calendars and clock locks with UI-mocked attenda
     let projection = { ...saved, startMs, endMs: startMs + 1800000, startsAt: new Date(startMs).toISOString() };
     const many = Array.from({ length: 105 }, (_, index) => ({ ...projection,
       id: index === 0 ? saved.id : `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
-      client: index === 0 ? saved.client : { ...saved.client, firstName: `Ejemplo ${index}` },
+      client: index === 0 ? saved.client : { ...saved.client, name: `Ejemplo ${index}` },
       state: index === 0 ? "confirmed" : ["confirmed", "cancelled", "done", "no_show"][index % 4],
     }));
     let patch = 0;
@@ -1113,7 +1121,7 @@ test("Turnos mounted read recovery resolves a persisted PATCH without blocking u
     await expect(newTurn).toBeEnabled(); // A PATCH on one record does not block unrelated create intents.
     // A second real appointment remains writable while the first PATCH outcome is unresolved.
     const nextOffer = setup.offers.find((slot: { startMs: number }) => slot.startMs >= offer.endMs);
-    const unrelatedClient = await setup.create("clients", { firstName: "Otro", lastName: "Cliente", phone: "+5491123456774" });
+    const unrelatedClient = await setup.create("clients", { name: "Otro Cliente", phone: "+5491123456774" });
     const unrelated = await setup.create("appointments", { serviceId: service.id, resourceId: resource.id, clientId: unrelatedClient.id,
       date, startRaw: nextOffer.start, expectedTerms: nextOffer.terms, confirmed: true });
     await closeTurno(business);
@@ -1292,8 +1300,7 @@ for (const path of ["/turnos", "/inicio", "/services"] as const) test(`Turnos mo
     await screen.getByRole("button", { name: "Nuevo turno", exact: true }).click();
     const form = screen.getByRole("form", { name: "Crear turno", exact: true });
     await form.getByRole("button", { name: "Nuevo cliente", exact: true }).click();
-    await form.getByLabel("Nombre", { exact: true }).fill("Nueva");
-    await form.getByLabel("Apellido", { exact: true }).fill("Guardada");
+    await form.getByLabel("Nombre completo", { exact: true }).fill("Nueva Guardada");
     await form.getByLabel("Teléfono", { exact: true }).fill("11 23456773");
     await choice(form, "Servicio", setup.service.id).check();
     await form.getByRole("combobox", { name: "Recurso", exact: true }).selectOption(setup.resource.id);

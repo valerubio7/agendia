@@ -638,7 +638,7 @@ test("Horario rejects exclusion of a real future confirmed booking independently
     const bookingResponse = await business.request.post(`${system.webUrl}/api/me/appointments`, {
       headers, data: { date, serviceId: service.id, resourceId: resource.id, startRaw: slot!.start,
         expectedTerms: slot!.terms, confirmed: true,
-        newClient: { firstName: "Cliente", lastName: "Futuro C2", phone: "+5491123456787" } },
+        newClient: { name: "Cliente Futuro C2", phone: "+5491123456787" } },
     });
     expect(bookingResponse.status()).toBe(201);
     const appointment = await bookingResponse.json();
@@ -1231,7 +1231,7 @@ test("Cierres rejects a date containing a real future confirmed booking and pres
       headers, data: {
         date, serviceId: service.id, resourceId: resource.id, startRaw: slot!.start,
         expectedTerms: slot!.terms, confirmed: true,
-        newClient: { firstName: "Cliente", lastName: "Cierre Futuro", phone: "+5491123456787" },
+        newClient: { name: "Cliente Cierre Futuro", phone: "+5491123456787" },
       },
     });
     expect(bookingResponse.status()).toBe(201);
@@ -1532,7 +1532,7 @@ test("Closures edit and delete retain identity and recover committed mutations",
     const booked = await business.request.post(`${system.webUrl}/api/me/appointments`, {
       headers, data: { date: bookingDate, serviceId: service.id, resourceId: resource.id, startRaw: offer!.start,
         expectedTerms: offer!.terms, confirmed: true,
-        newClient: { firstName: "Cliente", lastName: "Edición", phone: "+5491123456787" } },
+        newClient: { name: "Cliente Edición", phone: "+5491123456787" } },
     });
     expect(booked.status()).toBe(201);
     const appointment = await booked.json();

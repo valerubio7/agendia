@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ClientInputSchema } from "@agendia/domain/client-registry";
+import { ClientInputSchema, ClientSchema } from "@agendia/domain/client-registry";
 import { CalendarDateSchema, InstantSchema, parseInstantMs } from "@agendia/domain/calendar-values";
 import { AppointmentTermsSnapshotSchema, AppointmentStateSchema, AppointmentOriginSchema } from "@agendia/domain/appointment-lifecycle";
 
@@ -12,7 +12,7 @@ export const AppointmentListQuerySchema = z.object({
 /** Current client identity and historical terms, matching the DAL read projection. */
 export const AppointmentRecordSchema = z.object({
   id: appointmentId,
-  client: z.object({ id: appointmentId, firstName: z.string(), lastName: z.string(), phone: z.string() }).strict(),
+  client: ClientSchema,
   startsAt: InstantSchema,
   startMs: z.number().int(), endMs: z.number().int(),
   terms: z.object({ serviceId: appointmentId, serviceName: z.string(), resourceId: appointmentId,
@@ -58,7 +58,7 @@ export const ManualAppointmentCreateSchema = z.object({
   expectedTerms: AvailabilitySlotSchema.shape.terms.extend({ serviceId: availabilityId, resourceId: availabilityId })
     .refine(terms => !terms.serviceName.includes("\0") && !terms.resourceName.includes("\0")),
   confirmed: z.literal(true), clientId: availabilityId.optional(),
-  newClient: ClientInputSchema.strict().refine(client => !client.firstName.includes("\0") && !client.lastName.includes("\0")).optional(),
+  newClient: ClientInputSchema.strict().optional(),
   notes: z.string().refine(notes => !notes.includes("\0")).optional(),
 }).strict().refine(value => (value.clientId !== undefined) !== (value.newClient !== undefined), { message: "Exactly one client source is required" });
 export type ManualAppointmentCreateRequest = z.infer<typeof ManualAppointmentCreateSchema>;

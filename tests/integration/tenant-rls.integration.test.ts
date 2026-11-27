@@ -62,7 +62,7 @@ async function workerCatalogProbe(table: string) {
   if (table === "clients") await expect(admin.begin(async tx => {
     await tx.unsafe("set local role agendia_worker_runtime");
     await tx`select set_config('app.tenant_id', ${tenantA}, true)`;
-    return tx`insert into clients(business_id,first_name,last_name,phone) values(${tenantB},'Foreign','Write','+5491198765432')`;
+    return tx`insert into clients(business_id,name,phone) values(${tenantB},'Foreign Write','+5491198765432')`;
   })).rejects.toMatchObject({ code: "42501" });
 }
 
@@ -266,8 +266,8 @@ describe("forced tenant RLS", () => {
   });
 
   test("client registry is forced tenant-scoped with no delete or admin content access", async () => {
-    await admin`insert into clients(business_id,first_name,last_name,phone) values
-      (${tenantA},'A','Client','+5491123456789'), (${tenantB},'B','Client','+5491123456789')`;
+    await admin`insert into clients(business_id,name,phone) values
+      (${tenantA},'A Client','+5491123456789'), (${tenantB},'B Client','+5491123456789')`;
     const rows = await withTenantTransaction(admin, tenantContext({
       businessId: tenantA, actorId: "user-a", role: "business_user", requestId: "clients-rls",
     }), tx => tx<{ business_id: string }[]>`select business_id::text from clients`);

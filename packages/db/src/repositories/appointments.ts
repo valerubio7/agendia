@@ -50,14 +50,14 @@ export type StoredAppointment = {
   notes: string | null; customerResourcePreference: string | null;
 };
 type AppointmentRow = {
-  id: string; clientId: string; firstName: string; lastName: string; phone: string;
+  id: string; clientId: string; clientName: string; phone: string;
   startsAt: string; startMs: string | number; endMs: string | number;
   serviceId: string; serviceName: string; resourceId: string; resourceName: string;
   durationMinutes: number; priceArs: number; state: AppointmentState; origin: AppointmentOrigin;
   notes: string | null; customerResourcePreference: string | null;
 };
 const appointmentDto = (row: AppointmentRow): StoredAppointment => ({
-  id: row.id, client: { id: row.clientId, firstName: row.firstName, lastName: row.lastName, phone: row.phone },
+  id: row.id, client: { id: row.clientId, name: row.clientName, phone: row.phone },
   startsAt: row.startsAt, startMs: Number(row.startMs), endMs: Number(row.endMs),
   terms: { serviceId: row.serviceId, serviceName: row.serviceName, resourceId: row.resourceId,
     resourceName: row.resourceName, durationMinutes: row.durationMinutes, priceArs: row.priceArs },
@@ -77,7 +77,7 @@ function appointmentRows(db: Db, businessId: string, filters: { id?: string; cli
   const lowerBound = filters.overlap ? db`ap.end_ms>${from}::bigint`
     : db`(${from}::bigint is null or ap.start_ms>=${from}::bigint)`;
   return db<AppointmentRow[]>`select ap.id,ap.client_id "clientId",
-      c.first_name "firstName",c.last_name "lastName",c.phone,
+      c.name "clientName",c.phone,
       ap.start_raw "startsAt",ap.start_ms "startMs",ap.end_ms "endMs",
       ap.service_id "serviceId",ap.service_label "serviceName",ap.resource_id "resourceId",ap.resource_label "resourceName",
       ap.duration_minutes "durationMinutes",ap.price_ars::float8 "priceArs",ap.state,ap.origin,ap.notes,

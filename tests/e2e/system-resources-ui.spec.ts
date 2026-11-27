@@ -510,7 +510,7 @@ test("Recursos manages owned assignments while preserving weekly spans", async (
     expect(slots.length).toBeGreaterThan(0);
     const booking = await seed(business, "post", "appointments", { serviceId: ownService.id, resourceId: hoursResource.id,
       startRaw: slots[0]!.start, date, expectedTerms: slots[0]!.terms, confirmed: true,
-      newClient: { firstName: "Cliente", lastName: "Horario", phone: "+5491123456789" },
+      newClient: { name: "Cliente Horario", phone: "+5491123456789" },
     }, 201);
     await business.reload();
     const bookedRecord = await readHours();

@@ -24,7 +24,7 @@ export function BusinessHome({ today, now, rows, pending, stale, error, locked, 
   const next = confirmed.find(row => row.startMs >= now);
   const available = !pending && !stale && !error;
   const appointmentText = (row: AppointmentRecord, includeResource = false) => <span className="business-home__person">
-    <strong>{row.client.firstName} {row.client.lastName}</strong>
+    <strong>{row.client.name}</strong>
     <small>{row.terms.serviceName}{includeResource && ` · ${row.terms.resourceName}`}</small>
   </span>;
   const appointmentTime = (row: AppointmentRecord) => <time dateTime={row.startsAt}>{turnoTime(row.startMs)}</time>;

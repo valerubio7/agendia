@@ -149,7 +149,7 @@ test("the authenticated panel matches rendered type, interactive colors and moti
     };
     const weeklySchedule = Object.fromEntries(Array.from({ length: 7 }, (_, day) => [day, [{ startMinute: 0, endMinute: 1440 }]]));
     expect((await actual.request.put(`${system.webUrl}/api/me/business-calendar`, { headers, data: { weeklySchedule } })).status()).toBe(200);
-    const client = await create("clients", { firstName: "Clara", lastName: "López", phone: "+5491123456777" });
+    const client = await create("clients", { name: "Clara López", phone: "+5491123456777" });
     const service = await create("services", { name: "Corte", durationMinutes: 30, priceArs: 9500 });
     const resource = await create("resources", { name: "Consultorio", serviceIds: [service.id], weeklySchedule });
     const date = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Argentina/Buenos_Aires", year: "numeric", month: "2-digit", day: "2-digit" })
@@ -267,7 +267,7 @@ test("the authenticated panel matches rendered type, interactive colors and moti
       await compare("validacion", [[".turno-error", ".turnos-screen .turno-error"], [".toast-area .toast", ".toast-area .toast"]]);
       await surfaces(reference.locator(".toast-area .toast"), actual.locator(".toast-area .toast"), ["background-color"]);
       const count = writes.length;
-      await actual.locator("#turnos-client-search").fill(client.firstName);
+      await actual.locator("#turnos-client-search").fill(client.name);
       await booking.getByRole("button", { name: "Buscar cliente", exact: true }).click();
       await booking.getByRole("list", { name: "Resultados de clientes" }).getByRole("button", { name: /Clara López/ }).click();
       await booking.locator(`input[name="turnos-service"][value="${service.id}"]`).check();
